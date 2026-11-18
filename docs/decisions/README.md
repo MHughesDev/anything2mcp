@@ -282,3 +282,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0288 | [Whether a page shows a sign now is the page's own answer, and a slow answer is never a no](0288-whether-a-page-shows-a-sign-now-is-the-pages-own-answer-and-a-slow-answer-is-never-a-no.md) | Accepted (design decision) |
 | 0290 | [The command pack's scout reads a PowerShell help file and a module manifest as data](0290-the-command-packs-scout-reads-a-powershell-help-file-and-a-module-manifest-as-data.md) | Accepted (design decision) |
 | 0289 | [A failure is made from its code's row, so the place that makes it cannot give it another class](0289-a-failure-is-made-from-its-codes-row.md) | Accepted (design decision) |
+| 0291 | [A watch ends when its condition holds on a check's own result](0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md) | Accepted (design decision) |
+| 0292 | [A web tab sends only to its surface and the destinations its tool declares, and the publish page says so](0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md) | Accepted (design decision) |

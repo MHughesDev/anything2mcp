@@ -115,6 +115,12 @@ pub struct Failure { /* class, code, message, next_step; and `said`, what the sy
 // meaning or next step, a bad code or action, and a `busy` row with no `passes` fail to compile.
 // A failure of a code is made from its row, codes::row::NAME.failure(message, next), so the place that makes
 // it cannot give it another class; a step's from what its plan says it fails as. Decision 0289
+// Hidden, and built only for tests and under the feature `testing` (turned on as a feature of a dev-dependency):
+// testing::classes_of_their_own(src, remakes) -> io::Result<Vec<String>>, what each crate's test
+// `every_failure_takes_its_class_from_a_table` reads its `src` with. It skips what `#[cfg(test)]` marks (a module,
+// inline or in its own file or folder, and any single item, field, statement, or arm) and reads the code after it;
+// `remakes` names each file that remakes a failure in the class it has, with its exact count. The one place this
+// crate reads a file
 pub struct CodeEntry { pub declared_in, pub class, pub code, pub meaning, pub next, pub then: Option<ThenAction>, pub passes: Passes }
 impl CodeEntry { pub const fn failure_code(&self) -> FailureCode; pub fn failure(&self, message, next) -> Failure; }
 impl FailsAs { pub fn failure(&self, message, next) -> Failure; }   // and From<&CodeEntry> for FailsAs
@@ -428,6 +434,7 @@ It produces no other class. The codes are declared in this crate's own `failure_
 | A secret is never shown by any formatter, alone or inside another structure | `secret::tests` |
 | `Secret` is neither serializable nor copyable | A test that fails to compile otherwise |
 | A table row with an empty meaning or next step, or a `busy` row that does not say whether it passes by itself, does not compile; a book refuses one code with two classes | `code_book::tests`; two `compile_fail` doc tests of `failure_codes!` |
+| The reading of the class test skips only what `#[cfg(test)]` marks, reads the code after it, skips the files of a test module, and fails a file whose remakes are not the stated count | `testing::tests` |
 | A failure with no next action, wait, or text from the system is written as before, keeps the others through serde, and is no larger for them | `failure::tests` |
 | A badly formed name is refused with a failure of class `input`, and the refusal never echoes more than 64 characters of input | `name::tests`, `ident::tests` over every checked name |
 | Two findings with the same content have the same `id`; a change to any content field changes it | `finding::tests` |
@@ -470,6 +477,7 @@ It produces no other class. The codes are declared in this crate's own `failure_
 14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.
 15. Done: the table form of failure codes, `failure_codes!`, with `CodeEntry`, `ThenAction`, `Passes`, and `CodeBook`; this crate's own codes in it; and `Failure`'s next action and wait as data ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). Nothing reads the two new parts yet.
 16. Done: the module `row` of each table, `CodeEntry::failure`, `FailsAs::failure`, and `FailsAs` from a row, so that a failure takes its class from its code's row ([decision 0289](../../decisions/0289-a-failure-is-made-from-its-codes-row.md)).
+17. Done: the hidden module `testing` and its feature, one reading of a crate's sources for the eleven copies of `every_failure_takes_its_class_from_a_table`. It replaced a reading that stopped at a file's first `#[cfg(test)]`, and so missed the code after a test-only item in nine files, and that skipped three files whole where they remake a failure; those now have an exact count each. No call site was found that the old reading had missed.
 
 ## Open points
 

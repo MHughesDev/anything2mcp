@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    Digest, EnvironmentKind, Failure, FailureClass, RecordKey, Redact, Step, Value, Values,
+    CodeEntry, Digest, EnvironmentKind, Failure, RecordKey, Redact, Step, Value, Values,
 };
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPath, Cleanup, ConnFailure, Deadline, Driver, DriverHealth,
@@ -26,11 +26,7 @@ use a2m_telemetry::{Acting, Detail};
 
 use crate::args::{self, Given};
 use crate::codes::{
-    self, AMBIGUOUS_MATCH, APP_VALIDATION_ERROR, CLEANUP_INCOMPLETE, FILE_KIND, LIMIT_EXCEEDED,
-    NEEDS_LOGIN, OUTPUT_UNPARSED, PACK, PROGRAM_BUSY, PROGRAM_DIGEST_CHANGED, PROGRAM_MISSING,
-    PROGRAM_PATH_UNSAFE, PROGRAM_VERSION_UNSUPPORTED, READ_ONLY_POSTURE, RECORD_ABSENT,
-    SCHEMA_INVALID, SURFACE_KIND, UNEXPECTED_EXIT_STATUS, UNEXPECTED_PROMPT, UPSTREAM_UNAVAILABLE,
-    VERSION_CONFLICT, answered, not_sent, not_usable, possible_commit, shown,
+    self, FILE_KIND, PACK, SURFACE_KIND, answered, not_sent, not_usable, possible_commit, shown,
 };
 use crate::model::{
     Command, Effect, ExitMeaning, Limits, Probe, Program, Script, Section, StepPayload,
@@ -106,28 +102,24 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
     let at = shown(&path.display().to_string());
     match why {
         Refused::Missing => not_sent(
-            FailureClass::Drift,
-            PROGRAM_MISSING,
+            &codes::row::PROGRAM_MISSING,
             format!("The program `{at}` is not there, is not a file, or cannot be run."),
             "Install the program at the path its surface declares, or correct the path in `target.yaml`.",
         ),
         Refused::NotAbsolute => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!("The program `{at}` is not named by an absolute path."),
             "Name the program by its absolute path in `target.yaml`; it is never searched for.",
         ),
         Refused::Script => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The program `{at}` is a shell, an interpreter, a program that runs code its arguments name, or a script that one of them would run."
             ),
             "Name a program that takes its arguments as data; a shell or a script is never started.",
         ),
         Refused::Writable(what) => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The program `{at}` could be replaced by another user: `{}` is theirs to write.",
                 shown(&what.display().to_string())
@@ -135,8 +127,7 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
             "Give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.",
         ),
         Refused::Unreadable(what) => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The program `{at}` is not started: who may change `{}` could not be read.",
                 shown(&what.display().to_string())
@@ -144,8 +135,7 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
             "Give the file and every folder above it an access list the engine's user can read, naming only that user and the system's own identities.",
         ),
         Refused::Link(what) => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The program `{at}` is not started: `{}` is a link, which is not followed on this system.",
                 shown(&what.display().to_string())
@@ -153,8 +143,7 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
             "Name the program by the path it has with no link on the way.",
         ),
         Refused::Elsewhere => not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The program `{at}` is on another machine's share, a device, a drive that is not fixed in this machine, or a drive letter that stands for a folder."
             ),
@@ -165,8 +154,7 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
 
 fn digest_changed(path: &Path, why: &str) -> StepFailure {
     not_sent(
-        FailureClass::Drift,
-        PROGRAM_DIGEST_CHANGED,
+        &codes::row::PROGRAM_DIGEST_CHANGED,
         format!(
             "The program `{}` {why}.",
             shown(&path.display().to_string())
@@ -196,8 +184,7 @@ fn left_running(finished: &Finished, writes: bool) -> Option<StepFailure> {
         possible_commit("left something running that could not be ended")
     } else {
         answered(
-            FailureClass::Busy,
-            CLEANUP_INCOMPLETE,
+            &a2m_provider::codes::row::CLEANUP_INCOMPLETE,
             "The program ended, and something it started could not be ended.",
             "End what the program left running; new starts on the surface wait until then.",
         )
@@ -250,8 +237,7 @@ impl CliDriver {
             .min(u64::try_from(deadline.remaining().as_millis()).unwrap_or(u64::MAX));
         if allowed_ms == 0 {
             return Err(not_sent(
-                FailureClass::Transient,
-                codes::TIMEOUT,
+                &a2m_provider::codes::row::TIMEOUT,
                 "No time was left to start the program.",
                 "Try again.",
             ));
@@ -266,8 +252,7 @@ impl CliDriver {
                 .find(|name| a2m_provider::is_engine_variable(name))
         }) {
             return Err(not_sent(
-                FailureClass::Input,
-                codes::STEP_NOT_USABLE,
+                &codes::row::STEP_NOT_USABLE,
                 format!(
                     "The plan hands the program the variable `{}`, which belongs to the engine.",
                     name.chars().take(64).collect::<String>()
@@ -285,8 +270,7 @@ impl CliDriver {
                 .find(|name| a2m_provider::redirects_loading(name))
         }) {
             return Err(not_sent(
-                FailureClass::Input,
-                codes::STEP_NOT_USABLE,
+                &codes::row::STEP_NOT_USABLE,
                 format!(
                     "The plan hands the program the variable `{}`, which makes a program load code other than its own.",
                     name.chars().take(64).collect::<String>()
@@ -349,8 +333,7 @@ impl CliDriver {
         }
         if failure.code() == &contract::SUBSYSTEM_LIMIT {
             return not_sent(
-                FailureClass::Busy,
-                PROGRAM_BUSY,
+                &codes::row::PROGRAM_BUSY,
                 "Another start of the program holds the surface.",
                 "Try again when it has ended.",
             );
@@ -386,8 +369,7 @@ impl CliDriver {
             .await?;
         let unsupported = |why: &str| {
             answered(
-                FailureClass::Drift,
-                PROGRAM_VERSION_UNSUPPORTED,
+                &codes::row::PROGRAM_VERSION_UNSUPPORTED,
                 format!(
                     "The program `{}` {why}.",
                     shown(&session.path.display().to_string())
@@ -451,8 +433,7 @@ impl CliDriver {
                 for name in names {
                     if a2m_provider::interpreter_form(&name.to_string_lossy(), &fixed).is_err() {
                         return Err(not_sent(
-                            FailureClass::Policy,
-                            PROGRAM_PATH_UNSAFE,
+                            &codes::row::PROGRAM_PATH_UNSAFE,
                             format!(
                                 "The interpreter `{}` is not started with the fixed arguments its files declare: they are not the one form in which it reads a script file and takes what follows as data.",
                                 shown(&name.display().to_string())
@@ -580,12 +561,12 @@ impl CliDriver {
                 }
             }
         }
-        Err(StepFailure::not_sent(Failure::new(
-            FailureClass::Input,
-            a2m_provider::codes::FILE_UNAVAILABLE,
-            "No empty folder could be made for the run: every name tried was already taken.",
-            "Remove what earlier runs left under the command pack's `command_runs` root.",
-        )))
+        Err(StepFailure::not_sent(
+            a2m_provider::codes::row::FILE_UNAVAILABLE.failure(
+                "No empty folder could be made for the run: every name tried was already taken.",
+                "Remove what earlier runs left under the command pack's `command_runs` root.",
+            ),
+        ))
     }
 
     async fn probe(
@@ -635,8 +616,7 @@ impl CliDriver {
                 };
                 if !words.iter().all(plain) {
                     return Err(not_sent(
-                        FailureClass::Input,
-                        codes::ARGUMENT_UNSAFE,
+                        &codes::row::ARGUMENT_UNSAFE,
                         "A command's name is words of letters, digits, and `_.:-`, and this one is not.",
                         "Ask for the help of a command the program's own help lists.",
                     ));
@@ -741,8 +721,7 @@ impl CliDriver {
         };
         if !allowed {
             return Err(not_sent(
-                FailureClass::Policy,
-                READ_ONLY_POSTURE,
+                &a2m_provider::codes::row::READ_ONLY_POSTURE,
                 "A command of a program was asked for where only its declared help and version forms may run: nothing can make a program unable to write.",
                 "Try the command against an environment of kind `test`, or run the operation live.",
             ));
@@ -824,8 +803,7 @@ impl CliDriver {
                 possible_commit("printed more than its ceiling allows")
             } else {
                 answered(
-                    FailureClass::Policy,
-                    LIMIT_EXCEEDED,
+                    &codes::row::LIMIT_EXCEEDED,
                     format!(
                         "The command `{name}` printed more than its ceiling `limits.{stream}` of {ceiling} bytes."
                     ),
@@ -880,8 +858,7 @@ impl CliDriver {
                 possible_commit("asked a question nobody was there to answer")
             } else {
                 answered(
-                    FailureClass::UnknownVariant,
-                    UNEXPECTED_PROMPT,
+                    &codes::row::UNEXPECTED_PROMPT,
                     format!(
                         "The command `{name}` asked a question, and a program is never given a person to answer one."
                     ),
@@ -897,64 +874,57 @@ impl CliDriver {
         // only then cut. It is untrusted text, carried apart from the
         // failure's own sentence.
         let said = self.said(&stderr);
-        let own = |class, code, what: &str, next: &str| {
-            answered(class, code, format!("The command `{name}` {what}."), next).with_said(&said)
+        let own = |row: &CodeEntry, what: &str, next: &str| {
+            answered(row, format!("The command `{name}` {what}."), next).with_said(&said)
         };
         let done = match meaning {
             Some(ExitMeaning::Ok) => true,
             Some(ExitMeaning::Absent) if step.lookup => false,
             Some(ExitMeaning::Absent) => {
                 return Err(own(
-                    FailureClass::Stale,
-                    RECORD_ABSENT,
+                    &codes::row::RECORD_ABSENT,
                     "found no record of that name, and changed nothing",
                     "Read the record again; it may have been removed.",
                 ));
             }
             Some(ExitMeaning::Input) => {
                 return Err(own(
-                    FailureClass::Input,
-                    SCHEMA_INVALID,
+                    &codes::row::SCHEMA_INVALID,
                     "refused its arguments as badly formed, and changed nothing",
                     "Correct the values and call again.",
                 ));
             }
             Some(ExitMeaning::Rejected) => {
                 return Err(own(
-                    FailureClass::Rejected,
-                    APP_VALIDATION_ERROR,
+                    &codes::row::APP_VALIDATION_ERROR,
                     "refused the values by a rule of its own, and changed nothing",
                     "Correct the values and call again.",
                 ));
             }
             Some(ExitMeaning::Stale) => {
                 return Err(own(
-                    FailureClass::Stale,
-                    VERSION_CONFLICT,
+                    &codes::row::VERSION_CONFLICT,
                     "found the record changed by someone else, and changed nothing",
                     "Read the record again and decide whether the change still applies.",
                 ));
             }
             Some(ExitMeaning::Busy) => {
                 return Err(own(
-                    FailureClass::Busy,
-                    PROGRAM_BUSY,
+                    &codes::row::PROGRAM_BUSY,
                     "found what it needs held by another, and changed nothing",
                     "Try again shortly.",
                 ));
             }
             Some(ExitMeaning::Transient) => {
                 return Err(own(
-                    FailureClass::Transient,
-                    UPSTREAM_UNAVAILABLE,
+                    &codes::row::UPSTREAM_UNAVAILABLE,
                     "asked to be tried again later, and changed nothing",
                     "Try again shortly.",
                 ));
             }
             Some(ExitMeaning::SessionExpired) => {
                 return Err(own(
-                    FailureClass::SessionExpired,
-                    NEEDS_LOGIN,
+                    &a2m_auth::codes::row::NEEDS_LOGIN,
                     "is not signed in, and changed nothing",
                     "Sign the program in again.",
                 ));
@@ -966,8 +936,7 @@ impl CliDriver {
             }
             None => {
                 return Err(answered(
-                    FailureClass::UnknownVariant,
-                    UNEXPECTED_EXIT_STATUS,
+                    &codes::row::UNEXPECTED_EXIT_STATUS,
                     match last.finished.exit {
                         Exit::Code(code) => format!(
                             "The command `{name}` ended with the status {code}, which its `exits` do not declare."
@@ -1015,8 +984,7 @@ impl CliDriver {
                 possible_commit("printed something other than its declared output")
             } else {
                 answered(
-                    FailureClass::Drift,
-                    OUTPUT_UNPARSED,
+                    &codes::row::OUTPUT_UNPARSED,
                     format!(
                         "The output of the command `{name}` is not of its declared form: {why}."
                     ),
@@ -1039,8 +1007,7 @@ impl CliDriver {
                 0 => return Err(unparsed("it holds no record")),
                 _ => {
                     return Err(answered(
-                        FailureClass::PossibleCommit,
-                        AMBIGUOUS_MATCH,
+                        &codes::row::AMBIGUOUS_MATCH,
                         format!(
                             "The command `{name}` found more than one record where exactly one is the record written."
                         ),
@@ -1157,9 +1124,7 @@ fn script_copy(
     trust: &Trust,
 ) -> Result<String, StepFailure> {
     let (Some(project), Some(folder)) = (session.project.as_ref(), session.scripts.as_ref()) else {
-        return Err(StepFailure::not_sent(Failure::new(
-            FailureClass::Input,
-            a2m_provider::codes::PROJECT_FOLDER_MISSING,
+        return Err(StepFailure::not_sent(a2m_provider::codes::row::PROJECT_FOLDER_MISSING.failure(
             format!(
                 "The command `{name}` runs a script the target keeps, and the call that started the run came with no project folder to find the target in."
             ),
@@ -1169,8 +1134,7 @@ fn script_copy(
     let shown_path = shown(&script.path);
     let missing = || {
         not_sent(
-            FailureClass::Drift,
-            PROGRAM_MISSING,
+            &codes::row::PROGRAM_MISSING,
             format!(
                 "The script `{shown_path}` of the command `{name}` is not in the target's folder, or cannot be read."
             ),
@@ -1179,8 +1143,7 @@ fn script_copy(
     };
     let changed = |place: &str| {
         not_sent(
-            FailureClass::Drift,
-            PROGRAM_DIGEST_CHANGED,
+            &codes::row::PROGRAM_DIGEST_CHANGED,
             format!(
                 "The script `{shown_path}` of the command `{name}` {place} is not the one its digest names."
             ),
@@ -1211,8 +1174,7 @@ fn script_copy(
             _ => shown(&copy.as_path().display().to_string()),
         };
         return Err(not_sent(
-            FailureClass::Policy,
-            PROGRAM_PATH_UNSAFE,
+            &codes::row::PROGRAM_PATH_UNSAFE,
             format!(
                 "The copy of the script `{shown_path}` of the command `{name}` is not started: another user could change it, or who may change `{what}` could not be read."
             ),

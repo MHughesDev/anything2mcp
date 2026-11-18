@@ -35,7 +35,9 @@ pub struct Migration {
     pub name: &'static str,
     /// The crate that owns the tables it creates.
     pub owner: Owner,
-    /// The tables it creates, in the order it creates them.
+    /// The tables it creates, in the order it creates them, including a
+    /// table of its crate it builds again (migration 0026 builds `watches`
+    /// and `watch_changes` again).
     pub tables: Vec<String>,
     /// The digest of its text, with line endings made the same everywhere.
     pub checksum: Digest,
@@ -63,7 +65,12 @@ fn known() -> &'static Result<Known, String> {
                 })?;
             let tables = created_tables(sql);
             for table in &tables {
-                if let Some(other) = owners.insert(table.clone(), owner) {
+                // A table built again by its own crate, to widen what a
+                // column may hold, is created twice by the one owner; one
+                // created by two crates is refused.
+                if let Some(other) = owners.insert(table.clone(), owner)
+                    && other != owner
+                {
                     return Err(format!(
                         "table `{table}` is created twice, by {} and by {}",
                         other.crate_name(),
@@ -106,8 +113,8 @@ fn created_tables(sql: &str) -> Vec<String> {
 ///
 /// # Errors
 ///
-/// `busy`/`store_corrupt` when a migration file names no owner or two files
-/// create one table. A test holds this to never happening in a build.
+/// `busy`/`store_corrupt` when a migration file names no owner or the files
+/// of two crates create one table. A test holds this to never happening in a build.
 pub fn migrations() -> Result<&'static [Migration], Failure> {
     match known() {
         Ok(known) => Ok(&known.migrations),

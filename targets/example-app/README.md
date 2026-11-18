@@ -29,7 +29,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `/secure/...` | Cases 13 to 15 and 29: signing in, below |
 | `/traps/...` | Case 32: pages that write by themselves, below |
 | `/escapes/...` | Case 32, continued: pages that try to get out of a tab that only observes, below |
-| `/leaving/{how}/orders/{order}/items/{item}` | Case 32, for the interface driver: the line-item form on a page that moves itself to the other loopback name while it loads (`load`), leaves or opens a window on it after Save (`click`, `window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at `/traps/write/leaving/{how}` |
+| `/leaving/{how}/orders/{order}/items/{item}` | Case 32, for the interface driver: the line-item form on a page that moves itself to the other loopback name while it loads (`load`), leaves or opens a window on it after Save (`click`, `window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at `/traps/write/leaving/{how}`. With `loads`, the form loads an image and sends a `fetch` to the other name, at `/traps/write/leaving/loads-image` and `loads-fetch` |
 | `/edge/elsewhere`, `/edge/blocked`, `/edge/limited` | Cases 34 and 23: a redirect to the other loopback host name (`localhost` when asked as `127.0.0.1`), a 403 page as a protective edge would send, and a 429 with `Retry-After: 30` |
 | `GET /views/xml/orders/{order}`, `GET /views/xml/orders/{order}/items/{item}` | The order and the line item as XML (`application/xml`), in the namespace `urn:example:orders`, written with the prefix `ord` on the order and as the default namespace on its items, each item an element `item` with its code and version as attributes; the line item also carries its `ETag`. 404 as plain text ([decision 0217](../../docs/decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)) |
 | `GET /views/xml/declared` | An order as XML whose document type defines an entity built of another: an answer to refuse |
@@ -87,6 +87,7 @@ Each aims at `/traps/write/escapes/{what}`, so the same counts show that none ar
 | `/escapes/download/{name}` | The answer is a file to save under that name |
 | `/escapes/links` | A link that opens a new window, and a link to a download |
 | `/escapes/frame` | It embeds `/escapes/inner` from the other name, which opens a WebSocket and sends a `POST` in its first document and in a second one it moves itself to |
+| `/escapes/loads` | It loads an image, a script, and a style, sends a `fetch` with `GET` and one with `POST`, and opens a WebSocket, each at `/traps/write/escapes/loads-{image,script,style,fetch,post,socket}` of the origin `from` names (the other name when none), then says "Tried."; with `frame`, it also embeds `{frame}/escapes/loads?from={from}` and says "The frame tried." once that page has (decision 0292) |
 | `/escapes/service-worker.js`, `/escapes/shared-worker.js` | Workers that, when reached, send a `POST` and open a WebSocket, and answer with what became of each: the service worker when sent a message, the shared worker when a page connects to it. The service worker also answers a request for `/escapes/answered-by-worker` itself, which the application never serves |
 
 ## The control interface

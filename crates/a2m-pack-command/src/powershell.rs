@@ -74,9 +74,7 @@ impl PowerShellCommandFound {
     /// `input`/`finding_invalid` when the finding is not one of this pack's.
     pub fn read(finding: &Finding) -> Result<Self, a2m_core::Failure> {
         written::from_text(finding.found()).ok_or_else(|| {
-            a2m_core::Failure::new(
-                a2m_core::FailureClass::Input,
-                a2m_core::FailureCode::FINDING_INVALID,
+            a2m_core::codes::row::FINDING_INVALID.failure(
                 "A `powershell_command` finding does not hold what the command pack's discoverer writes.",
                 "Run the discovery again with the version of the pack that is enabled.",
             )

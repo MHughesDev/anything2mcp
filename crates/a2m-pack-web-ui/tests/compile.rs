@@ -333,30 +333,52 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     );
 }
 
-/// The review does not say a web tool sends only to its surface: the
-/// browser lets a page's other requests pass to any origin, so the pack
-/// states nothing, and the review says so in its fixed words (decisions
-/// 0252 and 0264).
+/// The review states where a web tool sends, which the browser holds it to
+/// (decision 0292): its surface, and the destinations its operation
+/// declares; it starts no program and sets no variable.
 #[test]
-fn the_review_does_not_state_where_a_web_tool_sends() {
+fn the_review_states_that_a_web_tool_sends_to_its_surface_and_its_declared_destinations() {
     let stand = stand("review");
-    let compiled = compile(&stand.registry, "example");
+    let compiled = compile_changed(
+        &stand.registry,
+        "example",
+        "operations/line_items.yaml",
+        |text| {
+            text.replacen(
+                "description: >\n  Reads one line item",
+                "permissions:\n  destinations: [\"https://assets.example.com\"]\ndescription: >\n  Reads one line item",
+                1,
+            )
+        },
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     assert!(!compiled.review.items.is_empty());
     for item in &compiled.review.items {
         for binding in &item.bindings {
             assert_eq!(
                 binding.states,
-                a2m_files::BindingStates::NotStated {
-                    says: a2m_files::NOT_STATED
+                a2m_files::BindingStates::Stated {
+                    runs: Vec::new(),
+                    environment: Vec::new()
                 },
                 "{}",
                 item.tool
             );
         }
-        assert!(
-            matches!(item.reach, a2m_files::Reach::Partly { .. }),
-            "{}",
-            item.tool
-        );
+        let a2m_files::Reach::Stated { groups, .. } = &item.reach else {
+            panic!("{}: {:?}", item.tool, item.reach);
+        };
+        let addresses: Vec<&str> = groups
+            .iter()
+            .flat_map(|group| group.addresses.iter().map(String::as_str))
+            .collect();
+        let mut expected = vec!["http://127.0.0.1:4010"];
+        if item.tool.as_str() == "example_line_item_get" {
+            expected.push("https://assets.example.com");
+        }
+        let mut addresses = addresses;
+        addresses.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(addresses, expected, "{}", item.tool);
     }
 }

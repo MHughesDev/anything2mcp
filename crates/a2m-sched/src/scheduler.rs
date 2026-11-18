@@ -322,6 +322,20 @@ impl Scheduler {
         Ok(woken)
     }
 
+    /// What follows runs cancelled in a transaction of another call, as
+    /// [`Scheduler::cancel`] does after its own: `cancelled` when a run was
+    /// cancelled at once, whose locks the ledger sorted; `freed` when a job
+    /// let resources go.
+    pub(crate) async fn after_cancels(&self, cancelled: bool, freed: bool) {
+        if cancelled {
+            self.inner.waits().locks_changed();
+        }
+        if freed {
+            self.grant().await;
+        }
+        self.changed();
+    }
+
     /// Cancels a run. A run no runner holds is cancelled at once. A run a
     /// runner holds is cancelled by that runner: it is told at its next
     /// heartbeat, finishes the commit point in hand, and ends the run.

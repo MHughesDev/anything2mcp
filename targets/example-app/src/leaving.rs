@@ -18,6 +18,9 @@
 //!   as a page that kept an earlier refusal would; Save works as on the plain
 //!   form.
 //! - `/leaving/saved/...`: the form says "Saved." before anything is done.
+//! - `/leaving/loads/...`: the form loads an image and sends a `fetch` with
+//!   `GET` to the other name while it loads, as a page that loads from
+//!   another origin does (decision 0292).
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -74,6 +77,12 @@ fn added(how: &str) -> Option<String> {
                 .to_owned()
         }
         "saved" => "document.getElementById(\"status\").textContent = \"Saved.\";".to_owned(),
+        "loads" => format!(
+            "const logo = new Image();\nlogo.alt = \"Logo\";\nlogo.src = {};\n\
+             document.body.append(logo);\nfetch({}, {{mode: \"no-cors\"}}).catch(() => {{}});",
+            trap("loads-image"),
+            trap("loads-fetch")
+        ),
         _ => return None,
     })
 }

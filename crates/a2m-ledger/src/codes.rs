@@ -1,5 +1,5 @@
 //! The failure codes this crate produces, each with its one class. The codes
-//! of a watch are the last fourteen rows, which `WATCH_CODES` lists.
+//! of a watch are the last fifteen rows, which `WATCH_CODES` lists.
 //!
 //! Whether a `busy` code passes by itself, and why:
 //!
@@ -83,7 +83,7 @@ a2m_core::failure_codes! {
         meaning "The shadow of a binding of an operation that writes is not built: its comparison cannot be stored, and it is never promotable through shadow.",
         next "Keep the operation on its verified binding.",
         passes not_by_itself;
-    // The codes of a watch: the last fourteen rows, which `WATCH_CODES` lists.
+    // The codes of a watch: the last fifteen rows, which `WATCH_CODES` lists.
     WATCH_NOT_A_READ = Policy, "watch_not_a_read",
         meaning "A watch was asked for an operation that is not a read.",
         next "Watch an operation whose effect class is `read`.";
@@ -131,11 +131,14 @@ a2m_core::failure_codes! {
     WATCH_RESULT_NOT_ITS_SHAPE = UnknownVariant, "watch_result_not_its_shape",
         meaning "A check's result is not of the shape the watch was asked with: its list output is missing or not a list of records, or a record lacks a field of its key.",
         next "Check the operation's outputs and the key it declares; the watch goes on and compares the next check.";
+    WATCH_CONDITION_UNANSWERED = UnknownVariant, "watch_condition_unanswered",
+        meaning "A watch's condition could not be answered on a check's result: its evaluation stopped, or it gave neither true nor false. Whether it holds is not known, so the check is a gap and is not compared.",
+        next "Look at the check's run for what the read returned; the watch goes on and tries the condition on the next check.";
 }
 
 /// Every failure code of a watch the ledger produces, with its one class:
-/// the last fourteen rows of the table.
-pub const WATCH_CODES: &[(a2m_core::FailureClass, &str)] = ALL.split_at(ALL.len() - 14).1;
+/// the last fifteen rows of the table.
+pub const WATCH_CODES: &[(a2m_core::FailureClass, &str)] = ALL.split_at(ALL.len() - 15).1;
 
 #[cfg(test)]
 mod tests {
@@ -143,36 +146,18 @@ mod tests {
 
     /// No source of this crate gives a failure a class of its own: each is
     /// made from a row of a table, which gives it its class. `ledger.rs`
-    /// rebuilds a stored failure with the class its row recorded.
+    /// rebuilds a stored failure with the class its row recorded, in one
+    /// place. A second place fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
-        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        walk(&path, found);
-                    }
-                } else if name.ends_with(".rs") && name != "tests.rs" && name != "ledger.rs" {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    let text = text.split("#[cfg(test)]").next().unwrap();
-                    for made in ["Failure::new(", "class: FailureClass::"] {
-                        if text.contains(made) {
-                            found.push(format!("{}: {made}", path.display()));
-                        }
-                    }
-                }
-            }
-        }
-        let mut found = Vec::new();
-        walk(
+        let found = a2m_core::testing::classes_of_their_own(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut found,
-        );
+            &[("ledger.rs", 1)],
+        )
+        .unwrap();
         assert!(
             found.is_empty(),
-            "made with a class of their own: {found:?}"
+            "made with a class of their own: {found:#?}"
         );
         for row in TABLE {
             let made = row.failure("A case.", row.next);

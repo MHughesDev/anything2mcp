@@ -9,7 +9,7 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 | Side | Kernel |
 | Layer | 3, Stores |
 | May depend on | Layers 1 and 2 |
-| Depends on | `a2m-core`; `a2m-vault` to seal blobs, for its `RandomSource`, and to implement its `KeyRecords`; `a2m-telemetry` for its `Clock` and for spans. Outside: `rusqlite` with SQLite built in ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)), `serde_json`, and `tokio` for the channel an answer comes back on. Identifiers and SHA-256 come from `a2m-core` |
+| Depends on | `a2m-core`; `a2m-expr` to load a watch's condition and answer it on a check's result ([decision 0291](../../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)); `a2m-vault` to seal blobs, for its `RandomSource`, and to implement its `KeyRecords`; `a2m-telemetry` for its `Clock` and for spans. Outside: `rusqlite` with SQLite built in ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)), `serde_json`, and `tokio` for the channel an answer comes back on. Identifiers and SHA-256 come from `a2m-core` |
 | Roadmap packages | Phase 1, group H: runs, events, blobs, migrations, on SQLite. Phase 3, group A and slice 3.1: record rows, locks, the nine rules. Stage E, package E1: findings and open questions. Phase 6: Postgres |
 | Carries out | Spec sections [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (assigned keys and stored outputs), [217](../../spec/2-kernel/217-traces-evidence-and-repair.md) (where evidence is kept), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (no ledger, no write), [218](../../spec/2-kernel/218-discovery-and-findings.md) (the findings store and the unknowns ledger); the [ledger schema](../../reference/ledger-schema.md) |
 
@@ -289,17 +289,20 @@ pub struct ShadowPromotion { pub subject: ShadowSubject, pub mode: Mode, pub pro
 ```
 
 ```rust
-// Watches (decisions 0247, 0262, 0285, 0287): `tx.watches()`. Migrations 0021, 0023, 0025. No value of what a check read is stored.
+// Watches (decisions 0247, 0262, 0285, 0287, 0291): `tx.watches()`. Migrations 0021, 0023, 0025, 0026. No value of what a check read is stored.
 impl Watches<'_, '_> {
     pub fn ask(&mut self, new: &NewWatch) -> Result<WatchRow, Failure>;            // `asked`; a read only (`watch_not_a_read`);
-                                                                                   // 60 s to 366 days, a cost, a shape (`schema_invalid`)
+                                                                                   // 60 s to 366 days, a cost, a shape, a condition that
+                                                                                   // loads and gives true or false (`schema_invalid`)
     pub fn confirm(&mut self, id: WatchId, by: PrincipalId, phase: Duration, current: &Digest) -> Result<WatchRow, Failure>;
                                                 // `acts_for` only; `watch_needs_confirmation` when asked under another version
     pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId, opened: bool) -> Result<CheckRow, Failure>;
                                                 // the watch's own read only; `watch_ended` at or after the end;
                                                 // `opened`: admission opened the run (only a run no check names yet)
     pub fn end_check(&mut self, id: WatchId, seq: u64, result: Option<&[u8]>) -> Result<CheckEnded, Failure>;
-                                                // the bytes of the run's own stored result (`watch_run_not_its_own`)
+                                                // the bytes of the run's own stored result (`watch_run_not_its_own`);
+                                                // answers the condition on them: holds, `condition_met` and the end;
+                                                // no answer, a gap with `watch_condition_unanswered`
     pub fn missed(&mut self, id: WatchId, from: u64, until: u64, missed: Missed) -> Result<u64, Failure>;  // one gap
     pub fn defer(&mut self, id: WatchId, until: Timestamp) -> Result<(), Failure>;
     pub fn pause(&mut self, id: WatchId, reason: WatchReason) -> Result<WatchRow, Failure>;
@@ -311,6 +314,9 @@ impl Watches<'_, '_> {
     pub fn on_surface(&mut self, ws, target, environment, surface: &SurfaceName) -> Result<Vec<WatchRow>, Failure>; // open
     pub fn checks_of_run(&mut self, run: RunId) -> Result<Vec<CheckRow>, Failure>;   // every check under way on it
     pub fn run_opened_by_a_check(&mut self, run: RunId) -> Result<bool, Failure>;    // some check's admission opened it
+    pub fn run_left_to_cancel(&mut self, run: RunId, stopping: &BTreeSet<(WatchId, u64)>) -> Result<bool, Failure>;
+                                                // decision 0287's rule, in one place: a check opened it and no check
+                                                // under way but `stopping` names it
     // Reading: get, list, not_ended, open, check, checks, check_of_run (one check under way), changes, baseline, key_of.
 }
 pub struct NewWatch { pub workspace, pub target, pub environment, pub operation, pub target_version: Digest,
@@ -318,14 +324,14 @@ pub struct NewWatch { pub workspace, pub target, pub environment, pub operation,
                       pub ignore: BTreeSet<String>, pub surface: SurfaceName, pub requests_per_check: u32,
                       pub shape: WatchShape, pub interval: Duration, pub ends_at: Timestamp,
                       pub asked_by: PrincipalId, pub acts_for: PrincipalId, pub client_label: String,
-                      pub retention: RetentionClass }
+                      pub retention: RetentionClass, pub condition: Option<PlanExpr> }   // WatchRow carries `condition` too
 pub enum WatchShape { Whole, List { list: String, key: Vec<String> } }   // from the plan; stored as canonical JSON
 pub const WATCH_INTERVAL_FLOOR: Duration;   // 60 s
 pub const WATCH_LONGEST: Duration;          // 366 days
 pub enum WatchState { Asked, Confirmed, Running, Paused, Ended }
 pub enum WatchReason { NeedsLogin, NeedsInput, Drifted, VersionChanged, OnHold, PausedByPerson,
-                       EndedByPerson, EndedByCaller, EndReached, VersionWithdrawn, Declined }   // a state, not a failure
-pub enum ChangeKind { Confirmed, Added, Changed, Removed, Unseen, Gap, Paused, Resumed, Ended }
+                       EndedByPerson, EndedByCaller, EndReached, VersionWithdrawn, Declined, ConditionMet }   // a state, not a failure
+pub enum ChangeKind { Confirmed, Added, Changed, Removed, Unseen, Gap, Paused, Resumed, Ended, ConditionMet }
 pub enum CheckOutcome { Running, Complete, CutShort, Failed, Faulted }
 // The comparison, pure: watch_compare.rs.
 pub enum WatchKey { Whole, Record(Digest) }    // the keyed digest under `record_key`, as a record row names a key
@@ -440,9 +446,10 @@ The codes are constants in the crate's `codes` module.
 8a. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `StoreConfig::throwaway` and `Store::is_throwaway`, an offline test's own store in memory, which keeps its policy key; `WriteClearance::OfflineTest`, taken only there, recorded as a decision of the test's rule so the triggers of rule 3 hold; `PublishedVersion::gate_evidence` and `Versions::gate_evidence`, with migration 0016. Tests: `tests/offline.rs`, `tests/store.rs`.
 8b. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `Ledger::recorded_before_commit`, the values recorded before the save of every record of an operation in a workspace whose write may have landed (`RecordRow::may_have_landed`), of its current attempt alone, after its current intent (`intent_seq`), so that a value an attempt settled as not landed recorded is held by nothing ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md), `tests/acknowledged.rs`); migration 0017, a trigger that keeps a version's `gate_evidence` as written (LE-1); migration 0018, `actions_scouts.project`.
 8c. Done ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)): `Tx::shadow`, migration 0020, the tables `shadow_comparisons` and `shadow_promotions`; comparisons, standings, the promotable question, a person's promotion, and the report. Tests: `tests/shadow.rs`.
-8d. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): `Tx::watches`, migration 0021, the tables `watches`, `watch_checks`, `watch_changes`, `watch_baseline`; the comparison in `watch_compare.rs`. Not built: a watch's condition; retention of watches, as of runs.
+8d. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): `Tx::watches`, migration 0021, the tables `watches`, `watch_checks`, `watch_changes`, `watch_baseline`; the comparison in `watch_compare.rs`. Not built: retention of watches, as of runs. A watch's condition came with 8h.
 8f. Done ([decision 0262](../../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)): migration 0023; a watch's surface, requests per check, and record shape; the floor and the ceiling in `ask` and a trigger; `confirm` against the current version; asked watches ended by a version change; no check at or past the end; `end_check` from the run's own result, never complete; `past_end`, `on_surface`; the purposes `watch_value` and `shadow_input`, with `input_purpose`. Not built: the engine's completeness flag, which `COMPLETENESS_RECORDED` in `src/watch.rs` waits for. Tests: `tests/watch.rs`, `tests/shadow.rs`.
 8g. Done ([decision 0285](../../decisions/0285-two-watches-of-the-same-read-for-one-person-share-a-run-and-ending-one-never-cancels-a-run-another-rests-on.md), [decision 0287](../../decisions/0287-the-last-check-under-way-on-a-run-a-check-opened-cancels-it.md)): migration 0025, `watch_checks.opened_run`, set by `begin_check` from the admission's answer; `checks_of_run`, `run_opened_by_a_check`. Test: `two_watches_of_one_read_share_a_run_and_only_the_opener_is_marked` in `tests/watch.rs`.
+8h. Done ([decision 0291](../../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)): a watch's condition. Migration 0026 builds `watches` and `watch_changes` again, with the column `condition` and the word `condition_met` for a reason and a change's kind, copying every row; the migration list lets a crate create a table of its own again for such a rebuild. `ask` loads the condition (this crate depends on `a2m-expr` for it); `end_check` answers it on the run's own result before anything of the check is stored; `watch_condition_unanswered`; `run_left_to_cancel`, decision 0287's rule moved here from the registry so that the scheduler can answer it in its own transaction. Tests in `tests/watch.rs`: `a_condition_that_holds_on_a_checks_own_result_ends_the_watch`, `a_condition_that_cannot_be_answered_is_a_gap_and_the_baseline_stays`, `ask_refuses_a_condition_that_does_not_load_or_give_true_or_false`, `building_the_watch_tables_again_keeps_every_row_and_reference`.
 8e. Done ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)): migration 0022; a comparison's keyed input digest and its cost in requests, a run event per comparison; distinct inputs per environment, against the named verified binding; the promotion row's verified binding and evidence. Its own digest purpose came with 8f. Tests: `tests/shadow.rs`.
 9. Not built: Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 

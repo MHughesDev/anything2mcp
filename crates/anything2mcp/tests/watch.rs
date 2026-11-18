@@ -149,24 +149,28 @@ impl Watching {
     /// `lasts` from now; its person confirms it on the page. Gives its
     /// identifier.
     async fn watched(&self, item_code: &str, lasts: Duration) -> String {
+        self.watched_with(item_code, lasts, &[]).await
+    }
+
+    /// The same, with more arguments of `watch create`.
+    async fn watched_with(&self, item_code: &str, lasts: Duration, more: &[&str]) -> String {
         let input = json!({"order_id": "A-100", "item_code": item_code}).to_string();
         let ends_at = (self.clock.now().as_unix_millis()
             + i64::try_from(lasts.as_millis()).unwrap())
         .to_string();
-        let asked = self
-            .world
-            .agent(&[
-                "watch",
-                "create",
-                ITEM_GET,
-                "--input",
-                &input,
-                "--interval-seconds",
-                "60",
-                "--ends-at",
-                &ends_at,
-            ])
-            .await;
+        let mut args = vec![
+            "watch",
+            "create",
+            ITEM_GET,
+            "--input",
+            &input,
+            "--interval-seconds",
+            "60",
+            "--ends-at",
+            &ends_at,
+        ];
+        args.extend_from_slice(more);
+        let asked = self.world.agent(&args).await;
         let result = asked.result();
         assert_eq!(result["state"], "asked", "{:?}", asked.finished);
         let id = result["watch_id"].as_str().unwrap().to_owned();
@@ -339,6 +343,69 @@ async fn a_watch_reports_the_record_the_stand_changed_and_no_other() {
 
     // The product wrote nothing: the one write the stand holds is the
     // test's own.
+    assert_eq!(app.writes().await.unwrap().len(), 1);
+    watching.world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_watch_ends_at_the_first_check_on_which_its_condition_holds_of_what_the_stand_changed() {
+    let app = TestApp::start().await.unwrap();
+    let machine = machine_over(&app);
+    let watching = published(&app, &machine).await;
+    let id = watching
+        .watched_with(
+            "L-101",
+            Duration::from_secs(3_600),
+            &["--condition", "result.quantity >= 9"],
+        )
+        .await;
+    assert_eq!(
+        watching.watch(&id).await["condition"],
+        "result.quantity >= 9"
+    );
+    // Two rails: the first check makes the baseline, and the condition does
+    // not hold.
+    watching.checked(Duration::from_secs(10), &[&id], 1).await;
+
+    // The stand's record changes, outside the product, to nine.
+    changed_by_the_stand(&app, "L-101", 9).await;
+    watching.clock.advance(Duration::from_secs(60));
+    let mut ended = Json::Null;
+    for pass in 0..PASSES {
+        if pass > 0 {
+            watching.clock.advance(Duration::from_millis(100));
+        }
+        watching.world.engine.kernel().tend().await;
+        ended = watching.watch(&id).await;
+        if ended["state"] == "ended" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(ended["state"], "ended", "{ended}");
+    assert_eq!(ended["reason"], "condition_met", "{ended}");
+    assert_eq!(ended["checks"], 2, "{ended}");
+    // The check that found it records the change it saw, then that the
+    // condition held, then the end; the run it names read nine.
+    let changes = watching.changes(&id).await;
+    assert_eq!(
+        kinds(&changes),
+        ["confirmed", "changed", "condition_met", "ended"],
+        "{changes:?}"
+    );
+    assert_eq!(changes[2]["check"], 1, "{changes:?}");
+    assert_eq!(changes[3]["reason"], "condition_met", "{changes:?}");
+    let run = changes[2]["run_id"].as_str().unwrap();
+    let read = watching.world.ok(&["run", "get", run]).await;
+    assert_eq!(read["result"]["quantity"], 9, "{read}");
+
+    // Ended, it reads nothing more, and the product wrote nothing: the one
+    // write the stand holds is the test's own.
+    let reads = app.seen_all().await.unwrap().len();
+    watching.clock.advance(Duration::from_secs(600));
+    watching.world.engine.kernel().tend().await;
+    assert_eq!(app.seen_all().await.unwrap().len(), reads);
+    assert_eq!(watching.watch(&id).await["checks"], 2);
     assert_eq!(app.writes().await.unwrap().len(), 1);
     watching.world.close().await;
 }

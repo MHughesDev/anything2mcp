@@ -53,6 +53,7 @@ fn new_watch(stand: &Stand, person: u8, interval: u64) -> NewWatch {
         acts_for: principal(person),
         client_label: "example-agent".to_owned(),
         retention: RetentionClass::Long,
+        condition: None,
     }
 }
 
@@ -657,10 +658,11 @@ async fn a_watch_past_its_end_ends_whatever_its_state() {
     let after = stand.sched.due_watches().await.unwrap();
     assert!(after.checks.is_empty());
     assert_eq!(
-        after.cancel,
+        after.cancelled,
         vec![started.run],
-        "the check's run is to be cancelled"
+        "the check's run is cancelled with the watch's end"
     );
+    assert_eq!(stand.run_state(started.run), "cancelled");
     for watch in [asked, paused, running] {
         let row = stand
             .store
@@ -691,6 +693,73 @@ async fn a_watch_past_its_end_ends_whatever_its_state() {
             started.run
         )),
         "failed"
+    );
+}
+
+#[tokio::test]
+async fn a_pass_that_fails_ends_nothing_and_cancels_nothing_and_the_next_does_both() {
+    // The watch's end and its run's cancel are one transaction: a pass the
+    // store refuses leaves the watch running on its run, so the next pass
+    // still finds the run to cancel. Before, the runs to cancel were handed
+    // out after the end had committed and a failure lost them.
+    let stand = Stand::new("watch-end-and-cancel-together").await;
+    stand.hello(1).await;
+    let asked = stand
+        .sched
+        .ask_watch(NewWatch {
+            ends_at: stand.after(i64::try_from(INTERVAL * 2).unwrap()),
+            ..new_watch(&stand, 1, INTERVAL)
+        })
+        .await
+        .unwrap();
+    let row = confirm(&stand, asked.id, 1).await;
+    move_to(&stand, first_due(&row));
+    let due = stand.sched.due_watches().await.unwrap().checks;
+    let started = start(&stand, &due[0]).await;
+    assert!(started.job.is_some(), "the check opened its run");
+    stand.advance(INTERVAL * 2);
+
+    // The fault: the store refuses the run's cancel.
+    stand
+        .raw()
+        .execute_batch(
+            "CREATE TRIGGER fault_for_tests BEFORE UPDATE OF state ON runs
+             WHEN NEW.state = 'cancelled'
+             BEGIN SELECT RAISE(ABORT, 'a fault for the test'); END;",
+        )
+        .unwrap();
+    assert!(stand.sched.due_watches().await.is_err());
+    let id = asked.id;
+    let watch = stand
+        .store
+        .read(move |tx| tx.watches().get(id))
+        .await
+        .unwrap();
+    assert_eq!(watch.state, WatchState::Running, "the end did not commit");
+    assert_ne!(stand.run_state(started.run), "cancelled");
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT COUNT(*) FROM watch_checks WHERE run_id = '{}' AND outcome = 'running'",
+            started.run
+        )),
+        1
+    );
+
+    stand
+        .raw()
+        .execute_batch("DROP TRIGGER fault_for_tests;")
+        .unwrap();
+    let after = stand.sched.due_watches().await.unwrap();
+    assert_eq!(after.cancelled, vec![started.run]);
+    assert_eq!(stand.run_state(started.run), "cancelled");
+    let watch = stand
+        .store
+        .read(move |tx| tx.watches().get(id))
+        .await
+        .unwrap();
+    assert_eq!(
+        (watch.state, watch.reason),
+        (WatchState::Ended, Some(WatchReason::EndReached))
     );
 }
 

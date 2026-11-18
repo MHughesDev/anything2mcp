@@ -6,7 +6,7 @@
 //! because the program, or the other start that holds the surface, ends.
 
 use a2m_core::{
-    Failure, FailureClass, FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind,
+    CodeEntry, Failure, FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind,
     SurfaceKind,
 };
 use a2m_provider::StepFailure;
@@ -148,40 +148,37 @@ pub fn lint(rule: &'static str) -> LintCode {
         .unwrap_or_else(|_| unreachable!("a rule name of the command pack is well formed"))
 }
 
+/// A failure of the code of `row`, in the class its table gives it.
 pub(crate) fn failure(
-    class: FailureClass,
-    code: FailureCode,
+    row: &CodeEntry,
     message: impl Into<String>,
     next: impl Into<String>,
 ) -> Failure {
-    Failure::new(class, code, message, next)
+    row.failure(message, next)
 }
 
 /// A failure before any program was started.
 pub(crate) fn not_sent(
-    class: FailureClass,
-    code: FailureCode,
+    row: &CodeEntry,
     message: impl Into<String>,
     next: impl Into<String>,
 ) -> StepFailure {
-    StepFailure::not_sent(failure(class, code, message, next))
+    StepFailure::not_sent(failure(row, message, next))
 }
 
 /// A failure the program itself answered with: it ran to its end.
 pub(crate) fn answered(
-    class: FailureClass,
-    code: FailureCode,
+    row: &CodeEntry,
     message: impl Into<String>,
     next: impl Into<String>,
 ) -> StepFailure {
-    StepFailure::answered(failure(class, code, message, next))
+    StepFailure::answered(failure(row, message, next))
 }
 
 /// A write that was started and whose result nothing confirms.
 pub(crate) fn possible_commit(what: &str) -> StepFailure {
     StepFailure::unknown(failure(
-        FailureClass::PossibleCommit,
-        NO_CONFIRMATION,
+        &a2m_provider::codes::row::NO_CONFIRMATION,
         format!("A program that writes was started and {what}, so nothing confirms the write."),
         "Reconcile the record: read it back before anything is written again.",
     ))
@@ -191,8 +188,7 @@ pub(crate) fn possible_commit(what: &str) -> StepFailure {
 /// was started.
 pub(crate) fn not_usable(what: &str) -> StepFailure {
     not_sent(
-        FailureClass::Input,
-        STEP_NOT_USABLE,
+        &row::STEP_NOT_USABLE,
         format!("The `cli` driver cannot carry out this step as the plan wrote it: {what}."),
         "Compile the target again with the version of the command pack that is enabled.",
     )
@@ -214,5 +210,29 @@ pub(crate) fn shown(text: &str) -> String {
         format!("{clean}…")
     } else {
         clean
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of the pack gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        let found = a2m_core::testing::classes_of_their_own(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &[],
+        )
+        .unwrap();
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:#?}"
+        );
+        for row in TABLE {
+            let made = failure(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
     }
 }

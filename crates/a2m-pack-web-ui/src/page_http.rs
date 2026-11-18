@@ -582,16 +582,17 @@ impl Lowering for PageHttpLowering {
         self.mode.clone()
     }
 
-    /// Not stated, for the reason the `ui` mode gives
-    /// (`UiLowering::statement`): the request is made from inside a page,
-    /// and the browser lets that page's other requests pass to any origin.
+    /// As the `ui` mode states it (`UiLowering::statement`): the request
+    /// is made from inside a page on the surface's origin, and the browser
+    /// holds that page's every request to the surface and the operation's
+    /// declared destinations (decision 0292).
     fn statement(
         &self,
         _binding: &ResolvedBinding<'_>,
         _lowered: &Lowered,
         _cx: &LowerContext<'_>,
     ) -> Statement {
-        Statement::NotStated
+        crate::lower::web_statement()
     }
 
     fn verbs(&self) -> &[Verb] {

@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use a2m_core::{
     Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass, FailureCode,
-    OperationName, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName, Timestamp,
-    Value, Values, WorkspaceId,
+    OperationName, PlanExpr, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName,
+    Timestamp, Value, ValueType, Values, WorkspaceId,
 };
 use serde_json::{Map, Value as Json};
 
@@ -71,6 +71,8 @@ words! {
         VersionWithdrawn => "version_withdrawn",
         /// Its person declined it before confirming.
         Declined => "declined",
+        /// Its condition held on a check (decision 0291).
+        ConditionMet => "condition_met",
     }
 }
 
@@ -194,6 +196,8 @@ words! {
         Resumed => "resumed",
         /// It ended.
         Ended => "ended",
+        /// Its condition held on a check, which then ended it.
+        ConditionMet => "condition_met",
     }
 }
 
@@ -346,6 +350,11 @@ pub struct NewWatch {
     pub client_label: String,
     /// How long its history is kept: the class its read's runs take.
     pub retention: RetentionClass,
+    /// What ends it early: an expression over a check's result, in the
+    /// read's output names, that gives true or false. Checked by the caller
+    /// against the read's outputs and compiled; the ledger loads it again
+    /// when it is asked and evaluates it on each check's own result.
+    pub condition: Option<PlanExpr>,
 }
 
 /// A watch, as the store holds it.
@@ -414,6 +423,8 @@ pub struct WatchRow {
     pub baseline_through: Option<u64>,
     /// Whether a complete check is in the baseline.
     pub baseline_complete: bool,
+    /// What ends it early, when its condition holds on a check.
+    pub condition: Option<PlanExpr>,
 }
 
 impl WatchRow {
@@ -615,6 +626,44 @@ fn failure_of(
     }
 }
 
+/// A watch's condition as the store keeps it: the plan's form as canonical
+/// JSON, once it is shown to load and to give true or false.
+fn condition_json(condition: Option<&PlanExpr>) -> Result<Option<String>, Failure> {
+    let Some(expr) = condition else {
+        return Ok(None);
+    };
+    if expr.result != ValueType::Bool {
+        return Err(failure::invalid(
+            "a watch's condition that does not give true or false",
+        ));
+    }
+    a2m_expr::Program::load(expr)
+        .map_err(|_| failure::invalid("a watch's condition that does not load"))?;
+    serde_json::to_string(expr)
+        .map(Some)
+        .map_err(|_| failure::invalid("a watch's condition"))
+}
+
+/// Whether a watch's condition holds on a check's result, bound as
+/// `result`. Anything but true or false, or an evaluation that stops, is
+/// no answer: the check is a gap, and never taken as false (rule 7).
+fn condition_holds(expr: &PlanExpr, result: &Values) -> Result<bool, Failure> {
+    let unanswered = || {
+        refused(
+            &crate::codes::row::WATCH_CONDITION_UNANSWERED,
+            "The watch's condition could not be answered on the check's result.",
+            "Look at the check's run for what the read returned; the watch goes on and tries the condition on the next check.",
+        )
+    };
+    let program = a2m_expr::Program::load(expr).map_err(|_| unanswered())?;
+    let result = Value::Record(result.clone());
+    let bindings = a2m_expr::Bindings::new().with(a2m_expr::names::RESULT, &result);
+    match program.evaluate(&bindings) {
+        Ok(Value::Bool(holds)) => Ok(holds),
+        _ => Err(unanswered()),
+    }
+}
+
 fn names_json(names: &BTreeSet<String>) -> Result<String, Failure> {
     serde_json::to_string(names).map_err(|_| failure::invalid("the names of outputs"))
 }
@@ -661,7 +710,7 @@ macro_rules! watch_columns {
          input_ref, ignore_outputs, interval_seconds, ends_at, asked_by, acts_for, client_label,
          asked_at, retention_class, confirmed_by, confirmed_at, phase_ms, state, reason,
          reason_failure_class, reason_failure_code, state_since, next_due_index, not_before, running_check, checks,
-         baseline_through, baseline_complete, surface, requests_per_check, record_shape"
+         baseline_through, baseline_complete, surface, requests_per_check, record_shape, condition"
     };
 }
 
@@ -713,6 +762,13 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
         surface: parse(row.text(30)?)?,
         requests_per_check: crate::codec::small(row.int(31)?)?,
         shape: WatchShape::from_stored(row.text(32)?)?,
+        condition: row
+            .opt_text(33)?
+            .map(|text| {
+                serde_json::from_str::<PlanExpr>(text)
+                    .map_err(|_| failure::corrupt("a watch's condition that no longer reads"))
+            })
+            .transpose()?,
     })
 }
 
@@ -961,6 +1017,7 @@ impl Watches<'_, '_> {
             return Err(failure::invalid("a watch whose check sends no request"));
         }
         new.shape.check()?;
+        let condition = condition_json(new.condition.as_ref())?;
         let id = WatchId(*RunId::from_parts(now, self.tx.random()?)?.as_bytes());
         let label = self.tx.shared.attached()?.redact.redact(&new.client_label);
         self.tx.exec(
@@ -968,9 +1025,9 @@ impl Watches<'_, '_> {
                 (id, workspace_id, target, environment, operation, target_version_hash, effect,
                  input_hash, input_ref, ignore_outputs, interval_seconds, ends_at, asked_by,
                  acts_for, client_label, asked_at, retention_class, state, state_since, surface,
-                 requests_per_check, record_shape)
+                 requests_per_check, record_shape, condition)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'read', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, 'asked', ?15, ?17, ?18, ?19)",
+                     ?16, 'asked', ?15, ?17, ?18, ?19, ?20)",
             &[
                 id.to_string().into(),
                 new.workspace.to_string().into(),
@@ -991,6 +1048,7 @@ impl Watches<'_, '_> {
                 new.surface.as_str().into(),
                 new.requests_per_check.into(),
                 new.shape.stored().into(),
+                condition.into(),
             ],
         )?;
         self.load(id)
@@ -1240,12 +1298,23 @@ impl Watches<'_, '_> {
                 "End the check with the bytes of its run's own result.",
             ));
         }
-        let observed = serde_json::from_slice::<Values>(bytes)
-            .map_err(|_| CheckFault::NotItsShape)
-            .and_then(|values| watch.shape.records(&values));
-        let observed = match observed {
+        let Ok(values) = serde_json::from_slice::<Values>(bytes) else {
+            return self.faulted(id, seq, &CheckFault::NotItsShape.failure());
+        };
+        let observed = match watch.shape.records(&values) {
             Ok(observed) => observed,
-            Err(fault) => return self.faulted(id, seq, &fault),
+            Err(fault) => return self.faulted(id, seq, &fault.failure()),
+        };
+        // The condition is answered on the same result the comparison
+        // reads, before anything of the check is stored: a condition that
+        // gives no answer makes the check a gap, and leaves the baseline as
+        // it was.
+        let held = match &watch.condition {
+            Some(expr) => match condition_holds(expr, &values) {
+                Ok(held) => held,
+                Err(failure) => return self.faulted(id, seq, &failure),
+            },
+            None => false,
         };
         let digests = {
             let records = observed.iter().map(|record| {
@@ -1267,7 +1336,7 @@ impl Watches<'_, '_> {
         };
         let digests = match digests {
             Ok(digests) => digests,
-            Err(fault) => return self.faulted(id, seq, &fault),
+            Err(fault) => return self.faulted(id, seq, &fault.failure()),
         };
         let seen = u64::try_from(digests.len()).unwrap_or(u64::MAX);
         let outcome = if digests.complete() {
@@ -1350,16 +1419,24 @@ impl Watches<'_, '_> {
             ],
         )?;
         self.leave_running(id, WatchState::Confirmed, None, None)?;
+        if held {
+            // The check's changes are recorded first, then that the
+            // condition held on it, and the watch ends, in the transaction
+            // that ended the check.
+            self.change(
+                id,
+                ChangeKind::ConditionMet,
+                NewChange {
+                    check: Some(seq),
+                    ..NewChange::default()
+                },
+            )?;
+            self.end(id, WatchReason::ConditionMet)?;
+        }
         self.ended(id, seq, comparison)
     }
 
-    fn faulted(
-        &mut self,
-        id: WatchId,
-        seq: u64,
-        fault: &CheckFault,
-    ) -> Result<CheckEnded, Failure> {
-        let failure = fault.failure();
+    fn faulted(&mut self, id: WatchId, seq: u64, failure: &Failure) -> Result<CheckEnded, Failure> {
         self.close_check(
             id,
             seq,
@@ -1942,6 +2019,32 @@ impl Watches<'_, '_> {
             .is_some())
     }
 
+    /// Whether `run` is left to be cancelled once the checks in `stopping`
+    /// stop waiting on it: a check of a watch opened it, and no check under
+    /// way but those names it (decisions 0285 and 0287). A run no check
+    /// opened, such as the person's own call that a check joined, is never
+    /// cancelled for a watch; a run another check still rests on is left for
+    /// that check, and the last check on it to stop cancels it. The one
+    /// place the rule is answered: the registry and the scheduler both ask
+    /// it, each in the transaction that stops the checks.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn run_left_to_cancel(
+        &mut self,
+        run: RunId,
+        stopping: &BTreeSet<(WatchId, u64)>,
+    ) -> Result<bool, Failure> {
+        if !self.run_opened_by_a_check(run)? {
+            return Ok(false);
+        }
+        Ok(self
+            .checks_of_run(run)?
+            .iter()
+            .all(|check| stopping.contains(&(check.watch, check.seq))))
+    }
+
     fn named_by_a_check(&mut self, run: RunId) -> Result<bool, Failure> {
         Ok(self
             .tx
@@ -2031,7 +2134,12 @@ mod tests {
 
     #[test]
     fn every_word_of_a_watch_is_in_its_migration_and_the_ledger_schema() {
-        let migration = include_str!("../migrations/0021-ledger-watches-checks-and-changes.sql");
+        // Migration 0026 built the tables again with every word of 0021
+        // and `condition_met`.
+        let migration = concat!(
+            include_str!("../migrations/0021-ledger-watches-checks-and-changes.sql"),
+            include_str!("../migrations/0026-ledger-a-watch-ends-when-its-condition-holds.sql"),
+        );
         let schema = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
@@ -2137,6 +2245,10 @@ mod tests {
             ),
             (
                 crate::codes::WATCH_RESULT_NOT_ITS_SHAPE,
+                FailureClass::UnknownVariant,
+            ),
+            (
+                crate::codes::WATCH_CONDITION_UNANSWERED,
                 FailureClass::UnknownVariant,
             ),
         ];

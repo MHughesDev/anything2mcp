@@ -10,6 +10,9 @@ build = "build.rs"
 
 [dependencies]
 a2m-core = { path = "../a2m-core" }
+# A watch's condition is evaluated on its check's own result, in the
+# transaction that ends the check (decision 0291).
+a2m-expr = { path = "../a2m-expr" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 a2m-vault = { path = "../a2m-vault" }
 # `hooks` gives the authorizer, which holds each crate to its own tables, and
@@ -26,6 +29,10 @@ tokio.workspace = true
 # crate's own tests take the key from each store they open, as the policy
 # engine does, and need no feature.
 testing = []
+
+[dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 
 [lints]
 workspace = true

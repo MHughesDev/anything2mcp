@@ -83,9 +83,15 @@ pub(crate) fn path_of(address: &str) -> &str {
 /// The origins a tab may be on. A tab is given them when it is opened,
 /// from the destinations its plan or its discovery declared, and they do
 /// not change while it lives. An empty set lets the tab go nowhere.
+///
+/// Beside them, the origins its page may send requests to although the tab
+/// is never on them (`and_requests_to`, decision 0292): a request of the
+/// page, its frames, or its workers to an origin in neither set is refused
+/// in the browser.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Origins {
     allowed: BTreeSet<String>,
+    requests_only: BTreeSet<String>,
 }
 
 impl Origins {
@@ -94,13 +100,28 @@ impl Origins {
     pub fn of<'a>(addresses: impl IntoIterator<Item = &'a Address>) -> Self {
         Self {
             allowed: addresses.into_iter().map(Address::origin).collect(),
+            requests_only: BTreeSet::new(),
         }
     }
 
-    /// These origins and those of `more`.
+    /// These origins and those of `more`, both sets.
     #[must_use]
     pub fn and(mut self, more: &Self) -> Self {
         self.allowed.extend(more.allowed.iter().cloned());
+        self.requests_only
+            .extend(more.requests_only.iter().cloned());
+        self
+    }
+
+    /// The same, and the origins of these addresses as places the tab's
+    /// page may send requests to: an image, a script, a style, a font, a
+    /// frame, a `fetch`. The tab is never on them: `goto`, the tab's own
+    /// document, and every look and act are held to the tab's own origins
+    /// alone (decision 0292).
+    #[must_use]
+    pub fn and_requests_to<'a>(mut self, addresses: impl IntoIterator<Item = &'a Address>) -> Self {
+        self.requests_only
+            .extend(addresses.into_iter().map(Address::origin));
         self
     }
 
@@ -115,9 +136,30 @@ impl Origins {
         self.allowed.iter().map(String::as_str)
     }
 
+    /// The origins the tab's page may send requests to and the tab is
+    /// never on, in order.
+    pub fn requests_only(&self) -> impl Iterator<Item = &str> {
+        self.requests_only.iter().map(String::as_str)
+    }
+
     /// Whether an address the browser reported is on one of the origins.
     pub(crate) fn allows_reported(&self, address: &str) -> bool {
         key_of(address).is_some_and(|key| self.allowed.contains(&key))
+    }
+
+    /// Whether a request the browser reported may go to its address: on
+    /// one of the tab's origins, or on one its page may send requests to.
+    pub(crate) fn reaches_reported(&self, address: &str) -> bool {
+        key_of(address)
+            .is_some_and(|key| self.allowed.contains(&key) || self.requests_only.contains(&key))
+    }
+
+    /// Every origin a request may go to, each as the browser writes it.
+    pub(crate) fn reach(&self) -> Vec<&str> {
+        self.allowed
+            .union(&self.requests_only)
+            .map(String::as_str)
+            .collect()
     }
 
     /// The same origins, and the pages a test gives as `data:` addresses.
@@ -231,8 +273,21 @@ mod tests {
         assert!(!Origins::default().allows(&address("https://app.example.com/")));
         assert!(
             origins
+                .clone()
                 .with_data_pages()
                 .allows_reported("data:text/html,x")
         );
+        // A place the page may send requests to is not a place the tab is.
+        let wider = origins.and_requests_to([&address("https://assets.example.com/fonts")]);
+        assert!(wider.reaches_reported("https://assets.example.com/a.woff2"));
+        assert!(!wider.allows_reported("https://assets.example.com/a.woff2"));
+        assert!(!wider.allows(&address("https://assets.example.com/")));
+        assert!(wider.reaches_reported("https://app.example.com/orders"));
+        assert!(!wider.reaches_reported("https://other.example/x"));
+        assert_eq!(
+            wider.iter().collect::<Vec<_>>(),
+            ["https://api.example.com:8443", "https://app.example.com"]
+        );
+        assert_eq!(wider.reach().len(), 3);
     }
 }

@@ -78,7 +78,7 @@ pub use structure::{
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
-    EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment, PageExchange,
-    PageExchanges, PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest,
-    SafeRequests, TextMatch,
+    EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE, ObserveTab, PageEnvironment,
+    PageExchange, PageExchanges, PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat,
+    SafeRequest, SafeRequests, TextMatch,
 };

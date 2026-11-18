@@ -19,6 +19,13 @@
 //! - `/escapes/frame`: embeds `/escapes/inner` from the other name. The inner
 //!   page opens a WebSocket and sends a `POST`, in its first document and again
 //!   in a second one it moves itself to, and tells its parent when it has tried.
+//! - `/escapes/loads`: loads an image, a script, and a style, sends a `fetch`
+//!   with `GET` and one with `POST`, and opens a WebSocket, each to
+//!   `loads-{image,script,style,fetch,post,socket}` at the origin named by
+//!   `from` (the other name when none is given), then says "Tried.". With
+//!   `frame`, it also embeds `{frame}/escapes/loads?from={from}`, and says
+//!   "The frame tried." once that page has. For the proofs that a tab sends
+//!   nothing outside what it may reach (decision 0292).
 //! - `/escapes/service-worker.js` and `/escapes/shared-worker.js`: workers that,
 //!   when reached, send a `POST` and open a WebSocket, and answer with what
 //!   became of each: the service worker when sent a message, the shared worker
@@ -27,7 +34,7 @@
 //!   application never serves.
 
 use axum::Router;
-use axum::extract::Path;
+use axum::extract::{Path, RawQuery};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
@@ -55,6 +62,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/escapes/links", get(links))
         .route("/escapes/frame", get(frame))
         .route("/escapes/inner", get(inner))
+        .route("/escapes/loads", get(loads))
         .route("/escapes/service-worker.js", get(service_worker))
         .route("/escapes/shared-worker.js", get(shared_worker))
 }
@@ -239,6 +247,83 @@ async fn inner() -> Html<String> {
              post(\"frame-post-\" + which).then(() => {{\n\
              parent.postMessage(which, \"*\");\n\
              if (!second) location.href = \"/escapes/inner?again\";\n}});\n</script>"
+        ),
+    )
+}
+
+/// The origin a query names under `name`, when it names one: a scheme, then
+/// a host and a port of plain characters, and nothing else. Anything else
+/// is as if it were not there.
+fn origin_in(query: Option<&str>, name: &str) -> Option<String> {
+    let value = query?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))?;
+    let decoded = percent_decoded(value)?;
+    let rest = decoded
+        .strip_prefix("http://")
+        .or_else(|| decoded.strip_prefix("https://"))?;
+    let plain = !rest.is_empty()
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '[' | ']'));
+    plain.then_some(decoded)
+}
+
+fn percent_decoded(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let pair = text.get(at + 1..at + 3)?;
+            out.push(u8::from_str_radix(pair, 16).ok()?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+async fn loads(RawQuery(query): RawQuery) -> Html<String> {
+    let quoted =
+        |origin: Option<String>| origin.map_or_else(|| "\"\"".to_owned(), |o| format!("\"{o}\""));
+    let from = quoted(origin_in(query.as_deref(), "from"));
+    let frame = quoted(origin_in(query.as_deref(), "frame"));
+    page(
+        "Order assets",
+        &format!(
+            "<p>The order's assets.</p>\n<script>\n\
+             const from = {from} || {OTHER};\nconst frame = {frame};\n\
+             const main = document.querySelector(\"main\");\n\
+             const at = (what) => from + \"{WRITE}/loads-\" + what;\n\
+             const settled = [];\n\
+             const loaded = (element) => settled.push(new Promise((done) => {{\n\
+             element.onload = done;\nelement.onerror = done;\n}}));\n\
+             const image = new Image();\nimage.alt = \"Logo\";\nloaded(image);\n\
+             image.src = at(\"image\");\nmain.append(image);\n\
+             const style = document.createElement(\"link\");\nstyle.rel = \"stylesheet\";\n\
+             loaded(style);\nstyle.href = at(\"style\");\ndocument.head.append(style);\n\
+             const script = document.createElement(\"script\");\nloaded(script);\n\
+             script.src = at(\"script\");\ndocument.head.append(script);\n\
+             settled.push(fetch(at(\"fetch\"), {{mode: \"no-cors\"}}).then(() => {{}}, () => {{}}));\n\
+             settled.push(fetch(at(\"post\"), {{method: \"POST\", mode: \"no-cors\"}}).then(() => {{}}, () => {{}}));\n\
+             try {{\nconst socket = new WebSocket(at(\"socket\").replace(/^http/, \"ws\"));\n\
+             settled.push(new Promise((done) => {{ socket.onerror = done; socket.onclose = done; }}));\n\
+             }} catch (_) {{}}\n\
+             if (frame) {{\n\
+             addEventListener(\"message\", (event) => {{\n\
+             if (event.data !== \"tried\") return;\n\
+             const done = document.createElement(\"p\");\ndone.id = \"frame-tried\";\n\
+             done.textContent = \"The frame tried.\";\nmain.append(done);\n}});\n\
+             const view = document.createElement(\"iframe\");\nview.title = \"Assets\";\n\
+             view.src = frame + \"/escapes/loads?from=\" + encodeURIComponent(from);\n\
+             main.append(view);\n}}\n\
+             Promise.all(settled).then(() => {{\n\
+             const tried = document.createElement(\"p\");\ntried.id = \"tried\";\n\
+             tried.textContent = \"Tried.\";\nmain.append(tried);\n\
+             if (parent !== window) parent.postMessage(\"tried\", \"*\");\n}});\n</script>"
         ),
     )
 }

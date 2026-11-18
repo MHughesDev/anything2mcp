@@ -274,36 +274,18 @@ mod tests {
     /// No source of this crate gives a failure a class of its own: each is
     /// made from a row of a table, which gives it its class. `start.rs`
     /// remakes the failure an engine wrote as it stopped, in the class it
-    /// has.
+    /// has, in two places: the line the engine writes, and the failure the
+    /// client gives when it reads that line. A third place fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
-        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        walk(&path, found);
-                    }
-                } else if name.ends_with(".rs") && name != "tests.rs" && name != "start.rs" {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    let text = text.split("#[cfg(test)]").next().unwrap();
-                    for made in ["Failure::new(", "class: FailureClass::"] {
-                        if text.contains(made) {
-                            found.push(format!("{}: {made}", path.display()));
-                        }
-                    }
-                }
-            }
-        }
-        let mut found = Vec::new();
-        walk(
+        let found = a2m_core::testing::classes_of_their_own(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut found,
-        );
+            &[("start.rs", 2)],
+        )
+        .unwrap();
         assert!(
             found.is_empty(),
-            "made with a class of their own: {found:?}"
+            "made with a class of their own: {found:#?}"
         );
         for row in TABLE {
             let made = failure(row, "A case.", row.next);

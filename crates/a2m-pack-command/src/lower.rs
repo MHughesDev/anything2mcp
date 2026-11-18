@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    Digest, EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload,
+    CodeEntry, Digest, EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload,
     PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
 };
 use a2m_files::{
@@ -14,10 +14,7 @@ use a2m_files::{
     Statement, StepCommits, VariableValue,
 };
 
-use crate::codes::{
-    self, EXPECT, FILE_KIND, NO_CONFIRMATION, OUTPUT_UNPARSED, PARSE, SPAWN, SURFACE_KIND, TIMEOUT,
-    UNEXPECTED_EXIT_STATUS, lint,
-};
+use crate::codes::{self, EXPECT, FILE_KIND, PARSE, SPAWN, SURFACE_KIND, lint};
 use crate::model::{Arg, Command, Effect, Section, StepPayload};
 
 /// The verbs this version of the pack lowers.
@@ -192,7 +189,7 @@ fn steps(
         one: run.role == Role::Lookup,
     })
     .ok()?;
-    let step = |kind: StepKind, class, code, args: Vec<StepArg>, commits, lookup| Step {
+    let step = |kind: StepKind, row: &CodeEntry, args: Vec<StepArg>, commits, lookup| Step {
         kind,
         refers_to: Some(PackRef {
             section: index,
@@ -200,17 +197,17 @@ fn steps(
         }),
         args,
         timeout_ms: command.limits.timeout_ms,
-        fails_as: FailsAs { class, code },
+        fails_as: FailsAs::from(row),
         commits,
         lookup,
         idempotent: false,
         when: None,
         payload: payload.clone(),
     };
-    let (spawn_class, spawn_code) = if writes {
-        (FailureClass::PossibleCommit, NO_CONFIRMATION)
+    let spawn_fails = if writes {
+        &a2m_provider::codes::row::NO_CONFIRMATION
     } else {
-        (FailureClass::Transient, TIMEOUT)
+        &a2m_provider::codes::row::TIMEOUT
     };
     let surface = section
         .programs
@@ -218,19 +215,17 @@ fn steps(
         .map(|program| program.surface.clone())?;
     Some((
         vec![
-            step(SPAWN, spawn_class, spawn_code, step_args, writes, false),
+            step(SPAWN, spawn_fails, step_args, writes, false),
             step(
                 EXPECT,
-                FailureClass::UnknownVariant,
-                UNEXPECTED_EXIT_STATUS,
+                &codes::row::UNEXPECTED_EXIT_STATUS,
                 Vec::new(),
                 false,
                 !writes,
             ),
             step(
                 PARSE,
-                FailureClass::Drift,
-                OUTPUT_UNPARSED,
+                &codes::row::OUTPUT_UNPARSED,
                 Vec::new(),
                 false,
                 !writes,

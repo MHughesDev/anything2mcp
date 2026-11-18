@@ -28,6 +28,8 @@ use common::*;
 #[tokio::test]
 async fn every_table_has_exactly_one_owner_and_the_migrations_create_what_they_declare() {
     let store = memory().await;
+    // A table its crate builds again is declared by each migration that
+    // creates it, always by the same owner.
     let declared: Vec<(String, Owner)> = migrations()
         .unwrap()
         .iter()
@@ -37,6 +39,8 @@ async fn every_table_has_exactly_one_owner_and_the_migrations_create_what_they_d
                 .iter()
                 .map(|table| (table.clone(), migration.owner))
         })
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .into_iter()
         .collect();
     assert!(declared.len() >= 12);
     // The first line of each file names a crate; the file's name says whose it is.

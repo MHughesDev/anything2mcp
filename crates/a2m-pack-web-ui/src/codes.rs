@@ -58,6 +58,9 @@ a2m_core::failure_codes! {
     PAGE_WRITE_REFUSED = Policy, "page_write_refused",
         meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195).",
         next "Look at what the page does when it loads; a page that writes by itself is not read by the web pack, so read the record another way.";
+    ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
+        meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",
+        next "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.";
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it.",
         next "Compile the target again with the version of the web pack that is enabled.";
@@ -139,33 +142,14 @@ mod tests {
     /// made from a row of a table, which gives it its class.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
-        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        walk(&path, found);
-                    }
-                } else if name.ends_with(".rs") && name != "tests.rs" {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    let text = text.split("#[cfg(test)]").next().unwrap();
-                    for made in ["Failure::new(", "class: FailureClass::"] {
-                        if text.contains(made) {
-                            found.push(format!("{}: {made}", path.display()));
-                        }
-                    }
-                }
-            }
-        }
-        let mut found = Vec::new();
-        walk(
+        let found = a2m_core::testing::classes_of_their_own(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut found,
-        );
+            &[],
+        )
+        .unwrap();
         assert!(
             found.is_empty(),
-            "made with a class of their own: {found:?}"
+            "made with a class of their own: {found:#?}"
         );
         for row in TABLE {
             let made = failure(row, "A case.", row.next);

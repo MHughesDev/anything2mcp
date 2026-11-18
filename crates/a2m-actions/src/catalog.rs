@@ -190,6 +190,7 @@ fn watch_output() -> JsonSchema {
         .required("requests_per_check", JsonSchema::int())
         .required("compared", JsonSchema::words(&["whole", "records"]))
         .required("ignore", list_of(text()))
+        .optional("condition", text())
 }
 
 /// One change a watch recorded, as `watch.changes` returns it: its kind,
@@ -209,6 +210,7 @@ fn watch_change() -> JsonSchema {
                 "paused",
                 "resumed",
                 "ended",
+                "condition_met",
             ]),
         )
         .required("at", JsonSchema::int())
@@ -390,6 +392,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .req("interval_seconds", FieldType::Int { min: 60, max: 86_400 }, "Seconds between checks: at least `watch.shortest_interval_seconds`, and within the share of the surface's rate that watches may take.")
             .req("ends_at", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "When the watch ends, in whole milliseconds since 1970 in UTC: at most `watch.longest_days` from now.")
             .opt("ignore", LIST, "Outputs left out of the comparison, such as one that moves on every read.")
+            .opt("condition", TEXT, "An expression over the read's result, in its output names, that gives true or false, such as `result.status == 'shipped'`. The watch ends at the first check on which it holds.")
             .writes()
             .output(watch_output()
                 .optional("act", text())

@@ -199,6 +199,10 @@ code = "page_write_refused"
 
 [[failure_codes]]
 class = "policy"
+code = "origin_not_declared"
+
+[[failure_codes]]
+class = "policy"
 code = "password_read_refused"
 
 [[failure_codes]]

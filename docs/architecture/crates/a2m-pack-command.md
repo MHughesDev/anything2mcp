@@ -84,6 +84,7 @@ pub mod codes {
     pub const SPAWN: StepKind;  pub const EXPECT: StepKind;  pub const PARSE: StepKind;
     pub const ALL: &[(FailureClass, &str)];   // every code the manifest declares
     pub const PROGRAM_MISSING: FailureCode;   // and one constant for each code below
+    pub mod row { pub const PROGRAM_MISSING: CodeEntry; /* one row per code */ }   // what a failure is made from
 }
 ```
 
@@ -174,6 +175,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 | Invariant | Proven by |
 | --- | --- |
 | The registry builds with only this pack, its digest is stable, and the manifest declares exactly the codes the driver raises | `tests/files.rs` |
+| Every failure takes its class from a row of a table, its own or the provider contract's, the session keeper's, or the core's: no source outside tests gives one a class of its own | `every_failure_takes_its_class_from_a_table`, in `src/codes.rs` |
 | The `example` files compile twice, and from disk, to the same bytes; the plan declares the program of every environment | `tests/files.rs` |
 | A file that breaks a rule is refused with its file, a line, and a fix: twenty-two cases | `tests/files.rs` |
 | No form of argument hands a value to a flag that runs it: seven forms; a flag that takes a folder compiles | `tests/files.rs`, `src/kind.rs` |
@@ -218,6 +220,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 11a. Done: the readers of a PowerShell XML help file and a module manifest handed to the scout, the `powershell_command` finding, and its drafting rule ([decision 0290](../../decisions/0290-the-command-packs-scout-reads-a-powershell-help-file-and-a-module-manifest-as-data.md)). Not built: the values a help lists for a parameter, help for providers, help written as comments in a script, drafting from a manifest's names alone, the system's own module folders, and PowerShell 7. Discovery on a Windows PowerShell surface needs one `commands/` file there that declares the pair first, because `prepare` refuses an interpreter surface whose files do not.
 12. Not proven here: Windows and macOS. The whole crate, its tests included, compiles and lints for both from Linux with a stand-in C compiler for the trees that compile C; the tests have not run there, and CI is their first run.
 12. Done ([decision 0264](../../decisions/0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md)): `Lowering::statement` for the review summary: each program the binding's commands run (its own, its read-back's, its lookup's), by the surface's address and every digest its file pins, or the fixed pair of the interpreter with its digests and fixed arguments and the script with its digest; each `env.set` as set with its value and each `env.pass` as passed; where it sends, not stated, since what a program reaches is the program's own. No variable is a secret: no credential reaches a program yet. Tests: `the_review_states_what_the_command_pack_runs_and_where_it_sends` (`tests/files.rs`) and `the_review_names_the_interpreter_and_the_script_it_runs` (`tests/script.rs`).
+13. Done: a failure is made from its code's row ([decision 0289](../../decisions/0289-a-failure-is-made-from-its-codes-row.md)). The helpers `failure`, `not_sent`, and `answered` take a row (`&codes::row::NAME`, or a row of the table of the provider contract, the session keeper, or the core), not a class and a code; a step's `fails_as` is `FailsAs::from(row)`. Every call site's class was the class its row gives, and no code, message, or next step changed.
 
 ## Open points
 

@@ -145,3 +145,15 @@ Pull request 16 merged at 718aa9c after twelve runs, with 40 checks passing. Two
 - Still not explained: the answer lost on macOS without TLS, twice.
 
 Next: pull request 17's checks; then the scan tests' two weak points, the command pack's failures from rows, W2c, P3 (the web pack's declared destinations), and the PowerShell surface gap.
+
+## After pull request 17
+
+Pull request 17 merged at a25985e with 18 checks passing. Three packages followed, validated together.
+
+- **The scan for a stated class, in one place** (an addition to decision 0289), and the command pack's failures made from rows.
+- **W2c** ([decision 0291](../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)): a watch ends when its condition holds on a check's own result. Migration 0026 builds two tables again; its schema was compared object by object with the one before. W2d holds what is left.
+- **P3** ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)): a web tab sends only to its surface and the destinations its tool declares, and the publish page says so. A write's body now passes through the engine's process, where nothing of it is read or kept. P3b holds what is left, first the drafting of destinations from what discovery refused.
+- The validation found a fault older than these packages: an observed page could open a peer connection under the browser's older name. Fixed. It also found a race in the database stand's own code, fixed.
+- Validation of the tree: 2,192 tests passed and the one that failed was the stand's race, since fixed and passing; 561 more as an account that is not root; lints clean on Linux and for Windows and macOS.
+
+Next: pull request 18's checks; then P3b, W2d, the PowerShell surface gap, and the answer lost on macOS.

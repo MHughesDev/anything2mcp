@@ -380,27 +380,42 @@ impl<'a> Lower<'a, '_> {
     }
 }
 
+/// What a binding of the `ui` or the `page_http` mode states for the
+/// review: it sends only to its surface and its operation's declared
+/// destinations, starts nothing, and sets nothing (decision 0292).
+pub(crate) fn web_statement() -> Statement {
+    use a2m_files::{BindingStatement, Sends};
+    Statement::Stated(BindingStatement {
+        sends: Sends::Only {
+            surface: true,
+            addresses: Vec::new(),
+        },
+        ..BindingStatement::default()
+    })
+}
+
 impl Lowering for UiLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
     }
 
-    /// Not stated, on purpose (decisions 0252 and 0264). A tab's own
-    /// document goes only to the origins it was opened for, but the
-    /// browser lets the page's other requests pass to any origin: an
-    /// image, a script, or a `fetch` the page makes with `GET`, `HEAD`, or
-    /// `OPTIONS` is never refused for where it goes, and in a tab that may
-    /// act nothing is (`a2m-pack-web-browser`, `Page::judge_request`). So
-    /// the surface and the declared destinations are not all a tool of
-    /// this pack can reach, and the pack does not say they are. And what
-    /// a tab runs is the scripts the system's pages bring.
+    /// Where the tool sends, which the browser holds it to (decision 0292):
+    /// its surface, and the destinations its operation declares, which the
+    /// review adds as it does for every pack. A tab's own document and
+    /// every look and act are on the surface's origin alone; every other
+    /// request of its page, its frames, and its workers to an origin on
+    /// neither list is failed in the browser before it leaves
+    /// (`a2m-pack-web-browser`, `Page::judge_request`). It starts no
+    /// program and sets no variable: the browser is the engine's own, held
+    /// to the digests the person reviewed, and the scripts a page brings
+    /// run inside it, from the reach stated.
     fn statement(
         &self,
         _binding: &ResolvedBinding<'_>,
         _lowered: &Lowered,
         _cx: &LowerContext<'_>,
     ) -> Statement {
-        Statement::NotStated
+        web_statement()
     }
 
     fn verbs(&self) -> &[Verb] {

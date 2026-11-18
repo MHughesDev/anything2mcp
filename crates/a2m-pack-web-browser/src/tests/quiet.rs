@@ -1,8 +1,9 @@
 //! What crosses from the browser into the engine's process while an acting
 //! tab signs in and writes (decision 0254, audit finding M7), by the
-//! message that carries it: the body of a write from inside the page in
-//! no event, and a posted form, the cookies, and the token only in the
-//! events named here, so that a new carrier fails this test.
+//! message that carries it: the body of a write from inside the page only
+//! in the pause of its request, which the hold on the tab's reach needs
+//! (decision 0292), and a posted form, the cookies, and the token only in
+//! the events named here, so that a new carrier fails this test.
 
 use example_app::forgery::TOKEN_PREFIX;
 use example_app::harness::{SESSION_COOKIE, USERNAME};
@@ -20,7 +21,7 @@ const TYPED: &str = "secret-for-tests-typed-into-the-page-5e71";
 const NOTE: &str = "Quiet-note-of-a-write-7a3";
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_acting_tab_hears_no_body_of_a_write_and_its_cookies_and_token_only_where_named() {
+async fn an_acting_tab_hears_a_write_s_body_its_cookies_and_its_token_only_where_named() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("quiet");
     let origins = origins(&app);
@@ -108,8 +109,9 @@ async fn an_acting_tab_hears_no_body_of_a_write_and_its_cookies_and_token_only_w
     assert_eq!(app.stored_notes().await.unwrap().notes["A-100"], NOTE);
 
     // What crossed, by the message that carried it. The body of a write
-    // the page's script sends: in no event, only in the helper's reply
-    // with the application's answer, which quotes it. The body of a form
+    // the page's script sends: in the pause of its request, which the hold
+    // on the tab's reach needs (decision 0292), in no network event, and
+    // in the helper's reply with the application's answer, which quotes it. The body of a form
     // a document posts, the typed password in it: in the pause of that
     // document request, which the hold on the tab's origins needs, and in
     // the browser's event for that request, which the browser fills
@@ -127,7 +129,12 @@ async fn an_acting_tab_hears_no_body_of_a_write_and_its_cookies_and_token_only_w
         assert!(other.is_empty(), "heard in {other:?}");
         heard
     };
-    assert!(!only(NOTE, &["reply"]).is_empty());
+    let heard = only(NOTE, &["reply", "Fetch.requestPaused"]);
+    assert!(heard.iter().any(|method| method == "reply"), "{heard:?}");
+    assert!(
+        heard.iter().any(|method| method == "Fetch.requestPaused"),
+        "{heard:?}"
+    );
     let form = ["Fetch.requestPaused", "Network.requestWillBeSent"];
     assert!(!only(TYPED, &form).is_empty());
     let carried = [
