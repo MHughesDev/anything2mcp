@@ -96,11 +96,13 @@ const REFUSE_SOCKETS: &str = r#"(() => {
   };
   const mark = Symbol.for("anything2mcp.refused");
   const refusal = () => new DOMException("Refused while the page is only observed.", "SecurityError");
-  for (const name of ["WebSocket", "WebTransport", "SharedWorker", "RTCPeerConnection"]) {
+  // The prefixed name is a second property holding the same constructor:
+  // refusing the plain name alone leaves it open.
+  for (const name of ["WebSocket", "WebTransport", "SharedWorker", "RTCPeerConnection", "webkitRTCPeerConnection"]) {
     if (!(name in globalThis)) continue;
     if (globalThis[name] && globalThis[name][mark]) continue;
     const refused = function (address) {
-      report(name, address);
+      report(name === "webkitRTCPeerConnection" ? "RTCPeerConnection" : name, address);
       throw refusal();
     };
     refused[mark] = true;

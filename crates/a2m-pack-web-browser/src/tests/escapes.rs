@@ -909,6 +909,18 @@ async fn a_tab_sends_nothing_to_an_origin_outside_its_reach_and_what_it_may_reac
             [elsewhere("socket").replacen("http", "ws", 1)]
         );
     }
+    // Neither name of a peer connection gives one, in either posture: the
+    // prefixed name is a second property holding the same constructor.
+    let peer = "['RTCPeerConnection', 'webkitRTCPeerConnection'].map((name) => { \
+        if (!(name in globalThis)) return name + ' absent'; \
+        try { new globalThis[name]({iceServers: []}); return name + ' made'; } \
+        catch (error) { return name + ' refused'; } }).join(', ')";
+    let from_acting = must(acting.page.as_the_page(peer, soon()).await);
+    let from_observing = must(observing.page.as_the_page(peer, soon()).await);
+    for answer in [from_acting, from_observing] {
+        assert!(!answer.contains("made"), "{answer}");
+        assert!(answer.starts_with("RTCPeerConnection refused"), "{answer}");
+    }
     drop(acting);
     drop(observing);
     assert_eq!(loads_arrived(&app).await, BTreeMap::new());

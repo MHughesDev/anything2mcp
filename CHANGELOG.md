@@ -136,6 +136,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- A page the engine only observes can no longer open a peer connection under the browser's older prefixed name; both names are refused.
 - A window that a page opens from a tab that may act is reported and closed at once. It was closed only after the 30-second limit of a call, because the engine's watcher waited for an answer the browser gives only after the window's first request is decided.
 - A web sign-in or step on a slow machine no longer stops with `unexpected_page` because the browser took over a quarter of a second to say what the page shows; the page is asked once and its answer is waited for within the step's own time ([decision 0288](docs/decisions/0288-whether-a-page-shows-a-sign-now-is-the-pages-own-answer-and-a-slow-answer-is-never-a-no.md)).
 - On macOS and Linux, a command that connects just as the engine stops is told `connection_lost`, and one that starts an engine on demand goes on looking for one; it was told `channel_unavailable`, as if this machine had refused the channel.

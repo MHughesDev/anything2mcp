@@ -43,3 +43,12 @@ The publish page shows, for each tool, every address it can send a request to ([
 - A web tool's tools state, on the page a person publishes from, that they send only to their surface and their declared destinations, and the reach is no longer "not stated".
 - A page that loads from an origin its tool does not declare stops the run with `origin_not_declared` in both postures, where before it worked. Discovery's observing tabs refuse such requests too, and report them as `OUTSIDE`.
 - `Origins` gains `and_requests_to`; `ActTab::blocked` and `ObserveTab::blocked` report `OUTSIDE`. No other interface of either crate changes.
+
+## Added since
+
+Added 2026-11-18, from the validation of the tree this record's work is in.
+
+- **A fault found beside it, and fixed.** The script an observing tab and every service worker carry refused a peer connection under its standard name and not under the older prefixed name the browser still answers to. An observed page could open a peer connection to any server. Both names are refused now, and a test asks for each in both kinds of tab. The fault was there before this record.
+- **The sign-in tab changed too, and point by point this record did not say so.** A frame's document inside a sign-in tab is now judged like any request, and one outside the application and the sign-in providers is refused. The person at the window is shown no named stop for it. Showing the refusal in the window is owed with the rest of the sign-in tab's work.
+- **Covered by reasoning and not by a test:** a subresource redirected to another origin, a beacon to another origin, a form posted into a frame, dedicated workers, WebTransport, an event source, a prefetch link, and the page's icon. **Not covered:** speculation rules, and a service worker woken with no tab attached.
+- **A paused request has no bound of its own.** Each is continued or failed by a call with a deadline; if that call is lost the request stays paused until its tab closes, which for a refused request means it is never sent.

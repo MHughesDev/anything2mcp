@@ -1053,7 +1053,13 @@ fn is_administrator() -> bool {
     {
         use std::os::unix::fs::MetadataExt;
         // The owner of a file this process just made is the process's user.
-        let probe = std::env::temp_dir().join(format!("a2m-uid-probe-{}", std::process::id()));
+        // Each call makes a file of its own: tests that start servers at
+        // once must not remove each other's probe before it is read.
+        let probe = std::env::temp_dir().join(format!(
+            "a2m-uid-probe-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
         let owner = std::fs::write(&probe, b"")
             .and_then(|()| std::fs::metadata(&probe))
             .map(|meta| meta.uid());
