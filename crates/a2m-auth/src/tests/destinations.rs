@@ -337,11 +337,11 @@ async fn a_credential_opens_only_for_the_target_it_was_stored_for() {
     world
         .store_credential(&key, "client/secret", CLIENT_SECRET)
         .await;
-    let lease = world
+    world
         .keeper
         .lease(request(&key, &entry, Wait::DEFAULT))
-        .await;
-    // The earlier refusal counted as an attempt of the stored credential
-    // only if it reached the system, which it did not.
-    assert!(lease.is_ok() || heard(&service) == 0, "{lease:?}");
+        .await
+        .unwrap();
+    assert_eq!(heard(&service), 1);
+    assert!(heard_the_secret(&service));
 }

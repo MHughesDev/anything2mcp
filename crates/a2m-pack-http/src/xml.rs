@@ -805,8 +805,8 @@ mod tests {
         assert!(matches!(nothing, Err(Unread::Shape(why)) if why.contains("matches nothing")));
         let mut optional = one("note", &["order", "note"], None, Kind::String);
         optional.required = false;
-        let read = read(ORDER.as_bytes(), &form(vec![optional])).unwrap();
-        assert_eq!(read.get("note"), Some(&Json::Null));
+        let optional_read = read(ORDER.as_bytes(), &form(vec![optional])).unwrap();
+        assert_eq!(optional_read.get("note"), Some(&Json::Null));
 
         let twice = read(
             ORDER.as_bytes(),
