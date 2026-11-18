@@ -188,7 +188,7 @@ async fn case_13_the_second_factor_asks_for_the_code() -> Outcome {
     let app = TestApp::start().await?;
     app.set_auth_settings(&AuthSettings {
         second_factor: true,
-        single_session: false,
+        ..AuthSettings::default()
     })
     .await?;
     let client = no_redirects()?;
@@ -270,8 +270,8 @@ async fn case_14_and_15_sessions_end_when_told_to() -> Outcome {
     );
 
     app.set_auth_settings(&AuthSettings {
-        second_factor: false,
         single_session: true,
+        ..AuthSettings::default()
     })
     .await?;
     let first = app.session_cookie().await?;

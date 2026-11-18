@@ -331,7 +331,9 @@ class RealEngineTests(unittest.TestCase):
 
     def test_a_client_that_finds_no_engine_has_the_program_start_one_and_is_answered(self) -> None:
         home = Path(tempfile.mkdtemp(prefix="a2m"))
-        env = {"A2M_HOME": str(home)}
+        # The passphrase is given as a person's shell gives it: a machine with
+        # no key store (a Linux runner) has the vault take its root key from it.
+        env = {"A2M_HOME": str(home), "A2M_VAULT_PASSPHRASE": "secret-for-tests-only"}
         try:
             # Asked to start nothing, it starts nothing.
             with self.assertRaises(anything2mcp.ChannelError) as raised:

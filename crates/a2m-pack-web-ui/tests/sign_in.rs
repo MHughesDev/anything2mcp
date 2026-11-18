@@ -436,7 +436,7 @@ async fn a_second_factor_is_answered_by_the_person_and_the_code_is_kept_nowhere(
         .app
         .set_auth_settings(&AuthSettings {
             second_factor: true,
-            single_session: false,
+            ..AuthSettings::default()
         })
         .await
         .unwrap();
@@ -469,7 +469,7 @@ async fn a_second_factor_asked_with_nobody_there_is_a_named_stop() {
         .app
         .set_auth_settings(&AuthSettings {
             second_factor: true,
-            single_session: false,
+            ..AuthSettings::default()
         })
         .await
         .unwrap();

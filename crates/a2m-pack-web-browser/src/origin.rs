@@ -97,6 +97,13 @@ impl Origins {
         }
     }
 
+    /// These origins and those of `more`.
+    #[must_use]
+    pub fn and(mut self, more: &Self) -> Self {
+        self.allowed.extend(more.allowed.iter().cloned());
+        self
+    }
+
     /// Whether the address is on one of the origins.
     #[must_use]
     pub fn allows(&self, address: &Address) -> bool {

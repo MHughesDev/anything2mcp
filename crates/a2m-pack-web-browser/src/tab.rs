@@ -27,10 +27,10 @@ use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
     CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
-    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, HandleDialog,
-    InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
-    RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
-    SetLifecycleEvents, SetLocale, SetTimezone,
+    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, GetTargetInfo,
+    HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable,
+    RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics,
+    SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -835,7 +835,7 @@ enum Verdict {
 pub(crate) struct Page {
     client: Client,
     session: String,
-    target: String,
+    pub(crate) target: String,
     serial: u64,
     call_deadline: Duration,
     max_read: usize,
@@ -1027,7 +1027,7 @@ impl Page {
         }
     }
 
-    async fn call<C: Command>(
+    pub(crate) async fn call<C: Command>(
         &self,
         command: &C,
         deadline: Deadline,
@@ -1298,7 +1298,25 @@ impl Page {
                 .filter(|(of, _)| *of == loader)
                 .map(|(_, status)| *status);
         }
-        let (address, title) = self.address_and_title(deadline).await?;
+        // A tab a person signs in in may be on a page whose origin its
+        // helper does not look at: the browser says where it is, and the
+        // page's title is not read.
+        let (address, title) = if self.quiet {
+            let info = self
+                .client
+                .call(
+                    None,
+                    &GetTargetInfo {
+                        target_id: &self.target,
+                    },
+                    deadline,
+                )
+                .await
+                .map_err(|error| self.client_error(error))?;
+            (self.redact.redact(&info.target_info.url), String::new())
+        } else {
+            self.address_and_title(deadline).await?
+        };
         Ok(Loaded {
             address,
             title,

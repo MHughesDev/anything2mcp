@@ -60,3 +60,98 @@ pub fn requirement() -> String {
         places.join(", ")
     )
 }
+
+/// When set to `1`, a test that needs a screen fails where none can be
+/// had, instead of saying so and passing: the same variable the desktop
+/// pack's tests heed.
+pub const REQUIRE_SCREEN_VARIABLE: &str = "A2M_REQUIRE_DESKTOP";
+
+/// Whether the test environment says a screen must be had.
+#[must_use]
+pub fn screen_required() -> bool {
+    std::env::var(REQUIRE_SCREEN_VARIABLE).is_ok_and(|value| value == "1")
+}
+
+/// A screen a test shows a window on. On Linux, a virtual X display of the
+/// test's own, started with `Xvfb` and stopped when dropped; on Windows
+/// and macOS, the desktop the test runs in.
+#[derive(Debug)]
+pub struct Screen {
+    display: Option<String>,
+    child: Option<std::process::Child>,
+}
+
+impl Screen {
+    /// A screen, or `None` with the reason when this machine cannot give
+    /// one: on Linux, no `Xvfb` program, or one that did not start.
+    ///
+    /// # Errors
+    ///
+    /// The reason, as text, when none can be had.
+    pub fn start() -> Result<Self, String> {
+        if !cfg!(unix) || cfg!(target_os = "macos") {
+            return Ok(Self {
+                display: None,
+                child: None,
+            });
+        }
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        // `-displayfd 1`: the server picks a free display and writes its
+        // number on its standard output once it takes connections.
+        let mut child = Command::new("Xvfb")
+            .args([
+                "-displayfd",
+                "1",
+                "-screen",
+                "0",
+                "1280x800x24",
+                "-nolisten",
+                "tcp",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Xvfb did not start: {error}"))?;
+        let mut line = String::new();
+        let read = child
+            .stdout
+            .take()
+            .map(|out| BufReader::new(out).read_line(&mut line));
+        let number = line.trim().to_owned();
+        if !matches!(read, Some(Ok(_))) || number.is_empty() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Xvfb started and named no display".to_owned());
+        }
+        Ok(Self {
+            display: Some(format!(":{number}")),
+            child: Some(child),
+        })
+    }
+
+    /// The X display, on Linux.
+    #[must_use]
+    pub fn display(&self) -> Option<&str> {
+        self.display.as_deref()
+    }
+
+    /// The settings of a test, showing a window on this screen.
+    #[must_use]
+    pub fn settings(&self) -> BrowserSettings {
+        BrowserSettings {
+            display: self.display.clone(),
+            ..settings()
+        }
+    }
+}
+
+impl Drop for Screen {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}

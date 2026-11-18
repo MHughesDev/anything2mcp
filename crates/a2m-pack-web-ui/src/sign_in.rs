@@ -98,7 +98,7 @@ const LOOK_ONCE: Duration = Duration::from_millis(250);
 /// The material's plain part that lists the cookies' names and rules.
 const COOKIES: &str = "cookies";
 
-fn invalid(why: &str) -> Failure {
+pub(crate) fn invalid(why: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
         a2m_auth::codes::AUTH_SETTINGS_INVALID,
@@ -145,7 +145,7 @@ fn no_sign(when: &str) -> Failure {
     )
 }
 
-fn page_lost(error: &BrowserError, what: &str) -> Failure {
+pub(crate) fn page_lost(error: &BrowserError, what: &str) -> Failure {
     error.failure().unwrap_or_else(|| {
         Failure::new(
             FailureClass::Transient,
@@ -310,7 +310,7 @@ fn page_time(entry: &AuthEntry) -> Result<Duration, Failure> {
 }
 
 /// The path of a screen that takes no input.
-fn fixed_path(screen: &Screen) -> Result<String, Failure> {
+pub(crate) fn fixed_path(screen: &Screen) -> Result<String, Failure> {
     let mut path = String::new();
     for segment in &screen.reach {
         match segment {
@@ -556,6 +556,21 @@ impl FormLogin {
             .await
             .map_err(|error| page_lost(&error, "the reading of the session's state"))?;
         drop(tab);
+        material_of(self.name(), &name, state, cx)
+    }
+}
+
+/// The session's material from what the browser holds for the
+/// application's origin after a sign-in: each cookie's value a secret part,
+/// registered with the redactor first, and their names and rules a plain
+/// part.
+pub(crate) fn material_of(
+    provider: ProviderName,
+    profile: &str,
+    state: BrowserState,
+    cx: &SignInContext<'_>,
+) -> Result<Material, Failure> {
+    {
         if state.cookies.is_empty() {
             return Err(Failure::new(
                 FailureClass::UnknownVariant,
@@ -565,8 +580,8 @@ impl FormLogin {
             ));
         }
         let mut rules = Vec::new();
-        let mut material = Material::new(self.name())
-            .with_profile(ProfileRef::new(&name)?)
+        let mut material = Material::new(provider)
+            .with_profile(ProfileRef::new(profile)?)
             .expiring_at(None);
         for (position, cookie) in state.cookies.into_iter().enumerate() {
             cx.register(&cookie.value);
@@ -833,6 +848,17 @@ impl AuthProvider for FormLogin {
     }
 
     fn inject(&self, material: &Material, sink: &mut dyn CredentialSink) -> Result<(), Failure> {
+        inject_state(material, sink)
+    }
+}
+
+/// Places a web session's state, as [`material_of`] made it, under the one
+/// name the web pack's drivers take.
+pub(crate) fn inject_state(
+    material: &Material,
+    sink: &mut dyn CredentialSink,
+) -> Result<(), Failure> {
+    {
         let incomplete = || {
             Failure::new(
                 FailureClass::SessionExpired,

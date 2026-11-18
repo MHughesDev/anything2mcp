@@ -23,8 +23,9 @@ use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
 use crate::launch;
 use crate::origin::Origins;
 use crate::protocol::{
-    CloseBrowser, CookieToSet, CreateBrowserContext, GetCookies, GetVersion, GrantPermissions,
-    SetAutoAttach, SetCookies, SetDownloadBehavior, TargetFilter,
+    CloseBrowser, CloseTarget, CookieToSet, CreateBrowserContext, GetCookies, GetTargets,
+    GetVersion, GrantPermissions, SetAutoAttach, SetCookies, SetDocumentContent,
+    SetDownloadBehavior, TargetFilter,
 };
 use crate::tab::{
     ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
@@ -79,6 +80,10 @@ pub struct BrowserSettings {
     /// build, and nothing in the product can set it.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) without_sandbox: bool,
+    /// Tests only: the display a window is shown on, in place of the one
+    /// the engine's own environment names.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) display: Option<String>,
     /// This crate's own tests only: variables set in the browser's
     /// environment, to stand for what a machine around the engine may hold,
     /// such as a proxy.
@@ -98,6 +103,8 @@ impl Default for BrowserSettings {
             max_read_chars: 1024 * 1024,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
+            #[cfg(any(test, feature = "test-support"))]
+            display: None,
             #[cfg(test)]
             environment_for_tests: Vec::new(),
         }
@@ -105,6 +112,14 @@ impl Default for BrowserSettings {
 }
 
 impl BrowserSettings {
+    /// The display a test names for a window, if it names one.
+    fn screen_for_tests(&self) -> Option<&str> {
+        #[cfg(any(test, feature = "test-support"))]
+        return self.display.as_deref();
+        #[cfg(not(any(test, feature = "test-support")))]
+        None
+    }
+
     /// The same settings with the browser program a person named.
     #[must_use]
     pub fn with_program(mut self, program: PathBuf) -> Self {
@@ -182,6 +197,16 @@ impl ProfileKey {
 pub enum Visibility {
     /// No window.
     Background,
+    /// A window a person sees, for a sign-in the person carries out
+    /// themself (decision 0254). The browser is always started afresh for
+    /// it, in the same engine-owned data directory and in-memory context as
+    /// any other, and a later `Background` open of the profile closes it.
+    /// Its first tab shows `notice`, the engine's own words naming the
+    /// target and the person; the browser's own first window is closed.
+    Window {
+        /// What the first tab says, as plain text.
+        notice: String,
+    },
 }
 
 /// What a browser is doing.
@@ -239,6 +264,8 @@ pub(crate) struct BrowserInner {
     /// the same state is placed once and a newer cookie the application set
     /// since is not overwritten by an older copy.
     state_mark: Mutex<Option<String>>,
+    /// Whether the browser shows a window.
+    window: bool,
 }
 
 /// A window a page opened. It is kept locked, and closed once the first
@@ -504,6 +531,82 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
     Ok(())
 }
 
+/// The first tab of a window: a page the engine writes, which names what
+/// the window is for, held to no origin, so that nothing sends it anywhere.
+/// Once it is there, the browser's own first window, which is in the
+/// browser's default context and is no tab of the engine's, is closed.
+async fn show_notice(
+    shared: &Arc<Shared>,
+    inner: &Arc<BrowserInner>,
+    text: &str,
+) -> Result<ActTab, BrowserError> {
+    let page = open_page(
+        shared,
+        inner,
+        &PageEnvironment::default(),
+        Posture::Act,
+        &Origins::default(),
+        None,
+    )
+    .await?;
+    let tab = ActTab::new(page);
+    let deadline = Deadline::after(shared.settings.call_deadline);
+    let html = notice_html(text);
+    tab.page
+        .call(
+            &SetDocumentContent {
+                frame_id: &tab.page.target,
+                html: &html,
+            },
+            deadline,
+        )
+        .await?;
+    let lost = |_| BrowserError::Disconnected {
+        dispatch: Dispatch::Unknown,
+    };
+    let targets = inner
+        .client
+        .call(None, &GetTargets {}, deadline)
+        .await
+        .map_err(lost)?;
+    for target in targets.target_infos {
+        let foreign = target.kind == "page"
+            && target.browser_context_id.as_deref() != Some(inner.context.as_str());
+        if foreign {
+            inner
+                .client
+                .call(
+                    None,
+                    &CloseTarget {
+                        target_id: &target.target_id,
+                    },
+                    deadline,
+                )
+                .await
+                .map_err(lost)?;
+        }
+    }
+    Ok(tab)
+}
+
+/// The notice, as a page: plain text, escaped, with no script.
+fn notice_html(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            other => escaped.push(other),
+        }
+    }
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escaped}</title></head><body><main><h1>{escaped}</h1><p>The next tab is the sign-in page. The engine types nothing there and reads nothing you type. Close the window to stop.</p></main></body></html>"
+    )
+}
+
 /// The engine's browsers. One per engine process; cheap to clone, and
 /// every clone is the same set, so that a profile is never opened by two
 /// browsers.
@@ -580,19 +683,34 @@ impl Browsers {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
         let existing = shared.open().get(profile).cloned();
+        let notice = match &show {
+            Visibility::Background => None,
+            Visibility::Window { notice } => Some(notice.clone()),
+        };
+        let window = notice.is_some();
         if let Some(existing) = existing {
-            if existing.health() != BrowserHealth::Exited {
+            // A browser in the background is used again; a window never is,
+            // and one is never used for a run in the background.
+            if existing.health() != BrowserHealth::Exited && !window && !existing.window {
                 return Ok(Browser {
                     inner: existing,
                     shared: Arc::clone(shared),
+                    _notice: None,
                 });
             }
             shared.open().remove(profile);
             existing.client.close();
             shared.supervisor.stop(existing.subsystem).await;
         }
-        let Visibility::Background = show;
         let failed = |reason| BrowserError::LaunchFailed(reason);
+        let screen = if window {
+            Some(
+                launch::screen(shared.settings.screen_for_tests())
+                    .ok_or(failed(LaunchReason::NoScreen))?,
+            )
+        } else {
+            None
+        };
 
         let place = profile.place();
         // Looking for the program and making the folder touch the disk:
@@ -624,13 +742,17 @@ impl Browsers {
             }
         };
         #[allow(unused_mut, reason = "only a test build adds an argument")]
-        let mut args = launch::arguments(directory.as_path(), false);
+        let mut args = launch::arguments(directory.as_path(), window);
         #[cfg(any(test, feature = "test-support"))]
         if shared.settings.without_sandbox {
             args.push(crate::test_support::WITHOUT_SANDBOX.into());
         }
         #[allow(unused_mut, reason = "only this crate's tests add a variable")]
         let mut env = launch::environment();
+        if let Some(screen) = screen {
+            env.pass.extend(screen.pass);
+            env.set.extend(screen.set);
+        }
         #[cfg(test)]
         env.set
             .extend(shared.settings.environment_for_tests.iter().cloned());
@@ -748,6 +870,7 @@ impl Browsers {
             windows: Mutex::new(BTreeMap::new()),
             context,
             state_mark: Mutex::new(None),
+            window,
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine
@@ -757,10 +880,22 @@ impl Browsers {
             shared.supervisor.stop(subsystem).await;
             return Err(failed(LaunchReason::NotOwned(why)));
         }
+        let notice = match notice {
+            None => None,
+            Some(text) => match show_notice(shared, &inner, &text).await {
+                Ok(tab) => Some(Arc::new(tab)),
+                Err(error) => {
+                    inner.client.close();
+                    shared.supervisor.stop(subsystem).await;
+                    return Err(error);
+                }
+            },
+        };
         shared.open().insert(profile.clone(), Arc::clone(&inner));
         Ok(Browser {
             inner,
             shared: Arc::clone(shared),
+            _notice: notice,
         })
     }
 
@@ -836,8 +971,11 @@ impl Browsers {
 /// One browser process. Cheap to clone.
 #[derive(Clone)]
 pub struct Browser {
-    inner: Arc<BrowserInner>,
+    pub(crate) inner: Arc<BrowserInner>,
     shared: Arc<Shared>,
+    /// A window's first tab, which says what the window is for. Held, not
+    /// used: it is closed when the last clone of this handle goes.
+    _notice: Option<Arc<ActTab>>,
 }
 
 impl fmt::Debug for Browser {
@@ -863,9 +1001,49 @@ impl Browser {
         env: &PageEnvironment,
         origins: &Origins,
     ) -> Result<ActTab, BrowserError> {
-        let page = open_page(&self.shared, &self.inner, env, Posture::Act, origins).await?;
+        let page = open_page(&self.shared, &self.inner, env, Posture::Act, origins, None).await?;
         self.inner.runs.fetch_add(1, Ordering::SeqCst);
         Ok(ActTab::new(page))
+    }
+
+    /// A tab a person signs in in, in a window (decision 0254). It may be
+    /// on the origins of `look_on`, the application's, and of
+    /// `pass_through`, an identity provider's, and on no other: a move to
+    /// another is ended in the browser and reported as `NAVIGATION`, as in
+    /// an acting tab. Its helper looks at a page of `look_on` alone: on a
+    /// page of `pass_through` every look is [`BrowserError::ForeignOrigin`]
+    /// and reads nothing. It hears no network event, and the engine sends
+    /// it no input: what the person types there crosses into the engine's
+    /// process only in the pause of a document request the hold needs.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
+    /// browser is gone or does not answer.
+    pub async fn sign_in_tab(
+        &self,
+        env: &PageEnvironment,
+        look_on: &Origins,
+        pass_through: &Origins,
+    ) -> Result<ActTab, BrowserError> {
+        let both = look_on.clone().and(pass_through);
+        let page = open_page(
+            &self.shared,
+            &self.inner,
+            env,
+            Posture::SignIn,
+            &both,
+            Some(look_on),
+        )
+        .await?;
+        self.inner.runs.fetch_add(1, Ordering::SeqCst);
+        Ok(ActTab::new(page))
+    }
+
+    /// Whether the browser shows a window.
+    #[must_use]
+    pub fn shows_window(&self) -> bool {
+        self.inner.window
     }
 
     /// What the browser is doing.
@@ -1106,6 +1284,7 @@ impl Observer {
             env,
             Posture::Observe(allow.clone()),
             origins,
+            None,
         )
         .await?;
         Ok(ObserveTab::new(page))

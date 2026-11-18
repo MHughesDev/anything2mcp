@@ -38,6 +38,7 @@ mod looking;
 mod observing;
 mod quiet;
 mod state;
+mod window;
 
 /// A folder under the system's temporary folder, removed when dropped.
 struct Folder(PathBuf);

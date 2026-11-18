@@ -383,7 +383,9 @@ test("the client reaches a real engine and the engine answers", { skip: !BINARY 
 
 test("a client that finds no engine has the program start one and is answered", { skip: !BINARY || WINDOWS }, async (t) => {
   const home = scratch();
-  const env = { A2M_HOME: home };
+  // The passphrase is given as a person's shell gives it: a machine with no
+  // key store (a Linux runner) has the vault take its root key from it.
+  const env = { A2M_HOME: home, A2M_VAULT_PASSPHRASE: "secret-for-tests-only" };
   t.after(() => {
     spawnSync(BINARY, ["engine", "stop"], { env: { ...process.env, ...env }, stdio: "ignore", timeout: 60000 });
     fs.rmSync(home, { recursive: true, force: true });

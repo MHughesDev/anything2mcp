@@ -43,6 +43,17 @@ pub struct AuthSettings {
     /// Case 15: a new sign-in revokes every other session of the account.
     #[serde(default)]
     pub single_session: bool,
+    /// Stands for a person at a window of the engine's own browser: the
+    /// sign-in page, and the identity provider's, fill in the made-up
+    /// username and password with a script of their own and send the form,
+    /// as a person would. Nothing of the engine types there.
+    #[serde(default)]
+    pub person_at_the_window: bool,
+    /// The identity provider sends the browser, after a right password, to
+    /// an origin nobody declared (its own server under the name `127.0.0.1`)
+    /// instead of back to the application.
+    #[serde(default)]
+    pub identity_provider_strays: bool,
 }
 
 /// A credential of the JSON interface that the control interface can revoke.
@@ -83,6 +94,16 @@ pub struct AuthReport {
     pub bearer_token_revoked: bool,
     /// Whether the control interface revoked the API key.
     pub api_key_revoked: bool,
+    /// Sign-ins at the identity provider that ended in a code.
+    pub identity_provider_sign_ins: u64,
+    /// One-use codes the application took back from the identity provider.
+    pub codes_used: u64,
+    /// Returns from the identity provider the application refused: a code it
+    /// did not issue, one already used, or a state it did not send.
+    pub returns_refused: u64,
+    /// Requests that reached the identity provider at the origin nobody
+    /// declared.
+    pub strays_arrived: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +123,9 @@ pub(crate) struct AuthState {
     failures_in_a_row: u64,
     settings: AuthSettings,
     report: AuthReport,
+    /// Single sign-on: where each side is, the states the application sent,
+    /// and the codes the identity provider issued, each with whether it was used.
+    pub(crate) sso: crate::identity::SsoState,
 }
 
 impl Default for AuthState {
@@ -116,17 +140,18 @@ impl Default for AuthState {
             failures_in_a_row: 0,
             settings: AuthSettings::default(),
             report: AuthReport::default(),
+            sso: crate::identity::SsoState::default(),
         }
     }
 }
 
 impl AuthState {
-    fn new_id(&mut self, kind: &str) -> String {
+    pub(crate) fn new_id(&mut self, kind: &str) -> String {
         self.issued += 1;
         format!("example-{kind}-{:016x}-{}", self.salt, self.issued)
     }
 
-    fn issue_session(&mut self) -> String {
+    pub(crate) fn issue_session(&mut self) -> String {
         if self.settings.single_session {
             for state in self.sessions.values_mut() {
                 if *state == SessionState::Active {
@@ -157,6 +182,14 @@ impl AuthState {
             .count();
         report.active_sessions = u64::try_from(active).unwrap_or(u64::MAX);
         report
+    }
+
+    pub(crate) fn settings(&self) -> AuthSettings {
+        self.settings
+    }
+
+    pub(crate) fn report_mut(&mut self) -> &mut AuthReport {
+        &mut self.report
     }
 
     pub(crate) fn set_settings(&mut self, settings: AuthSettings) {
@@ -202,6 +235,8 @@ pub(crate) fn routes(state: &AppState) -> Router<AppState> {
         .route(SIGN_IN, get(sign_in_page).post(sign_in))
         .route(CODE, get(code_page).post(code))
         .route("/secure/sign-out", post(sign_out))
+        .route(crate::identity::START, get(crate::identity::start))
+        .route(crate::identity::RETURN, get(crate::identity::come_back))
         .merge(pages)
         .nest(
             "/secure",
@@ -235,7 +270,7 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 /// Reads `application/x-www-form-urlencoded` text: the form body, or a query.
-fn form_fields(text: &str) -> BTreeMap<String, String> {
+pub(crate) fn form_fields(text: &str) -> BTreeMap<String, String> {
     fn decode(part: &str) -> String {
         let bytes = part.as_bytes();
         let mut out = Vec::with_capacity(bytes.len());
@@ -279,11 +314,11 @@ fn next_page(fields: &BTreeMap<String, String>) -> String {
         .unwrap_or_else(|| HOME.to_owned())
 }
 
-fn query(request_query: Option<&str>) -> BTreeMap<String, String> {
+pub(crate) fn query(request_query: Option<&str>) -> BTreeMap<String, String> {
     form_fields(request_query.unwrap_or(""))
 }
 
-fn set_cookie(name: &str, value: &str) -> String {
+pub(crate) fn set_cookie(name: &str, value: &str) -> String {
     format!("{name}={value}; Path=/secure; HttpOnly; SameSite=Lax")
 }
 
@@ -291,7 +326,7 @@ fn clear_cookie(name: &str) -> String {
     format!("{name}=; Path=/secure; HttpOnly; SameSite=Lax; Max-Age=0")
 }
 
-fn page(title: &str, body: &str) -> Html<String> {
+pub(crate) fn page(title: &str, body: &str) -> Html<String> {
     Html(format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <title>{} - Example Orders</title>\n</head>\n<body>\n<main>\n{body}\n</main>\n</body>\n</html>\n",
@@ -320,14 +355,30 @@ fn sign_in_form(next: &str, message: &str) -> Html<String> {
     )
 }
 
-async fn sign_in_page(request: Request) -> Html<String> {
+async fn sign_in_page(State(state): State<AppState>, request: Request) -> Html<String> {
     let fields = query(request.uri().query());
     let message = match fields.get("reason").map(String::as_str) {
         Some("session_expired") => "Your session has expired. Sign in again.",
         Some("session_revoked") => "Your session was ended. Sign in again.",
         _ => "",
     };
-    sign_in_form(&next_page(&fields), message)
+    let Html(form) = sign_in_form(&next_page(&fields), message);
+    if state.lock().await.auth.settings().person_at_the_window && message.is_empty() {
+        Html(form.replace("</main>", &format!("</main>\n{}", person_types("sign-in"))))
+    } else {
+        Html(form)
+    }
+}
+
+/// A script of the page that stands for a person at the window: it types
+/// the made-up username and password into the form `form` and sends it.
+pub(crate) fn person_types(form: &str) -> String {
+    format!(
+        "<script>\naddEventListener(\"DOMContentLoaded\", () => {{\n  \
+         document.getElementById(\"username\").value = \"{USERNAME}\";\n  \
+         document.getElementById(\"password\").value = \"{PASSWORD}\";\n  \
+         document.getElementById(\"{form}\").submit();\n}});\n</script>"
+    )
 }
 
 async fn sign_in(State(state): State<AppState>, body: String) -> Response {

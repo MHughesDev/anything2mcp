@@ -20,6 +20,7 @@ mod escapes;
 pub mod faults;
 pub mod forgery;
 pub mod harness;
+mod identity;
 mod leaving;
 mod openapi;
 mod own_requests;
@@ -93,7 +94,12 @@ impl AppState {
 /// Faults set through the control interface apply to the pages and the JSON
 /// interface, never to the control interface itself.
 pub fn router() -> Router {
-    let state = AppState::default();
+    router_over(AppState::default())
+}
+
+/// The application over a state that another server, the identity
+/// provider's, shares.
+pub(crate) fn router_over(state: AppState) -> Router {
     let application = Router::new()
         .merge(api::routes())
         .merge(pages::routes())
@@ -136,6 +142,12 @@ async fn seen(
     next.run(request).await
 }
 
+/// Serves the identity provider, over the application's state, until the
+/// task is stopped.
+pub(crate) async fn serve_provider(listener: TcpListener, state: AppState) -> std::io::Result<()> {
+    axum::serve(listener, identity::provider_routes().with_state(state)).await
+}
+
 /// Serves a new application on the given listener until the task is stopped.
 ///
 /// Served this way, the fault "lost after commit" can cut a connection.
@@ -144,9 +156,14 @@ async fn seen(
 ///
 /// Returns the error that stopped the server.
 pub async fn serve(listener: TcpListener) -> std::io::Result<()> {
+    serve_over(listener, AppState::default()).await
+}
+
+/// Serves the application over a state that the identity provider shares.
+pub(crate) async fn serve_over(listener: TcpListener, state: AppState) -> std::io::Result<()> {
     axum::serve(
         CuttableListener(listener),
-        router().into_make_service_with_connect_info::<ConnectionHandle>(),
+        router_over(state).into_make_service_with_connect_info::<ConnectionHandle>(),
     )
     .await
 }

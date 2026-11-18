@@ -3199,7 +3199,11 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert_eq!(standing["matches"], 5, "{reported}");
     assert_eq!(standing["distinct_inputs"], 1, "{reported}");
     assert_eq!(standing["not_promotable"], "too_few", "{reported}");
-    assert_eq!(standing["evidence_from"], json!(["production"]), "{reported}");
+    assert_eq!(
+        standing["evidence_from"],
+        json!(["production"]),
+        "{reported}"
+    );
     assert_eq!(standing["against_verified_now"], true, "{reported}");
     assert_eq!(standing["environments"][0]["requests"], 5, "{reported}");
     assert!(!reported.to_string().contains("SO-1001"), "{reported}");

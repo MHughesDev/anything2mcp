@@ -15986,8 +15986,29 @@
              "items": {
               "additionalProperties": false,
               "properties": {
+               "against_verified_now": {
+                "type": "boolean"
+               },
                "binding": {
                 "type": "string"
+               },
+               "distinct_inputs": {
+                "type": "integer"
+               },
+               "environments": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "evidence_from": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
                },
                "first_at": {
                 "type": "integer"
@@ -16031,6 +16052,9 @@
                 "required": [],
                 "type": "object"
                },
+               "requests": {
+                "type": "integer"
+               },
                "threshold": {
                 "type": "integer"
                }
@@ -16043,6 +16067,11 @@
                "mismatches",
                "not_compared",
                "in_a_row",
+               "distinct_inputs",
+               "evidence_from",
+               "requests",
+               "against_verified_now",
+               "environments",
                "threshold",
                "promotable",
                "first_at",
@@ -16134,8 +16163,29 @@
              "items": {
               "additionalProperties": false,
               "properties": {
+               "against_verified_now": {
+                "type": "boolean"
+               },
                "binding": {
                 "type": "string"
+               },
+               "distinct_inputs": {
+                "type": "integer"
+               },
+               "environments": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "evidence_from": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
                },
                "first_at": {
                 "type": "integer"
@@ -16179,6 +16229,9 @@
                 "required": [],
                 "type": "object"
                },
+               "requests": {
+                "type": "integer"
+               },
                "threshold": {
                 "type": "integer"
                }
@@ -16191,6 +16244,11 @@
                "mismatches",
                "not_compared",
                "in_a_row",
+               "distinct_inputs",
+               "evidence_from",
+               "requests",
+               "against_verified_now",
+               "environments",
                "threshold",
                "promotable",
                "first_at",

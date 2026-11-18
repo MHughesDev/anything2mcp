@@ -494,20 +494,39 @@ pub(crate) struct CloseTarget<'a> {
 command!(CloseTarget<'_>, "Target.closeTarget" => Nothing);
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetTargetInfo<'a> {
+    pub target_id: &'a str,
+}
+command!(GetTargetInfo<'_>, "Target.getTargetInfo" => TargetAddress);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TargetAddress {
+    pub target_info: TargetUrl,
+}
+
+/// Where a target is, as the browser says; its title is not read.
+#[derive(Debug, Deserialize)]
+pub(crate) struct TargetUrl {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct GetTargets {}
 command!(GetTargets, "Target.getTargets" => TargetInfos);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TargetInfos {
-    pub target_infos: Vec<TargetInfo>,
+    pub target_infos: Vec<ListedTarget>,
 }
 
 /// One target as the browser lists it. Only what tells the engine's own
 /// pages from the browser's first window is read.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TargetInfo {
+pub(crate) struct ListedTarget {
     pub target_id: String,
     #[serde(rename = "type")]
     pub kind: String,
