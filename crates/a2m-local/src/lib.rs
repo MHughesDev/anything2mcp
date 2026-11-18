@@ -37,7 +37,7 @@ pub use lock::{ENGINE_LOCK_NAME, EngineLock, LockPlace};
 pub use os::{Kept, kept_by};
 pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
-    PromptText, presence_available, system_prompt,
+    PromptText, presence_available, system_prompt, system_prompt_for,
 };
 pub use start::{
     ENGINE_LOG_NAME, Launch, START_LOCK_NAME, STARTED_LINE, STOPPED_LINE, Started, stopped_line,
