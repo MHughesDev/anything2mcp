@@ -14,7 +14,7 @@
 mod on_linux {
     use std::time::Duration;
 
-    use example_desk::{Desk, LATE, Order, SECRET, Session};
+    use example_desk::{Desk, Fault, LATE, Order, SECRET, Session};
 
     fn session() -> Option<Session> {
         let session = Session::start().unwrap();
@@ -137,6 +137,167 @@ mod on_linux {
             tokio::task::yield_now().await;
         }
         assert_eq!(desk.truth().tracking, LATE);
+    }
+
+    async fn text(conn: &zbus::Connection, bus: &str, path: &str) -> String {
+        let reply = conn
+            .call_method(
+                Some(bus),
+                path,
+                Some("org.a11y.atspi.Text"),
+                "GetText",
+                &(0_i32, -1_i32),
+            )
+            .await
+            .unwrap();
+        reply.body().deserialize().unwrap()
+    }
+
+    async fn set(conn: &zbus::Connection, bus: &str, path: &str, value: &str) -> bool {
+        let reply = conn
+            .call_method(
+                Some(bus),
+                path,
+                Some("org.a11y.atspi.EditableText"),
+                "SetTextContents",
+                &(value,),
+            )
+            .await
+            .unwrap();
+        reply.body().deserialize().unwrap()
+    }
+
+    async fn press(conn: &zbus::Connection, bus: &str) {
+        conn.call_method(
+            Some(bus),
+            "/org/a11y/atspi/accessible/35",
+            Some("org.a11y.atspi.Action"),
+            "DoAction",
+            &(0_i32,),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn what_is_typed_is_stored_only_by_save_and_only_when_the_application_takes_it() {
+        let Some(session) = session() else { return };
+        let mut desk = Desk::start(&session, Order::example()).await.unwrap();
+        let conn = a11y(&session).await;
+        let ours = ours(&conn).await;
+        let (customer, new_customer, new_status, message, problem) = (
+            "/org/a11y/atspi/accessible/6",
+            "/org/a11y/atspi/accessible/37",
+            "/org/a11y/atspi/accessible/39",
+            "/org/a11y/atspi/accessible/41",
+            "/org/a11y/atspi/accessible/43",
+        );
+        let role: u32 = call(
+            &conn,
+            &ours,
+            new_customer,
+            "org.a11y.atspi.Accessible",
+            "GetRole",
+        )
+        .await;
+        assert_eq!(
+            role, 79,
+            "the node at {new_customer} is the customer's edit field"
+        );
+
+        // Typed is not stored: the labelled value shows the store until
+        // Save.
+        assert!(set(&conn, &ours, new_customer, "Example Traders").await);
+        let truth = desk.truth();
+        assert_eq!(truth.stored["customer"], "Example Supplies");
+        assert_eq!(text(&conn, &ours, customer).await, "Example Supplies");
+        assert_eq!(truth.sets.len(), 1);
+        assert_eq!(truth.sets[0].field, "New customer");
+        assert_eq!(truth.sets[0].value, "Example Traders");
+        press(&conn, &ours).await;
+        let truth = desk.truth();
+        assert_eq!((truth.writes, truth.stores), (1, 1));
+        assert_eq!(truth.stored["customer"], "Example Traders");
+        assert_eq!(text(&conn, &ours, customer).await, "Example Traders");
+        assert_eq!(text(&conn, &ours, message).await, example_desk::SAVED);
+
+        // The field cuts a long value; the application refuses a status
+        // it does not know, says so, and stores nothing.
+        assert!(set(&conn, &ours, new_customer, &"x".repeat(40)).await);
+        assert_eq!(
+            text(&conn, &ours, new_customer).await.chars().count(),
+            example_desk::CUSTOMER_MOST
+        );
+        assert_eq!(text(&conn, &ours, message).await, "");
+        assert!(set(&conn, &ours, new_status, "lost").await);
+        press(&conn, &ours).await;
+        let truth = desk.truth();
+        assert_eq!((truth.writes, truth.stores), (2, 1));
+        assert!(text(&conn, &ours, problem).await.contains("Status must be"));
+
+        // A read-only field takes nothing, and no set of it is recorded.
+        desk.fault(&Fault::ReadOnly("New status".to_owned()))
+            .unwrap();
+        assert!(!set(&conn, &ours, new_status, "held").await);
+        assert_eq!(desk.truth().sets.len(), 3);
+
+        // Save that stores nothing and says nothing.
+        desk.fault(&Fault::SaveSilently).unwrap();
+        press(&conn, &ours).await;
+        let truth = desk.truth();
+        assert_eq!((truth.writes, truth.stores), (3, 1));
+
+        // Save that stores and then exits; started again, the application
+        // shows what it stored, in its fields too.
+        desk.fault(&Fault::ExitAfterSave).unwrap();
+        assert!(set(&conn, &ours, new_customer, "Example Holdings").await);
+        let _ = conn
+            .call_method(
+                Some(ours.as_str()),
+                "/org/a11y/atspi/accessible/35",
+                Some("org.a11y.atspi.Action"),
+                "DoAction",
+                &(0_i32,),
+            )
+            .await;
+        assert_eq!(desk.truth().stores, 1, "the status `lost` is still refused");
+        desk.restart().await.unwrap();
+        let again = ours(&conn).await;
+        assert_ne!(again, ours);
+        assert_eq!(text(&conn, &again, new_customer).await, "Example Traders");
+        assert_eq!(text(&conn, &again, message).await, "");
+    }
+
+    /// The stand's application's name on the bus, from the registry's list.
+    async fn ours(conn: &zbus::Connection) -> String {
+        let apps: Vec<(String, zbus::OwnedObjectPath)> = call(
+            conn,
+            "org.a11y.atspi.Registry",
+            "/org/a11y/atspi/accessible/root",
+            "org.a11y.atspi.Accessible",
+            "GetChildren",
+        )
+        .await;
+        let mut found = None;
+        for (bus, path) in &apps {
+            let Ok(reply) = conn
+                .call_method(
+                    Some(bus.as_str()),
+                    path.as_str(),
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &("org.a11y.atspi.Accessible", "Name"),
+                )
+                .await
+            else {
+                continue;
+            };
+            let name: zbus::OwnedVariant = reply.body().deserialize().unwrap();
+            if String::try_from(name).unwrap() == example_desk::APPLICATION {
+                found = Some(bus.clone());
+            }
+        }
+        found.expect("the stand's application is on the desktop")
     }
 }
 

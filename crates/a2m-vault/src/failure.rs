@@ -21,6 +21,8 @@ pub const VAULT_PASSPHRASE_MISMATCH: FailureCode = FailureCode::fixed("vault_pas
 /// The passphrase given is too short to derive a root key from.
 pub const VAULT_PASSPHRASE_TOO_SHORT: FailureCode =
     FailureCode::fixed("vault_passphrase_too_short");
+/// The passphrase route is chosen and no passphrase was given.
+pub const VAULT_PASSPHRASE_MISSING: FailureCode = FailureCode::fixed("vault_passphrase_missing");
 /// A key record already exists, or changed before it could be replaced.
 pub const KEY_RECORD_CONFLICT: FailureCode = FailureCode::fixed("key_record_conflict");
 /// The operating system gave no random bytes, so no key or nonce was made.
@@ -72,8 +74,21 @@ pub(crate) fn passphrase_not_enabled() -> Failure {
     Failure::new(
         FailureClass::Policy,
         VAULT_PASSPHRASE_NOT_ENABLED,
-        "The passphrase route for the root key is not switched on.",
-        "Use the operating system's key store or a key service. A person may switch the passphrase route on as a protected setting; it is weaker than either.",
+        "The passphrase route for the root key is not chosen.",
+        "Use the operating system's key store or a key service. A person may choose the passphrase route in the installation's settings file, as `backend = \"passphrase\"` under `[vault]`; it is weaker than either.",
+    )
+}
+
+/// The route is chosen and no passphrase was given. `variable` is the name
+/// of the environment variable, never a value.
+pub(crate) fn passphrase_missing(variable: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        VAULT_PASSPHRASE_MISSING,
+        "The vault takes its root key from a passphrase, and no passphrase was given to the engine, so nothing can be sealed or opened. The passphrase protects the sessions and secrets the engine keeps on this machine: a copy of its files opens nothing without it.",
+        format!(
+            "Set the environment variable `{variable}` to a passphrase of at least 16 bytes in the shell you run `anything2mcp` from, then run the command again; the command hands it to the engine it starts. Choose it once and keep it, in a password manager: what was kept under one passphrase opens under no other."
+        ),
     )
 }
 

@@ -318,9 +318,12 @@ impl<'a> Lower<'a, '_> {
             }
             // Entry bar item 2: every value written is read back, or the
             // operation says it cannot be.
-            let read_back = self.cx.operation().outputs().iter().any(|output| {
-                output.name == *name && !matches!(output.ty, ValueType::List(_))
-            });
+            let read_back = self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|output| output.name == *name && !matches!(output.ty, ValueType::List(_)));
             if !read_back && !irreversible {
                 self.refuse(
                     "unreadable_write",

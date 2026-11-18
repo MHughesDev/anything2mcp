@@ -19,8 +19,7 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Action, Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, Variant,
-    WindowMatch,
+    Action, Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, Variant, WindowMatch,
 };
 use crate::roles;
 
@@ -337,8 +336,16 @@ impl Reader {
             }
         }
         let mut variants = BTreeMap::new();
-        for entry in doc.get("variants").map(Located::entries).unwrap_or_default() {
-            if let Some(when) = entry.value.get("when").and_then(|cond| self.condition(cond)) {
+        for entry in doc
+            .get("variants")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            if let Some(when) = entry
+                .value
+                .get("when")
+                .and_then(|cond| self.condition(cond))
+            {
                 variants.insert(entry.key.value.clone(), Variant { when });
             }
         }

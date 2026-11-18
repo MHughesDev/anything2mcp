@@ -412,10 +412,7 @@ impl Model {
             .text
             .clone()
             .unwrap_or_default();
-        let status = self.nodes[self.new_status]
-            .text
-            .clone()
-            .unwrap_or_default();
+        let status = self.nodes[self.new_status].text.clone().unwrap_or_default();
         let refused = if customer.trim().is_empty() {
             Some(CUSTOMER_REFUSED)
         } else if !STATUSES.contains(&status.as_str()) {
@@ -434,7 +431,9 @@ impl Model {
         self.truth
             .stored
             .insert("customer".to_owned(), customer.clone());
-        self.truth.stored.insert("status".to_owned(), status.clone());
+        self.truth
+            .stored
+            .insert("status".to_owned(), status.clone());
         let (shown_customer, shown_status) = (self.customer, self.status);
         pressed
             .changed
@@ -454,7 +453,12 @@ impl Model {
     /// As a restarted application shows itself: the stored values in its
     /// fields, nothing said, no fault.
     fn restarted(&mut self) {
-        let customer = self.truth.stored.get("customer").cloned().unwrap_or_default();
+        let customer = self
+            .truth
+            .stored
+            .get("customer")
+            .cloned()
+            .unwrap_or_default();
         let status = self.truth.stored.get("status").cloned().unwrap_or_default();
         let (new_customer, new_status) = (self.new_customer, self.new_status);
         self.set_text(new_customer, &customer);
@@ -776,11 +780,7 @@ struct EditableText {
 
 #[interface(name = "org.a11y.atspi.EditableText")]
 impl EditableText {
-    async fn set_text_contents(
-        &self,
-        text: String,
-        #[zbus(connection)] conn: &Connection,
-    ) -> bool {
+    async fn set_text_contents(&self, text: String, #[zbus(connection)] conn: &Connection) -> bool {
         let changed = {
             let mut model = lock(&self.model);
             *model

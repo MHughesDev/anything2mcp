@@ -99,8 +99,14 @@ mod on_linux {
             )
             .await
             .unwrap();
-        assert_eq!(before.get("customer"), Some(&Value::from(order.customer.as_str())));
-        assert_eq!(before.get("status"), Some(&Value::from(order.status.as_str())));
+        assert_eq!(
+            before.get("customer"),
+            Some(&Value::from(order.customer.as_str()))
+        );
+        assert_eq!(
+            before.get("status"),
+            Some(&Value::from(order.status.as_str()))
+        );
         // Nor can the act itself run there: its first `set` is refused.
         let refused = scene
             .steps(
@@ -151,7 +157,12 @@ mod on_linux {
             last,
             [("New customer", "Example Traders"), ("New status", "held")]
         );
-        assert!(truth.sets.iter().all(|set| set.window == example_desk::WINDOW));
+        assert!(
+            truth
+                .sets
+                .iter()
+                .all(|set| set.window == example_desk::WINDOW)
+        );
 
         // The read-back reaches the window afresh and reads what is
         // stored, which the field type compares with what was intended.
@@ -174,7 +185,11 @@ mod on_linux {
         let doubt = act(&scene, &values, WITHIN).await.unwrap_err();
         assert_eq!(
             stopped(&doubt),
-            (FailureClass::PossibleCommit, "no_confirmation", Sent::Unknown)
+            (
+                FailureClass::PossibleCommit,
+                "no_confirmation",
+                Sent::Unknown
+            )
         );
         assert_eq!(scene.desk().truth().stores, 1);
         // The application is started again; the resume reads the stored
@@ -196,7 +211,11 @@ mod on_linux {
             .unwrap_err();
         assert_eq!(
             stopped(&doubt),
-            (FailureClass::PossibleCommit, "no_confirmation", Sent::Unknown)
+            (
+                FailureClass::PossibleCommit,
+                "no_confirmation",
+                Sent::Unknown
+            )
         );
         assert_eq!(scene.desk().truth().stores, 0);
         // The fields hold the new values; the window, reached afresh,
@@ -236,10 +255,16 @@ mod on_linux {
         // The application cuts a long value: the run stops before Save.
         let long = "Example Supplies and Sons, Limited";
         assert!(long.chars().count() > CUSTOMER_MOST);
-        let cut = act(&scene, &inputs(long, "held"), WITHIN).await.unwrap_err();
+        let cut = act(&scene, &inputs(long, "held"), WITHIN)
+            .await
+            .unwrap_err();
         assert_eq!(
             stopped(&cut),
-            (FailureClass::UnknownVariant, "value_not_held", Sent::Answered)
+            (
+                FailureClass::UnknownVariant,
+                "value_not_held",
+                Sent::Answered
+            )
         );
         assert_eq!(scene.desk().truth().writes, 0);
 
@@ -250,7 +275,11 @@ mod on_linux {
             .unwrap_err();
         assert_eq!(
             stopped(&refused),
-            (FailureClass::Rejected, "app_validation_error", Sent::Answered)
+            (
+                FailureClass::Rejected,
+                "app_validation_error",
+                Sent::Answered
+            )
         );
         let said = refused.failure.said().unwrap();
         assert!(said.contains("Status must be"), "{said}");
@@ -271,7 +300,11 @@ mod on_linux {
             .unwrap_err();
         assert_eq!(
             stopped(&locked),
-            (FailureClass::UnknownVariant, "field_read_only", Sent::NotSent)
+            (
+                FailureClass::UnknownVariant,
+                "field_read_only",
+                Sent::NotSent
+            )
         );
         let truth = scene.desk().truth();
         assert_eq!((truth.writes, truth.stores), (1, 0));
@@ -292,7 +325,11 @@ mod on_linux {
         .unwrap_err();
         assert_eq!(
             stopped(&other),
-            (FailureClass::UnknownVariant, "unexpected_page", Sent::NotSent)
+            (
+                FailureClass::UnknownVariant,
+                "unexpected_page",
+                Sent::NotSent
+            )
         );
         assert_eq!(scene.desk().truth().writes, 1);
         assert_eq!(scene.desk().truth().secret_reads, 0);
@@ -305,7 +342,11 @@ mod on_linux {
         let Some(scene) = Scene::start("twin").await else {
             return;
         };
-        scene.desk().open_window(example_desk::WINDOW).await.unwrap();
+        scene
+            .desk()
+            .open_window(example_desk::WINDOW)
+            .await
+            .unwrap();
         let twice = act(&scene, &inputs("Example Traders", "held"), WITHIN)
             .await
             .unwrap_err();
@@ -320,7 +361,11 @@ mod on_linux {
         let Some(scene) = Scene::start("copy").await else {
             return;
         };
-        scene.desk().open_window("Example order (copy)").await.unwrap();
+        scene
+            .desk()
+            .open_window("Example order (copy)")
+            .await
+            .unwrap();
         act(&scene, &inputs("Example Traders", "held"), WITHIN)
             .await
             .unwrap();
@@ -328,7 +373,10 @@ mod on_linux {
         assert_eq!(truth.stores, 1);
         assert!(!truth.sets.is_empty());
         assert!(
-            truth.sets.iter().all(|set| set.window == example_desk::WINDOW),
+            truth
+                .sets
+                .iter()
+                .all(|set| set.window == example_desk::WINDOW),
             "{:?}",
             truth.sets
         );
@@ -341,10 +389,7 @@ mod on_linux {
         };
         let first = inputs("Alpha Traders", "held");
         let second = inputs("Beta Traders", "closed");
-        let (one, two) = tokio::join!(
-            act(&scene, &first, WITHIN),
-            act(&scene, &second, WITHIN)
-        );
+        let (one, two) = tokio::join!(act(&scene, &first, WITHIN), act(&scene, &second, WITHIN));
         one.unwrap();
         two.unwrap();
         let truth = scene.desk().truth();

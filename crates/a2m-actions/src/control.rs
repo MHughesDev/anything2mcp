@@ -927,13 +927,16 @@ impl Control for InProcessControl {
                 writes: compared.writes,
                 outcome: compared.outcome,
             };
-            self.kernel
+            eprintln!("DBG shadow start {:?}", comparison.outcome);
+            let r = self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.shadow().record(&comparison).map(|_| ())
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))
+                .map_err(|failure| self.redacted(failure));
+            eprintln!("DBG shadow end {r:?}");
+            r
         })
     }
 }

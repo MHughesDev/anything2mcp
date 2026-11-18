@@ -508,13 +508,17 @@ impl Held {
             shown(&name)
         );
         let tree = self.walk(deadline).await?;
-        let at = tree.one(&field.locate).map_err(|miss| missed(miss, &what))?;
+        let at = tree
+            .one(&field.locate)
+            .map_err(|miss| missed(miss, &what))?;
         let node = tree.nodes[at].clone();
         if node.secret {
             return Err(StepFailure::not_sent(codes::failure(
                 FailureClass::Policy,
                 codes::PASSWORD_SET_REFUSED,
-                format!("{what} holds a secret; it is never set from an input a caller can see. Nothing was sent."),
+                format!(
+                    "{what} holds a secret; it is never set from an input a caller can see. Nothing was sent."
+                ),
                 "Leave the field out. Signing in to a desktop application is not built in this version.",
             )));
         }
@@ -559,7 +563,9 @@ impl Held {
                 return Err(StepFailure::answered(codes::failure(
                     FailureClass::UnknownVariant,
                     codes::FIELD_READ_ONLY,
-                    format!("The application did not take the value for {what}. Nothing was saved."),
+                    format!(
+                        "The application did not take the value for {what}. Nothing was saved."
+                    ),
                     "Look at the application; the field may be locked for this record.",
                 )));
             }
@@ -578,7 +584,9 @@ impl Held {
             return Err(StepFailure::answered(codes::failure(
                 FailureClass::UnknownVariant,
                 codes::VALUE_NOT_HELD,
-                format!("After it was set, {what} holds another value than the one set: the application changed it. Nothing was saved."),
+                format!(
+                    "After it was set, {what} holds another value than the one set: the application changed it. Nothing was saved."
+                ),
                 "Give a value the field holds as it is written, such as a shorter one.",
             )));
         }
@@ -698,11 +706,7 @@ impl Held {
             }
             Err(Acted::NotSent(error)) => return Err(unsent(&error, &self.program)),
             Err(Acted::Unknown(_)) => {
-                return Err(self.no_confirmation(
-                    step,
-                    &what,
-                    "the application did not answer it",
-                ));
+                return Err(self.no_confirmation(step, &what, "the application did not answer it"));
             }
         }
         // From here the action reached the application. What it made of
@@ -711,11 +715,7 @@ impl Held {
         // before.
         loop {
             let Ok(tree) = self.walk(deadline).await else {
-                return Err(self.no_confirmation(
-                    step,
-                    &what,
-                    "then the window could not be read",
-                ));
+                return Err(self.no_confirmation(step, &what, "then the window could not be read"));
             };
             let Ok(confirmed) = self.holds(&tree, &action.confirm, &confirm).await else {
                 return Err(self.no_confirmation(
@@ -758,7 +758,10 @@ impl Held {
                     let refused = StepFailure::answered(codes::failure(
                         FailureClass::Rejected,
                         codes::APP_VALIDATION_ERROR,
-                        format!("After {what}, the window shows the variant `{}`.", shown(&variant)),
+                        format!(
+                            "After {what}, the window shows the variant `{}`.",
+                            shown(&variant)
+                        ),
                         "Correct the values and run the tool again; the application refused them.",
                     ));
                     return Err(match said {
@@ -876,7 +879,10 @@ fn condition_reads(cond: &Cond, node: &Node) -> bool {
 /// The first locator a condition names: where a variant's words are.
 fn first_locator(cond: &Cond) -> Option<&crate::model::Locator> {
     match cond {
-        Cond::Visible(locator) | Cond::Text { locate: locator, .. } => Some(locator),
+        Cond::Visible(locator)
+        | Cond::Text {
+            locate: locator, ..
+        } => Some(locator),
         Cond::All(all) => all.iter().find_map(first_locator),
     }
 }

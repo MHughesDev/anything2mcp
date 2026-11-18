@@ -70,10 +70,8 @@ pub(crate) const READ_MEMBERS: &[(&str, &str)] = &[
 /// and only [`Hands`] calls it. A test holds that no member of
 /// [`READ_MEMBERS`] is here, and that each is one of AT-SPI's members that
 /// act.
-pub(crate) const ACT_MEMBERS: &[(&str, &str)] = &[
-    (EDITABLE_TEXT, "SetTextContents"),
-    (ACTION, "DoAction"),
-];
+pub(crate) const ACT_MEMBERS: &[(&str, &str)] =
+    &[(EDITABLE_TEXT, "SetTextContents"), (ACTION, "DoAction")];
 
 /// The properties [`PROPERTIES`]`.Get` may ask for.
 const READ_PROPERTIES: &[(&str, &str)] = &[(ACCESSIBLE, "Name"), ("org.a11y.Status", "IsEnabled")];
@@ -323,8 +321,8 @@ pub(crate) struct Proof {
 /// the process table gives it: what tells a process from a later one with
 /// the same number.
 fn started(process: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(Path::new("/proc").join(process.to_string()).join("stat"))
-        .ok()?;
+    let stat =
+        std::fs::read_to_string(Path::new("/proc").join(process.to_string()).join("stat")).ok()?;
     // The program's name, in parentheses, may hold spaces; the fields
     // after it are numbered from the third, and the start time is the
     // twenty-second.
@@ -835,7 +833,8 @@ impl Look {
             process: app.process,
             started,
             program,
-            digest: digest.map(|stated| stated.strip_prefix("sha256:").unwrap_or(stated).to_owned()),
+            digest: digest
+                .map(|stated| stated.strip_prefix("sha256:").unwrap_or(stated).to_owned()),
         })
     }
 

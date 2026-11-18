@@ -723,3 +723,91 @@ async fn the_vault_and_its_futures_cross_threads() {
     drop(crosses_threads(vault.keyed_digest()));
     drop(crosses_threads(vault.health()));
 }
+
+/// Decision 0220. Where this build has no operating-system key store, as
+/// on Linux, `vault.backend` is the passphrase route when nothing sets it,
+/// so a first run needs no settings file: with an empty folder and a
+/// passphrase from the person, the vault seals and opens, and opens again
+/// after a restart. Where the build has a key store, the default stays
+/// that store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn where_the_build_has_no_key_store_the_passphrase_route_is_the_default_and_opens() {
+    use a2m_vault::{
+        BACKEND_OS_KEY_STORE, BACKEND_PASSPHRASE, DEFAULT_BACKEND, OsKeyStore, PassphraseKeyStore,
+        PassphraseRoute, PassphraseSalt,
+    };
+
+    let has_store = cfg!(any(target_os = "macos", target_os = "windows"));
+    assert_eq!(OsKeyStore::IN_THIS_BUILD, has_store);
+    let expected = if has_store {
+        BACKEND_OS_KEY_STORE
+    } else {
+        BACKEND_PASSPHRASE
+    };
+    assert_eq!(DEFAULT_BACKEND, expected);
+    assert_eq!(
+        PassphraseRoute::of_backend(Some(DEFAULT_BACKEND)) == PassphraseRoute::Enabled,
+        !has_store
+    );
+    // Only the passphrase route's own word chooses it.
+    for other in [None, Some(BACKEND_OS_KEY_STORE), Some("Passphrase"), Some("")] {
+        assert_eq!(
+            PassphraseRoute::of_backend(other),
+            PassphraseRoute::NotEnabled
+        );
+    }
+
+    // The route the default chooses on a build with no key store, and the
+    // one a person chooses on a build with one.
+    let route = PassphraseRoute::of_backend(Some(if has_store {
+        BACKEND_PASSPHRASE
+    } else {
+        DEFAULT_BACKEND
+    }));
+    let folder = std::env::temp_dir().join(format!("a2m-vault-first-run-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    let salt_file = folder.join("vault.salt");
+    let passphrase = Secret::new("secret-for-tests-first-run");
+    let records = Arc::new(MemoryKeyRecords::new());
+    let first = PassphraseKeyStore::derive(
+        route,
+        &passphrase,
+        &PassphraseSalt::load_or_create(&salt_file, &OsRandom)
+            .await
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.describe().strength, StoreStrength::Passphrase);
+    let sealed = Vault::new(Arc::new(first), Arc::clone(&records) as _)
+        .seal(&context(), PLAIN)
+        .await
+        .unwrap();
+    let again = PassphraseKeyStore::derive(
+        route,
+        &passphrase,
+        &PassphraseSalt::load_or_create(&salt_file, &OsRandom)
+            .await
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let opened = Vault::new(Arc::new(again), records as _)
+        .open(&context(), &sealed)
+        .await
+        .unwrap();
+    assert_eq!(opened.expose(), PLAIN);
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    // With no passphrase, the failure names the variable a person sets,
+    // and says what a passphrase is for.
+    let missing = PassphraseKeyStore::not_given("A2M_VAULT_PASSPHRASE");
+    assert_eq!(missing.code(), &codes::VAULT_PASSPHRASE_MISSING);
+    assert_eq!(missing.class(), FailureClass::Input);
+    assert!(missing.message().contains("protects"), "{missing:?}");
+    assert!(
+        missing.next_step().contains("`A2M_VAULT_PASSPHRASE`"),
+        "{missing:?}"
+    );
+    assert!(missing.next_step().contains("16 bytes"), "{missing:?}");
+}

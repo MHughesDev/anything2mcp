@@ -220,3 +220,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0216 | [The command pack on three systems: the check on Windows, the administrators' group, and a script the target keeps](0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md) | Accepted (design decision) |
 | 0217 | [The HTTP pack reads answers that are not JSON](0217-the-http-pack-reads-answers-that-are-not-json.md) | Accepted (design decision) |
 | 0222 | [The product is aware of the network its machine is on](0222-the-product-is-aware-of-the-network-its-machine-is-on.md) | Accepted (owner decision) |
+| 0230 | [What the product does not answer for](0230-what-the-product-does-not-answer-for.md) | Proposed (owner decision) |
