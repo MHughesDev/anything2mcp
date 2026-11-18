@@ -45,6 +45,24 @@ use crate::runner::CallerFacts;
 /// How long a job waits for a record another run holds.
 const LOCK_WAIT: Duration = Duration::from_secs(60);
 
+/// The keeper's entry for a surface's sign-in, field by field from the
+/// plan (decision 0121). `session.login` builds the same entry from the
+/// same plan, so a sign-in a person makes is the session a run leases.
+pub(crate) fn entry_of(auth: &a2m_core::AuthPlan) -> AuthEntry {
+    let mut entry = AuthEntry::new(auth.provider.clone());
+    for setting in &auth.settings {
+        entry = entry.setting(&setting.name, &setting.value);
+    }
+    for credential in &auth.credentials {
+        entry = entry.credential(&credential.role, credential.reference.clone());
+    }
+    entry.idle = auth.idle_ms.map(Duration::from_millis);
+    entry.absolute = auth.absolute_ms.map(Duration::from_millis);
+    entry.attempt_limit = auth.attempt_limit;
+    entry.movable = auth.movable;
+    entry
+}
+
 /// `Control` for one job of one run, in the process that holds the store.
 pub(crate) struct InProcessControl {
     kernel: Kernel,
@@ -228,19 +246,7 @@ impl Control for InProcessControl {
                         "Declare the surface in the target's auth file, then publish again.",
                     )
                 })?;
-            // Decision 0121: the keeper's entry, field by field from the
-            // plan.
-            let mut entry = AuthEntry::new(auth.provider.clone());
-            for setting in &auth.settings {
-                entry = entry.setting(&setting.name, &setting.value);
-            }
-            for credential in &auth.credentials {
-                entry = entry.credential(&credential.role, credential.reference.clone());
-            }
-            entry.idle = auth.idle_ms.map(Duration::from_millis);
-            entry.absolute = auth.absolute_ms.map(Duration::from_millis);
-            entry.attempt_limit = auth.attempt_limit;
-            entry.movable = auth.movable;
+            let entry = entry_of(auth);
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {

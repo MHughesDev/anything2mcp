@@ -183,7 +183,10 @@ async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absen
         "{escaping}"
     );
     assert_eq!(escaping.sent, a2m_provider::Sent::NotSent);
-    assert_eq!(app.seen().await.unwrap(), before);
+    assert_eq!(
+        app.heard_since(&before).await.unwrap(),
+        Vec::<String>::new()
+    );
     assert!(handle.release(prepared, true).await.complete);
     assert!(app.stored_item("A-100", "L-101").await.unwrap().is_some());
     scene.stand.end().await;

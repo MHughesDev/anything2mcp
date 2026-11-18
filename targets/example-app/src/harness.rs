@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 use crate::auth::{AuthReport, AuthSettings, Credential};
 use crate::details::StoredDelivery;
 use crate::faults::Fault;
+use crate::forgery::NotesReport;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
 
 /// The one account's username. Made up.
@@ -422,6 +423,28 @@ impl TestApp {
         Ok(seen)
     }
 
+    /// What the application has heard that it had not heard when `before`
+    /// was taken: the requests in [`TestApp::seen`] now whose line is not
+    /// one of `before`'s. A test uses it to show that an act it expects to
+    /// be refused sent nothing of its own. A page loaded earlier may still
+    /// be making the requests it makes by itself (its script's own reads),
+    /// and such a late repeat of an earlier request is not something the
+    /// refused act sent; comparing the two lists for equality would fail
+    /// on it. The act under test must be one whose request, had it been
+    /// sent, would differ from every earlier one, as a refused key's does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn heard_since(&self, before: &[String]) -> Result<Vec<String>, HarnessError> {
+        Ok(self
+            .seen()
+            .await?
+            .into_iter()
+            .filter(|line| !before.contains(line))
+            .collect())
+    }
+
     /// Every request the application received outside the control
     /// interface, the browser's own request for the site's icon included.
     ///
@@ -430,6 +453,16 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<Seen>("/__control/seen").await?.seen)
+    }
+
+    /// What the anti-forgery case stored: each order's note, how many writes
+    /// changed it, and how many were refused for their token (case 5).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn stored_notes(&self) -> Result<NotesReport, HarnessError> {
+        self.ask::<NotesReport>("/__control/notes").await
     }
 
     /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step

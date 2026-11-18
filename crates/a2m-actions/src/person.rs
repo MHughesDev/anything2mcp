@@ -604,7 +604,30 @@ impl ApprovalDesk {
         act: PersonActId,
         proof: PresenceProof,
     ) -> Result<Response, Failure> {
-        self.acts.kernel()?.carry_out_act(act, proof).await
+        self.acts.kernel()?.carry_out_act(act, proof, None).await
+    }
+
+    /// As [`ApprovalDesk::carry_out`], with what the person typed on the
+    /// act's page beside their press: for a sign-in, the credentials the
+    /// page asked for, by role (decision 0205). Each value is registered
+    /// with the redactor before anything else; only a value for a secret
+    /// the page asked for is kept, and it reaches the act's handler and
+    /// nothing else. It is never part of the act's input, its result, or
+    /// what is kept of it.
+    ///
+    /// # Errors
+    ///
+    /// As [`ApprovalDesk::carry_out`].
+    pub async fn carry_out_with(
+        &self,
+        act: PersonActId,
+        proof: PresenceProof,
+        given: a2m_auth::Returned,
+    ) -> Result<Response, Failure> {
+        self.acts
+            .kernel()?
+            .carry_out_act(act, proof, Some(given))
+            .await
     }
 
     /// Records that the person declined the act, or, with `by_person`

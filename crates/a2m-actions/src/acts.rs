@@ -127,6 +127,22 @@ struct PublishShown {
     warnings: Vec<ActWarning>,
 }
 
+/// One secret a person's act asks its person for on its page, beside the
+/// input: for a sign-in, a credential its provider uses (decision 0205).
+/// The page shows a field for it that is never filled in and never shown
+/// back; what the person types goes to the desk with their press, and to
+/// nothing else. The names are the auth file's, never a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskedSecret {
+    /// The role the provider uses it in, such as `token` or `password`.
+    pub role: String,
+    /// Where it is kept once given: the auth file's vault reference.
+    pub reference: String,
+    /// Whether something is stored there already. The person may then
+    /// leave the field empty, and the stored one is used.
+    pub stored: bool,
+}
+
 /// A person's act that an agent asked for, as the person surface is given
 /// it and as [`ApprovalDesk::person_act`](crate::ApprovalDesk::person_act)
 /// reads it back: exactly what will be done.
@@ -156,6 +172,10 @@ pub struct PersonActAsk {
     /// For a publish, every warning the compiler gave for the version;
     /// empty for every other act, and not repeated among `details`.
     pub warnings: Vec<ActWarning>,
+    /// For a sign-in, the secrets the page asks the person for; empty for
+    /// every other act. A press may carry a value for these and for
+    /// nothing else.
+    pub secrets: Vec<AskedSecret>,
     /// Through which door and client the act was asked for.
     pub asked_through: String,
     /// When the act stops waiting, by the kernel's clock. No answer by
@@ -438,7 +458,8 @@ impl Kernel {
 
         // What the act rests on is pinned now, so that the person carries
         // out what they read and nothing changed since.
-        let (pinned, details, publish) = self.pinned(def, caller, input.clone(), &project).await?;
+        let (pinned, details, publish, secrets) =
+            self.pinned(def, caller, input.clone(), &project).await?;
 
         let mut bytes = [0_u8; 16];
         self.inner.random.fill(&mut bytes)?;
@@ -503,6 +524,14 @@ impl Kernel {
                     message: redact.redact(&warning.message),
                 })
                 .collect(),
+            secrets: secrets
+                .into_iter()
+                .map(|secret| AskedSecret {
+                    role: redact.redact(&secret.role),
+                    reference: redact.redact(&secret.reference),
+                    stored: secret.stored,
+                })
+                .collect(),
             asked_through: redact.redact(&format!(
                 "{} ({})",
                 caller.door.as_str(),
@@ -554,9 +583,14 @@ impl Kernel {
         caller: &Caller,
         mut input: Map<String, Json>,
         project: &(Option<PathBuf>, Option<Failure>),
-    ) -> Result<(Map<String, Json>, Vec<String>, PublishShown), Failure> {
+    ) -> Result<(Map<String, Json>, Vec<String>, PublishShown, Vec<AskedSecret>), Failure> {
+        if def.name.as_str() == "session.login" {
+            let (input, details, secrets) =
+                crate::handlers::sessions::pinned(self, caller, input, project).await?;
+            return Ok((input, details, PublishShown::default(), secrets));
+        }
         if def.name.as_str() != "version.publish" {
-            return Ok((input, Vec::new(), PublishShown::default()));
+            return Ok((input, Vec::new(), PublishShown::default(), Vec::new()));
         }
         let folder = match project {
             (Some(folder), _) => folder.clone(),
@@ -652,7 +686,7 @@ impl Kernel {
         let shown = publish_shown(self, &compiled);
         let mut details = details;
         details.extend(gates.lines());
-        Ok((input, details, shown))
+        Ok((input, details, shown, Vec::new()))
     }
 
     /// One line for each verified binding of `plan` that the target's
@@ -765,7 +799,15 @@ impl Kernel {
         &self,
         act: PersonActId,
         proof: PresenceProof,
+        given: Option<a2m_auth::Returned>,
     ) -> Result<Response, Failure> {
+        // What the person typed is registered with the redactor before
+        // anything else is done with it, whatever comes of the press.
+        if let Some(given) = &given {
+            for (_, secret) in given.iter() {
+                self.register_secret(secret);
+            }
+        }
         let now = self.inner.clock.now();
         let refuse = |why: &str| {
             codes::policy(
@@ -774,7 +816,7 @@ impl Kernel {
                 "Open the act's page again and press there yourself.",
             )
         };
-        let (def_name, caller, input, project, project_refused) = {
+        let (def_name, caller, input, project, project_refused, asked) = {
             let mut state = self.inner.acts.state();
             sweep(&mut state, now);
             let Some(pending) = state.pending.get_mut(&act) else {
@@ -796,10 +838,19 @@ impl Kernel {
                 pending.input.clone(),
                 pending.project.clone(),
                 pending.project_refused.clone(),
+                pending.ask.secrets.clone(),
             )
         };
+        // A press carries a value only for a secret the page asked for; a
+        // value under any other name is dropped, and so is an empty one.
+        let given = given
+            .map(|given| {
+                given.only(|name| asked.iter().any(|secret| secret.role == name))
+            })
+            .filter(|given| !given.is_empty())
+            .map(Arc::new);
         let outcome = self
-            .perform_act(&def_name, caller, input, project, project_refused, proof)
+            .perform_act(&def_name, caller, input, (project, project_refused), proof, given)
             .await;
         let kept = match &outcome {
             Ok((output, _)) => Ok(output.clone()),
@@ -836,9 +887,9 @@ impl Kernel {
         name: &ActionName,
         asker: Caller,
         input: Map<String, Json>,
-        project: Option<PathBuf>,
-        project_refused: Option<Failure>,
+        (project, project_refused): (Option<PathBuf>, Option<Failure>),
         proof: PresenceProof,
+        given: Option<Arc<a2m_auth::Returned>>,
     ) -> Result<(Output, DecisionId), Box<Performed>> {
         let none = DecisionId::from_bytes([0; 16]);
         let Some(def) = self.actions().get(name).cloned() else {
@@ -901,6 +952,7 @@ impl Kernel {
             project,
             project_refused,
             presence: Some(proof),
+            given,
             decided: Some((effect, Hazard::None)),
         };
         match self.run_handler(&def, call).await {

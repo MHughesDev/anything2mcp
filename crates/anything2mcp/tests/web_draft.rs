@@ -480,7 +480,11 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
             );
             assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
         }
-        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+        assert_eq!(
+            app.heard_since(&before).await.unwrap(),
+            Vec::<String>::new(),
+            "{refused:?}"
+        );
     }
 
     // Nothing was written.
@@ -590,7 +594,11 @@ async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the
             "{refused:?}: {stopped}"
         );
         assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
-        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+        assert_eq!(
+            app.heard_since(&before).await.unwrap(),
+            Vec::<String>::new(),
+            "{refused:?}"
+        );
     }
 
     assert!(app.writes().await.unwrap().is_empty());

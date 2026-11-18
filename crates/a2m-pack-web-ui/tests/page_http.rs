@@ -381,7 +381,11 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
             "{refused:?}: {stopped}"
         );
         assert_eq!(stopped.sent, Sent::NotSent);
-        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+        assert_eq!(
+            app.heard_since(&before).await.unwrap(),
+            Vec::<String>::new(),
+            "{refused:?}"
+        );
     }
 
     // An answer whose shape the stand changed stops by name, and so does

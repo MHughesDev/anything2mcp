@@ -29,6 +29,7 @@ mod job;
 mod loaded;
 mod run;
 mod sandbox;
+mod shadow;
 mod tool;
 mod values;
 
@@ -40,7 +41,7 @@ pub use binding::{BindingPin, binding_digest, default_binding};
 pub use compare::Comparison;
 pub use control::{
     Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
-    SessionWant,
+    SessionWant, ShadowCompared,
 };
 pub use diff::{
     Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord, NOW_CANNOT_BE_READ,

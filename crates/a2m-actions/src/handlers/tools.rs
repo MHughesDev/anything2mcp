@@ -1972,8 +1972,21 @@ pub(crate) async fn plan_to_observe(
     call: &Call,
     target: &a2m_core::TargetName,
 ) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::Plan>), Failure> {
-    if let Ok(folder) = call.project_folder() {
-        let folder = folder.to_path_buf();
+    plan_in(
+        kernel,
+        call.project_folder().ok().map(std::path::Path::to_path_buf),
+        target,
+    )
+    .await
+}
+
+/// As [`plan_to_observe`], for a project folder already checked, or none.
+pub(crate) async fn plan_in(
+    kernel: &Kernel,
+    folder: Option<std::path::PathBuf>,
+    target: &a2m_core::TargetName,
+) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::Plan>), Failure> {
+    if let Some(folder) = folder {
         let named = target.clone();
         let kernel_for = kernel.clone();
         let compiled = super::build::off_thread(move || {

@@ -705,7 +705,11 @@ async fn two_pages_of_one_screen_draft_reads_by_key_that_read_each_order_and_ref
             );
             assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
         }
-        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+        assert_eq!(
+            app.heard_since(&before).await.unwrap(),
+            Vec::<String>::new(),
+            "{refused:?}"
+        );
     }
 
     assert!(app.writes().await.unwrap().is_empty());
