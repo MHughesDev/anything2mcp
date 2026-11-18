@@ -1,0 +1,24 @@
+surface: config_files
+file: example.ini
+format: ini
+fingerprint: {sections: [orders, warehouse W1]}
+may_be_open: false
+records:
+  general:
+    path: []
+    fields:
+      title: {path: [title], type: identifier}
+  orders:
+    path: [orders]
+    fields:
+      prefix: {path: [prefix], type: identifier, writable: true}
+      next_number: {path: [next_number], type: integer, writable: true}
+      empty: {path: [empty], type: identifier, writable: true}
+  orders_note:
+    path: [orders]
+    fields:
+      note: {path: [note], type: note}
+  warehouse:
+    path: [warehouse W1]
+    fields:
+      cutoff: {path: [cutoff], type: cutoff, writable: true}

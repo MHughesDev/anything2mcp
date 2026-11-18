@@ -1,0 +1,18 @@
+operation: example_inbox_list
+title: List the inbox
+effect: read
+inputs: {}
+outputs:
+  name: {type: entry_name, list: true}
+  kind: {type: identifier, list: true}
+  size: {type: integer, list: true}
+  digest: {type: identifier, list: true}
+  truncated: {type: boolean}
+bindings:
+  - mode: file
+    verb: list
+    folder: inbox
+    digest: true
+    limit: 10
+description: >
+  Lists the entries of the inbox folder and the one below it.

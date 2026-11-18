@@ -1,0 +1,7 @@
+surface: inbox_files
+depth: 1
+max_entries: 100
+digest_max_bytes: 4096
+content_max_bytes: 4096
+writes: [create, update, rename, delete]
+may_be_open: false

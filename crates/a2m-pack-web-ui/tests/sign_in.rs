@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use a2m_auth::{
-    AskPerson, AuthEntry, AuthProvider, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork,
+    AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork,
     Keeper, KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet,
     Purpose, Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore,
     StoredCredentials, Wait,
@@ -260,10 +260,9 @@ impl World {
 
     async fn end(self) {
         self.keeper.idle().await;
-        let Self { scene, .. } = self;
-        match Arc::try_unwrap(scene) {
-            Ok(scene) => scene.stand.end().await,
-            Err(_) => panic!("the scene is still held"),
+        if let Some(browsers) = self.scene.stand.browsers.get() {
+            let cleanup = browsers.shutdown().await;
+            assert!(cleanup.complete, "{cleanup:?}");
         }
     }
 }
@@ -321,10 +320,11 @@ async fn a_right_password_signs_in_once_an_expired_session_is_renewed_and_no_sec
     assert_eq!((report.sign_in_attempts, report.sign_ins), (1, 1));
 
     // A read under the session: the application says who is signed in.
+    // The username is a stored credential, so its echo is masked.
     let lease = world.lease().await.unwrap();
     let values = read(&world.scene, &lease).await.unwrap();
     let shown = format!("{values:?}");
-    assert!(shown.contains("Signed in as example-user"), "{shown}");
+    assert!(shown.contains("Signed in as [redacted]."), "{shown}");
 
     // The application ends the session. The read meets the sign-in page,
     // which the target declares as a sign of expiry: a named stop, not an
@@ -344,7 +344,7 @@ async fn a_right_password_signs_in_once_an_expired_session_is_renewed_and_no_sec
     let renewed = world.lease().await.unwrap();
     assert!(renewed.epoch() > lease.epoch());
     let values = read(&world.scene, &renewed).await.unwrap();
-    assert!(format!("{values:?}").contains("Signed in as example-user"));
+    assert!(format!("{values:?}").contains("Signed in as [redacted]."));
     // The old lease places nothing any more.
     assert!(read(&world.scene, &lease).await.is_err());
 
@@ -374,7 +374,6 @@ async fn a_wrong_password_is_refused_after_one_attempt_and_never_tried_again() {
     const WRONG: &str = "secret-for-tests-not-the-password";
     let world = World::storing("signin-wrong", true, WRONG).await;
     let refused = world.sign_in().await.unwrap_err();
-    eprintln!("SEEN {:?}", world.app.seen().await.unwrap());
     assert_eq!(refused.class(), FailureClass::SessionExpired);
     assert_eq!(refused.code().as_str(), "credential_refused");
     let report = world.app.auth_report().await.unwrap();
@@ -417,7 +416,7 @@ async fn a_second_factor_is_answered_by_the_person_and_the_code_is_kept_nowhere(
     );
     let lease = world.lease().await.unwrap();
     let values = read(&world.scene, &lease).await.unwrap();
-    assert!(format!("{values:?}").contains("Signed in as example-user"));
+    assert!(format!("{values:?}").contains("Signed in as [redacted]."));
     world.keeper.idle().await;
     for secret in [SECOND_FACTOR_CODE, PASSWORD, COOKIE_PREFIX] {
         for folder in [world.home.path(), world.telemetry_dir.as_path()] {

@@ -29,6 +29,23 @@ pub(crate) const DIGEST: &str = "digest";
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 64;
 /// The most elements an XML answer may hold, unless the endpoint says.
 pub(crate) const DEFAULT_MAX_ELEMENTS: u64 = 100_000;
+/// The longest namespace address an XML answer may declare, in bytes
+/// (decision 0249).
+pub(crate) const MAX_NAMESPACE_BYTES: usize = 2_048;
+/// The longest name of an element or an attribute, with its prefix, in
+/// bytes.
+pub(crate) const MAX_NAME_BYTES: usize = 256;
+/// The longest value of one attribute, as written, in bytes.
+pub(crate) const MAX_ATTRIBUTE_BYTES: usize = 65_536;
+/// The most namespaces an XML answer may have declared at once.
+pub(crate) const MAX_NAMESPACES: usize = 64;
+/// What reading an answer may cost, in units of work, for each byte of it
+/// and each declared field: an event, an attribute, a byte of text taken,
+/// and a comparison with a field each cost one. A reader that would spend
+/// more stops (decision 0249).
+pub(crate) const WORK_PER_BYTE: u64 = 4;
+/// What reading any answer may cost besides.
+pub(crate) const WORK_BASE: u64 = 65_536;
 /// The most memory a compiled pattern may take, as the command pack's.
 const PATTERN_SIZE_LIMIT: usize = 1 << 20;
 

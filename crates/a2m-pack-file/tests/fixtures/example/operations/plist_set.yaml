@@ -1,0 +1,22 @@
+operation: example_plist_set
+title: Set the property list settings
+effect: write
+commit_points: 1
+inputs:
+  title: {type: note, description: "The title"}
+  next_number: {type: integer, description: "The next number"}
+  open: {type: boolean, description: "Whether it is open"}
+outputs:
+  title: {type: note}
+  next_number: {type: integer}
+  open: {type: boolean}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: plist_settings
+    record: general
+    fields: {title: input.title, next_number: input.next_number, open: input.open}
+    read_back: {record: general}
+description: >
+  Sets three values of the property list.

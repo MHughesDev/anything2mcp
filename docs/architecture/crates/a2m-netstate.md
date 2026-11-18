@@ -9,7 +9,7 @@ What this machine already knows about its own place on its networks, read from t
 | Side | Kernel |
 | Layer | 2, Foundations |
 | May depend on | `a2m-core` |
-| Depends on | `a2m-core`, for `AddressScope` and `ScopedHost` ([decision 0240](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) answered the network questions; the address type is that record's) and `Failure`. Outside: `serde`; on Linux `rustix` with its `net` feature, for the route-netlink socket; on macOS `libc`, for `getifaddrs` and `sysctl`; on Windows `windows-sys`, for the IP Helper functions, the current user's proxy setting, and a process's program name. All four were already in the workspace's tree. The list is closed and a test holds it |
+| Depends on | `a2m-core`, for `AddressScope` and `ScopedHost` (the kind of place an address's literal says it is, [decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)) and `Failure`. Outside: `serde`; on Linux `rustix` with its `net` feature, for the route-netlink socket; on macOS `libc`, for `getifaddrs` and `sysctl`; on Windows `windows-sys`, for the IP Helper functions, the current user's proxy setting, and a process's program name. All four were already in the workspace's tree. The list is closed and a test holds it |
 | Roadmap packages | None yet; built as the first slice of the network-awareness design (its slice N1), under [decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) point 10 |
 | Carries out | [Decision 0222](../../decisions/0222-the-product-is-aware-of-the-network-its-machine-is-on.md); [decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) points 6 to 8 (nothing is sent on a network the person has not named; this crate sends nothing on any); [decision 0197](../../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md) (a proxy is read to be shown, never applied); research notes [28](../../research/28-how-a-network-can-be-seen-from-one-machine.md), parts 1, 5, 6, 7, 8, and [29](../../research/29-network-tools-for-agents-and-the-conduct-of-looking.md) |
 
@@ -55,7 +55,7 @@ pub struct Standing { interfaces: Vec<InterfaceStanding>, default_routes: Vec<Ro
 pub struct HardwareAddress(..); // octets() for the kernel; serialized as length and locally_administered only
 pub struct Cut { list, kept, seen, table_cut: bool }
 pub enum NetError { Refused { fact }, NotBuilt { fact, system }, Unreadable { fact, what }, Failed { fact, code } }
-impl From<NetError> for a2m_core::Failure;
+impl From<NetError> for Failure; // the shared failure of the core crate
 
 // Pure text readers, public for the tests of other systems: resolv.conf, the kernel's
 // /proc tables, a network mask, and a proxy value with its credentials removed.

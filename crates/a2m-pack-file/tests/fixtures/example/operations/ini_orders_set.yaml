@@ -1,0 +1,20 @@
+operation: example_ini_orders_set
+title: Set the order number prefix and the next number
+effect: write
+commit_points: 1
+inputs:
+  prefix: {type: identifier, description: "The prefix, such as B-"}
+  next_number: {type: integer, description: "The next order number"}
+outputs:
+  prefix: {type: identifier}
+  next_number: {type: integer}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: ini_settings
+    record: orders
+    fields: {prefix: input.prefix, next_number: input.next_number}
+    read_back: {record: orders}
+description: >
+  Sets two values of the order settings in the INI file.

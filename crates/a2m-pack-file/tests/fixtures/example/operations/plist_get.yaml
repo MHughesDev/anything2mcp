@@ -1,0 +1,15 @@
+operation: example_plist_get
+title: Read the property list settings
+effect: read
+inputs: {}
+outputs:
+  title: {type: note}
+  next_number: {type: integer}
+  open: {type: boolean}
+bindings:
+  - mode: file
+    verb: read
+    document: plist_settings
+    record: general
+description: >
+  Reads three values of the property list.

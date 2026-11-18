@@ -23,7 +23,8 @@
 //! themself, single sign-on through an identity provider's pages, the
 //! application's own sign-out, and a session kept in page storage.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use a2m_auth::{
@@ -369,11 +370,24 @@ pub(crate) fn state_from(placed: &Secret) -> Option<BrowserState> {
 /// The auth provider `form_login`.
 pub(crate) struct FormLogin {
     browsers: Browsers,
+    /// The credentials the application refused, each as a digest of the
+    /// session's key and the stored values, in memory only. One of them is
+    /// never sent again: a lockout is real damage, and the keeper counts a
+    /// refusal of a sign-in a person asked for as no attempt (decision
+    /// 0245). A credential stored anew with another value is tried.
+    refused: Mutex<BTreeSet<Digest>>,
 }
 
 impl FormLogin {
     pub(crate) fn new(browsers: Browsers) -> Self {
-        Self { browsers }
+        Self {
+            browsers,
+            refused: Mutex::new(BTreeSet::new()),
+        }
+    }
+
+    fn refused_set(&self) -> MutexGuard<'_, BTreeSet<Digest>> {
+        self.refused.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     async fn sign_in_now(&self, cx: &SignInContext<'_>) -> Result<Material, Failure> {
@@ -402,6 +416,28 @@ impl FormLogin {
                     "the credential of the role `{role}` is not one stored for this target"
                 )));
             }
+        }
+        let user = cx.credential(USER).await?;
+        let password = cx.credential(PASSWORD).await?;
+        let tried = {
+            let key = &cx.session().key;
+            let mut hashed = Vec::new();
+            for part in [
+                key.workspace.to_string(),
+                key.target.to_string(),
+                key.environment.to_string(),
+                key.identity.to_string(),
+            ] {
+                hashed.extend_from_slice(part.as_bytes());
+                hashed.push(0);
+            }
+            hashed.extend_from_slice(user.expose().as_bytes());
+            hashed.push(0);
+            hashed.extend_from_slice(password.expose().as_bytes());
+            Digest::of(&hashed)
+        };
+        if self.refused_set().contains(&tried) {
+            return Err(refused());
         }
         let name = profile_name(cx.session().session);
         let profile = ProfileKey {
@@ -439,8 +475,6 @@ impl FormLogin {
             }
         }
 
-        let user = cx.credential(USER).await?;
-        let password = cx.credential(PASSWORD).await?;
         fill(&tab, &pages.user, &user, deadline, "the username").await?;
         fill(&tab, &pages.password, &password, deadline, "the password").await?;
         press(&tab, &pages.submit, deadline).await?;
@@ -474,7 +508,10 @@ impl FormLogin {
         }
         match sign {
             Sign::SignedIn => {}
-            Sign::Refused => return Err(refused()),
+            Sign::Refused => {
+                self.refused_set().insert(tried);
+                return Err(refused());
+            }
             Sign::CodeRefused => return Err(needs_code("the code entered was refused")),
             Sign::Blocked => return Err(blocked()),
             Sign::Code => return Err(no_sign("after the code was sent")),

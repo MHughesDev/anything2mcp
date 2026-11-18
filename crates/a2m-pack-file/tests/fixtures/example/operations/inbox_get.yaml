@@ -1,0 +1,17 @@
+operation: example_inbox_get
+title: Read one note of the inbox
+effect: read
+inputs:
+  name: {type: entry_name, description: "The entry's name, such as note-1.txt"}
+outputs:
+  name: {type: entry_name}
+  size: {type: integer}
+  content: {type: body}
+bindings:
+  - mode: file
+    verb: read
+    folder: inbox
+    key: {name: input.name}
+    content: true
+description: >
+  Reads one note of the inbox, with its content.

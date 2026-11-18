@@ -1,0 +1,17 @@
+operation: example_orders_log_read
+title: Read the new lines of the order log
+effect: read
+inputs:
+  position: {type: entry_name, description: "Where the last read stopped; none to read from the start", required: false}
+outputs:
+  lines: {type: body, list: true}
+  position: {type: entry_name}
+  outcome: {type: identifier}
+  more: {type: boolean}
+bindings:
+  - mode: file
+    verb: read
+    log: orders
+    from: input.position
+description: >
+  Reads the complete lines appended to the order log since the position given.

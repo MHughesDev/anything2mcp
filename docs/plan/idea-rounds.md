@@ -56,3 +56,15 @@ The owner asked for the ideas the first rounds would most likely reach to be tes
 **Verdict: changed.** Nothing sensitive is readable in the clear, so the idea as stated is wrong. But the product's protection of its own files should not rest on a folder it did not make: taken up as a small change. The engine makes its home and everything in it the owner's alone, as it already does for the socket's folder; where it finds a home that others can enter, `doctor` says so with the fix.
 
 **Next.** Joins the queue for the crates that hold the home's paths, with a test that every entry under a fresh home is closed to group and others.
+
+## Round 15 (2026-11-18, 03:37 UTC)
+
+**Idea.** Some command, asked for JSON, prints something that is not JSON: a stray line of text, a warning on standard output, a usage message. A program that reads the output would then break exactly when something went wrong.
+
+**Test.** Ran every command and subcommand the program lists (54 commands) with `--json`, three ways each: with no argument, with the name of a target that exists, and with a name that does not. 276 runs against a scratch engine, with standard output parsed strictly each time. Commands that start or stop the engine or serve were left out; inputs that fail deeper inside an action (a refused write, a lost connection) were not reached by this.
+
+**Result.** All 276 outputs parse as one JSON value, the refusals and the usage errors included. One successful command also wrote text to standard error, where it belongs. The exit codes seen: 0 for success, 2 for a command line that is itself wrong, 1 for an action that refused, 3 where a person is needed.
+
+**Verdict: ruled out.** There is no such command among those reached. The result stands as evidence for the claim that the command line is safe to drive from a program.
+
+**Next.** Nothing to build. Still open for a later round: whether exit codes tell "try again later" from the other failures, which this run could not reach.

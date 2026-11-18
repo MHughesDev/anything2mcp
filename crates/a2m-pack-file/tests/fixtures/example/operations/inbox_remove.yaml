@@ -1,0 +1,17 @@
+operation: example_inbox_remove
+title: Remove a note of the inbox
+effect: irreversible
+key: name
+commit_points: 1
+inputs:
+  name: {type: entry_name, description: "The entry's name"}
+outputs:
+  name: {type: entry_name}
+bindings:
+  - mode: file
+    verb: delete
+    status: shadow
+    folder: inbox
+    key: {name: input.name}
+description: >
+  Removes one note, or an empty folder, from the inbox.

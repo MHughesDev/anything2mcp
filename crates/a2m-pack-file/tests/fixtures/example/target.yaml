@@ -14,6 +14,13 @@ surfaces:
     kind: file
     folder: config
     stands: alone
+  inbox_files:
+    kind: file
+    folder: inbox
+    stands: alone
+  log_files:
+    kind: file
+    folder: logs
 environments:
   test:
     kind: test

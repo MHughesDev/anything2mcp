@@ -1,0 +1,18 @@
+operation: example_ini_note_stripped_set
+title: Set the order note inside its quotes
+effect: write
+commit_points: 1
+inputs:
+  note: {type: note, description: "The note"}
+outputs:
+  note: {type: note}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: ini_quoted
+    record: orders
+    fields: {note: input.note}
+    read_back: {record: orders}
+description: >
+  Sets the quoted note, through a document that says the quotes are around the value.
