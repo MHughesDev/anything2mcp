@@ -56,15 +56,19 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
             .unwrap_or_else(|| panic!("`{code}` is not in the manifest"));
         assert_eq!(declared.class, *class, "{code}");
     }
-    // And the codes of other crates the pack gives as they are.
+    // And the codes of other crates the pack gives as they are, each in
+    // the class the core's table gives it.
     for code in a2m_pack_file::codes::PASSED_ON {
-        assert!(
-            manifest
-                .failure_codes
-                .iter()
-                .any(|declared| &declared.code == code),
-            "`{code}` is not in the manifest"
-        );
+        let declared = manifest
+            .failure_codes
+            .iter()
+            .find(|declared| &declared.code == code)
+            .unwrap_or_else(|| panic!("`{code}` is not in the manifest"));
+        let row = a2m_core::codes::TABLE
+            .iter()
+            .find(|row| row.code == code.as_str())
+            .unwrap_or_else(|| panic!("`{code}` is not in the core's table"));
+        assert_eq!(declared.class, row.class, "{code}");
     }
     assert_eq!(
         manifest.failure_codes.len(),
