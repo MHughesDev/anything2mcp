@@ -347,6 +347,31 @@ jobs:
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
 
+  web-window:
+    name: The sign-in window of the engine's own browser, on Linux, on a virtual display
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # A machine without a display server fails each window test instead of
+      # skipping it. In the matrix job above the same tests print that they
+      # did not run, and pass.
+      A2M_REQUIRE_DESKTOP: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The test starts a display server of its own and gives the browser
+      # its number; nothing is shown to anyone.
+      - name: Install the virtual display server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+      - name: Test the browser base and the web pack, the window tests among them
+        run: cargo test --locked --no-fail-fast -p a2m-pack-web-browser -p a2m-pack-web-ui
+
   desktop-windows:
     name: The desktop pack on Windows, against its stand
     runs-on: windows-latest

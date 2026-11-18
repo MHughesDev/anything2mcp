@@ -120,6 +120,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - The MCP pack starts a local MCP server program on Windows as well as on macOS and Linux (written for Windows, and not yet run there).
 - The compiler accepts a write of one fixed place, such as a settings value, with no key input. A draft may declare a sign-in before the read that checks it exists. The review summary of a publish carries what each tool starts, sets, and reaches, and where each sign-in sends a credential; the packs do not fill it yet, and the publish page does not show it yet (decision 0252).
 - The file pack discovers a surface's folder, its INI files and property lists, and its growing logs, and drafts reads for each: a folder's list and a read by name, one read for each settings section, and a log read from a position. A value whose key names a secret is never recorded or drafted. Nothing that writes is drafted (decision 0255).
+- A person can sign in to a web application themself, in a window of the engine's own browser, on its own sign-in page or through single sign-on, before anything is published; the engine types and reads nothing there. Reads made from inside a page stop by name when the target's declared sign of an expired session appears, and the session is renewed (decision 0254).
 
 ### Changed
 
@@ -196,6 +197,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - A command or a local MCP server is no longer given a variable that makes it load other code, such as `LD_PRELOAD` or `NODE_OPTIONS`.
 - A script a target keeps runs only through an interpreter in its one known form, and only from a run folder no other user can change.
 - A sign-in sends a credential only to an address the target declares. A sign-in that only drafts declare always goes to the person's page, which shows every address first, and a stored credential is used only under a published version. Each credential belongs to the target it was stored for; one stored before this change must be stored again. A refused password a person asked to try is not tried again by a later run (decision 0248).
+- A stored password is set into the field that was checked, never typed into whatever holds focus, and the sign-in page is proven again before each value and before the press; a sign-in page that holds a frame is a named stop. A sign-in in a browser refuses an entry that also covers a surface of another kind, so a web session's cookies go to no other surface. Cookies are placed only for the run's own origins (decision 0254).
 
 ## [0.0.1]
 
