@@ -349,6 +349,8 @@ pub(crate) enum Meant {
     ElementRemoved { list: ByteSpan, index: usize },
     /// One element added at the end of the JSON list at this span.
     ElementAdded { list: ByteSpan },
+    /// These values of a settings file, by their spans in the old file.
+    Values(Vec<ByteSpan>),
 }
 
 type Literals<'a> = Vec<Vec<&'a [u8]>>;
@@ -418,7 +420,7 @@ fn same_cells(old: &OpenFile, new: &OpenFile, meant: &Meant) -> Option<bool> {
 fn json_text(file: &OpenFile) -> Option<(&JsonNode, &[u8], u64)> {
     match &file.content {
         Content::Json { root, offset } => Some((root, file.bytes.get(at(*offset)..)?, *offset)),
-        Content::Cells(_) => None,
+        Content::Cells(_) | Content::Settings(_) => None,
     }
 }
 
@@ -478,6 +480,10 @@ impl Walk<'_> {
 /// The untouched check: whether the new file, parsed again, holds at every
 /// place outside the named ones exactly what the old file held.
 pub(crate) fn untouched(old: &OpenFile, new: &OpenFile, meant: &Meant) -> bool {
+    if let (Content::Settings(old_file), Content::Settings(new_file)) = (&old.content, &new.content)
+    {
+        return matches!(meant, Meant::Values(changed) if old_file.same_except(new_file, changed));
+    }
     if let Some(same) = same_cells(old, new, meant) {
         return same;
     }

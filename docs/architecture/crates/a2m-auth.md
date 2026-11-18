@@ -10,7 +10,7 @@ The session keeper and the auth providers. The keeper is the only code that sign
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
 | Depends on | `a2m-core`; `a2m-vault` to seal saved state and for the redactor; `a2m-ledger` for its tables; `a2m-telemetry` for the clock, logs, and metrics. Outside: `reqwest` for identity services' token endpoints; `sha1` and `sha2` for one-time codes and proof keys; `serde`, `serde_json`, `tokio`, `tracing`, `zeroize`; and, behind the feature `tls`, `rustls` with the ring provider ([record 0084](../../decisions/0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md)), `rustls-platform-verifier`, and `webpki-roots` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). The OAuth exchanges and the encodings are this crate's own code |
-| Built in | Phase 2: slices 2.3 to 2.6, groups C, D, E, H. Phase 7: moving sessions between runners, the operating system's broker, hosted sign-in |
+| Roadmap packages | Phase 2: slices 2.3 to 2.6, groups C, D, E, H. Phase 7: moving sessions between runners, the operating system's broker, hosted sign-in |
 | Carries out | Spec sections [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [602](../../spec/6-running-it/602-identity-on-a-shared-server.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (sign-in), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (the key store unreachable); the [auth provider interface](../../reference/technical-reference.md#auth-provider-interface); decisions 0030, 0032, and 0035; [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md), which records what a safety audit changed |
 
 ## Owns
@@ -59,7 +59,27 @@ pub struct AuthEntry {
     pub idle: Option<Duration>, pub absolute: Option<Duration>,
     pub attempt_limit: u32,                           // default 1
     pub movable: bool,                                // default true
+    pub surfaces: EntrySurfaces,                      // decisions 0245 and 0248: empty by default
 }
+impl AuthEntry { pub fn published(self) -> Self; /* new, setting, credential, required, optional, only */ }
+/// The entry's surfaces as the plan holds them in the environment, the plan's pack sections of their
+/// kinds, every address the target declares there, whether the plan is a published version's (only the
+/// caller that loaded one says so), and whether the person carried out this one sign-in on a page that
+/// showed every address (only the caller that took the act says so). Decision 0248.
+pub struct EntrySurfaces {
+    pub surfaces: Vec<SurfacePlan>, pub sections: Vec<PackSection>,
+    pub from_published: bool, pub shown_to_person: bool, pub destinations: SignInDestinations,
+}
+impl EntrySurfaces {
+    pub fn of(plan: &Plan, auth: &AuthPlan, environment: &Environment) -> Self;
+    pub fn published(self) -> Self; pub fn shown_to_person(self) -> Self;
+}
+/// Where a sign-in may send: the target's surface addresses in the environment, compared by origin
+/// for http and https, as written otherwise. No setter.
+pub struct SignInDestinations { /* new(addresses), allows(&str), iter(), is_empty() */ }
+/// One address a sign-in sends a credential, a token, or the person to, and what it is.
+pub struct SignInAddress { pub what: String, pub address: String }
+pub fn sign_in_addresses(provider: &dyn AuthProvider, entry: &AuthEntry) -> Vec<SignInAddress>;
 
 pub struct Keeper { /* Clone; an Arc inside */ }
 impl Keeper {
@@ -68,12 +88,15 @@ impl Keeper {
     pub async fn report(&self, lease: &SessionLease, sign: ExpirySign);
     pub async fn sign_in(&self, key: &SessionKey, entry: Arc<AuthEntry>, acting_for: Option<PrincipalId>) -> Result<SignInTicket, Failure>; // session.login
     pub async fn status(&self, workspace: &WorkspaceId, identity: Option<&Identity>) -> Result<Vec<SessionStatus>, Failure>;              // session.status, session.list
+    pub async fn signed_in(&self, session: SessionId, limit: Duration) -> Result<SessionStatus, Failure>; // waits for the outcome of sign_in; starts nothing (decision 0205)
     pub async fn timeline(&self, session: SessionId) -> Result<Vec<SessionEvent>, Failure>;
     pub async fn revoke(&self, key: &SessionKey, by: EndedBy) -> Result<(), Failure>;   // session.revoke (Owner), session.end (Administrator)
     pub async fn tick(&self);          // timers; reads the keeper's clock
     pub async fn idle(&self);          // waits until no work it started is in flight
     pub fn waiting(&self) -> usize;    // calls waiting for a session now
     pub fn needs(&self, provider: &ProviderName) -> Result<ProviderNeeds, Failure>;
+    pub fn sign_in_addresses(&self, target: &TargetName, entry: &AuthEntry) -> Result<Vec<SignInAddress>, Failure>; // checked first
+    pub fn allows(&self, session: SessionId, entry: &AuthEntry) -> bool; // a drafts' entry sends only where its person allowed
 }
 impl KeeperBuilder {   // local_worker(Arc<KeeperWorker>), settings(KeeperSettings), telemetry(Telemetry), random(Arc<dyn RandomSource>), build()
 }
@@ -144,13 +167,14 @@ pub trait AskPerson: Send + Sync {
     fn return_address(&self) -> Option<String> { None }   // where a person's browser comes back to after a link
 }
 pub enum PersonAsk { OpenLink { url: String, reason: PersonReason }, EnterCode { reason: PersonReason }, Notify { reason: PersonReason } }
-pub enum PersonAnswer { Done(Returned), Declined, NoAnswer, Unreachable }   // Returned: named values, each a Secret
+pub enum PersonAnswer { Done(Returned), Declined, NoAnswer, Unreachable }   // Returned: named values, each a Secret; new, with, get, iter, is_empty, only
 pub enum PersonReason { SignIn, Consent, SecondFactor, CredentialRefused }
 
 pub trait AuthProvider: Send + Sync {
     fn name(&self) -> ProviderName;
     fn needs(&self) -> ProviderNeeds;   // person, silent_renewal, light_prompt, movable, confirms
     fn check(&self, entry: &AuthEntry) -> Result<(), Failure>;   // the entry is usable; nothing is opened
+    fn destinations(&self, entry: &AuthEntry) -> Vec<SignInAddress> { Vec::new() } // what it sends to itself (decision 0248)
     fn sign_in<'a>(&'a self, cx: &'a SignInContext<'a>) -> BoxFuture<'a, Result<Material, Failure>>;
     fn is_signed_in<'a>(&'a self, material: &'a Material, now: Timestamp) -> BoxFuture<'a, SignedIn>;
     fn detect_expiry(&self, sign: &RawSign) -> Option<ExpirySign>;
@@ -159,7 +183,8 @@ pub trait AuthProvider: Send + Sync {
     fn inject(&self, material: &Material, sink: &mut dyn CredentialSink) -> Result<(), Failure>;
 }
 /// What a provider is given: session(), entry(), now(), rung(), credential(role), has_credential(role),
-/// register(&Secret), random(&mut [u8]), ask_person(PersonAsk), return_address(), one_time_code().
+/// register(&Secret), random(&mut [u8]), ask_person(PersonAsk), return_address(), one_time_code(),
+/// check_address(what, address) just before a request the provider makes itself.
 pub struct SignInContext<'a> { /* opaque */ }
 /// A session's credentials: named secret parts, named plain parts, an expiry, a profile. Not Clone,
 /// not Serialize; Debug shows names only. Built with new / with_secret / with_plain / expiring_at / with_profile.
@@ -171,7 +196,7 @@ pub struct ProviderSet { /* new(), neutral(), with(Arc<dyn AuthProvider>) -> Res
 pub trait Credentials: Send + Sync {
     fn open<'a>(&'a self, session: &'a SessionKey, reference: &'a CredentialRef) -> BoxFuture<'a, Result<Secret, Failure>>;
 }
-pub struct StoredCredentials { /* new(SessionStore, Arc<Vault>); put(workspace, identity, reference, &Secret) */ }
+pub struct StoredCredentials { /* new(SessionStore, Arc<Vault>); put(workspace, identity, reference, &Secret); holds(workspace, identity, reference) -> bool, opening nothing */ }
 
 /// The module `tls`: the one way an HTTP client of the product is made (record 0157).
 pub mod tls {
@@ -215,6 +240,8 @@ Contracts that the signatures do not show:
 - **A stored credential signs in without anyone.** A session that is `absent` or `expired`, whose provider needs no person, is signed in by the keeper on the first lease that asks, within the attempt limit. A provider that needs a person is never started by a lease: the person starts it with `session.login`.
 - **A call returns on the record; `idle` waits for the rest.** A call is answered as soon as the session's row decides it. The task that wrote the row may still have steps to take after its last write: the notice to the person, the home runner dropping what it held, a metric. `idle` covers all of it: a session is marked as having work in flight before the row says the work has begun, the marks are counted so that two pieces of work on one session overlap safely, and the mark is dropped when the task ends. Anything that reads what the work leaves behind, a test above all, waits on `idle` first. `waiting` counts only calls that are waiting now; a call that is cancelled is no longer counted.
 - **What waits for what.** An interactive call waits up to its wait for anything. A call with `NoWait`, a pipeline, waits for the keeper's own work (a check, a silent renewal, a stored-credential sign-in) up to the keeper's work limit, and never for a person. A wait is counted on the keeper's clock and looked at on each `tick`, so tests move time and nothing sleeps.
+- **A sign-in goes only where a published version says** ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)). Before any work, the keeper checks the entry: the provider's own `check`; every credential reference belongs to the session's target (`vault://<target>/...`, else `input`/`credential_of_another_target`); and every address the provider names in `destinations` is allowed by the entry's `SignInDestinations` (else `policy`/`destination_not_declared`). The worker checks again before it calls the provider, and the OAuth providers check each address just before the request. A drafts' entry signs in only when it is marked `shown_to_person`, and renews never: a lease's automatic sign-in, a renewal under a drafts' entry, and `sign_in` with an entry neither published nor shown stop with `needs_login`. A session whose last sign-in was under drafts is not renewed without its person. A lease under a drafts' entry is given only when every address the entry sends the session's credentials to is one the person allowed for that session (in memory; after a restart, none).
+- **A credential belongs to its target.** `StoredCredentials` seals a credential with `SealContext::credential`, whose item names the target the reference belongs to, and opens it under the session's target. One sealed for another target, or before the target was in the context, fails as `input`/`credential_unreadable`, which tells the person to store it again.
 - **The keeper is told the identity, it does not choose it.** `LeaseRequest` carries the `ActAs` decision that `a2m-actions` obtained from `a2m-policy`, and the person the run acts for. The keeper records the decision with the lease, and refuses with `policy`, `identity_not_allowed` a lease or a sign-in on a person's session for any run that does not act for that person. A person's saved state is sealed under that owner's key, so a lease for the wrong owner could not open it anyway.
 - **A lease is a snapshot, not a promise.** It names an epoch. `apply` asks the home runner for the credentials a lease of that epoch may place, and refuses with `session_expired`, `lease_stale` when the credentials held are of another epoch, or the session has ended at a later one, whatever is held. So a lease from before a renewal, an expiry, or a revoke places nothing. A driver that sees a sign of expiry asks `detect_expiry`, stops the step with `session_expired`, and the engine relays the report; a report for an epoch that is no longer the session's changes nothing.
 - **An end is remembered where the credentials are.** The session's record is in the store, which the home runner's half cannot read when a lease is applied: `apply` does not wait, and the runner may be another machine. So the order of a session's changes is carried to it by epochs. `SignOut` and `Forget` name the epoch they end: the epoch of the record once it was ended, or the epoch of credentials that were never made the session's. The worker drops what it holds at that epoch or an earlier one, leaves newer credentials alone, and remembers the epoch. From then on nothing of an earlier epoch is held, by a restore that was slow above all, and no lease of an earlier epoch places anything. Work that finds the session ended, or newer credentials held, when it comes to hold what it made, holds nothing and answers `Ended`.
@@ -241,7 +268,7 @@ Each is checked by `AuthProvider::check`, which refuses a setting or a credentia
 | `oauth_client_credentials` | `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` (`basic` or `body`) | `client_secret` | `Authorization: Bearer` and the access token |
 | `oauth_authorization_code` | `authorization_endpoint`, `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` | `client_secret`, optional | The same |
 
-A token endpoint must be an `https` address, or `http` to a loopback address written as an IP address in `127.0.0.0/8` or `::1`; a name, `localhost` included, is not one, as in the packs (decision 0192). The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
+A token endpoint and an authorization endpoint must be addresses the target declares for its surfaces in the session's environment (decision 0248; the table of every provider's addresses is there); a redirect from the token endpoint is not followed and is `unexpected_response`. A token endpoint must be an `https` address, or `http` to a loopback address written as an IP address in `127.0.0.0/8` or `::1`; a name, `localhost` included, is not one, as in the packs (decision 0192). The one function that judges it, `link::loopback`, asks `ScopedHost::may_leave_this_machine` of `a2m-core` of the host as the URL parser writes it, the question every check of a plain link asks; `::ffff:127.0.0.1` and an address with a zone are not loopback either ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
 
 ## Used by, and uses
 
@@ -292,7 +319,10 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 | Must always hold | Proven by |
 | --- | --- |
 | Ten runs that meet an expired session cause one renewal | `ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens`, held on one thread so that all ten are seen waiting; `one_renewal_also_under_real_parallelism`; and against a token endpoint in `client_credentials_are_exchanged_once_renewed_once_and_shown_nowhere`. Hypothesis H-04 |
-| A refused stored credential is not tried again | `a_refused_stored_credential_is_not_tried_again`, `a_held_credential_the_system_refuses_is_offered_once_and_no_more`, and the token endpoint's own count of requests. The test application's lockout counter is still owed |
+| A sign-in sends only to a declared address, and a redirect elsewhere is not followed | `a_published_sign_in_sends_only_to_an_address_the_target_declares`, against two services, one the target declares and one it does not, which counts what it hears |
+| A drafts' sign-in sends nothing until its person carries it out, and is never renewed without them | `a_sign_in_the_drafts_declare_sends_nothing_until_its_person_carries_it_out`, which also shows a published sign-in renewed without anyone |
+| A credential opens only for the target it was stored for | `a_credential_opens_only_for_the_target_it_was_stored_for`, and the vault's `a_credential_opens_only_for_the_target_it_was_stored_for` |
+| A refused stored credential is not tried again | `a_refused_sign_in_a_person_asked_for_is_not_tried_again_by_a_lease`; `a_refused_stored_credential_is_not_tried_again`, `a_held_credential_the_system_refuses_is_offered_once_and_no_more`, and the token endpoint's own count of requests. The test application's lockout counter is still owed |
 | No transition outside the table of moves | `every_pair_of_states_is_legal_only_when_the_table_lists_it`, over all 64 pairs; every write of a state passes `legal_move` |
 | No credential appears in a lease, a status, the timeline, a log, or a failure | The planted-secret tests, run against every neutral provider: `a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else` and the two OAuth tests, which also read the keeper's log lines |
 | Every secret is registered with the redactor | The same tests ask the redactor about each stored, received, and placed value |
@@ -317,6 +347,10 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 7. Partly done: saved state sealed in the vault and restored after a restart. Not built: moving a session to another runner, and a home runner other than the local engine. Phases 2 and 7.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: ends remembered by epoch on the home runner, a restore and a lease ordered by the store, and provider failures redacted.
 9. Done, behind the feature `tls`: the module `tls` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). `Trust` (the named roots, checked first by the same rules on every system, then the platform's verifier, or the bundled roots on a machine with none; TLS 1.2 and 1.3), `install` and `installed` (one trust for the process, set when the engine starts), `client_builder` (the one way an HTTP client is made), and `refusal` (the named failure of a request that failed in its handshake). Not built: reading `network.trust_roots` in the product crate, mutual TLS, a server listener.
+
+10. Done: `link::loopback` asks the one question of a plain link, and is pinned over the shared corpus of address spellings with its old form kept beside it ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
+
+11. Done: what audit 5 found ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)): `SignInDestinations`, `AuthProvider::destinations`, the checks before any work and before each request, the drafts' gate on sign-in and renewal, the allowances a person gave a session, credentials bound to their target; and a person's refused sign-in counted as an attempt.
 
 ## Open points
 

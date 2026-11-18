@@ -33,6 +33,7 @@ pub mod providers;
 mod sink;
 mod state;
 mod store;
+mod surfaces;
 mod tables;
 #[cfg(test)]
 mod tests;
@@ -50,11 +51,13 @@ pub use material::Material;
 pub use name::{CredentialRef, ProfileRef, ProviderName};
 pub use person::{AskPerson, PersonAnswer, PersonAsk, PersonReason, Returned};
 pub use provider::{
-    AuthProvider, ExpirySign, ProviderNeeds, ProviderSet, RawSign, Rung, SignInContext, SignedIn,
+    AuthProvider, ExpirySign, ProviderNeeds, ProviderSet, RawSign, Rung, SignInAddress,
+    SignInContext, SignedIn, sign_in_addresses,
 };
 pub use sink::{ChallengeScheme, CredentialSink};
 pub use state::{CallRule, call_rule, legal_move};
 pub use store::{EventKind, SessionEvent, SessionRow, SessionStore};
+pub use surfaces::{EntrySurfaces, SignInDestinations};
 pub use work::{
     InProcessWork, KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, RunProbe, Work, WorkOutcome,
 };
@@ -62,9 +65,11 @@ pub use work::{
 /// The failure codes this crate produces. Each belongs to exactly one class.
 pub mod codes {
     pub use crate::failure::{
-        AUTH_PROVIDER_UNKNOWN, AUTH_SETTINGS_INVALID, CREDENTIAL_MISSING, CREDENTIAL_REFUSED,
-        DEVICE_REQUIRED, HEADROOM_SHORT, IDENTITY_NOT_ALLOWED, LEASE_STALE, NEEDS_LOGIN, NEEDS_MFA,
-        TLS_NOT_ENABLED, UNEXPECTED_RESPONSE, UPSTREAM_UNAVAILABLE,
+        AUTH_PROVIDER_UNKNOWN, AUTH_SETTINGS_INVALID, CREDENTIAL_MISSING,
+        CREDENTIAL_OF_ANOTHER_TARGET, CREDENTIAL_REFUSED, CREDENTIAL_UNREADABLE,
+        DESTINATION_NOT_DECLARED, DEVICE_REQUIRED, HEADROOM_SHORT, IDENTITY_NOT_ALLOWED,
+        LEASE_STALE, NEEDS_LOGIN, NEEDS_MFA, TLS_NOT_ENABLED, UNEXPECTED_RESPONSE,
+        UPSTREAM_UNAVAILABLE,
     };
     pub use crate::keeper::SESSION_MOVE_ILLEGAL;
     pub use crate::provider::AUTH_PROVIDER_DUPLICATE;

@@ -41,6 +41,34 @@ fn draft_file(folder: &CheckedPath, path: &RelPath) -> Result<CheckedPath, Failu
     folder.join(path.as_str())
 }
 
+/// Refuses a path that passes through a link below the target's folder
+/// (audit finding DD-1): a draft is written or removed only in the target's
+/// own folders, never in a folder a link leads to, even one inside the
+/// project. A part not there yet is no link.
+fn no_link_on_the_way(folder: &CheckedPath, path: &RelPath) -> Result<(), Failure> {
+    let parts: Vec<&str> = path.parts().collect();
+    let mut at = String::new();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        if !at.is_empty() {
+            at.push('/');
+        }
+        at.push_str(part);
+        match folder.join(&at)?.entry_kind()? {
+            EntryKind::Folder | EntryKind::Absent => {}
+            _ => {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!(
+                        "`{at}` of the target is a link or not a folder, and a draft is never written or removed through one."
+                    ),
+                    "Make it a folder of the target's own.",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn no_such_file(target: &TargetName, path: &RelPath) -> Failure {
     codes::input(
         codes::NOT_FOUND,
@@ -96,6 +124,68 @@ fn its_own(problem: &a2m_files::Diagnostic, path: &RelPath) -> bool {
         && matches!(problem.stage, Stage::Parse | Stage::Validate)
 }
 
+/// The refusal of a written file that makes a binding verified, or keeps
+/// one verified while changing it (audit finding PM-2): only
+/// `binding.promote` makes a binding verified, on its evidence. Each binding
+/// the new text holds as `verified` must be, at the same place of the same
+/// operation, a binding the target's files on disk hold as `verified`, of
+/// the same mode, written the same. `None` where the text may be written.
+fn verified_by_hand(previous: &Sources, edited: &SourceFile) -> Option<Failure> {
+    if edited.kind.as_str() != "operation" {
+        return None;
+    }
+    let before = |operation: &str| {
+        previous
+            .of_kind("operation")
+            .flat_map(|file| file.docs.iter())
+            .find(|doc| doc.text("operation") == Some(operation))
+    };
+    for doc in &edited.docs {
+        let Some(operation) = doc.text("operation") else {
+            continue;
+        };
+        let bindings = doc.get("bindings").map(a2m_files::Located::items);
+        for (position, binding) in bindings.unwrap_or_default().iter().enumerate() {
+            if binding.text("status") != Some("verified") {
+                continue;
+            }
+            let earlier = before(operation)
+                .and_then(|earlier| earlier.get("bindings"))
+                .and_then(|bindings| bindings.items().get(position).cloned());
+            let kept = earlier.as_ref().is_some_and(|earlier| {
+                earlier.text("status") == Some("verified") && earlier.to_json() == binding.to_json()
+            });
+            if kept {
+                continue;
+            }
+            let (message, next) = if earlier
+                .as_ref()
+                .is_some_and(|earlier| earlier.text("status") == Some("verified"))
+            {
+                (
+                    format!(
+                        "The binding {} of `{}` is verified, and this text changes it while leaving it `verified`: a changed binding has not earned what the verified one did.",
+                        position + 1,
+                        codes::shown(operation)
+                    ),
+                    "Write the changed binding with `status: draft`, test it, and make it verified with `binding.promote`.",
+                )
+            } else {
+                (
+                    format!(
+                        "The binding {} of `{}` is written as `verified`, and the target's files do not hold it so: a binding is made verified only by `binding.promote`, on its evidence.",
+                        position + 1,
+                        codes::shown(operation)
+                    ),
+                    "Write it with `status: draft`, test it and try it, then call `binding.promote`.",
+                )
+            };
+            return Some(codes::input(codes::BINDING_NOT_PROMOTABLE, message, next));
+        }
+    }
+    None
+}
+
 handler!(
     /// `draft.write`: one draft file, validated and linted before it is
     /// written. A file that does not read, or does not fit its kind's
@@ -133,12 +223,30 @@ handler!(
                 Err(problem) => return Ok(Err(Diagnostics::from(problem))),
             };
             let root = TargetRoot::new(folder.as_path());
-            let previous = a2m_files::load(&root, set)
-                .unwrap_or_else(|_| Sources::from_files(root.clone(), Vec::new()));
+            let loaded = a2m_files::load(&root, set).ok();
+            let previous = loaded
+                .clone()
+                .unwrap_or_else(|| Sources::from_files(root.clone(), Vec::new()));
+            // What the disk holds of the file now, where the target as a
+            // whole does not load.
+            let on_disk = || {
+                let file = draft_file(&folder, &at).ok()?;
+                let bytes = file.read(LARGEST_TARGET_FILE as u64).ok()?;
+                let read = SourceFile::read(at.clone(), &bytes, set).ok()?;
+                Some(Sources::from_files(root.clone(), vec![read]))
+            };
+            let before = match loaded {
+                Some(loaded) => loaded,
+                None => on_disk().unwrap_or_else(|| previous.clone()),
+            };
+            if let Some(refused) = verified_by_hand(&before, &edited) {
+                return Err(refused);
+            }
             let problems = a2m_files::lint_one(&previous, edited.clone(), set);
             if problems.iter().any(|problem| its_own(problem, &at)) {
                 return Ok(Err(problems));
             }
+            no_link_on_the_way(&folder, &at)?;
             let file = draft_file(&folder, &at)?;
             if matches!(file.entry_kind()?, EntryKind::Folder | EntryKind::Link) {
                 return Err(codes::input(
@@ -196,10 +304,45 @@ handler!(
     draft_delete,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let path = draft_path(call.required("file")?)?;
+        // One file by `file`, or several by `files` (decision 0219): the
+        // same checks for each, every one checked before any is removed,
+        // and all removed or none.
+        let named: Vec<String> = match (call.text("file"), call.input.get("files")) {
+            (Some(one), None) => vec![one.to_owned()],
+            (None, Some(Json::Array(many))) if !many.is_empty() => many
+                .iter()
+                .map(|file| file.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    codes::input(
+                        codes::SCHEMA_INVALID,
+                        "`files` holds a value that is not a path.",
+                        "Give each draft's path inside the target's folder as text.",
+                    )
+                })?,
+            _ => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    "`draft.delete` takes one draft by `file`, or several by `files`, and not both.",
+                    "Name the drafts to remove, by their paths inside the target's folder.",
+                ));
+            }
+        };
+        let mut paths = Vec::with_capacity(named.len());
+        for file in &named {
+            let path = draft_path(file)?;
+            if paths.contains(&path) {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("`{path}` is named twice."),
+                    "Name each draft once.",
+                ));
+            }
+            paths.push(path);
+        }
         let project_folder = call.project_folder()?.to_path_buf();
-        let (kernel, named, at) = (kernel.clone(), target.clone(), path.clone());
-        let (digest, problems) = off_thread(move || {
+        let (kernel, named, all) = (kernel.clone(), target.clone(), paths.clone());
+        let (removed, problems) = off_thread(move || {
             let set = kernel.providers().compiler_set();
             let folder = target_folder(&project_folder, &named)?;
             if !folder.is_dir() {
@@ -209,36 +352,54 @@ handler!(
                     "Call `target.list` to see the project's targets.",
                 ));
             }
-            if at.folder().is_none() {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
-                    "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
-                ));
-            }
-            let file = draft_file(&folder, &at)?;
-            match file.entry_kind()? {
-                EntryKind::File => {}
-                EntryKind::Absent => return Err(no_such_file(&named, &at)),
-                _ => {
+            let mut checked = Vec::with_capacity(all.len());
+            for at in &all {
+                if at.folder().is_none() {
                     return Err(codes::input(
                         codes::PATH_NOT_ALLOWED,
-                        format!("`{at}` is not a regular file: a link, a folder, or a device is never removed."),
-                        "Name a file of the target's folder.",
+                        format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
+                        "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
+                    ));
+                }
+                no_link_on_the_way(&folder, at)?;
+                let file = draft_file(&folder, at)?;
+                match file.entry_kind()? {
+                    EntryKind::File => {}
+                    EntryKind::Absent => return Err(no_such_file(&named, at)),
+                    _ => {
+                        return Err(codes::input(
+                            codes::PATH_NOT_ALLOWED,
+                            format!("`{at}` is not a regular file: a link, a folder, or a device is never removed."),
+                            "Name a file of the target's folder.",
+                        ));
+                    }
+                }
+                let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
+                if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
+                    && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
+                {
+                    return Err(codes::input(
+                        codes::PATH_NOT_ALLOWED,
+                        format!("`{at}` is not in a folder of the target's drafts: no file kind claims it, so it is not removed."),
+                        "Name a draft the compiler reads; `target.status` lists them.",
+                    ));
+                }
+                checked.push((at.clone(), file, bytes));
+            }
+            // Every file passed its checks: each is removed. A removal that
+            // fails puts back the ones removed before it.
+            for (done, (at, file, _)) in checked.iter().enumerate() {
+                if let Err(failure) = file.remove_file() {
+                    for (_, earlier, bytes) in &checked[..done] {
+                        let _ = earlier.write(bytes);
+                    }
+                    return Err(codes::busy(
+                        failure.code().clone(),
+                        format!("`{at}` could not be removed, so no draft was: {}", failure.message()),
+                        failure.next_step(),
                     ));
                 }
             }
-            let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
-            if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
-                && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
-            {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    format!("`{at}` is not in a folder of the target's drafts: no file kind claims it, so it is not removed."),
-                    "Name a draft the compiler reads; `target.status` lists them.",
-                ));
-            }
-            file.remove_file()?;
             let root = TargetRoot::new(folder.as_path());
             let problems = match a2m_files::load(&root, set) {
                 Ok(sources) => match a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION) {
@@ -247,18 +408,29 @@ handler!(
                 },
                 Err(problems) => problems,
             };
-            Ok((a2m_core::Digest::of(&bytes), problems))
+            let removed: Vec<(String, a2m_core::Digest)> = checked
+                .iter()
+                .map(|(at, _, bytes)| (at.as_str().to_owned(), a2m_core::Digest::of(bytes)))
+                .collect();
+            Ok((removed, problems))
         })
         .await?;
-        Ok(Output::ok(json!({
+        let mut shown = json!({
             "target": target.as_str(),
-            "file": path.as_str(),
+            "files": removed
+                .iter()
+                .map(|(file, digest)| json!({"file": file, "digest": digest.to_string()}))
+                .collect::<Vec<_>>(),
             "removed": true,
-            "digest": digest.to_string(),
             "ok": !problems.has_errors(),
             "problems": problems_json(&problems),
-        }))
-        .then(Next::new(
+        });
+        // One file named by `file` is answered as before.
+        if let ([(file, digest)], Some(_)) = (removed.as_slice(), call.text("file")) {
+            shown["file"] = json!(file);
+            shown["digest"] = json!(digest.to_string());
+        }
+        Ok(Output::ok(shown).then(Next::new(
             "test.run",
             json!({"target": target.as_str()}),
             "to run the gates on the drafts that are left",
@@ -412,11 +584,19 @@ handler!(
                 json!({"target": target.as_str()}),
                 "after correcting the files the problems name",
             ),
-            (true, None) => Next::new(
-                "publish.request",
-                json!({"target": target.as_str()}),
-                "when the drafts are ready for a person's review",
-            ),
+            (true, None) => {
+                super::build::publish_next(
+                    kernel,
+                    &call,
+                    &target,
+                    Next::new(
+                        "publish.request",
+                        json!({"target": target.as_str()}),
+                        "when the drafts are ready for a person's review",
+                    ),
+                )
+                .await
+            }
             (true, Some(_)) => Next::new(
                 "tool.search",
                 json!({"target": target.as_str()}),
@@ -459,6 +639,9 @@ handler!(
         let compiled = match compiled {
             Ok(compiled) => compiled,
             Err(problems) => {
+                // The gates did not pass: the action failed, exit code 1,
+                // with the refusal a publish would give (decision 0219).
+                let refusal = crate::offline::publish_refusal(&target, problems.clone());
                 return Ok(Output::ok(json!({
                     "target": target.as_str(),
                     "passed": false,
@@ -472,6 +655,7 @@ handler!(
                     "missing": crate::offline::without_test(&target, &problems),
                     "not_run": crate::offline::gates_not_built(),
                 }))
+                .failed(refusal)
                 .then(Next::new(
                     "draft.lint",
                     json!({"target": target.as_str()}),
@@ -485,7 +669,8 @@ handler!(
             vault: kernel.inner.vault.clone(),
         };
         let gates =
-            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world, None)
+                .await?;
         let all_passed = gates.passed;
         let output = Output::ok(json!({
             "target": target.as_str(),
@@ -499,6 +684,14 @@ handler!(
             "not_run": crate::offline::gates_not_built(),
         }))
         .warn("The schema and lint gate and the offline tests run; the other gates are not built, so the result is never complete.");
+        // Gates that did not pass are a failed action, exit code 1, with
+        // the refusal a publish would give; never "a person is needed"
+        // (decision 0219).
+        let output = if all_passed {
+            output
+        } else {
+            output.failed(gates.refusal(&target))
+        };
         Ok(output.then(if all_passed {
             Next::new(
                 "publish.request",

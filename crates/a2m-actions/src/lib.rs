@@ -47,8 +47,8 @@ mod tools;
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
 pub use acts::{
-    ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS,
-    ShownField,
+    ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, AskedSecret, PersonActAsk, PersonActId,
+    SHOWN_VALUE_CHARS, ShownField,
 };
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
@@ -67,13 +67,14 @@ pub use faces::{
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
-pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
+pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, PASSPHRASE_VARIABLE, Paths};
 pub use person::{
     ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, MAY_NOT_BE_READ_BACK, NOT_READ_BACK,
     NOW_CANNOT_BE_READ, PRESENCE_WINDOW_MS, PREVIEW_RECORDS, PREVIEW_VALUE_CHARS, PersonSurface,
     PresenceAsk, PresenceProof, PresenceReport, PreviewBinding, PreviewField, PreviewNotice,
     PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
+pub use project::PROJECT_SETTINGS_DIFFER;
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;
 pub use settings::{Settings, Sources};

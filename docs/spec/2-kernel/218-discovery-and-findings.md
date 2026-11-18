@@ -1,6 +1,6 @@
 # 218. Discovery and findings
 
-Discovery is how the runtime learns what a system can do. This section defines what a discoverer may do, what it returns, and the rules that stop a guess from passing as a fact. Much of the discipline here was learned from the REA project ([research note 16](../../research/16-rea-methods.md)); the design is ours.
+Discovery is how the runtime learns what a system can do. This section defines what a discoverer may do, what it returns, and the rules that stop a guess from passing as a fact. Much of the discipline here was learned from the REA project ([research note 16](../../research/16-rea-methods.md)); the design is ours. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## Three rules first
 
@@ -76,7 +76,7 @@ An empty result means nothing by itself.
 
 ## Limitations
 
-Each limitation is a code from a closed list and a sentence. Codes, so that a machine can act on them; a sentence, so that a person understands.
+Each limitation is a code from a closed list and a sentence. The list below and the reasons for an unknown subject are fixed in `a2m-core` as `LimitationCode` and `UnknownReason`; kinds of finding are registered names, which each discoverer brings. Codes, so that a machine can act on them; a sentence, so that a person understands.
 
 | Code | Meaning |
 | --- | --- |
@@ -140,6 +140,5 @@ Findings are stored with a format number. When the format changes, old findings 
 
 ## Open points
 
-- The closed lists: limitation codes and reasons for an unknown subject. Fixed when the first discoverer is built. Kinds of finding are registered names, and the first discoverer registers the first.
 - Whether a help listing counts as the live system observing itself or as a description. It is the running program's answer, so `discovered` for "this command is listed", and `not_exercised` until it is run.
 - How long a finding stays valid; see section 219.

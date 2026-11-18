@@ -410,6 +410,12 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
     );
     let both = ["escapes/service-post", "escapes/service-socket"];
     assert_eq!(arrived_all(&app, &both).await, both);
+    // The tab that may act passes the worker by: a request of its page
+    // reaches the application, which serves no such page, and is not
+    // answered by the worker (decision 0245, audit finding M6).
+    let asked = "fetch('/escapes/answered-by-worker').then((answer) => answer.status + ' ' + answer.statusText)";
+    let answered = must(acting.page.as_the_page(asked, soon()).await);
+    assert!(answered.starts_with("404"), "{answered}");
     drop(acting);
     app.reset().await.unwrap();
 

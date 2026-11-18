@@ -313,6 +313,27 @@ pub fn system_prompt() -> Arc<dyn PresencePrompt> {
     }
 }
 
+/// The prompt this build has for this machine, for the engine whose
+/// directories are `paths`: as [`system_prompt`], and on Linux, when polkit
+/// does not know the engine's action, its availability writes a copy of
+/// the policy file into the folder `polkit` of the data directory, mode
+/// 0644, and its remedy names that copy and the one command a person with
+/// administrator rights runs to install it. The engine never runs the
+/// command, asks for no elevation, and writes nothing outside its own
+/// data directory (decision 0220).
+#[must_use]
+pub fn system_prompt_for(paths: &a2m_actions::Paths) -> Arc<dyn PresencePrompt> {
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(polkit::PolkitPrompt::system().copying_into(paths.data.join(polkit::COPY_FOLDER)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = paths;
+        system_prompt()
+    }
+}
+
 /// The kind of presence check this machine has now, and why: what
 /// [`system_prompt`] answers when asked. `doctor.run` reports it.
 pub async fn presence_available() -> Availability {

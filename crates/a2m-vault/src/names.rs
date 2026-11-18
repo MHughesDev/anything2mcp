@@ -4,7 +4,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use a2m_core::{Digest, Failure, Identity, WorkspaceId};
+use a2m_core::{Digest, Failure, Identity, TargetName, WorkspaceId};
 
 use crate::cipher::BoundTo;
 use crate::failure;
@@ -158,7 +158,8 @@ impl OwnerRef {
 pub enum SealedKind {
     /// Saved session state: equivalent to being signed in as the owner.
     SessionState,
-    /// A stored credential of a service account.
+    /// A stored credential, a person's or a service identity's, for one
+    /// target.
     Credential,
     /// An evidence blob.
     Blob,
@@ -207,6 +208,31 @@ pub struct SealContext {
 }
 
 impl SealContext {
+    /// The context of a stored credential: the workspace, its owner, the
+    /// target it was stored for, and its reference. The item is written
+    /// `credential:<target>:<reference>`, which reads one way only because a
+    /// target's name holds no colon. The target is authenticated with the
+    /// ciphertext, so a credential stored for one target does not open
+    /// under another, even under the same reference (decision 0248).
+    ///
+    /// # Errors
+    ///
+    /// `input`/`schema_invalid` when the item would not be a name this
+    /// crate accepts.
+    pub fn credential(
+        workspace: WorkspaceId,
+        owner: OwnerRef,
+        target: &TargetName,
+        reference: &str,
+    ) -> Result<Self, Failure> {
+        Ok(Self {
+            workspace,
+            owner,
+            kind: SealedKind::Credential,
+            item: ItemId::new(format!("credential:{target}:{reference}"))?,
+        })
+    }
+
     /// The context's fields, added to bytes that will be authenticated.
     pub(crate) fn bind(&self, bound: BoundTo) -> BoundTo {
         bound

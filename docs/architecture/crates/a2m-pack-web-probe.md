@@ -12,7 +12,7 @@ Built so far ([decision 0114](../../decisions/0114-the-web-probe-as-built-three-
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5, and `a2m-pack-web-browser` |
 | Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-telemetry` (the clock), `a2m-pack-web-browser` (the cell of browsers, of which only the `Observer` is kept). Outside: `serde_json`. Not yet `a2m-auth`: a discovery's scope carries no session |
-| Built in | Package E2, after E1 gives the discoverer extension point and the findings store, and after 2.6 gives sign-in. `auth.detect` arrives earlier, in package 2.6, as the first discoverer |
+| Roadmap packages | Package E2, after E1 gives the discoverer extension point and the findings store, and after 2.6 gives sign-in. `auth.detect` arrives earlier, in package 2.6, as the first discoverer |
 | Carries out | Spec sections [301](../../spec/3-packs/301-the-web-pack.md) (the probe), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (auth discovery), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (capture, mining, read-only exploration), [218](../../spec/2-kernel/218-discovery-and-findings.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (scenarios, templating), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (stages 1 and 2 for web surfaces) |
 
 ## Owns

@@ -1,6 +1,6 @@
 # 502. Defending against a manipulated agent
 
-Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Anything2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing.
+Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Anything2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The aim is simple to state: a manipulated agent should be able to do nothing through Anything2MCP that the person could not have been asked to approve, and should not be able to make Anything2MCP reach, read, or send anything its tools do not openly declare.
 
@@ -25,6 +25,8 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 | On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make. A project folder is one that holds a project file and is no program's own folder: not the engine's, not the home folder or a hidden folder of it, not a folder the operating system gives programs for their data. A source file is read only from the project's `sources` folder |
 | Everywhere | Size limits; the content must be the type it claims, so a renamed file is refused; a file is read once and stored as a blob, so what was previewed is what is uploaded |
 
+One input may name an entry inside a folder the target declares, as a row's key names a row ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)). Each part of the name is one name of at most 255 bytes, with no separator, no `..`, and no drive. A read may name an entry as many folders down as the declared depth allows, with `/` between the parts, and reaches none of them through a link; a write names an entry directly in the folder. An input never names a path outside the folder.
+
 ## Downloads are data
 
 - A downloaded file goes to a scoped store and comes back as a resource link, never inline.
@@ -42,7 +44,7 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 The agent that builds a target reads the system more than anyone. If it is steered, the thing it can do is write target files that do something other than they claim. Four barriers stand in the way.
 
 1. **Exploration cannot write, and drafts can touch only test records.** Enforced in the engine's sandbox, as section 401 describes, with what "cannot write" means stated per archetype by each pack ([section 218](../2-kernel/218-discovery-and-findings.md)).
-2. **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside the origins a person registered for the target needs that person's confirmation.
+2. **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside the origins a person registered for the target needs that person's confirmation. A sign-in is held to the same rule: one that only the drafts declare sends no stored credential, and no token, until the person has been shown every address it sends to and has carried it out on its page; a credential belongs to the target it was stored for ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)).
 3. **Publishing needs a person, and the person is shown what matters first.** The compiler produces a review summary ordered by risk, above the ordinary file differences:
 
 | Shown first | Why |
@@ -53,6 +55,7 @@ The agent that builds a target reads the system more than anyone. If it is steer
 | Changed identity strategies and read-back rules | Whether writes are still verified |
 | Changed expressions in bodies and mappings | What values are now sent |
 | Changed descriptions | What agents will now be told |
+| What each tool starts and sets; every address a tool or a sign-in's credential can reach, by kind of place | What runs on the machine, and where data and credentials can go ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 
 4. **The linter looks for the obvious.** Credentials in files, undeclared destinations, and descriptions that address the reader as an instruction.
 

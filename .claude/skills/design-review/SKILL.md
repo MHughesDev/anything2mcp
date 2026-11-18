@@ -19,7 +19,7 @@ A round improves the documents. It writes no product code.
    - It needs outside facts: add a brief to `docs/research/11-open-research.md`.
 5. **Prefer the smallest fix.** A new section only when no existing one can hold the content. Never rewrite an old decision record; supersede it.
 6. **Check your own fixes.** Run `python3 tools/docs_audit.py`. If the round added a kind of mistake the script could catch, add that check to the script.
-7. **Record the round:** update the lens's last-used date, add the findings and fixes to `docs/plan/readiness.md` if they change what is ready, and note the round in the journal.
+7. **Record the round:** update the lens's last-used date, update `docs/spec/7-project/704-readiness.md` if they change how firm a section's design is, and note the round in the journal. A written report goes in `docs/reviews/`, listed in its README.
 8. **Report:** the lens, what was found, what was fixed, what was deferred and why.
 
 Be honest about returns. If a round finds little, say so, and say whether the next gain is more likely to come from another lens or from building.

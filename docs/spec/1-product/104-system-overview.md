@@ -1,6 +1,6 @@
 # 104. System overview
 
-The system has five layers of responsibility between the callers and the system being wrapped. In the smallest setup they all run inside one process on a laptop; in the largest, the control plane and the runners are separate services on separate machines. The layers and their contracts are the same either way.
+The system has five layers of responsibility between the callers and the system being wrapped. In the smallest setup they all run inside one process on a laptop; in the largest, the control plane and the runners are separate services on separate machines. The layers and their contracts are the same either way. The overview is of the design: on one machine every layer is built in part, and separate control-plane and runner machines are not built ([section 704](../7-project/704-readiness.md)).
 
 | Layer | Responsibility | Knows about a specific kind of system? | Knows about a specific target? |
 | --- | --- | --- | --- |

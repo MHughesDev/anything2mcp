@@ -13,6 +13,7 @@ use a2m_core::{Failure, FailureClass, Value, Values};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
+use crate::forms::AnswerSpec;
 use crate::json::{Json, is_plain_number};
 use crate::shape::{Kind, Shape};
 
@@ -191,8 +192,19 @@ pub(crate) struct EndpointTemplate {
     pub auth: Auth,
     /// Whether the endpoint changes the system.
     pub writes: bool,
+    /// Whether the developer says that an endpoint marked `read`, whose
+    /// method HTTP does not mark safe, only reads (decision 0249). Left
+    /// out of the payload when false, so other endpoints compile as before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_asserted: bool,
     pub request: Option<Shape>,
+    /// The shape the answer's record must fit: the body itself for JSON,
+    /// the declared fields for any other form.
     pub response: Shape,
+    /// The form of the answer. Left out of the payload for JSON with
+    /// nothing declared, so such an endpoint compiles as it did before.
+    #[serde(default, skip_serializing_if = "AnswerSpec::is_plain_json")]
+    pub answer: AnswerSpec,
     pub answers: Answers,
     /// The header that carries the record's idempotency token.
     pub idempotency_header: Option<String>,
@@ -204,6 +216,14 @@ pub(crate) struct EndpointTemplate {
     pub max_response_bytes: Option<u64>,
     /// Request fields ignored when a shadow is compared.
     pub volatile: Vec<String>,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `skip_serializing_if` passes a reference"
+)]
+const fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 impl EndpointTemplate {
@@ -271,6 +291,8 @@ pub(crate) enum Take {
     Int,
     Decimal,
     Bool,
+    /// A calendar day, written `YYYY-MM-DD`.
+    Date,
 }
 
 /// One value an `extract` step takes out of an answer.
@@ -627,8 +649,10 @@ mod tests {
             headers: BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]),
             auth: Auth::None,
             writes: method.has_body(),
+            read_asserted: false,
             request: None,
             response: Shape::of(Kind::Any),
+            answer: crate::forms::AnswerSpec::default(),
             answers: Answers::default(),
             idempotency_header: Some("idempotency-key".to_owned()),
             version: VersionRule::default(),

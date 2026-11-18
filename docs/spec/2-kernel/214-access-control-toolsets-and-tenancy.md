@@ -1,6 +1,6 @@
 # 214. Access control, toolsets, and tenancy
 
-Administrators decide which tools exist for whom. Three pieces do this: principals, roles and grants, and toolsets.
+Administrators decide which tools exist for whom. Three pieces do this: principals, roles and grants, and toolsets. This section designs them. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **Principals.** Everyone and everything that calls Anything2MCP is a principal: a person, a group, an AI agent with its own identity, or an application with an API key. On a company server, people and groups come from the identity provider; nothing is managed twice.
 

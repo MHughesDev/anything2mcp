@@ -763,6 +763,41 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// Decision 0220. A remedy that holds a path and a command, as the one for
+/// a policy file that is not installed does, reaches the approval page and
+/// the answer to a press escaped as any text is: a folder's name cannot
+/// become markup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_remedy_that_holds_a_path_and_a_command_reaches_the_page_escaped() {
+    let copy = "/home/example/<b>x</b>&y/polkit/example.policy";
+    let remedy = format!(
+        "A person with administrator rights installs the policy file with this one command: `sudo sh -c 'cat {copy} > \"$f\"'`. The engine never runs it."
+    );
+    let why = Availability::not_available(
+        PresenceReason::PolicyNotInstalled,
+        "The policy file is not installed.",
+        remedy.clone(),
+    );
+    let prompt = TestPrompt::answering(PromptAnswer::NotAvailable(why));
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let rested = rest(&world).await;
+    let escaped = "/home/example/&lt;b&gt;x&lt;/b&gt;&amp;y/polkit/example.policy";
+    let (text, once) = open(&http, &rested.link).await;
+    assert!(text.contains(escaped), "{text}");
+    assert!(text.contains("sudo sh -c &#39;cat"), "{text}");
+    assert!(text.contains("&quot;$f&quot;"), "{text}");
+    assert!(!text.contains("<b>x</b>"), "{text}");
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::FORBIDDEN);
+    assert!(said.contains(escaped), "{said}");
+    assert!(!said.contains("<b>x</b>"), "{said}");
+    // `doctor` is given the text as it is, to escape at its own door.
+    let report = a2m_actions::PersonSurface::presence(&world.surface).await;
+    assert_eq!(report.fix, remedy);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proof_of_presence_comes_only_from_a_passed_prompt() {
     let prompt = TestPrompt::answering(PASSED);
@@ -1219,4 +1254,102 @@ fn escape_like_page(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// The one-time value and the address a form of `page` posts to.
+fn form_on(page: &str) -> (String, String) {
+    let value = |marker: &str| {
+        let from = page.find(marker).unwrap() + marker.len();
+        page[from..from + page[from..].find('"').unwrap()].to_owned()
+    };
+    (value("name=\"once\" value=\""), value("action=\""))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_in_that_asks_for_a_code_asks_on_the_persons_own_page_and_keeps_it_nowhere() {
+    use super::world::RIGHT_CODE;
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::signing_in(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let login = || world.call("session.login", json!({"target": "example"}));
+
+    // Nobody is pressing a sign-in's page: the keeper's request for a code
+    // reaches nobody, and says so.
+    let person = world.caller.principal.principal().id;
+    let unreachable = world
+        .surface
+        .ask_session(SessionAsk {
+            session: a2m_core::SessionId::from_bytes([7; 16]),
+            workspace: world.caller.principal.workspace(),
+            target: "example".parse().unwrap(),
+            environment: "test".parse().unwrap(),
+            identity: Identity::Person(person),
+            ask: PersonAsk::EnterCode {
+                reason: PersonReason::SecondFactor,
+            },
+        })
+        .await;
+    assert!(matches!(unreachable, PersonAnswer::Unreachable));
+
+    // The agent asks for the sign-in with no secret; the provider needs a
+    // person, so the person is asked on the act's page, which names no
+    // stored credential.
+    let asked = asked_of(&login().await);
+    let (text, once) = open(&http, &asked.link).await;
+    assert!(text.contains("<code>session.login</code>"), "{text}");
+    assert!(!text.contains("name=\"secret."), "{text}");
+    // The press raises the prompt; the provider asks for a code; the
+    // press's answer is the page that takes it.
+    let (status, page) = press_act(&http, &asked, "confirm", &once).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("The sign-in asks for a code"), "{page}");
+    assert_eq!(prompt.asked(), 1);
+    let (once, action) = form_on(&page);
+    let post = |body: String| {
+        http.post(format!("{}{action}", asked.origin))
+            .header(ORIGIN, &asked.origin)
+            .header(CONTENT_TYPE, FORM)
+            .body(body)
+            .send()
+    };
+    // A post without the page's value hands nothing on, and ends the
+    // sign-in: nothing is signed in, and the page is gone.
+    let refused = post(format!("once=0000&code={RIGHT_CODE}")).await.unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    world.surface.settled().await;
+    let gone = post(format!("once={once}&code={RIGHT_CODE}")).await;
+    assert!(gone.is_err() || gone.unwrap().status() == StatusCode::NOT_FOUND);
+    // Asked for again, the sign-in is a new act on a new page, and this
+    // time the code goes with the page's value.
+    let asked = asked_of(&login().await);
+    let (_, once) = open(&http, &asked.link).await;
+    let (_, page) = press_act(&http, &asked, "confirm", &once).await;
+    let (once, action) = form_on(&page);
+    let done = http
+        .post(format!("{}{action}", asked.origin))
+        .header(ORIGIN, &asked.origin)
+        .header(CONTENT_TYPE, FORM)
+        .body(format!("once={once}&code={RIGHT_CODE}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(done.status(), StatusCode::OK);
+    let said = done.text().await.unwrap();
+    assert!(said.contains("was carried out as you, once"), "{said}");
+    assert!(!said.contains(RIGHT_CODE), "{said}");
+
+    // The agent's same call is told a session holds, at the level the
+    // provider confirms; the code is in nothing it is told.
+    let signed = login().await;
+    assert!(signed.ok, "{signed:?}");
+    let shown = signed.to_json().to_string();
+    assert!(!shown.contains(RIGHT_CODE), "{shown}");
+    let result = signed.result.unwrap();
+    assert_eq!(result["state"], "signed_in", "{result}");
+    assert_eq!(result["level"], "confirmed", "{result}");
+    let sessions = world.call("session.status", json!({})).await;
+    let shown = sessions.to_json().to_string();
+    assert!(shown.contains("\"valid\""), "{shown}");
+    assert!(!shown.contains(RIGHT_CODE), "{shown}");
+    world.kernel.close(CloseReason::Asked).await;
 }

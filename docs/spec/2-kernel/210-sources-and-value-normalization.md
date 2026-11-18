@@ -1,6 +1,6 @@
 # 210. Sources and value normalization
 
-Input is read and validated in full before any surface of the target is touched, such as a browser opened in the web pack, and every comparison is between typed values, never display strings.
+Input is read and validated in full before any surface of the target is touched, such as a browser opened in the web pack, and every comparison is between typed values, never display strings. This section designs how input is read and how values are compared. Built today (packages 3.4 and 3.9), except what the roadmap's row 3.9 names.
 
 **Readers.** Built-in readers for xlsx, csv, json, and another operation's output. The xlsx reader:
 

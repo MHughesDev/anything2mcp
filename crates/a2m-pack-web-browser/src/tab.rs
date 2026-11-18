@@ -22,14 +22,15 @@ use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
 use crate::page_read::{PageAnswer, PagePath};
+use crate::page_write::{PageWrite, TokenProblem};
 use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
     CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
-    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, HandleDialog,
-    InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
-    RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
-    SetLifecycleEvents, SetLocale, SetTimezone,
+    FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
+    GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
+    NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
+    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -181,6 +182,10 @@ fn under(prefix: &str, address: &str) -> bool {
 pub(crate) enum Posture {
     Act,
     Observe(SafeRequests),
+    /// A tab a person signs in in, in a window (decision 0254): held to its
+    /// origins as an acting tab is, and with no network event on, since
+    /// nothing in it writes and what the person types would cross in them.
+    SignIn,
 }
 
 /// How one element is matched. Every variant must match exactly one
@@ -830,7 +835,7 @@ enum Verdict {
 pub(crate) struct Page {
     client: Client,
     session: String,
-    target: String,
+    pub(crate) target: String,
     serial: u64,
     call_deadline: Duration,
     max_read: usize,
@@ -841,6 +846,10 @@ pub(crate) struct Page {
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
+    /// How many documents of the tab's own frame have loaded, and how many
+    /// things the tab refused, together: what a wait for the next change of
+    /// the tab waits on.
+    changes: watch::Sender<u64>,
     /// The page's own requests heard and not yet answered whole, by the
     /// browser's number for them, and how many there are.
     pending: Mutex<BTreeMap<String, Pending>>,
@@ -858,6 +867,8 @@ pub(crate) struct Page {
     /// browser's headers from the page's.
     document: Mutex<Option<DocumentHeaders>>,
     safe: Option<SafeRequests>,
+    /// Whether the tab hears no network event (a sign-in tab).
+    quiet: bool,
     /// The origins the tab was opened for.
     origins: Origins,
     /// The helper's source, with those origins written in.
@@ -1016,7 +1027,7 @@ impl Page {
         }
     }
 
-    async fn call<C: Command>(
+    pub(crate) async fn call<C: Command>(
         &self,
         command: &C,
         deadline: Deadline,
@@ -1034,7 +1045,7 @@ impl Page {
         &self,
         on: On<'_>,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         by_value: bool,
         await_promise: bool,
         deadline: Deadline,
@@ -1123,7 +1134,7 @@ impl Page {
     async fn in_world(
         &self,
         function: &str,
-        arguments: impl Fn() -> Option<Vec<CallArgument<'static>>>,
+        arguments: impl Fn() -> Option<Vec<CallArgument>>,
         by_value: bool,
         await_promise: bool,
         deadline: Deadline,
@@ -1191,7 +1202,7 @@ impl Page {
         &self,
         element: &Element,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         deadline: Deadline,
     ) -> Result<Evaluated, BrowserError> {
         if element.tab != self.serial {
@@ -1287,7 +1298,25 @@ impl Page {
                 .filter(|(of, _)| *of == loader)
                 .map(|(_, status)| *status);
         }
-        let (address, title) = self.address_and_title(deadline).await?;
+        // A tab a person signs in in may be on a page whose origin its
+        // helper does not look at: the browser says where it is, and the
+        // page's title is not read.
+        let (address, title) = if self.quiet {
+            let info = self
+                .client
+                .call(
+                    None,
+                    &GetTargetInfo {
+                        target_id: &self.target,
+                    },
+                    deadline,
+                )
+                .await
+                .map_err(|error| self.client_error(error))?;
+            (self.redact.redact(&info.target_info.url), String::new())
+        } else {
+            self.address_and_title(deadline).await?
+        };
         Ok(Loaded {
             address,
             title,
@@ -1548,7 +1577,7 @@ impl Page {
         &self,
         element: &Element,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         deadline: Deadline,
     ) -> Result<Checked, BrowserError> {
         let evaluated = self
@@ -1870,6 +1899,99 @@ impl Page {
             status,
             media_type: self.redact.redact(&answer.media_type),
             body: self.redact.redact(&answer.body),
+            withheld: false,
+        })
+    }
+
+    /// A write from inside the page, with the page's own anti-forgery
+    /// token, which the helper reads and places in the same call that
+    /// sends it, and never hands back (decision 0206). Only an acting tab
+    /// calls it; in an observing tab the browser fails the request.
+    pub(crate) async fn write_from_page(
+        &self,
+        write: &PageWrite,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Answer {
+            refused: Option<String>,
+            failed: bool,
+            too_large: bool,
+            redirected: bool,
+            status: Option<u16>,
+            media_type: String,
+            body: String,
+            withheld: bool,
+        }
+        let shape =
+            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        let spec = write.spec();
+        let argument = CallArgument::of(&spec).ok_or_else(shape)?;
+        let world = self.world(deadline).await?;
+        // Sent once. From here, a failure leaves the write's fate unknown,
+        // unless the helper says it refused before anything left.
+        let outcome = self
+            .evaluate(
+                On::World(world),
+                "function (spec, limit) { return __a2m.writeFromPage(spec, limit); }",
+                vec![argument, CallArgument::number(self.max_read)],
+                true,
+                true,
+                deadline,
+            )
+            .await;
+        let lost = |why: &str| BrowserError::RequestFailed(why.to_owned());
+        let evaluated = match outcome {
+            Ok(evaluated) => evaluated,
+            // The helper's own text is not quoted: nothing it says while a
+            // write is under way is handed out.
+            Err(CallError::Browser(BrowserError::Unexpected(_))) => {
+                return Err(lost(
+                    "the helper in the page failed while the write was under way",
+                ));
+            }
+            Err(CallError::Browser(error)) => return Err(error),
+            Err(CallError::Gone | CallError::NoHelper) => {
+                return Err(lost("the page was replaced while the write was under way"));
+            }
+        };
+        let answer: Answer = Self::answer(evaluated)?;
+        if let Some(refused) = answer.refused {
+            return Err(match refused.as_str() {
+                "token_missing" => BrowserError::Token(TokenProblem::Missing),
+                "token_several" => BrowserError::Token(TokenProblem::Several),
+                "token_unusable" | "token_place" => BrowserError::Token(TokenProblem::Unusable),
+                "path" => BrowserError::WriteRefused(
+                    "the page has no origin of its own, or the path is not one on it".to_owned(),
+                ),
+                _ => BrowserError::WriteRefused("the helper does not send such a write".to_owned()),
+            });
+        }
+        if answer.failed {
+            return Err(lost("the page could not complete the write"));
+        }
+        if answer.redirected {
+            return Err(BrowserError::Redirected);
+        }
+        let Some(status) = answer.status else {
+            return Err(if answer.too_large {
+                BrowserError::TooLarge {
+                    limit: self.max_read,
+                }
+            } else {
+                BrowserError::Unexpected("the helper answered a write with no status".to_owned())
+            });
+        };
+        Ok(PageAnswer {
+            status,
+            media_type: self.redact.redact(&answer.media_type),
+            body: if answer.withheld {
+                String::new()
+            } else {
+                self.redact.redact(&answer.body)
+            },
+            withheld: answer.withheld,
         })
     }
 
@@ -2000,6 +2122,7 @@ impl Page {
                 blocked.push(shape);
             }
         }
+        self.changes.send_modify(|count| *count += 1);
     }
 
     /// Puts the lock on a worker or a frame that attached under an
@@ -2149,6 +2272,7 @@ impl Page {
                 if lifecycle.frame_id == self.target && lifecycle.name == "DOMContentLoaded" {
                     self.nav
                         .send_modify(|nav| nav.loaded = Some(lifecycle.loader_id));
+                    self.changes.send_modify(|count| *count += 1);
                 }
             }
             EventKind::ResponseReceived(received) if own => {
@@ -2821,6 +2945,7 @@ pub(crate) async fn open_page(
     env: &PageEnvironment,
     posture: Posture,
     origins: &Origins,
+    look_on: Option<&Origins>,
 ) -> Result<Arc<Page>, BrowserError> {
     let client = browser.client.clone();
     let settings = &shared.settings;
@@ -2836,7 +2961,14 @@ pub(crate) async fn open_page(
         }
     };
     let created = client
-        .call(None, &CreateTarget { url: "about:blank" }, deadline)
+        .call(
+            None,
+            &CreateTarget {
+                url: "about:blank",
+                browser_context_id: Some(&browser.context),
+            },
+            deadline,
+        )
         .await
         .map_err(lost)?;
     // The browser holds every new page before it runs. This one is the
@@ -2872,18 +3004,20 @@ pub(crate) async fn open_page(
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
         blocked: Mutex::new(Vec::new()),
+        changes: watch::Sender::new(0),
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
         recording: AtomicBool::new(false),
         dropped: AtomicUsize::new(0),
         document: Mutex::new(None),
+        quiet: matches!(posture, Posture::SignIn),
         safe: match posture {
-            Posture::Act => None,
+            Posture::Act | Posture::SignIn => None,
             Posture::Observe(safe) => Some(safe),
         },
         origins: origins.clone(),
-        helper: helper_for(origins),
+        helper: helper_for(look_on.unwrap_or(origins)),
         moves: Mutex::new(Moves::default()),
         released: AtomicBool::new(false),
         browser: Arc::clone(browser),
@@ -2946,11 +3080,33 @@ async fn prepare(
             deadline,
         )
         .await?;
+    } else if page.quiet {
+        // A tab a person signs in in holds the requests of documents, as a
+        // tab that may act does, and hears no network event at all.
+        page.call(&fetch_documents(), deadline).await?;
+        page.call(&RuntimeEnable {}, deadline).await?;
     } else {
         // A tab that may act holds only the requests of documents: that is
-        // where it is kept on the origins it was opened for.
+        // where it is kept on the origins it was opened for. The page's
+        // service worker is passed by here too, so that a write from inside
+        // the page reaches the application as sent, once, and no worker
+        // answers or changes it (decision 0245, audit finding M6).
+        //
+        // Its network events stay on: the browser passes the service
+        // worker by only while they are, and switching them off undoes it
+        // (measured, decision 0254). What they would carry of a posted body
+        // is cut: no request's body is put in an event, so the password a
+        // form posts and a token sent in a write's body never cross into
+        // the engine's process by them (audit finding M7). A write's "sent"
+        // and "answered" rest on none of them: they are the page's own
+        // request and its answer, through the helper.
         page.call(&fetch_documents(), deadline).await?;
-        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+        page.call(
+            &NetworkEnable::keeping(page.max_read).without_bodies(),
+            deadline,
+        )
+        .await?;
+        page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }
@@ -3225,6 +3381,53 @@ impl ActTab {
         self.page.fetch(request, deadline).await
     }
 
+    /// Writes from inside the page the tab is on, with the page's own
+    /// session and the page's own anti-forgery token, once (decision
+    /// 0206): the write's method from the closed list, to its checked path
+    /// on the page's own origin, which must be one of the tab's, with its
+    /// body, and with the token read from the page by the place the write
+    /// names and sent where it names, in the same call. No other header is
+    /// sent, and no redirect is followed. The token never leaves the page:
+    /// it is not returned, and every copy of it in the answer is replaced
+    /// in the page before the answer is handed back, which then passes the
+    /// redactor.
+    ///
+    /// Only an acting tab has this call. An observing tab has none, and its
+    /// browser fails every request of its page whose method could write:
+    ///
+    /// ```compile_fail
+    /// # async fn no(tab: a2m_pack_web_browser::ObserveTab, write: a2m_pack_web_browser::PageWrite, deadline: a2m_pack_web_browser::Deadline) {
+    /// let _ = tab.write_from_page(&write, deadline).await;
+    /// # }
+    /// ```
+    ///
+    /// ```no_run
+    /// # async fn yes(tab: a2m_pack_web_browser::ActTab, write: a2m_pack_web_browser::PageWrite, deadline: a2m_pack_web_browser::Deadline) {
+    /// let _ = tab.write_from_page(&write, deadline).await;
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Before anything was sent ([`Dispatch::NotSent`]):
+    /// [`BrowserError::ForeignOrigin`] for a page on an origin the tab was
+    /// not opened for; [`BrowserError::Token`] when the page holds no token
+    /// where the write says, two different ones, or one of a form that is
+    /// not sent; [`BrowserError::WriteRefused`] for a page with no origin
+    /// of its own. After the write may have left: [`BrowserError::Redirected`]
+    /// and [`BrowserError::TooLarge`] for an answer that was given and is not
+    /// read; [`BrowserError::RequestFailed`] when the page could not
+    /// complete it, or was replaced under it, and whether it was sent is
+    /// not known; a lost browser or a passed deadline as their dispatch
+    /// says.
+    pub async fn write_from_page(
+        &self,
+        write: &PageWrite,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        self.page.write_from_page(write, deadline).await
+    }
+
     /// Answers the dialog that is open.
     ///
     /// # Errors
@@ -3240,6 +3443,123 @@ impl ActTab {
 }
 
 impl ActTab {
+    /// How many documents of the tab have loaded and how many things it
+    /// refused, together, so far. [`ActTab::changed_since`] waits for it to
+    /// grow.
+    #[must_use]
+    pub fn changes(&self) -> u64 {
+        *self.page.changes.borrow()
+    }
+
+    /// Waits until a document of the tab loads, or the tab refuses
+    /// something, after the count `seen` that [`ActTab::changes`] gave: a
+    /// protocol event, never a guess at how long a page takes.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Timeout`] at the deadline; [`BrowserError::Crashed`]
+    /// or [`BrowserError::Disconnected`] when the tab goes.
+    pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError> {
+        let mut changes = self.page.changes.subscribe();
+        let mut status = self.page.status.subscribe();
+        loop {
+            if *changes.borrow_and_update() > seen {
+                return Ok(());
+            }
+            if let Some(error) =
+                Page::interrupted(*status.borrow_and_update(), false, Dispatch::NotSent)
+            {
+                return Err(error);
+            }
+            tokio::select! {
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return Err(BrowserError::Disconnected { dispatch: Dispatch::NotSent });
+                    }
+                }
+                _ = status.changed() => {}
+                () = tokio::time::sleep_until(deadline.at()) => {
+                    return Err(BrowserError::Timeout { dispatch: Dispatch::NotSent });
+                }
+            }
+        }
+    }
+
+    /// Where the tab's own document is, as the browser says, without asking
+    /// the page.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
+    /// browser is gone or does not answer.
+    pub async fn address(&self, deadline: Deadline) -> Result<String, BrowserError> {
+        let page = &self.page;
+        let info = page
+            .client
+            .call(
+                None,
+                &GetTargetInfo {
+                    target_id: &page.target,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|error| page.client_error(error))?;
+        Ok(page.redact.redact(&info.target_info.url))
+    }
+
+    /// The origin of every frame inside the tab's own document, as the
+    /// browser says, without asking the page; a frame that inherits its
+    /// document's origin (`about:blank`, `about:srcdoc`) is left out.
+    ///
+    /// # Errors
+    ///
+    /// As [`ActTab::address`].
+    pub async fn frame_origins(&self, deadline: Deadline) -> Result<Vec<String>, BrowserError> {
+        fn walk(tree: &crate::protocol::FrameTree, out: &mut Vec<String>) {
+            for child in &tree.child_frames {
+                if !child.frame.url.starts_with("about:") {
+                    out.push(child.frame.security_origin.clone());
+                }
+                walk(child, out);
+            }
+        }
+        let tree = self.page.call(&GetFrameTree {}, deadline).await?;
+        let mut out = Vec::new();
+        walk(&tree.frame_tree, &mut out);
+        Ok(out
+            .into_iter()
+            .map(|origin| self.page.redact.redact(&origin))
+            .collect())
+    }
+
+    /// Waits for `until`, and ends early when the tab refuses something or
+    /// a document of it loads after the count `seen`: `Ok(true)` when the
+    /// condition held, `Ok(false)` when the tab changed first. On a page
+    /// whose origin the tab's helper does not look at, nothing is looked
+    /// at: the wait is for the next change alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Look::wait`] and [`ActTab::changed_since`].
+    pub async fn wait_unless_changed(
+        &self,
+        until: &Primitive,
+        seen: u64,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
+        tokio::select! {
+            waited = self.page.wait(until, deadline) => match waited {
+                Ok(()) => Ok(true),
+                Err(BrowserError::ForeignOrigin(_)) => {
+                    self.changed_since(seen, deadline).await.map(|()| false)
+                }
+                Err(error) => Err(looked(error)),
+            },
+            changed = self.changed_since(seen, deadline) => changed.map(|()| false),
+        }
+    }
+
     /// What this tab refused since the last call, oldest first: a move of
     /// the tab to an origin it was not opened for (`NAVIGATION`), a window
     /// its page opened, which was closed before it fetched anything

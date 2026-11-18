@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use a2m_actions::settings::InstallationKeeper;
 use a2m_actions::{
     ActionRegistry, Caller, CallerCredential, CloseReason, FrontDoor, Kernel, KernelParts, Paths,
     PersonSurface, Principal, Request, Response, Settings, Sources, StorePlace,
@@ -34,7 +35,7 @@ use crate::packs;
 /// The environment variable that holds the vault's passphrase, when the
 /// installation's settings choose the passphrase route. It is read once at
 /// start and never shown.
-pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
+pub const PASSPHRASE_VARIABLE: &str = a2m_actions::PASSPHRASE_VARIABLE;
 
 /// The warning a client gives when the engine that answers it was started
 /// with other settings variables than its own (decision 0192).
@@ -118,6 +119,11 @@ pub struct EngineOptions {
     pub os_user: String,
     /// How a person is reached.
     pub person: Arc<dyn PersonSurface>,
+    /// Who keeps the installation's settings file, when a test says so in
+    /// place of the check of the file on disk. Private: only
+    /// [`EngineOptions::with_installation_kept_by_an_administrator_for_tests`]
+    /// sets it, which no product code calls (decision 0241).
+    installation_keeper: Option<InstallationKeeper>,
 }
 
 impl std::fmt::Debug for EngineOptions {
@@ -150,7 +156,21 @@ impl EngineOptions {
             random: Arc::new(OsRandom),
             os_user,
             person,
+            installation_keeper: None,
         }
+    }
+
+    /// The same options, with the installation's settings file taken as an
+    /// administrator's, whoever may change it on disk: it may then loosen a
+    /// protected setting. For a test of the product that stands for an
+    /// installation an administrator set up, in a temporary folder the
+    /// test's own account owns (decision 0241). The shipped program never
+    /// calls it: no file, variable, or flag reaches it, and a test of the
+    /// workspace holds that no product source names it but this one.
+    #[must_use]
+    pub fn with_installation_kept_by_an_administrator_for_tests(mut self) -> Self {
+        self.installation_keeper = Some(InstallationKeeper::Administrator);
+        self
     }
 }
 
@@ -199,6 +219,9 @@ fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
     for (key, value) in &options.flags {
         sources = sources.with_flag(key, value);
     }
+    if let Some(keeper) = &options.installation_keeper {
+        sources.installation_keeper = keeper.clone();
+    }
     Ok(sources)
 }
 
@@ -237,8 +260,15 @@ pub(crate) fn load_settings(options: &EngineOptions) -> Result<Settings, Failure
 }
 
 fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
-    if make && std::fs::create_dir_all(folder).is_err() {
-        return;
+    if make {
+        if std::fs::create_dir_all(folder).is_err() {
+            return;
+        }
+        // The engine's own folders are its user's alone. A run folder for
+        // a kept script is refused when another account could change it
+        // (decision 0250), so a folder made under a permissive default
+        // mode is closed here, not left to the default.
+        let _ = a2m_local::keep_folder_private(folder);
     }
     if let Ok(name) = RootName::new(name) {
         // A folder that does not exist is left out: a pack that needs the
@@ -287,6 +317,9 @@ fn roots(paths: &Paths, place: StorePlace) -> Roots {
 /// reads that need no secret go on, and nothing is sealed or written.
 struct NoKeyStore {
     name: String,
+    /// The strength of the route that could not be taken: a passphrase
+    /// route that failed is not reported as a key store.
+    strength: StoreStrength,
     why: Failure,
 }
 
@@ -294,7 +327,7 @@ impl KeyStore for NoKeyStore {
     fn describe(&self) -> StoreDescription {
         StoreDescription {
             name: self.name.clone(),
-            strength: StoreStrength::OsStore,
+            strength: self.strength,
         }
     }
 
@@ -320,39 +353,32 @@ impl KeyStore for NoKeyStore {
 }
 
 fn no_key_store(name: &str, why: Failure) -> Arc<dyn KeyStore> {
-    Arc::new(NoKeyStore {
-        name: name.to_owned(),
-        why,
-    })
+    no_store_of(name, StoreStrength::OsStore, why)
 }
 
-fn passphrase_failure(message: &str, fix: &str) -> Failure {
-    Failure::new(
-        FailureClass::Busy,
-        a2m_vault::codes::KEY_STORE_UNREACHABLE,
-        message,
-        fix,
-    )
+fn no_store_of(name: &str, strength: StoreStrength, why: Failure) -> Arc<dyn KeyStore> {
+    Arc::new(NoKeyStore {
+        name: name.to_owned(),
+        strength,
+        why,
+    })
 }
 
 /// This machine's key store, as the installation's settings choose it.
 /// Never fails: a store that cannot be reached is one that does not
 /// answer, and the kernel opens degraded and says why.
 async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<dyn KeyStore> {
-    if settings.text("vault.backend") == Some("passphrase") {
+    // The route the setting chooses; where the build has no key store it
+    // is the default (decision 0220).
+    if PassphraseRoute::of_backend(settings.text("vault.backend")) == PassphraseRoute::Enabled {
         let name = "a passphrase given at start";
+        let no_store = |why: Failure| no_store_of(name, StoreStrength::Passphrase, why);
         let Some(passphrase) = options
             .environment
             .get(PASSPHRASE_VARIABLE)
             .filter(|value| !value.is_empty())
         else {
-            return no_key_store(
-                name,
-                passphrase_failure(
-                    "The vault is set to take its root key from a passphrase, and none was given.",
-                    "Set the environment variable `A2M_VAULT_PASSPHRASE` for the engine's process.",
-                ),
-            );
+            return no_store(PassphraseKeyStore::not_given(PASSPHRASE_VARIABLE));
         };
         // The vault makes the salt once, under a lock beside the file, so two
         // commands that start together on a new installation end with one
@@ -364,7 +390,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         .await
         {
             Ok(salt) => salt,
-            Err(failure) => return no_key_store(name, failure),
+            Err(failure) => return no_store(failure),
         };
         return match PassphraseKeyStore::derive(
             PassphraseRoute::Enabled,
@@ -374,7 +400,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         .await
         {
             Ok(store) => Arc::new(store),
-            Err(failure) => no_key_store(name, failure),
+            Err(failure) => no_store(failure),
         };
     }
     let name = "the operating system's key store";
@@ -482,6 +508,22 @@ impl Engine {
         // What every HTTP client trusts is set before any pack registers
         // and before anything makes a client (decision 0166).
         crate::trust::install(&settings, options.project.as_deref())?;
+        // The engine's own folders are this user's alone, as the runtime
+        // folder is: what the store, the vault's salt, the traces, and the
+        // profiles hold is sealed, and is not left in folders other
+        // accounts may enter (decision 0241). A folder that cannot be
+        // closed does not stop the engine; `doctor.run` names it.
+        let own = [
+            options.paths.data.clone(),
+            options.paths.config.clone(),
+            options.paths.cache.clone(),
+        ];
+        let _ = tokio::task::spawn_blocking(move || {
+            for folder in &own {
+                let _ = a2m_local::keep_folder_private(folder);
+            }
+        })
+        .await;
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,

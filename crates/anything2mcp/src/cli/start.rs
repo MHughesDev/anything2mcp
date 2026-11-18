@@ -141,6 +141,11 @@ pub(crate) fn plan(
 
 /// The same, from the program and the environment alone: what the bridge
 /// keeps for as long as it runs.
+/// The flag of `serve` that says a command started the engine on demand:
+/// such an engine that cannot open its vault ends at once, saying why
+/// (decision 0220).
+pub(crate) const STARTED_ON_DEMAND: &str = "--started-on-demand";
+
 pub(crate) fn plan_for(
     program: Option<&Path>,
     environment: &BTreeMap<String, String>,
@@ -164,15 +169,15 @@ pub(crate) fn plan_for(
     // The started engine is given the passphrase on its standard input,
     // which only it reads, and never in its environment or its arguments,
     // which other programs of the user can read for as long as it runs.
-    let input = if settings.text("vault.backend") == Some("passphrase") {
+    // The route is the setting's, by default the build's (decision 0220);
+    // without the passphrase the command stops by the vault's own name for
+    // it, and starts no engine that could not open its vault.
+    let route = a2m_vault::PassphraseRoute::of_backend(settings.text("vault.backend"));
+    let input = if route == a2m_vault::PassphraseRoute::Enabled {
         let given = environment
             .get(PASSPHRASE_VARIABLE)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                not_started(&format!(
-                    "the vault takes its root key from a passphrase, and `{PASSPHRASE_VARIABLE}` was not given to this program, so an engine started now could not open its vault"
-                ))
-            })?;
+            .ok_or_else(|| a2m_vault::PassphraseKeyStore::not_given(PASSPHRASE_VARIABLE))?;
         Some(Secret::new(given.clone()))
     } else {
         None
@@ -185,6 +190,7 @@ pub(crate) fn plan_for(
         args.extend(["--project".to_owned(), folder.to_owned()]);
     }
     args.push("serve".to_owned());
+    args.push(STARTED_ON_DEMAND.to_owned());
     if input.is_some() {
         args.push(PASSPHRASE_FROM_STDIN.to_owned());
     }

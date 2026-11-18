@@ -1,6 +1,6 @@
 # 219. The evidence ladder
 
-Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown or used at a higher level than its evidence supports. Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md).
+Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown or used at a higher level than its evidence supports. Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The levels
 
@@ -43,8 +43,8 @@ A device is stricter. A device whose firmware version is outside its map stops e
 | Binding status: `draft`, `shadow`, `verified`, `retired` | Unchanged. The compiler refuses `verified` on a binding whose version has not reached `behavior_verified` |
 | Version stages: published, candidate, current ([section 224](224-when-the-engine-itself-fails.md)) | Unchanged. `approved` is a version that is current |
 | The publish gates ([section 403](../4-building-tools/403-testing-and-publish-gates.md)) | They are what moves a version to `behavior_verified` |
-| Shadow comparison | A binding in shadow is at `executed` at most until its matches are counted and a person promotes it |
-| The first binding of an operation | Made `verified` in the drafts by `binding.promote` on a read's trial at `executed` and the operation's passing offline tests; the version it is published in reaches `behavior_verified` through the gates ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)) |
+| Shadow comparison | A binding in shadow is at `executed` at most until it has matched the verified binding that acts on the set number of distinct inputs, in each environment the evidence must come from, since its last mismatch, counted for it as it is now, by its digest, and a person at the machine promotes it ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)) |
+| The first binding of an operation | Made `verified` in the drafts by `binding.promote` on a read's trial at `executed` and the operation's passing offline tests, each of which names the binding it ran and the digest of what it does, and counts only for that binding as it is now; the version it is published in reaches `behavior_verified` through the gates ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md), [decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)) |
 | "Unknown means stop" | A run never acts on a finding. Only a plan runs, and a plan holds only compiled bindings |
 
 ## What an agent sees

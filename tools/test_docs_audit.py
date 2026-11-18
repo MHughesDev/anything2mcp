@@ -155,6 +155,46 @@ class AuditCatches(unittest.TestCase):
         project.write_text(changed, encoding="utf-8")
         self.assert_finding("release", "every package carries the same version")
 
+    def test_an_npm_launcher_on_another_version_is_refused(self):
+        launcher = self.root / "bindings" / "npm" / "anything2mcp" / "package.json"
+        text = launcher.read_text(encoding="utf-8")
+        changed = text.replace('"version": "', '"version": "9.', 1)
+        self.assertNotEqual(text, changed)
+        launcher.write_text(changed, encoding="utf-8")
+        self.assert_finding("release", "the npm launcher is 9.", "every package carries the same version")
+
+    def test_an_npm_platform_package_on_another_version_is_refused(self):
+        launcher = self.root / "bindings" / "npm" / "anything2mcp" / "package.json"
+        text = launcher.read_text(encoding="utf-8")
+        changed = text.replace('"@anything2mcp/linux-x64": "', '"@anything2mcp/linux-x64": "9.', 1)
+        self.assertNotEqual(text, changed)
+        launcher.write_text(changed, encoding="utf-8")
+        self.assert_finding("release", "its optional dependency @anything2mcp/linux-x64 is 9.")
+
+    def test_a_wrong_count_of_journal_entries_is_refused(self):
+        index = self.root / "docs" / "README.md"
+        text = index.read_text(encoding="utf-8")
+        changed = text.replace(" entries |", "0 entries |", 1)
+        self.assertNotEqual(text, changed)
+        index.write_text(changed, encoding="utf-8")
+        self.assert_finding("counts", "for journal entries")
+
+    def test_a_plan_document_missing_from_the_plan_index_is_refused(self):
+        (self.root / "docs" / "plan" / "a-new-plan.md").write_text("# A new plan\n", encoding="utf-8")
+        self.assert_finding("plans", "docs/plan/a-new-plan.md is not listed in docs/plan/README.md")
+
+    def test_a_review_document_missing_from_the_reviews_index_is_refused(self):
+        (self.root / "docs" / "reviews" / "a-new-review.md").write_text("# A new review\n", encoding="utf-8")
+        self.assert_finding("reviews", "docs/reviews/a-new-review.md is not listed in docs/reviews/README.md")
+
+    def test_a_wrong_count_of_review_documents_is_refused(self):
+        index = self.root / "docs" / "README.md"
+        text = index.read_text(encoding="utf-8")
+        changed = text.replace("lists them | 4 |", "lists them | 40 |", 1)
+        self.assertNotEqual(text, changed)
+        index.write_text(changed, encoding="utf-8")
+        self.assert_finding("counts", "for review documents")
+
     def test_a_changed_copy_of_the_licence_is_refused(self):
         copy = self.root / "bindings" / "python" / "LICENSE"
         copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")
@@ -220,6 +260,31 @@ class AuditCatches(unittest.TestCase):
         page = self.root / "docs" / "spec" / "2-kernel" / "207-the-engine-loop.md"
         page.write_text(page.read_text(encoding="utf-8") + "\nRuns are marked interrupted.\n", encoding="utf-8")
         self.assert_finding("replaced", "207-the-engine-loop.md")
+
+    def test_a_code_missing_from_the_failure_code_table_is_refused(self):
+        page = self.root / "docs" / "reference" / "technical-reference.md"
+        text = page.read_text(encoding="utf-8")
+        lines = [l for l in text.splitlines(keepends=True) if "| `not_granted` |" not in l]
+        self.assertNotEqual(len(lines), len(text.splitlines()))
+        page.write_text("".join(lines), encoding="utf-8")
+        self.assert_finding("codes", "`not_granted` is declared in", "and has no row in the reference")
+
+    def test_a_row_with_no_code_behind_it_is_refused(self):
+        page = self.root / "docs" / "reference" / "technical-reference.md"
+        text = page.read_text(encoding="utf-8")
+        row = "| `busy` | `no_such_code_anywhere` | `a2m-policy` | Planted. |\n"
+        marker = "| `busy` | `acknowledgement_not_kept` |"
+        self.assertIn(marker, text)
+        page.write_text(text.replace(marker, row + marker, 1), encoding="utf-8")
+        self.assert_finding("codes", "a row for `no_such_code_anywhere` and no crate declares it")
+
+    def test_a_code_declared_with_two_classes_is_refused(self):
+        table = self.root / "crates" / "a2m-engine" / "src" / "codes.rs"
+        text = table.read_text(encoding="utf-8")
+        planted = text.replace('(FailureClass::Busy, "no_binding")', '(FailureClass::Input, "no_binding")', 1)
+        self.assertNotEqual(text, planted)
+        table.write_text(planted, encoding="utf-8")
+        self.assert_finding("codes", "`no_binding` is declared with more than one class")
 
 
 if __name__ == "__main__":

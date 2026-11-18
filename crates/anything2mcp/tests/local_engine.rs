@@ -55,6 +55,12 @@ async fn published(app: &TestApp) -> Machine {
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);
     world.close().await;
+    // The engine has let its lock go, but a child that another test of this
+    // process forked while the lock was held keeps a copy of it until that
+    // child execs: an engine started on demand is forked, to give it a
+    // session of its own. The next engine here takes the lock without
+    // waiting, so the test waits until no copy is left.
+    lock_comes_free(&machine).await;
     machine
 }
 
@@ -309,7 +315,13 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     // same as the engine said.
     let alone = output(without_key(&read)).await;
     assert_eq!(alone.status.code(), Some(1), "{alone:?}");
-    assert_eq!(object(&alone)["error"]["class"], "busy", "{alone:?}");
+    // The machine's vault takes a passphrase, and the refusal names the
+    // missing one (decision 0220).
+    assert_eq!(
+        object(&alone)["error"]["code"],
+        "vault_passphrase_missing",
+        "{alone:?}"
+    );
     for (args, through) in asked.iter().zip(&through_engine) {
         let done = output(machine.program(args)).await;
         assert_eq!(done.status.code(), through.0, "{args:?}");

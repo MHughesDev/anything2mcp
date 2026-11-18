@@ -1,0 +1,68 @@
+endpoint: order_xml_get
+surface: api
+method: GET
+path: "/views/xml/orders/{order_id}"
+auth: none
+effect: read
+headers: {accept: "application/xml"}
+responses: {absent: [404]}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  max_depth: 64
+  max_elements: 1000
+  fields:
+    order_id: {path: "o:order/@id"}
+    status: {path: "o:order/@status"}
+    customer: {path: "o:order/o:customer"}
+    note: {path: "o:order/o:note", required: false}
+    items:
+      each: "o:order/o:items/o:item"
+      fields:
+        item_code: {path: "@code"}
+        quantity: {path: "o:quantity", type: integer}
+        length_in: {path: "o:length"}
+---
+endpoint: line_item_xml_get
+surface: api
+method: GET
+path: "/views/xml/orders/{order_id}/items/{item_code}"
+auth: none
+effect: read
+headers: {accept: "application/xml"}
+responses: {absent: [404]}
+version:
+  read: {field: version}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    version: {path: "o:item/@version", type: integer}
+    description: {path: "o:item/o:description"}
+    quantity: {path: "o:item/o:quantity", type: integer}
+    length_in: {path: "o:item/o:length"}
+---
+endpoint: declared_xml_get
+surface: api
+method: GET
+path: "/views/xml/declared"
+auth: none
+effect: read
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    customer: {path: "o:order/o:customer"}
+---
+endpoint: order_json_as_xml_get
+surface: api
+method: GET
+path: "/api/orders/{order_id}"
+auth: none
+effect: read
+responses: {absent: [404]}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    customer: {path: "o:order/o:customer"}

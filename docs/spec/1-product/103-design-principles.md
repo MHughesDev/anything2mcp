@@ -1,5 +1,7 @@
 # 103. Design principles
 
+This section lists the principles that every design decision is weighed against, in the order that settles a conflict. They are rules of design, not parts of the code.
+
 1. **The caller decides what; the system decides how.** Agents and applications name an operation and its inputs. They never handle clicks, selectors, endpoints, or tokens.
 2. **One operation, many bindings.** An operation is defined once. Each mode that can carry it is a binding, verified to produce the same result. The runtime chooses among verified bindings by declared rules.
 3. **Build with AI, run without it.** Exploration, inference, and repair happen at build time and end in reviewed files. Run time is a fixed replay.

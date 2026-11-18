@@ -1,6 +1,6 @@
 # 222. Front doors and the local engine
 
-The same operations, pipelines, and actions are reachable several ways, all backed by one engine, one policy gate, and one audit log. A front door reads the caller's credential, has `a2m-actions` check it, builds a request, and dispatches ([section 220](220-actions-and-the-authoring-interface.md)). It decides nothing, holds no run state, and holds no engine logic. This section describes the front doors, the local engine that serves them on one machine, the thin clients that reach it, and the server's network listener.
+The same operations, pipelines, and actions are reachable several ways, all backed by one engine, one policy gate, and one audit log. A front door reads the caller's credential, has `a2m-actions` check it, builds a request, and dispatches ([section 220](220-actions-and-the-authoring-interface.md)). It decides nothing, holds no run state, and holds no engine logic. This section describes the front doors, the local engine that serves them on one machine, the thin clients that reach it, and the server's network listener. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The front doors
 

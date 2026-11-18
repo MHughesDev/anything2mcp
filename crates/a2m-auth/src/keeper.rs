@@ -7,7 +7,7 @@
 //! session's state and epoch. The caller that wins a move starts the work
 //! that belongs to it; every other caller waits for the outcome.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -26,7 +26,9 @@ use crate::key::{AuthEntry, SessionKey, SessionRef};
 use crate::lease::{LeaseRequest, Purpose, SessionGrant, SessionLease, Wait};
 use crate::name::ProviderName;
 use crate::person::{PersonAsk, PersonReason};
-use crate::provider::{ExpirySign, ProviderNeeds, ProviderSet, Rung};
+use crate::provider::{
+    ExpirySign, ProviderNeeds, ProviderSet, Rung, SignInAddress, checked, sign_in_addresses,
+};
 use crate::state::{CallRule, call_rule, legal_move};
 use crate::store::{EventKind, Saved, SessionEvent, SessionRow, SessionStore};
 use crate::work::{KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, Work, WorkOutcome};
@@ -139,8 +141,19 @@ struct Inner {
     /// Moves on every change of any session and on every tick, so that a
     /// waiting call looks again.
     changed: watch::Sender<u64>,
-    /// The auth file entry each session was last used under.
+    /// The auth file entry each session was last used under. A drafts'
+    /// entry never replaces a published version's (decision 0248).
     entries: Mutex<BTreeMap<SessionId, Arc<AuthEntry>>>,
+    /// For each session, the addresses its person was shown and allowed
+    /// when they carried out a sign-in declared by drafts, or that a
+    /// published version declares for it: where a run under drafts may
+    /// send its credentials (decision 0248). In memory only: after a
+    /// restart a run under drafts is refused until the person signs in
+    /// again.
+    allowed: Mutex<BTreeMap<SessionId, BTreeSet<String>>>,
+    /// The sessions whose last sign-in was declared by drafts. None of them
+    /// is renewed without its person (decision 0248). In memory only.
+    drafted: Mutex<BTreeSet<SessionId>>,
     /// Sessions with work in flight in this process.
     busy: Mutex<BTreeMap<SessionId, usize>>,
     /// Why each session's last sign-in or renewal failed, until one works.
@@ -267,6 +280,8 @@ impl Keeper {
                 telemetry: None,
                 changed: watch::Sender::new(0),
                 entries: Mutex::new(BTreeMap::new()),
+                allowed: Mutex::new(BTreeMap::new()),
+                drafted: Mutex::new(BTreeSet::new()),
                 busy: Mutex::new(BTreeMap::new()),
                 failures: Mutex::new(BTreeMap::new()),
                 waiting: AtomicUsize::new(0),
@@ -281,6 +296,37 @@ impl Keeper {
     /// `input`/`auth_provider_unknown`.
     pub fn needs(&self, provider: &ProviderName) -> Result<ProviderNeeds, Failure> {
         Ok(self.inner.providers.get(provider)?.needs())
+    }
+
+    /// Every address a sign-in under `entry` for `target` sends a
+    /// credential, a token, or the person to, after the checks the keeper
+    /// makes before any request: the provider's own, that every credential
+    /// belongs to the target, and that every address the provider sends to
+    /// is one the target declares (decision 0248). What a person is shown
+    /// before a sign-in or a publish.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`auth_provider_unknown`; the provider's
+    /// `input`/`auth_settings_invalid`; `input`/`credential_of_another_target`;
+    /// `policy`/`destination_not_declared`.
+    pub fn sign_in_addresses(
+        &self,
+        target: &TargetName,
+        entry: &AuthEntry,
+    ) -> Result<Vec<SignInAddress>, Failure> {
+        let provider = self.inner.providers.get(&entry.provider)?;
+        checked(provider.as_ref(), entry, target)?;
+        Ok(sign_in_addresses(provider.as_ref(), entry))
+    }
+
+    /// Whether a run under `entry`, an entry the target's drafts declare,
+    /// may use the session `session`: every address it would send the
+    /// session's credentials to is one the session's person allowed. Always
+    /// true for an entry of a published version.
+    #[must_use]
+    pub fn allows(&self, session: SessionId, entry: &AuthEntry) -> bool {
+        self.inner.allows(session, entry)
     }
 
     /// The engine's only way to a session, through `Control`.
@@ -364,10 +410,23 @@ impl Keeper {
     ) -> Result<SignInTicket, Failure> {
         let inner = &self.inner;
         owner_only(key, acting_for.as_ref())?;
-        inner.providers.get(&entry.provider)?.check(&entry)?;
+        checked(
+            inner.providers.get(&entry.provider)?.as_ref(),
+            &entry,
+            &key.target,
+        )?;
+        let surfaces = &entry.surfaces;
+        if !surfaces.from_published && !surfaces.shown_to_person {
+            return Err(failure::not_published(
+                "it would sign in without the person being shown where it sends",
+            ));
+        }
         loop {
             let row = inner.find_or_create(key, &entry).await?;
             inner.remember_entry(row.id, &entry);
+            // The person, shown every address, allowed this sign-in's: a
+            // session that holds already may now be used there.
+            inner.allow(row.id, &entry);
             if matches!(
                 row.state,
                 SessionState::Valid
@@ -421,21 +480,63 @@ impl Keeper {
             .into_iter()
             .filter(|row| &row.key.workspace == workspace)
             .filter(|row| identity.is_none_or(|identity| &row.key.identity == identity))
-            .map(|row| SessionStatus {
-                session: row.id,
-                target: row.key.target,
-                environment: row.key.environment,
-                identity: row.key.identity,
-                provider: row.provider,
-                state: row.state,
-                epoch: row.epoch,
-                wants: row.wants,
-                signed_in_at: row.signed_in_at,
-                expires_at: row.expires_at,
-                checked_at: row.checked_at,
-                last_used_at: row.last_used_at,
-            })
+            .map(status_of)
             .collect())
+    }
+
+    /// Waits until the sign-in [`Keeper::sign_in`] started for `session`
+    /// has ended, for at most `limit`, and says how it ended: the session
+    /// as `status` shows it once it holds credentials, or the failure the
+    /// sign-in ended with, by name. A session that still signs in when the
+    /// limit is reached is shown as it stands, in `signing_in`.
+    ///
+    /// It only watches: it starts no sign-in and asks no person.
+    ///
+    /// # Errors
+    ///
+    /// The failure the sign-in ended with: `session_expired` with
+    /// `credential_refused`, `needs_login`, or `needs_mfa`, a provider's
+    /// failure, or `input`/`credential_missing`; `needs_login` when the
+    /// session ended without one being recorded; the store's failures.
+    pub async fn signed_in(
+        &self,
+        session: SessionId,
+        limit: Duration,
+    ) -> Result<SessionStatus, Failure> {
+        let inner = &self.inner;
+        let mut changes = inner.changed.subscribe();
+        let until = tokio::time::Instant::now() + limit;
+        loop {
+            let Some(row) = inner.store.get(session).await? else {
+                return Err(failure::needs_login("no such session is kept"));
+            };
+            match row.state {
+                SessionState::Valid | SessionState::Suspect | SessionState::Renewing => {
+                    return Ok(status_of(row));
+                }
+                SessionState::SigningIn => {}
+                SessionState::NeedsPerson => {
+                    return Err(inner.last_failure(row.id).unwrap_or_else(|| {
+                        if row.wants == Some(PersonReason::SecondFactor) {
+                            failure::needs_mfa()
+                        } else {
+                            failure::needs_login("a person must sign in, and none has yet")
+                        }
+                    }));
+                }
+                SessionState::Absent | SessionState::Expired | SessionState::Revoked => {
+                    return Err(inner.last_failure(row.id).unwrap_or_else(|| {
+                        failure::needs_login("the sign-in did not end in a session")
+                    }));
+                }
+            }
+            match tokio::time::timeout_at(until, changes.changed()).await {
+                Ok(Ok(())) => {}
+                // The limit, or a keeper that is gone: the session as it
+                // stands.
+                Ok(Err(_)) | Err(_) => return Ok(status_of(row)),
+            }
+        }
     }
 
     /// A session's timeline: what happened to it, when, and why. No
@@ -482,6 +583,10 @@ impl Keeper {
                 )
                 .await?;
             if let Some(revoked) = moved {
+                // What the person allowed was for this session, which has
+                // ended on purpose.
+                locked(&inner.allowed).remove(&revoked.id);
+                locked(&inner.drafted).remove(&revoked.id);
                 let entry = inner
                     .entry_of(revoked.id)
                     .unwrap_or_else(|| Arc::new(AuthEntry::new(revoked.provider.clone())));
@@ -550,6 +655,23 @@ fn owner_only(key: &SessionKey, acting_for: Option<&PrincipalId>) -> Result<(), 
     }
 }
 
+fn status_of(row: SessionRow) -> SessionStatus {
+    SessionStatus {
+        session: row.id,
+        target: row.key.target,
+        environment: row.key.environment,
+        identity: row.key.identity,
+        provider: row.provider,
+        state: row.state,
+        epoch: row.epoch,
+        wants: row.wants,
+        signed_in_at: row.signed_in_at,
+        expires_at: row.expires_at,
+        checked_at: row.checked_at,
+        last_used_at: row.last_used_at,
+    }
+}
+
 fn session_ref(row: &SessionRow) -> SessionRef {
     SessionRef {
         session: row.id,
@@ -580,7 +702,68 @@ impl Inner {
     }
 
     fn remember_entry(&self, session: SessionId, entry: &Arc<AuthEntry>) {
-        locked(&self.entries).insert(session, Arc::clone(entry));
+        let mut entries = locked(&self.entries);
+        let keeps_published = entries
+            .get(&session)
+            .is_some_and(|kept| kept.surfaces.from_published && !entry.surfaces.from_published);
+        if !keeps_published {
+            entries.insert(session, Arc::clone(entry));
+        }
+    }
+
+    /// The addresses a run under `entry` sends the session's credentials
+    /// to: those of the surfaces it covers, and those the provider itself
+    /// sends to.
+    fn reach(&self, entry: &AuthEntry) -> BTreeSet<String> {
+        let mut reach: BTreeSet<String> = entry
+            .surfaces
+            .surfaces
+            .iter()
+            .map(|surface| surface.address.clone())
+            .collect();
+        if let Ok(provider) = self.providers.get(&entry.provider) {
+            reach.extend(
+                provider
+                    .destinations(entry)
+                    .into_iter()
+                    .map(|sent| sent.address),
+            );
+        }
+        reach
+    }
+
+    /// Notes the addresses `entry` sends to as allowed for the session,
+    /// when a person was shown them or a published version declares them.
+    fn allow(&self, session: SessionId, entry: &AuthEntry) {
+        if entry.surfaces.shown_to_person || entry.surfaces.from_published {
+            let reach = self.reach(entry);
+            locked(&self.allowed)
+                .entry(session)
+                .or_default()
+                .extend(reach);
+        }
+    }
+
+    fn allows(&self, session: SessionId, entry: &AuthEntry) -> bool {
+        if entry.surfaces.from_published {
+            return true;
+        }
+        let reach = self.reach(entry);
+        locked(&self.allowed)
+            .get(&session)
+            .is_some_and(|allowed| reach.is_subset(allowed))
+    }
+
+    /// Refuses a run under drafts that would send the session's
+    /// credentials to an address its person did not allow.
+    fn may_use(&self, row: &SessionRow, entry: &AuthEntry) -> Result<(), Failure> {
+        if self.allows(row.id, entry) {
+            Ok(())
+        } else {
+            Err(failure::not_published(
+                "it would send the session's credentials to an address its person was not shown",
+            ))
+        }
     }
 
     fn mark_busy(self: &Arc<Self>, session: SessionId) -> Busy {
@@ -894,6 +1077,16 @@ impl Inner {
         tokio::spawn(async move {
             let _busy = busy;
             let outcome = inner.perform(&row, &entry, Work::SignIn).await;
+            if matches!(outcome, WorkOutcome::Held { .. }) {
+                let mut drafted = locked(&inner.drafted);
+                if entry.surfaces.from_published {
+                    drafted.remove(&row.id);
+                } else {
+                    drafted.insert(row.id);
+                }
+                drop(drafted);
+                inner.allow(row.id, &entry);
+            }
             if let Err(failure) = inner.signed_in(&row, &entry, automatic, outcome).await {
                 inner.fail(row.id, failure);
             }
@@ -929,7 +1122,20 @@ impl Inner {
                     row.id,
                     failure::credential_refused("the side that checks it"),
                 );
-                abandon("credential_refused").await.map(|_| ())
+                // The refused credential is counted as `refused` counts it,
+                // so that no lease tries it again by itself: a lockout
+                // would count that as a second failure.
+                let attempts = row.stored_attempts.saturating_add(1);
+                self.advance(
+                    row,
+                    SessionState::Absent,
+                    EventKind::Abandoned,
+                    "credential_refused",
+                    |next| next.stored_attempts = attempts,
+                    Saved::Delete,
+                )
+                .await
+                .map(|_| ())
             }
             WorkOutcome::NeedsPerson(reason) if automatic => {
                 self.want_person(row, reason, row.stored_attempts).await
@@ -1015,6 +1221,17 @@ impl Inner {
         let (Some(entry), Some(provider)) = (entry, provider) else {
             return self.expire(row, "entry_unknown").await;
         };
+        // A session signed in on a drafts' word, or one whose entry is a
+        // drafts', is never renewed without its person (decision 0248).
+        if !entry.surfaces.from_published || locked(&self.drafted).contains(&row.id) {
+            self.fail(
+                row.id,
+                failure::not_published("it would renew without its person"),
+            );
+            return self
+                .want_person(row, PersonReason::SignIn, row.stored_attempts)
+                .await;
+        }
         let needs = provider.needs();
         let started = self.clock.elapsed();
         let mut reason = PersonReason::SignIn;
@@ -1174,8 +1391,9 @@ impl Inner {
     async fn lease(self: &Arc<Self>, req: LeaseRequest) -> Result<SessionLease, Failure> {
         owner_only(&req.key, req.acting_for.as_ref())?;
         let provider = self.providers.get(&req.entry.provider)?;
-        provider.check(&req.entry)?;
+        checked(provider.as_ref(), &req.entry, &req.key.target)?;
         let needs = provider.needs();
+        let published = req.entry.surfaces.from_published;
         let started = self.clock.elapsed();
         // Subscribed before the first read, so no change is missed.
         let mut changes = self.changed.subscribe();
@@ -1190,6 +1408,7 @@ impl Inner {
             let probing = req.purpose == Purpose::Probe
                 && matches!(row.state, SessionState::Suspect | SessionState::Renewing);
             if probing {
+                self.may_use(&row, &req.entry)?;
                 match self.grant(&row, &req).await? {
                     Some(lease) => return Ok(lease),
                     None => continue,
@@ -1197,6 +1416,7 @@ impl Inner {
             }
             match call_rule(row.state) {
                 CallRule::Run => {
+                    self.may_use(&row, &req.entry)?;
                     if req.purpose == Purpose::Probe {
                         match self.grant(&row, &req).await? {
                             Some(lease) => return Ok(lease),
@@ -1220,6 +1440,11 @@ impl Inner {
                     let due = row
                         .expires_at
                         .is_some_and(|expires| between(now, expires) <= ahead);
+                    if due && !published {
+                        return Err(failure::not_published(
+                            "the session's credentials have run out, and it would renew without its person",
+                        ));
+                    }
                     if due {
                         if acted {
                             return Err(self.last_failure(row.id).unwrap_or_else(|| {
@@ -1315,6 +1540,11 @@ impl Inner {
                     }
                     if row.stored_attempts >= req.entry.attempt_limit {
                         return Err(failure::credential_refused("the side that checks it"));
+                    }
+                    if !published {
+                        return Err(failure::not_published(
+                            "it would sign in with a stored credential without its person",
+                        ));
                     }
                     // A stored credential and no person to wait for: the
                     // keeper signs in, once.

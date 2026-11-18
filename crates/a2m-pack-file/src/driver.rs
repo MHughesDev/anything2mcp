@@ -24,15 +24,17 @@ use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
+use crate::drive_folder::{Entries, Here};
 use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
     BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST,
-    FieldSpec, Format, INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec,
-    TRUNCATED, field_arg, key_arg,
+    FOLDER_KIND, FieldSpec, FolderSection, Format, INTENDED_DIGEST, LOG_KIND, LogSection, PACK,
+    ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec, TRUNCATED, field_arg, key_arg,
 };
 use crate::open::{self, Content, OpenFile, RowAt, Table};
 use crate::place::{Folder, Named};
 use crate::save::{self, SaveJob};
+use crate::settings::{self, Quotes, Which};
 
 /// What the pack may read: the limits of `packs.file`.
 #[derive(Debug, Clone, Copy)]
@@ -122,6 +124,9 @@ struct Current {
 struct State {
     folder: Folder,
     documents: BTreeMap<String, Loaded>,
+    /// The surface's folders and growing files, and the entry being worked
+    /// on (decision 0246).
+    entries: Entries,
     /// What the run may do: a save is refused where nothing may be written.
     posture: Posture,
     current: Option<Current>,
@@ -156,6 +161,16 @@ fn means_of(spec: &StepSpec, format: Option<Format>) -> Vec<Detail> {
         StepSpec::Confirm => ("confirm", "digest"),
         StepSpec::One { .. } => ("read", "one"),
         StepSpec::List { .. } => ("read", "list"),
+        StepSpec::FolderOpen { for_write } => {
+            ("folder_open_for", if *for_write { "write" } else { "read" })
+        }
+        StepSpec::FolderLocate { .. } => ("folder", "locate"),
+        StepSpec::FolderList { .. } => ("folder", "list"),
+        StepSpec::FolderRead { .. } => ("folder", "read"),
+        StepSpec::FolderSet { change } => ("folder_change", change.verb()),
+        StepSpec::FolderSave => ("folder", "save"),
+        StepSpec::FolderConfirm => ("folder", "confirm"),
+        StepSpec::LogRead => ("log", "read_from_position"),
     };
     means.push(Detail::new(name, value));
     means
@@ -169,6 +184,64 @@ const PROJECT_ROOT: &str = "project";
 #[serde(deny_unknown_fields)]
 struct SurfaceFields {
     root: Option<String>,
+}
+
+/// The folder a `file` surface names, from the roots the pack was handed:
+/// the place the target states, never one an input gives. With `write`, a
+/// root the pack may write gives a folder it may write, and a root it may
+/// only read one it may only read; without it, the folder is for reading
+/// alone, as discovery reads it.
+pub(crate) fn surface_folder(
+    roots: &Roots,
+    surface: &SurfaceRef,
+    paths: &CheckedPaths,
+    write: bool,
+) -> Result<Folder, StepFailure> {
+    let payload = &surface.surface.payload;
+    let fields: SurfaceFields = if payload.is_none() {
+        SurfaceFields::default()
+    } else {
+        payload
+            .decode()
+            .map_err(|_| plan_unreadable("the surface's fields do not decode"))?
+    };
+    let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
+        .map_err(StepFailure::not_sent)?;
+    let address = surface.surface.address.as_str();
+    if root.as_str() == PROJECT_ROOT {
+        let project = paths.project_folder().map_err(StepFailure::not_sent)?;
+        let folder = if address == "." {
+            project.clone()
+        } else {
+            project.join(address).map_err(StepFailure::not_sent)?
+        };
+        return Ok(Folder::reading(folder, project));
+    }
+    // A root may stand for the project folder of each request (decision
+    // 0193): it is resolved in this run's project folder, with every
+    // refusal of a root, and never in the folder the engine was started
+    // in. A run with no project folder stops by name.
+    let under = |access| {
+        if address == "." {
+            roots.folder_in(&root, access, paths)
+        } else {
+            roots.check_in(&root, address, access, paths)
+        }
+    };
+    let folder = if write {
+        under(Access::Write).or_else(|_| under(Access::Read))
+    } else {
+        under(Access::Read)
+    }
+    .map_err(StepFailure::not_sent)?;
+    let root = roots
+        .folder_in(&root, Access::Read, paths)
+        .map_err(StepFailure::not_sent)?;
+    Ok(if write {
+        Folder::new(folder, &root)
+    } else {
+        Folder::reading(folder, &root)
+    })
 }
 
 fn timed_out() -> StepFailure {
@@ -340,47 +413,7 @@ impl FileDriver {
     /// reads the project and does not write it, so such a folder is for
     /// reading alone.
     fn folder(&self, surface: &SurfaceRef, paths: &CheckedPaths) -> Result<Folder, StepFailure> {
-        let payload = &surface.surface.payload;
-        let fields: SurfaceFields = if payload.is_none() {
-            SurfaceFields::default()
-        } else {
-            payload
-                .decode()
-                .map_err(|_| plan_unreadable("the surface's fields do not decode"))?
-        };
-        let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
-            .map_err(StepFailure::not_sent)?;
-        let address = surface.surface.address.as_str();
-        if root.as_str() == PROJECT_ROOT {
-            let project = paths.project_folder().map_err(StepFailure::not_sent)?;
-            let folder = if address == "." {
-                project.clone()
-            } else {
-                project.join(address).map_err(StepFailure::not_sent)?
-            };
-            return Ok(Folder::reading(folder, project));
-        }
-        // A root may stand for the project folder of each request (decision
-        // 0193): it is resolved in this run's project folder, with every
-        // refusal of a root, and never in the folder the engine was started
-        // in. A run with no project folder stops by name.
-        let under = |access| {
-            if address == "." {
-                self.roots.folder_in(&root, access, paths)
-            } else {
-                self.roots.check_in(&root, address, access, paths)
-            }
-        };
-        // A root the pack may write gives a folder it may write; a root it
-        // may only read gives one it may only read.
-        let folder = under(Access::Write)
-            .or_else(|_| under(Access::Read))
-            .map_err(StepFailure::not_sent)?;
-        let root = self
-            .roots
-            .folder_in(&root, Access::Read, paths)
-            .map_err(StepFailure::not_sent)?;
-        Ok(Folder::new(folder, &root))
+        surface_folder(&self.roots, surface, paths, true)
     }
 
     async fn open(
@@ -671,8 +704,13 @@ fn set(
     let delimiter = delimiter_of(spec);
     let part = match &old.content {
         Content::Cells(parsed) => parsed.part(0),
-        Content::Json { .. } => None,
+        Content::Json { .. } | Content::Settings(_) => None,
     };
+    if spec.format.is_settings() && change != Change::Update {
+        return Err(unsupported(
+            "adding or removing a value of a settings file, whose editor sets one value in place",
+        ));
+    }
     let values = intended_values(
         loaded,
         record,
@@ -711,7 +749,23 @@ fn set(
                     ));
                 };
                 let existing = span.of(&old.bytes).unwrap_or_default();
-                let literal = if spec.format == Format::Json {
+                let literal = if spec.format.is_settings() {
+                    nodes.push(span);
+                    let setting = open::setting_at(old, span)
+                        .ok_or_else(|| round_trip("a value's place cannot be found again"))?;
+                    let which = if spec.format == Format::Ini {
+                        Which::Ini
+                    } else {
+                        Which::PropertyList
+                    };
+                    settings::literal(
+                        setting,
+                        which,
+                        Quotes::from_name(spec.quotes.as_deref()),
+                        intended,
+                        &typing.plan,
+                    )?
+                } else if spec.format == Format::Json {
                     nodes.push(span);
                     edit::json_literal(intended, &typing.plan, Some(existing))?
                 } else {
@@ -726,7 +780,9 @@ fn set(
                 };
                 patches.push(Patch::over(span, literal));
             }
-            if spec.format == Format::Json {
+            if spec.format.is_settings() {
+                Meant::Values(nodes)
+            } else if spec.format == Format::Json {
                 Meant::Nodes(nodes)
             } else {
                 Meant::Cells(cells)
@@ -921,6 +977,7 @@ impl FileDriver {
             before: current.open.digest,
             intended,
             max_bytes: self.limits.max_bytes,
+            expected: None,
         };
         // The replace is never left half asked: the work runs to its end on
         // its own thread, and a lost answer is a write whose fate is unknown.
@@ -988,9 +1045,39 @@ impl Driver for FileDriver {
                     }
                 }
             }
+            let mut entries = Entries::default();
+            let surface_name = cx.surface.surface.name.as_str();
+            for section in cx
+                .plan
+                .packs
+                .iter()
+                .filter(|section| section.pack == PACK && section.surface_kind == SURFACE_KIND)
+            {
+                if section.kind == FOLDER_KIND {
+                    let decoded: FolderSection = section
+                        .payload
+                        .decode()
+                        .map_err(|_| plan_unreadable("its section of folders does not decode"))?;
+                    entries.folders.extend(
+                        decoded
+                            .into_iter()
+                            .filter(|(_, spec)| spec.surface == surface_name),
+                    );
+                } else if section.kind == LOG_KIND {
+                    let decoded: LogSection = section.payload.decode().map_err(|_| {
+                        plan_unreadable("its section of growing files does not decode")
+                    })?;
+                    entries.logs.extend(
+                        decoded
+                            .into_iter()
+                            .filter(|(_, spec)| spec.surface == surface_name),
+                    );
+                }
+            }
             Ok(Prepared::new(State {
                 folder,
                 documents,
+                entries,
                 posture: cx.posture,
                 current: None,
             }))
@@ -1028,6 +1115,29 @@ impl Driver for FileDriver {
             );
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
             let result = match spec {
+                StepSpec::FolderOpen { .. }
+                | StepSpec::FolderLocate { .. }
+                | StepSpec::FolderList { .. }
+                | StepSpec::FolderRead { .. }
+                | StepSpec::FolderSet { .. }
+                | StepSpec::FolderSave
+                | StepSpec::FolderConfirm
+                | StepSpec::LogRead => {
+                    state
+                        .entries
+                        .act(
+                            Here {
+                                folder: &state.folder,
+                                limits: self.limits,
+                                posture: state.posture,
+                            },
+                            step,
+                            spec,
+                            document,
+                            input,
+                        )
+                        .await
+                }
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
                 StepSpec::Save => done(self.save(state, document, step).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
@@ -1051,9 +1161,7 @@ impl Driver for FileDriver {
                         StepSpec::Set { record, change } => {
                             done(set(loaded, current, &record, change, input, &self.limits)?)
                         }
-                        StepSpec::Open { .. } | StepSpec::Save | StepSpec::Confirm => {
-                            Err(out_of_order("a step of no kind"))
-                        }
+                        _ => Err(out_of_order("a step of no kind")),
                     }
                 }
             };
@@ -1112,6 +1220,8 @@ mod tests {
             format: Format::Delimited,
             delimiter: None,
             line_ending: None,
+            separator: None,
+            quotes: None,
             layout: Layout::default(),
             may_be_open,
             lock_sibling: lock_sibling.map(str::to_owned),

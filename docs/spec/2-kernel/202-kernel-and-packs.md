@@ -1,6 +1,6 @@
 # 202. Kernel and packs
 
-The system is split in two: a kernel that is the same whatever is being integrated, and packs that each know one kind of system. This section says what is on each side, how the line is held, and what a new pack must bring. Decision: [record 0049](../../decisions/0049-a-neutral-kernel-and-packs-behind-one-provider-contract.md).
+The system is split in two: a kernel that is the same whatever is being integrated, and packs that each know one kind of system. This section says what is on each side, how the line is held, and what a new pack must bring. Decision: [record 0049](../../decisions/0049-a-neutral-kernel-and-packs-behind-one-provider-contract.md). Built today: the split between kernel and packs is enforced by the audit's layering rules.
 
 ## The line
 

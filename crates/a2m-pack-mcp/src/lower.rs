@@ -727,7 +727,7 @@ impl LintRule for Rule {
                 "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
             }
             Self::EnvironmentRefused => {
-                "A local server program is handed no variable of the engine's and none named for a credential."
+                "A local server program is handed no variable of the engine's, none that makes it load other code, and none named for a credential."
             }
             Self::UnencryptedCredentials => {
                 "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."

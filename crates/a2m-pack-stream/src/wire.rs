@@ -64,13 +64,18 @@ pub(crate) enum WireErrorKind {
 /// Where a plain TCP connection may go: a loopback address written as an
 /// IP address, `127.0.0.0/8` or `::1`, with its port (decision 0197, by the
 /// rule of decision 0188). A name, `localhost` included, is never one: the
-/// resolver decides where a name leads. `::ffff:127.0.0.1`, `0.0.0.0`, and
-/// `::` are not one either. Every protocol of the pack dials only what this
-/// returns, so the session's credential never crosses a plain link to
-/// another machine, and nothing is resolved or sent before the check.
+/// resolver decides where a name leads. `::ffff:127.0.0.1`, `0.0.0.0`,
+/// `::`, and an address with a zone (`[::1%1]:4222`) are not one either.
+/// The address is judged by `a2m_core::ScopedHost::may_leave_this_machine`,
+/// the one question every check of a plain link asks (decision 0240). Every
+/// protocol of the pack dials only what this returns, so the session's
+/// credential never crosses a plain link to another machine, and nothing is
+/// resolved or sent before the check.
 pub(crate) fn plain_tcp_address(address: &str) -> Result<std::net::SocketAddr, WireError> {
     match address.parse::<std::net::SocketAddr>() {
-        Ok(found) if found.ip().is_loopback() => Ok(found),
+        Ok(found) if !a2m_core::ScopedHost::of_socket_address(found).may_leave_this_machine() => {
+            Ok(found)
+        }
         _ => Err(WireError {
             kind: WireErrorKind::Transport,
             sent: Sent::NotSent,
@@ -322,6 +327,79 @@ pub(crate) trait Link: Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The corpus of address spellings every check of where an address is
+    /// is pinned against (decision 0240).
+    const SPELLINGS: &str = include_str!("../../a2m-core/tests/address-spellings.txt");
+
+    /// Each spelling of the corpus, with the verdict of `column` now and
+    /// before decision 0240.
+    fn corpus(column: &str) -> Vec<(String, String, String)> {
+        let mut header: Vec<&str> = Vec::new();
+        let mut rows = Vec::new();
+        for line in SPELLINGS.lines() {
+            if let Some(names) = line.strip_prefix("#spelling") {
+                header = std::iter::once("spelling")
+                    .chain(names.split_whitespace())
+                    .collect();
+            }
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            let at = header.iter().position(|name| *name == column).unwrap();
+            let spelling = cells[0].replace("<empty>", "").replace("<sp>", " ");
+            let (now, before) = cells[at].split_once('<').unwrap_or((cells[at], cells[at]));
+            rows.push((spelling, now.to_owned(), before.to_owned()));
+        }
+        assert!(rows.len() > 50, "the corpus was not read");
+        rows
+    }
+
+    /// `plain_tcp_address`'s test of an address as it was before decision
+    /// 0240, kept to show that nothing it refused is allowed now.
+    fn before(address: &str) -> bool {
+        matches!(address.parse::<std::net::SocketAddr>(), Ok(found) if found.ip().is_loopback())
+    }
+
+    fn verdict(allowed: bool) -> &'static str {
+        if allowed { "here" } else { "away" }
+    }
+
+    #[test]
+    fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
+        for (spelling, now, before_then) in corpus("stream") {
+            assert_eq!(
+                verdict(plain_tcp_address(&spelling).is_ok()),
+                now,
+                "{spelling}"
+            );
+            assert_eq!(verdict(before(&spelling)), before_then, "{spelling}");
+        }
+    }
+
+    #[test]
+    fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
+        for (spelling, _, _) in corpus("stream") {
+            if !before(&spelling) {
+                assert!(plain_tcp_address(&spelling).is_err(), "{spelling}");
+            }
+        }
+    }
+
+    /// The one tightening of decision 0240 in this pack: a zone on the
+    /// loopback address names an interface, and what a connection to `::1`
+    /// through another interface does is no standard's that was read here;
+    /// unknown means stop.
+    #[test]
+    fn a_loopback_address_with_a_zone_was_allowed_and_is_refused() {
+        assert!(before("[::1%1]:4222"));
+        let refused = plain_tcp_address("[::1%1]:4222").unwrap_err();
+        assert_eq!(
+            (refused.kind, refused.sent),
+            (WireErrorKind::Transport, Sent::NotSent)
+        );
+    }
 
     #[test]
     fn plain_tcp_goes_only_to_a_loopback_address_written_as_an_ip_address() {

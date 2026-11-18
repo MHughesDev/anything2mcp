@@ -10,7 +10,7 @@ Emitting what the engine did: the step trace and its signature, the capture of a
 | Layer | 2, Foundations |
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside: `serde`, `serde_json`, and `tracing` for the logging macros and the subscriber interface ([decision 0077](../../decisions/0077-logs-through-the-tracing-crate-with-our-own-subscriber-and-spans-through-a-handle.md)). SHA-256 comes through `a2m-core`'s `Digest`. Still to verify and record: an OpenTelemetry exporter, behind a cargo feature |
-| Built in | Roadmap package 1.2, the step trace and its signature; package 2.1, redaction at capture and the check on the way out; the OpenTelemetry export with the server profile, Phase 6, or earlier if a slice needs it |
+| Roadmap packages | Roadmap package 1.2, the step trace and its signature; package 2.1, redaction at capture and the check on the way out; the OpenTelemetry export with the server profile, Phase 6, or earlier if a slice needs it |
 | Carries out | Spec section [217](../../spec/2-kernel/217-traces-evidence-and-repair.md); [decision 0037](../../decisions/0037-evidence-events-a-step-trace-and-artifacts-redacted-at-capture.md); [decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the determinism gate's input in [section 403](../../spec/4-building-tools/403-testing-and-publish-gates.md) |
 
 ## Owns

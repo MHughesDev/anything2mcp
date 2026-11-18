@@ -1,0 +1,13 @@
+# The same text as the constant `GET` of the web pack's test of writes
+# from inside a page (decision 0206).
+endpoint: example_order_note_get
+surface: app
+method: GET
+path: "/api/orders/{order_id}/note"
+page: "/orders/{order_id}/note"
+effect: read
+responses: {absent: [404]}
+response_schema:
+  type: object
+  properties: {order_id: {type: string}, note: {type: string}}
+  required: [order_id, note]

@@ -124,46 +124,87 @@ static FOLDERS: AtomicU32 = AtomicU32::new(0);
 /// The harness does not start the program. Whatever is under test starts it,
 /// from [`StdioStand::program`] with the environment of [`StdioStand::env`],
 /// as many times as it likes; every program started over one stand shares the
-/// stand's orders, settings, and ground truth. The folder is removed when the
-/// stand is dropped.
+/// stand's orders, settings, and ground truth. The folders are removed when
+/// the stand is dropped.
 #[derive(Debug)]
 pub struct StdioStand {
     folder: PathBuf,
+    program_folder: PathBuf,
     program: PathBuf,
     control: Control,
 }
 
+/// Makes `folder` empty and new: a folder left by an earlier process with
+/// the same number is stale.
+fn fresh_folder(folder: &Path) -> Result<(), HarnessError> {
+    match std::fs::remove_dir_all(folder) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(HarnessError::State(e)),
+        _ => {}
+    }
+    std::fs::create_dir_all(folder).map_err(HarnessError::State)
+}
+
+/// Puts the built program at `at`. On Linux and macOS a link where the disk
+/// allows it: a file that was never open for writing can always be started
+/// at once. On Windows a copy: a link there shares one access list with the
+/// file the build wrote, which may be open to other users, and a copy takes
+/// the access list of the stand's own folder.
+fn place_program(built: &Path, at: &Path) -> Result<(), HarnessError> {
+    #[cfg(not(windows))]
+    if std::fs::hard_link(built, at).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(built, at)
+        .map(|_| ())
+        .map_err(HarnessError::State)
+}
+
 impl StdioStand {
-    /// Makes a new state folder with the seed data, and builds the program if
-    /// it is not built.
+    /// Makes a new state folder with the seed data, builds the program if it
+    /// is not built, and puts it in a folder of the stand's own under the
+    /// system's temporary folder.
+    ///
+    /// The engine refuses a program that another user could replace, and
+    /// the folder a build writes to need not be closed to other users: on a
+    /// Windows machine whose checkout is on a drive other than the system's,
+    /// every signed-in user may change it, as on a hosted CI runner. The
+    /// user's temporary folder is closed to them on Windows and macOS, and on
+    /// Linux it is a folder with the sticky mark, where only an entry's owner
+    /// may replace it.
     ///
     /// # Errors
     ///
-    /// Returns an error if the folder could not be made or the program could
-    /// not be built.
+    /// Returns an error if a folder could not be made or the program could
+    /// not be built or placed.
     pub fn new() -> Result<Self, HarnessError> {
-        let program = stdio_program()?;
-        let folder = std::env::temp_dir().join(format!(
+        let built = stdio_program()?;
+        let name = format!(
             "example-mcp-{}-{}",
             std::process::id(),
             FOLDERS.fetch_add(1, Ordering::SeqCst)
-        ));
-        // A folder left by an earlier process with the same number is stale.
-        match std::fs::remove_dir_all(&folder) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(HarnessError::State(e)),
-            _ => {}
-        }
-        std::fs::create_dir_all(&folder).map_err(HarnessError::State)?;
+        );
+        let folder = std::env::temp_dir().join(&name);
+        let program_folder = std::env::temp_dir().join(format!("{name}-program"));
+        fresh_folder(&folder)?;
+        fresh_folder(&program_folder)?;
+        let program = program_folder.join(
+            built
+                .file_name()
+                .ok_or_else(|| HarnessError::Program("the program has no file name".to_owned()))?,
+        );
+        place_program(&built, &program)?;
         let control = Control::new(Arc::new(Backing::Folder(folder.clone())));
         control.reset()?;
         Ok(Self {
             folder,
+            program_folder,
             program,
             control,
         })
     }
 
-    /// The program to start. It takes no arguments.
+    /// The program to start: the built one, placed in the stand's own
+    /// folder. It takes no arguments.
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
@@ -211,6 +252,87 @@ impl Drop for StdioStand {
         // Left behind if a program still holds it open; the next stand with
         // the same name clears it.
         let _ = std::fs::remove_dir_all(&self.folder);
+        let _ = std::fs::remove_dir_all(&self.program_folder);
+    }
+}
+
+/// Whether the process `id` still runs, as the system's own listing of
+/// processes says: `ps` on Linux and macOS, where a process that has ended
+/// and is waiting to be reaped counts as gone, and `tasklist` on Windows.
+/// Both are programs started by their path, never through a shell.
+///
+/// # Errors
+///
+/// Returns an error if the listing could not be read.
+pub fn process_runs(id: u32) -> Result<bool, HarnessError> {
+    #[cfg(windows)]
+    {
+        let system = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        let output = Command::new(system.join("System32").join("tasklist.exe"))
+            .args(["/FI", &format!("PID eq {id}"), "/FO", "CSV", "/NH"])
+            .output()
+            .map_err(|e| HarnessError::Program(format!("tasklist could not be run: {e}")))?;
+        // A listed process is one line of quoted fields, the second its
+        // identifier; no process is a line of another kind.
+        let wanted = format!("\"{id}\"");
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.split(',').nth(1) == Some(wanted.as_str())))
+    }
+    #[cfg(not(windows))]
+    {
+        let ps = ["/bin/ps", "/usr/bin/ps"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+            .ok_or_else(|| HarnessError::Program("no ps in /bin or /usr/bin".to_owned()))?;
+        let output = Command::new(ps)
+            .args(["-o", "stat=", "-p", &id.to_string()])
+            .output()
+            .map_err(|e| HarnessError::Program(format!("ps could not be run: {e}")))?;
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Ok(output.status.success() && !state.is_empty() && !state.starts_with('Z'))
+    }
+}
+
+/// Ends the process `id` at once, from outside, as a person or the system
+/// would end a program in the middle of its work: `kill -KILL` on Linux
+/// and macOS, `taskkill /F` on Windows, each started by its path.
+///
+/// # Errors
+///
+/// Returns an error if the program could not be run or did not end it.
+pub fn kill_process(id: u32) -> Result<(), HarnessError> {
+    #[cfg(windows)]
+    let mut command = {
+        let system = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        let mut command = Command::new(system.join("System32").join("taskkill.exe"));
+        command.args(["/F", "/PID", &id.to_string()]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let kill = ["/bin/kill", "/usr/bin/kill"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+            .ok_or_else(|| HarnessError::Program("no kill in /bin or /usr/bin".to_owned()))?;
+        let mut command = Command::new(kill);
+        command.args(["-KILL", &id.to_string()]);
+        command
+    };
+    let output = command
+        .output()
+        .map_err(|e| HarnessError::Program(format!("the process could not be ended: {e}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(HarnessError::Program(format!(
+            "the process {id} was not ended: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
     }
 }
 

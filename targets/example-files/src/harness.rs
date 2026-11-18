@@ -931,6 +931,7 @@ fn changed_bytes(name: &str, old: &[u8], change: &Change) -> Result<Vec<u8>, Sta
                 .ok_or_else(|| StandError::BytesNotFound(name.to_owned()));
         }
         Change::Whole(bytes) => return Ok(bytes.clone()),
+        Change::Appended(bytes) => return Ok([old, bytes.as_slice()].concat()),
     };
     match edit {
         Edit::Whole(bytes) => Ok(bytes),

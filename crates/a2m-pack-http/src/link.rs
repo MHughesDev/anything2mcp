@@ -10,9 +10,7 @@
 //! `target.yaml`, which the lint reports as a warning on every lint. No
 //! setting, variable, or caller's input turns it on.
 
-use std::net::IpAddr;
-
-use a2m_core::{Failure, FailureClass, SurfacePlan};
+use a2m_core::{Failure, FailureClass, ScopedHost, SurfacePlan};
 use a2m_files::{CompileMode, Diagnostic, Level, LintRule, ResolvedView, Stage};
 use serde::Deserialize;
 
@@ -51,17 +49,13 @@ impl SurfaceFields {
 }
 
 /// Whether an address is plain `http` to an address that is not a
-/// loopback address written as an IP address.
+/// loopback address written as an IP address. The host is judged by
+/// `ScopedHost::may_leave_this_machine`, the one question every check of a
+/// plain link asks (decision 0240), as the URL parser wrote it: the address
+/// that is sent.
 pub(crate) fn plain_to_another_machine(url: &reqwest::Url) -> bool {
-    if url.scheme() != "http" {
-        return false;
-    }
-    let host = url.host_str().unwrap_or_default();
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-        .unwrap_or(host);
-    !bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    url.scheme() == "http"
+        && ScopedHost::of_host(url.host_str().unwrap_or_default()).may_leave_this_machine()
 }
 
 /// The refusal: a credential would cross an unencrypted link to another
@@ -122,6 +116,85 @@ impl LintRule for UnencryptedCredentials {
 #[cfg(test)]
 mod tests {
     use super::plain_to_another_machine;
+
+    /// The corpus of address spellings every check of where an address is
+    /// is pinned against (decision 0240).
+    const SPELLINGS: &str = include_str!("../../a2m-core/tests/address-spellings.txt");
+
+    /// Each spelling of the corpus, with the verdict of `column` now and
+    /// before decision 0240.
+    fn corpus(column: &str) -> Vec<(String, String, String)> {
+        let mut header: Vec<&str> = Vec::new();
+        let mut rows = Vec::new();
+        for line in SPELLINGS.lines() {
+            if let Some(names) = line.strip_prefix("#spelling") {
+                header = std::iter::once("spelling")
+                    .chain(names.split_whitespace())
+                    .collect();
+            }
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            let at = header.iter().position(|name| *name == column).unwrap();
+            let spelling = cells[0].replace("<empty>", "").replace("<sp>", " ");
+            let (now, before) = cells[at].split_once('<').unwrap_or((cells[at], cells[at]));
+            rows.push((spelling, now.to_owned(), before.to_owned()));
+        }
+        assert!(rows.len() > 50, "the corpus was not read");
+        rows
+    }
+
+    /// The verdict of `judge` for a spelling, given as `http://<spelling>/`.
+    fn verdict(spelling: &str, judge: impl Fn(&reqwest::Url) -> bool) -> &'static str {
+        match reqwest::Url::parse(&format!("http://{spelling}/")) {
+            Ok(url) if judge(&url) => "away",
+            Ok(_) => "here",
+            Err(_) => "-",
+        }
+    }
+
+    /// `plain_to_another_machine` as it was before decision 0240, kept to
+    /// show that nothing it refused is allowed now.
+    fn before(url: &reqwest::Url) -> bool {
+        if url.scheme() != "http" {
+            return false;
+        }
+        let host = url.host_str().unwrap_or_default();
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host);
+        !bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    }
+
+    #[test]
+    fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
+        for (spelling, now, before_then) in corpus("http") {
+            assert_eq!(
+                verdict(&spelling, plain_to_another_machine),
+                now,
+                "{spelling}"
+            );
+            assert_eq!(verdict(&spelling, before), before_then, "{spelling}");
+        }
+    }
+
+    #[test]
+    fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
+        for (spelling, _, _) in corpus("http") {
+            for scheme in ["http", "https"] {
+                let Ok(url) = reqwest::Url::parse(&format!("{scheme}://{spelling}/")) else {
+                    continue;
+                };
+                if before(&url) {
+                    assert!(plain_to_another_machine(&url), "{url}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn only_plain_http_to_an_address_that_is_not_loopback_is_another_machine() {

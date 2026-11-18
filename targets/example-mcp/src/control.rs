@@ -51,6 +51,12 @@ impl Control {
         self.with(|state| state.truth.clone())
     }
 
+    /// Every start of the stdio program since the last reset, oldest
+    /// first, as the program itself saw it.
+    pub fn starts(&self) -> Result<Vec<crate::state::StartRecord>, HarnessError> {
+        self.with(|state| state.truth.starts.clone())
+    }
+
     /// Every tool call received since the last reset, oldest first.
     pub fn calls(&self) -> Result<Vec<CallRecord>, HarnessError> {
         self.with(|state| state.truth.calls.clone())

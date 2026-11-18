@@ -498,6 +498,16 @@ pub enum ProbePlan {
     /// An entry of a pack section, such as an endpoint, which the pack of
     /// the surface reads.
     Entry(PackRef),
+    /// A probe named and not yet drafted: the read a system gives only to
+    /// a session, so the scout cannot draft it before the first sign-in. A
+    /// draft only: a plan under any version but the draft version, `0.0.0`,
+    /// that holds one is refused, because a session nobody can check is a
+    /// session nobody can trust. A session made under it is never called
+    /// confirmed (decision 0252).
+    Pending {
+        /// The name the entry gives its probe, which nothing defines yet.
+        name: String,
+    },
 }
 
 /// One setting of an auth provider: a name the provider documents, and a
@@ -711,7 +721,10 @@ pub struct IdentityPlan {
     /// The strategy.
     pub strategy: IdentityStrategy,
     /// The inputs whose normalized values are the record key, in declared
-    /// order, parent first.
+    /// order, parent first. Empty for `natural` only where the record is one
+    /// fixed place that every binding names in the target's files, and no
+    /// input chooses it (decision 0252): the record is read and written at
+    /// that place.
     pub key: Vec<InputIndex>,
 }
 
@@ -1250,6 +1263,17 @@ impl Plan {
                 ProbePlan::Entry(reference) => {
                     within("pack section", reference.section.get(), self.packs.len())?;
                 }
+                // The draft version is `0.0.0` (`a2m-files`' `DRAFT_VERSION`).
+                ProbePlan::Pending { .. } if self.header.version != Version::new(0, 0, 0) => {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        format!(
+                            "The plan's version {} signs in with a probe that is not drafted yet; only a draft may.",
+                            self.header.version
+                        ),
+                    ));
+                }
+                ProbePlan::Pending { .. } => {}
             }
         }
         for environment in &self.environments {
@@ -2102,6 +2126,20 @@ mod tests {
         let failure = decode_own(loose.as_bytes()).unwrap_err();
         assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
         assert!(failure.message().contains("tool 2"), "{failure}");
+    }
+
+    #[test]
+    fn a_probe_not_yet_drafted_stands_only_in_a_draft() {
+        let mut plan = sample();
+        plan.auth[0].probe = ProbePlan::Pending {
+            name: "order_get".to_owned(),
+        };
+        let failure = plan.encode().unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(failure.message().contains("not drafted"), "{failure}");
+        plan.header.version = Version::new(0, 0, 0);
+        let encoded = plan.encode().unwrap();
+        assert_eq!(decode_own(&encoded.bytes).unwrap(), plan);
     }
 
     /// The sample's write, turned into a read with one step that reads.

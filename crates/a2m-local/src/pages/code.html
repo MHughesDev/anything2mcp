@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A code for your sign-in</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>The sign-in asks for a code</h1>
+<p>The sign-in you are carrying out for <code>{{target}}</code>, in the environment <code>{{environment}}</code>, asks for a one-time code that only you have. Type it here. It goes to this machine's engine for this one sign-in, is kept nowhere, and is never shown to the program that asked.</p>
+<form method="post" action="/code/{{code}}">
+<input type="hidden" name="once" value="{{once}}">
+<p><label for="code">Code</label> <input id="code" name="code" type="password" inputmode="numeric" autocomplete="one-time-code" required></p>
+<p><button type="submit">Continue</button></p>
+</form>
+<p>No code by {{minutes}} minutes after the sign-in was asked for ends it, and nothing is signed in.</p>
+</main>
+</body>
+</html>

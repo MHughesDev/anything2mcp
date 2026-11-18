@@ -1,0 +1,84 @@
+endpoint: namespace_get
+surface: api
+method: GET
+path: "/views/hostile/namespace"
+auth: none
+effect: read
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    order_id: {path: "o:order/@id", required: false}
+---
+endpoint: control_get
+surface: api
+method: GET
+path: "/views/hostile/control"
+auth: none
+effect: read
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    order_id: {path: "o:order/@id"}
+    customer: {path: "o:order/o:customer"}
+---
+endpoint: control_text_get
+surface: api
+method: GET
+path: "/views/hostile/control-text"
+auth: none
+effect: read
+answer:
+  form: text
+  pattern: 'example order entry: (?P<orders>[0-9]+) orders, [^\n]*\n'
+  fields:
+    orders: {type: integer}
+---
+endpoint: status_text_get
+surface: api
+method: GET
+path: "/views/text/status"
+auth: none
+effect: read
+answer:
+  form: text
+  pattern: 'example order entry: (?P<orders>[0-9]+) orders, [^\n]* for (?P<customer>[^\n]+)\n'
+  fields:
+    orders: {type: integer}
+---
+endpoint: order_xml_get
+surface: api
+method: GET
+path: "/views/xml/orders/{order_id}"
+auth: none
+effect: read
+responses: {absent: [404]}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    customer: {path: "o:order/o:customer"}
+---
+endpoint: secret_label_get
+surface: api
+method: GET
+path: "/views/hostile/secret"
+auth: none
+effect: read
+answer:
+  form: bytes
+---
+endpoint: order_search
+surface: api
+method: POST
+path: "/views/search/orders"
+auth: none
+effect: read
+read_asserted: true
+headers: {accept: "application/json"}
+response_schema:
+  type: object
+  required: [orders]
+  properties:
+    orders: {type: array, items: {type: string}}

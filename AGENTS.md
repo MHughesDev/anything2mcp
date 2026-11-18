@@ -1,6 +1,6 @@
 # Instructions for AI agents building Anything2MCP
 
-You are building Anything2MCP. A full design is written, and very little of it has yet met running code. Your job is to build the core slowly, one small proven slice at a time, to test the design's bets as you go, and to keep making the design better. You are a designer of this system as well as its builder.
+You are building Anything2MCP. A full design is written, and the core of it now runs: the kernel, the packs, the local engine, and the flow that builds a tool are built and tested on three operating systems. None of it has met a real system yet, and parts are still unbuilt; [SCOPE.md](SCOPE.md) shows both. Your job is to keep building in small proven slices, to test the design's bets as you go, and to keep making the design better. You are a designer of this system as well as its builder.
 
 You do not wait for anyone. Plan, decide, build, and merge, and write down what you decided so that the owner and the next agent can find it.
 
@@ -8,11 +8,13 @@ You do not wait for anyone. Plan, decide, build, and merge, and write down what 
 
 A toolkit that latches onto existing software and systems and exposes them to AI agents as deterministic, verified MCP tools. A developer, human or agent, installs it, points it at a system they are entitled to use, and builds tools over it. Any agent that speaks the protocol can use the result; no make of agent is preferred.
 
-Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware. It runs on one laptop or as a company server.
+Rust core, one binary, installed through pip or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware.
+
+The first release is for one person's machine, on Windows, macOS, or Linux. That machine is the measure of what the product reaches and the boundary of where it serves: it can be set around anything the machine can reach, it knows the networks the machine is on, and it offers its tools on that machine only. A shared server comes after the first release.
 
 ## How this project grows
 
-- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. The [roadmap](docs/plan/roadmap.md) lists every package in order.
+- **In thin slices, each proven before the next.** The core came first and exists: the engine loop, the drivers, sessions, the ledger, the policy gate, and the compiler. Everything added now arrives the same way, as a slice that works end to end and is proven before the next begins. The [roadmap](docs/plan/roadmap.md) lists every package in order.
 - **Every slice tests the design.** The design is a set of bets, listed in [docs/hypotheses/README.md](docs/hypotheses/README.md). Before building, name an alternative to the documented design. After building, write down what the work showed.
 - **Keep improving the design.** Question the documents. When something is ambiguous, fix it. When evidence shows a section is wrong, correct it and record the decision. When a different design looks better, test it or propose it. [docs/plan/working-method.md](docs/plan/working-method.md) says how each kind of change is made.
 - **Review the whole design regularly,** one lens at a time, with [docs/plan/design-review-lenses.md](docs/plan/design-review-lenses.md).
@@ -26,8 +28,9 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 
 - **Do not wait.** Plan, build, open a pull request, and merge it when every check is green. Write the plan and the alternative you weighed in the pull request or the journal. Nobody has to answer them.
 - **Tell, do not ask.** Every choice between real alternatives is a decision record. A record the owner has not read says so in its status line and is in force. Every session ends with a journal entry.
-- **Machines hold the gates.** A change merges only when the build, the lints, the tests, and the documentation audit pass on Windows, macOS, and Linux. Never skip, disable, or weaken a check to get there, and never merge over a red one.
+- **Machines hold the gates.** A change merges only when every check in CI passes: the build, the lints, and the tests on Windows, macOS, and Linux, and the documentation audit and the licence check on Linux. Never skip, disable, or weaken a check to get there, and never merge over a red one.
 - **Work in parallel.** One work package, one branch, one pull request. Two agents do not change the same crate at the same time. An agent that leads others gives each a package with a stated proof, and merges what passes.
+- **Write the owner's direction in exact words of your own.** The owner gives direction in conversation, often aloud and unfinished. Do not quote it. Work out where it is heading, finish the thought, and state the decision whole and exact, in the glossary's terms: what it is, what it changes, what it leaves alone. Say what you inferred, so the owner can correct it. The words in these documents steer every agent that comes after you, so choose each one, and make each sentence true ([decision 0231](docs/decisions/0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)).
 - **Know whose a decision is.** A record marked as a design decision can be superseded by any agent, with a new record that gives the evidence. A record marked as an owner decision, and the ten rules below, are changed only by the owner. If you think one is wrong, write a record with status Proposed and carry on with other work.
 - **Careful is not the same as slow to start.** The care is in the size of the step and the proof of it, not in waiting.
 
@@ -52,7 +55,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 
 1. **No AI at run time.** Nothing in a run may call a model or improvise. If a step cannot be done as written, stop with a named failure class.
 2. **Safe, then correct, then fast, then easy.** In that order when they conflict.
-3. **Every write is verified.** Record intent in the ledger before acting; read the value back; compare after normalization. On resume, reconcile before writing.
+3. **Every write is recorded first and proven after.** Record the intent in the ledger before acting; read the value back; compare after normalization. On resume, reconcile before writing again. Where a system gives nothing to read back, say so: the operation is declared `irreversible`, a person approves it as that, it is never sent twice, and its result is never called verified.
 4. **Secrets never reach a caller.** Cookies, tokens, and passwords never appear in tool inputs, tool results, logs, traces, captures, fixtures, or error messages. Register every secret with the redactor.
 5. **Operate openly.** The browser always runs with a data directory the engine owns; never read, copy, or drive the user's everyday browser profile or another program's cookie store. No stealth, no fingerprint spoofing, no CAPTCHA or MFA bypass, no imitating another application's client id, and no getting past a licence check or a device's protection. A block is a named stop.
 6. **Rust first, other languages where they fit.** Everything on the path of a run is Rust. Use another language where it is clearly the better tool: the web pages, in-page scripts, SDKs, installers, migrations, and plug-ins, as listed in [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md). A new use of another language gets a decision record.
@@ -73,6 +76,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 - **Small changes.** One concern per commit. Every commit builds and passes tests. Add a line to [CHANGELOG.md](CHANGELOG.md) for anything a user of the product would notice.
 - **Spikes are thrown away.** Experiments live in `spikes/`, answer one question, and are never promoted into the product; real code is written fresh.
 - **Say what you did not do.** When you stop, report what is finished, what is stubbed, what failed, and what you could not verify.
+- **A "does not" describes; it does not rule.** [SCOPE.md](SCOPE.md) shows both sides of the scope: what the product does and answers for, and what it does not. Only the ten rules below and the owner's decisions bind. Never turn an idea down because a document says the product "is not" that: find out whether the line is a rule, a design choice, or simply not built yet ([decision 0230](docs/decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)). When you write a limit down, give its reason and its kind, and keep SCOPE.md true in the same change.
 
 ## What an agent does not do alone
 
@@ -89,7 +93,7 @@ Everything else is yours to decide and record.
 - **Workspace.** One Cargo workspace. Kernel crates are named `a2m-*`, pack crates `a2m-pack-*`, and the product crate `anything2mcp`, laid out as in [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md).
 - **Kernel and packs.** A kernel crate never depends on a pack crate. A pack crate sees the kernel up to the provider contract, layers 1 to 5, and the base of its own pack. Only the product crate names packs. The layering table in the technical reference is the rule, and the audit enforces it.
 - **Toolchain.** Stable Rust, pinned in `rust-toolchain.toml`. `cargo fmt` and `cargo clippy -- -D warnings` must pass.
-- **Errors.** Library crates return typed errors that map to exactly one failure class and code from the technical reference. No `unwrap` or `expect` in library code outside tests. No panics across crate boundaries.
+- **Errors.** Library crates return typed errors that map to exactly one failure class and code, each declared once in the crate's own code table (or, for a pack, its manifest) with its class; the technical reference's table of failure codes is generated from those tables by `tools/failure_codes.py`, and the documentation audit holds the two together. No `unwrap` or `expect` in library code outside tests. No panics across crate boundaries.
 - **Unsafe.** None without a comment explaining why it is sound and a test that exercises it.
 - **Async.** Tokio. No blocking calls on async threads. No fixed sleeps as waits; wait on a named condition.
 - **Types over strings.** Archetypes, effect classes, hazards, failure classes, evidence levels, and statuses are enums in `a2m-core`, and a test holds their names to the documents. A mode and a failure code are checked names, because packs and crates bring their own ([decision 0060](docs/decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Secrets are a wrapper type that cannot be printed or serialized.
@@ -113,8 +117,8 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 - Every crate has unit tests. Every driver and widget driver has tests against a test stand, described in [docs/plan/test-application.md](docs/plan/test-application.md).
 - A test stand imitates the part of its kind of system that makes the kind hard, and nothing else. Make it as real as is cheap.
 - Tests ask the test stand what it stored. A test never proves a write using Anything2MCP's own read path alone.
-- CI runs on Windows, macOS, and Linux.
-- The benchmark suite in `bench/` runs in CI. A regression over 10% on a budgeted path fails the build. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
+- CI runs the build, the lints, and the tests on Windows, macOS, and Linux.
+- The benchmark suite in `bench/` runs in CI and stores its results. A regression over 10% on a budgeted path is to fail the build: the comparison is built (`a2m-bench compare`) and CI does not run it yet, because no budgeted path is measured. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
 - The nine ledger rules in spec section 208 are each a test; a change that breaks one cannot merge.
 - Fault-injection tests are part of the definition of done for anything that writes: expired session, lost connection after a write was sent, bad input, stale approval, blocked surface.
 - Fixtures must be synthetic or scrubbed. Never commit recorded business data.
@@ -137,11 +141,11 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `bindings/` | The pip and npm packages |
 | `docs/architecture/` | How the code is put together: who defines, implements, and joins each interface, and one design per crate |
 | `docs/spec/` | The specification, in seven parts, one section per file |
-| `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, settings examples |
+| `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, the walkthrough, and the generated list of every source URL cited |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
-| `docs/references/` | Every source URL cited |
-| `docs/plan/` | The roadmap, the working method, the design review lenses, the test application plan, publishing setup |
+| `docs/plan/` | The roadmap; plans for work outside the build; the working method and the design review lenses; the test application plan and publishing setup. Its README sorts them by kind |
+| `docs/reviews/` | The results of design review rounds: what each looked at, what it found, and where each finding went |
 | `docs/archive/` | The first design's consolidated sections and its plans, kept as history, with the key from old section numbers to new |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
 | `docs/journal/` | One entry per session; read the newest first |
@@ -149,4 +153,5 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `spikes/` | Throwaway experiments; never part of the product |
 | `docs/assets/` | Diagrams |
 | `tools/docs_audit.py` | Checks the documents for broken links and contradictions, and the crates against the layering table |
+| `SCOPE.md` | What the product does and answers for, and what it does not, each "does not" marked as a rule, a choice, or not built yet |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `RELEASING.md` | How to contribute, report a vulnerability, behave, see what changed, and cut a release |

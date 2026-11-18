@@ -27,6 +27,21 @@
 //! name, so a JSON document keeps every type and its key as questions, and
 //! no read is drafted over it.
 //!
+//! A settings file names one-value places by a path of keys (decision
+//! 0246). Its document has a record kind for the keys before the first
+//! section of an INI file, for each section, and for each dictionary of a
+//! property list that holds a value, and a field for each value of a shape
+//! the pack reads as one value. An INI value is text, whatever it spells,
+//! and is drafted `untrusted_text`; a property list states each value's
+//! element, so a `string` is `untrusted_text`, an `integer` or a `real` a
+//! `decimal`, and `true` or `false` a `boolean`. A value whose key names a
+//! secret or that has the form of a credential is left out, so that no
+//! drafted read ever gives it to a caller (rule 4); so are a value whose
+//! form programs read in more than one way, a key the file holds twice, a
+//! list, a date, and data. Beside the document, one `read` of each record
+//! kind, which compiles: a settings record has no key to ask (decision
+//! 0255).
+//!
 //! An open question is the pack's own words and holds no text from the file:
 //! a header or a file name written as an instruction would reach the
 //! developer's agent as part of a question. Nothing is drafted for a write;
@@ -38,6 +53,7 @@ use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::discover::{CellKind, ColumnFound, FILE_LAYOUT, LayoutFound, invalid};
+use crate::evidence::ValueShape;
 use crate::model::{DOCUMENT_KIND, Format, MODE, TRUNCATED};
 
 /// The kernel's file kind for operations.
@@ -45,7 +61,7 @@ const OPERATION: FileKindName = FileKindName::fixed("operation");
 
 /// A name made from a file's own words: lowercase letters, digits, and
 /// underscores, starting with a letter.
-fn name_from(text: &str, taken: &mut BTreeSet<String>) -> String {
+pub(crate) fn name_from(text: &str, taken: &mut BTreeSet<String>) -> String {
     let mut name = String::new();
     for character in text.chars() {
         if character.is_ascii_alphanumeric() {
@@ -181,6 +197,52 @@ impl LayoutDraft {
         let mut kinds = Vec::new();
         let mut fingerprint = Vec::new();
         match found.format {
+            Format::Ini | Format::PropertyList => {
+                if found.format == Format::Ini {
+                    fingerprint.push(("sections", texts(&found.sections)));
+                } else {
+                    fingerprint.push(("keys", texts(&found.headers)));
+                }
+                // One record kind for each path above a value read, in the
+                // order the file first holds it.
+                let mut records: Vec<(Vec<String>, KindDraft, BTreeSet<String>)> = Vec::new();
+                for setting in &found.settings {
+                    let Some(ty) = settings_type(found.format, setting.shape) else {
+                        continue;
+                    };
+                    let Some((last, above)) = setting.path.split_last() else {
+                        continue;
+                    };
+                    let at = match records.iter().position(|(path, ..)| path == above) {
+                        Some(at) => at,
+                        None => {
+                            let name = if above.is_empty() {
+                                name_from("general", &mut taken)
+                            } else {
+                                name_from(&above.join(" "), &mut taken)
+                            };
+                            records.push((
+                                above.to_vec(),
+                                KindDraft {
+                                    name,
+                                    place: ("path", texts(above)),
+                                    fields: Vec::new(),
+                                },
+                                BTreeSet::new(),
+                            ));
+                            records.len() - 1
+                        }
+                    };
+                    if let Some((_, kind, names)) = records.get_mut(at) {
+                        kind.fields.push(FieldDraft {
+                            name: name_from(last, names),
+                            at: ("path", texts(std::slice::from_ref(last))),
+                            typed: Typed::As(ty, false),
+                        });
+                    }
+                }
+                kinds.extend(records.into_iter().map(|(_, kind, _)| kind));
+            }
             Format::Delimited => {
                 fingerprint.push(("headers", texts(&found.headers)));
                 kinds.push(kind(
@@ -227,10 +289,16 @@ impl LayoutDraft {
                 }
             }
         }
-        let stem = found
-            .file
-            .rsplit_once('.')
-            .map_or(found.file.as_str(), |(stem, _)| stem);
+        // A settings file is named by its whole name: a settings file and a
+        // data file of one stem stand side by side often.
+        let stem = if found.format.is_settings() {
+            found.file.as_str()
+        } else {
+            found
+                .file
+                .rsplit_once('.')
+                .map_or(found.file.as_str(), |(stem, _)| stem)
+        };
         Self {
             document: name_from(stem, &mut BTreeSet::new()),
             format: found.format,
@@ -243,6 +311,12 @@ impl LayoutDraft {
     /// workbook's tables. A JSON value has a type the file does not name.
     fn as_text(&self) -> bool {
         self.format != Format::Json
+    }
+
+    /// Whether a record kind is found by a key the file does not state: a
+    /// JSON document's. A settings record is one place, with no key.
+    fn asks_key(&self) -> bool {
+        self.format == Format::Json
     }
 
     /// The record kind as a description names it: the document, and the
@@ -261,6 +335,12 @@ impl LayoutDraft {
 
     /// How a read returns the record kind's values, in the pack's words.
     fn values_read(&self, kind: &KindDraft) -> String {
+        if self.format == Format::Ini {
+            return "each value as the text the file holds, marked untrusted.".to_owned();
+        }
+        if self.format == Format::PropertyList {
+            return "each value as the file's element states it: a string as the text it holds, marked untrusted, a number as an exact decimal, and true or false as a boolean.".to_owned();
+        }
         if self.format == Format::Delimited {
             return "each value as the text the file holds, marked untrusted.".to_owned();
         }
@@ -283,6 +363,32 @@ impl LayoutDraft {
         } else {
             format!("{}_{}", self.document, kind.name)
         }
+    }
+}
+
+/// The type a settings value of a shape is drafted as, where the shape is
+/// one value the pack reads. Nothing for a value withheld, unread, a list,
+/// a record, a date, or data.
+fn settings_type(format: Format, shape: ValueShape) -> Option<&'static str> {
+    match (format, shape) {
+        (Format::Ini, ValueShape::Text | ValueShape::Number | ValueShape::Boolean)
+        | (_, ValueShape::Text | ValueShape::Empty) => Some(UNTRUSTED_TEXT),
+        (Format::PropertyList, ValueShape::Number) => Some("decimal"),
+        (Format::PropertyList, ValueShape::Boolean) => Some("boolean"),
+        _ => None,
+    }
+}
+
+/// What a settings read's description says of the values it left out.
+fn settings_left_out(found: &LayoutFound) -> &'static str {
+    if found
+        .settings
+        .iter()
+        .any(|setting| settings_type(found.format, setting.shape).is_none())
+    {
+        " A value whose key names a secret or that has the form of a credential is never drafted, nor is a value whose form programs read in more than one way, a key the file holds twice, a list, a date, or data."
+    } else {
+        ""
     }
 }
 
@@ -370,7 +476,7 @@ impl DraftingRule for DocumentFromLayout {
                 })
                 .collect();
             let mut body = vec![kind.place.clone()];
-            if !layout.as_text() {
+            if layout.asks_key() {
                 body.push((
                     "key",
                     cx.open_question(&format!(
@@ -395,6 +501,12 @@ impl DraftingRule for DocumentFromLayout {
             body.push((
                 "dialect",
                 DraftValue::map(vec![("delimiter", DraftValue::text(delimiter))]),
+            ));
+        }
+        if let Some(separator) = &found.separator {
+            body.push((
+                "dialect",
+                DraftValue::map(vec![("separator", DraftValue::text(separator))]),
             ));
         }
         body.push(("fingerprint", DraftValue::map(layout.fingerprint)));
@@ -451,6 +563,9 @@ impl DraftingRule for ReadsFromLayout {
             return Ok(Vec::new());
         };
         let layout = LayoutDraft::of(&found);
+        if found.format.is_settings() {
+            return settings_reads(&found, &layout, target.as_str());
+        }
         if !layout.as_text() {
             return Ok(Vec::new());
         }
@@ -565,4 +680,58 @@ impl DraftingRule for ReadsFromLayout {
         }
         Ok(docs)
     }
+}
+
+/// One `read` of each record kind of a settings document: every field the
+/// document holds, as the type it is drafted as. A settings record is one
+/// place, so the read takes no input and holds no question.
+fn settings_reads(
+    found: &LayoutFound,
+    layout: &LayoutDraft,
+    target: &str,
+) -> Result<Vec<DraftDoc>, Failure> {
+    let mut docs = Vec::new();
+    for kind in layout
+        .kinds
+        .iter()
+        .filter(|kind| kind.read().next().is_some())
+    {
+        let object = layout.object(kind);
+        let name = format!("{target}_{object}_get");
+        if OperationName::new(&name).is_err() {
+            continue;
+        }
+        let outputs = kind
+            .read()
+            .map(|(field, ty)| (field.name.clone(), output_of(ty, false)))
+            .collect();
+        docs.push(DraftDoc {
+            path: RelPath::new(&format!("operations/{object}_get.yaml"))?,
+            body: DraftValue::map(vec![
+                ("operation", DraftValue::text(&name)),
+                ("effect", DraftValue::text("read")),
+                ("inputs", DraftValue::Map(Vec::new())),
+                ("outputs", DraftValue::Map(outputs)),
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![
+                        ("mode", DraftValue::text(MODE)),
+                        ("verb", DraftValue::text("read")),
+                        ("document", DraftValue::text(&layout.document)),
+                        ("record", DraftValue::text(&kind.name)),
+                    ])]),
+                ),
+                (
+                    "description",
+                    DraftValue::text(&format!(
+                        "Reads the values of {}, {}{} A key the file no longer holds is read as nothing. Drafted by rule from the file's keys; its name is provisional.",
+                        layout.named(kind),
+                        layout.values_read(kind),
+                        settings_left_out(found),
+                    )),
+                ),
+            ]),
+        });
+    }
+    Ok(docs)
 }

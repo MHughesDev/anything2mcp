@@ -36,6 +36,9 @@ pub enum Change {
     },
     /// The whole file becomes these bytes.
     Whole(Vec<u8>),
+    /// These bytes are added at the end, as a program that keeps a log adds
+    /// a line. Saved in place, the file keeps its identity.
+    Appended(Vec<u8>),
 }
 
 /// One fault.

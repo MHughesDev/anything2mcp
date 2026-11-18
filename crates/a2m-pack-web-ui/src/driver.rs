@@ -26,10 +26,10 @@ use a2m_core::{
     Value,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
-    ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
-    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, looks_like_an_action,
-    path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input,
+    Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue,
+    ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
+    looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -40,8 +40,8 @@ use a2m_telemetry::{Acting, Detail};
 use crate::codes::{self, shown};
 use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
 use crate::model::{
-    Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
-    ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
+    Cond, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows,
+    Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
 
@@ -198,6 +198,9 @@ struct Session {
     /// `scheme://host`, with a port when the surface has one.
     origin: String,
     sections: BTreeMap<usize, ScreenSection>,
+    /// The screens the target declares as a sign that the session has
+    /// ended, each with its `ready` (decision 0245).
+    expiry: Vec<(String, Cond)>,
     snapshots: SnapshotLimits,
     /// What the run may do. Only a live run sets a field or clicks an
     /// action that does not save; a run against a declared test record
@@ -262,16 +265,23 @@ pub(crate) fn time_zone(stated: Option<&str>) -> Result<String, StepFailure> {
     }
 }
 
-/// A sink that takes nothing: a browser's session is its own profile, and
-/// this version has no way to place a credential into it.
+/// A sink that takes one thing: the session's browser state, which the
+/// web pack's own provider places (decision 0245). Anything else a
+/// provider would place is a credential this pack does not put into a
+/// browser.
 #[derive(Default)]
-struct NoPlace {
+struct StatePlace {
+    state: Option<Secret>,
     placed: bool,
 }
 
-impl CredentialSink for NoPlace {
-    fn header(&mut self, _name: &str, _value: &Secret) {
-        self.placed = true;
+impl CredentialSink for StatePlace {
+    fn header(&mut self, name: &str, value: &Secret) {
+        if name == crate::sign_in::BROWSER_STATE && self.state.is_none() {
+            self.state = Some(Secret::new(value.expose()));
+        } else {
+            self.placed = true;
+        }
     }
 
     fn cookie(&mut self, _origin: &str, _name: &str, _value: &Secret) {
@@ -401,7 +411,24 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
             ),
             "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.",
         ),
+        // A write from inside the page, before anything was sent: the page
+        // does not hold its token where the entry says (decision 0206).
+        BrowserError::Token(a2m_pack_web_browser::TokenProblem::Missing) => fail(
+            FailureClass::Drift,
+            codes::ANTI_FORGERY_NOT_FOUND,
+            format!(
+                "The page holds no anti-forgery token where the entry says, at {what}. Nothing was sent."
+            ),
+            "Look at where the page holds its token now, and correct the entry's `anti_forgery`.",
+        ),
+        BrowserError::Token(problem) => fail(
+            FailureClass::UnknownVariant,
+            codes::ANTI_FORGERY_UNREADABLE,
+            format!("At {what}, {problem}. Nothing was sent."),
+            "Look at the page; a token is read from one place that holds one text.",
+        ),
         BrowserError::Unexpected(_)
+        | BrowserError::WriteRefused(_)
         | BrowserError::PasswordField
         | BrowserError::LaunchFailed(_) => fail(
             FailureClass::UnknownVariant,
@@ -959,7 +986,9 @@ impl Session {
             .map_err(|_| codes::not_usable("its payload does not decode"))?;
         let deadline = until(step, input);
         let what = format!("the screen `{name}`");
-        // The screen is ready, or it is in a state it declares instead.
+        // The screen is ready, or it is in a state it declares instead, or
+        // the page is one the target declares as a sign that the session
+        // has ended.
         let mut any = vec![screen.ready.primitive()];
         any.extend(
             screen
@@ -967,6 +996,7 @@ impl Session {
                 .values()
                 .map(|variant| Primitive::Visible(variant.when.query())),
         );
+        any.extend(self.expiry.iter().map(|(_, ready)| ready.primitive()));
         match self.tab().wait(&Primitive::Any(any), deadline).await {
             Ok(()) => {}
             Err(BrowserError::Timeout { .. }) => {
@@ -980,6 +1010,20 @@ impl Session {
                 )));
             }
             Err(error) => return Err(browser_failure(&error, &what)),
+        }
+        // A sign-in page in place of the screen: the session has ended. The
+        // driver stops; the engine tells the keeper, which alone renews.
+        if !self.expiry.is_empty() && !self.holds_now(&screen.ready.primitive(), deadline).await? {
+            for (sign, ready) in &self.expiry {
+                if sign != name && self.holds_now(&ready.primitive(), deadline).await? {
+                    return Err(StepFailure::not_sent(crate::sign_in::session_ended(
+                        format!(
+                            "The page shows the screen `{}` in place of {what}",
+                            shown(sign)
+                        ),
+                    )));
+                }
+            }
         }
         let variant = self
             .variant(screen, deadline)
@@ -1484,6 +1528,32 @@ pub(crate) struct TabSetup {
     pub profile: ProfileKey,
     pub environment: PageEnvironment,
     pub origins: Origins,
+    /// The session's browser state, with the mark of its session and
+    /// epoch, when its provider placed one.
+    pub state: Option<(String, BrowserState)>,
+}
+
+impl TabSetup {
+    /// Places the session's state into the profile's browser before any
+    /// tab of the run is opened, once for each epoch of the session.
+    pub(crate) async fn place_state(
+        &self,
+        browsers: &Browsers,
+        deadline: Deadline,
+    ) -> Result<(), StepFailure> {
+        let Some((mark, state)) = &self.state else {
+            return Ok(());
+        };
+        let browser = browsers
+            .open(&self.profile, Visibility::Background)
+            .await
+            .map_err(|error| browser_failure(&error, "the start of the session's browser"))?;
+        browser
+            .import_state(mark, state, &self.origins, deadline)
+            .await
+            .map(|_| ())
+            .map_err(|error| browser_failure(&error, "the placing of the session's state"))
+    }
 }
 
 /// The tab's setup, from the run's context and its session.
@@ -1536,11 +1606,35 @@ pub(crate) fn tab_setup(
     // Whose browser: the session's, or the one of a surface that needs
     // no sign-in. A browser's session lives in its own profile; a
     // credential handed over to be placed cannot be, yet.
+    let mut state = None;
     let account = match lease {
         None => ANONYMOUS.to_owned(),
         Some(lease) => {
-            let mut sink = NoPlace::default();
+            let mut sink = StatePlace::default();
             lease.apply(&mut sink).map_err(unsent)?;
+            // The state is taken only from a provider of this pack: another
+            // provider's header of the same name is not a browser's state
+            // (audit finding A7).
+            let ours = [
+                crate::sign_in::FORM_LOGIN,
+                crate::window::WINDOW_LOGIN,
+                crate::window::SSO_OIDC,
+                crate::window::SSO_SAML,
+            ]
+            .contains(&lease.grant().provider.as_str());
+            if sink.state.is_some() && !ours {
+                return Err(codes::not_usable(
+                    "the session's provider is not one of the web pack's, and only those hand over a browser's state",
+                ));
+            }
+            if let Some(placed) = &sink.state {
+                let parsed = crate::sign_in::state_from(placed).ok_or_else(|| {
+                    codes::not_usable(
+                        "the session's browser state is not in the form this pack places",
+                    )
+                })?;
+                state = Some((format!("{}:{}", lease.session(), lease.epoch()), parsed));
+            }
             if sink.placed {
                 return Err(codes::not_usable(
                     "the session's provider hands over a credential to place, and this version of the web pack uses only a session that lives in the browser's own profile",
@@ -1585,6 +1679,7 @@ pub(crate) fn tab_setup(
         profile,
         environment,
         origins,
+        state,
     })
 }
 
@@ -1594,12 +1689,15 @@ impl UiDriver {
         cx: &PrepareContext<'_>,
         lease: Option<&SessionLease>,
     ) -> Result<Session, StepFailure> {
+        let setup = tab_setup(cx, lease)?;
+        setup.place_state(&self.browsers, cx.deadline).await?;
         let TabSetup {
             origin,
             profile,
             environment,
             origins,
-        } = tab_setup(cx, lease)?;
+            state: _,
+        } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
         for (position, section) in cx.plan.packs.iter().enumerate() {
@@ -1666,7 +1764,13 @@ impl UiDriver {
                 }
             }
         }
+        // The `ui` driver reads pages: a sign of expiry that is a status of
+        // a page request's answer is `page_http`'s.
+        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &sections)
+            .map_err(codes::not_usable)?
+            .screens;
         Ok(Session {
+            expiry,
             looking,
             acting: None,
             on: TabKind::Observe,

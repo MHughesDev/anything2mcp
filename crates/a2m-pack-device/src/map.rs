@@ -1014,6 +1014,14 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        // The target has the surface the drafted maps name, of the kind the
+        // pack registered register files for, so that a draft is not refused
+        // for living on none (decision 0203).
+        std::fs::write(
+            root.join("target.yaml"),
+            "schema_version: 1\ntarget: example\nsurfaces:\n  controller:\n    kind: device_link\n    address: \"127.0.0.1:502\"\n    protocol: modbus_tcp\n    unit: 1\n",
+        )
+        .unwrap();
         let report = Drafter::new(&set, &TargetRoot::new(&root))
             .draft(std::slice::from_ref(&finding))
             .unwrap();
@@ -1022,6 +1030,13 @@ mod tests {
             .iter()
             .map(|(path, _)| path.as_str())
             .collect();
+        // Refused for the write it would allow, not for another reason.
+        for (path, why) in &report.refused {
+            assert!(
+                why.contains("drafts nothing that writes"),
+                "{path} was refused for another reason: {why}"
+            );
+        }
         let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
         let exists = root.join("registers").join("tries_a_write.yaml").exists();
         let _ = std::fs::remove_dir_all(&root);

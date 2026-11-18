@@ -65,6 +65,15 @@ fn code_words(text: &str) -> Vec<String> {
 }
 
 #[test]
+fn address_scopes_are_the_ones_in_the_technical_reference() {
+    let reference = document("reference/technical-reference.md");
+    assert_eq!(
+        column(&reference, "| Scope |", 0),
+        a2m_core::AddressScope::NAMES
+    );
+}
+
+#[test]
 fn write_evidence_is_the_list_in_the_ledger_section() {
     let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
     assert_eq!(column(&spec, "| Evidence |", 0), WriteEvidence::NAMES);
@@ -74,7 +83,13 @@ fn write_evidence_is_the_list_in_the_ledger_section() {
 fn failure_classes_are_the_ones_in_the_technical_reference() {
     let reference = document("reference/technical-reference.md");
     let section = between(&reference, "## Failure codes", "## Command line");
-    assert_eq!(column(section, "| Class |", 0), FailureClass::NAMES);
+    // The table is generated, one row for each code, with the codes of one
+    // class together and the classes in the order of the type. So the
+    // classes it names, each once and in the order they first appear, are
+    // the type's: none missing, none unknown, none out of place.
+    let mut classes = column(section, "| Class | Code |", 0);
+    classes.dedup();
+    assert_eq!(classes, FailureClass::NAMES);
 }
 
 #[test]

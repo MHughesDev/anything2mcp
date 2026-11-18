@@ -29,6 +29,7 @@ use crate::load::{SourceFile, Sources};
 use crate::register::{
     CompileMode, CompilerSet, Lowered, Lowering, Possible, StepCommits, SurfaceKindSpec,
 };
+use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -48,36 +49,6 @@ pub const MINIMUM_ENGINE: Version = Version::new(0, 0, 1);
 /// The version a draft is compiled as.
 pub const DRAFT_VERSION: Version = Version::new(0, 0, 0);
 
-/// What one tool may do, for the person who reviews a version before it is
-/// published.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReviewItem {
-    /// The tool.
-    pub tool: OperationName,
-    /// Its effect class.
-    pub effect: EffectClass,
-    /// What it could damage beyond the record it names.
-    pub hazard: Hazard,
-    /// How many times the system saves in one call; none for a pipeline.
-    pub commit_points: u32,
-    /// The surfaces it may reach.
-    pub surfaces: Vec<SurfaceName>,
-    /// Addresses beyond its surfaces that it may reach.
-    pub destinations: Vec<String>,
-    /// What it may send as a file.
-    pub uploads: Vec<String>,
-    /// What it may receive as a file.
-    pub downloads: Vec<String>,
-}
-
-/// Every tool of a version, the most dangerous first: by hazard, then by
-/// effect class, then by name.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
-pub struct ReviewSummary {
-    /// The tools, ordered by risk.
-    pub items: Vec<ReviewItem>,
-}
-
 /// A compiled target.
 #[derive(Debug, Clone)]
 pub struct Compiled {
@@ -89,6 +60,12 @@ pub struct Compiled {
     pub warnings: Diagnostics,
     /// What each tool may do, ordered by risk.
     pub review: ReviewSummary,
+    /// For each test of the plan, in the plan's order: the place, from 0,
+    /// of the binding of its operation the test names with `binding:`, or
+    /// `None` where it names none and tests the binding that would act
+    /// live. The plan's test does not carry it; the test file does, and
+    /// its digest is among the plan's sources.
+    pub test_bindings: Vec<Option<usize>>,
 }
 
 /// Compiles a target's files into a plan.
@@ -123,7 +100,9 @@ pub fn compile(
         source_plans: BTreeMap::new(),
         tools: Vec::new(),
         tests: Vec::new(),
+        test_bindings: Vec::new(),
         tool_names: BTreeMap::new(),
+        reviews: BTreeMap::new(),
     };
     compiler.run(version)
 }
@@ -174,7 +153,11 @@ struct Compiler<'a> {
     source_plans: BTreeMap<String, (SourcePlan, ValueType)>,
     tools: Vec<ToolPlan>,
     tests: Vec<TestPlan>,
+    test_bindings: Vec<Option<usize>>,
     tool_names: BTreeMap<String, Place>,
+    /// For the review summary: what each operation's packs stated, and its
+    /// fixed place.
+    reviews: BTreeMap<OperationName, OpReview>,
 }
 
 fn index(position: usize) -> u32 {
@@ -502,13 +485,14 @@ impl<'a> Compiler<'a> {
             packs: std::mem::take(&mut self.model.sections),
             tests: std::mem::take(&mut self.tests),
         };
-        let review = review_of(&plan);
+        let review = review_of(&plan, &self.reviews);
         match plan.encode() {
             Ok(encoded) => Ok(Compiled {
                 plan,
                 encoded,
                 warnings,
                 review,
+                test_bindings: std::mem::take(&mut self.test_bindings),
             }),
             Err(failure) => Err(Diagnostics::from(Diagnostic::error(
                 kernel(codes::PLAN_NOT_ENCODABLE),
@@ -1501,6 +1485,33 @@ impl<'a> Compiler<'a> {
                     entry: name.to_owned(),
                 }))
             }
+            [] if self.mode == CompileMode::Draft
+                && !self
+                    .sources
+                    .docs_of(k::OPERATION)
+                    .any(|doc| doc.text("operation") == Some(name)) =>
+            {
+                // A system that answers no read before a sign-in leaves
+                // nothing to draft a probe from until the first session: a
+                // draft may name its probe first (decision 0252). A publish
+                // never may, and the plan's own check refuses one.
+                self.problems.push(
+                    Diagnostic::error(
+                        kernel(codes::PROBE_PENDING),
+                        Stage::Resolve,
+                        &named.at,
+                        format!(
+                            "The probe `{}` is not drafted yet: this draft's sign-in is not confirmed until the read exists and passes, and the target cannot be published until then.",
+                            shown(name)
+                        ),
+                        "Sign in, let the scout draft a read, and name it here, or write the read by hand; `probe_inputs` are checked once it exists.",
+                    )
+                    .as_warning(),
+                );
+                Some(ProbePlan::Pending {
+                    name: name.to_owned(),
+                })
+            }
             [] => {
                 let known: Vec<&str> = self
                     .operations
@@ -1796,7 +1807,7 @@ impl<'a> Compiler<'a> {
         doc: &Located<Doc>,
         effect: EffectClass,
         inputs: &[InputInfo],
-    ) -> (IdentityStrategy, Vec<String>) {
+    ) -> (IdentityStrategy, Vec<String>, Option<Place>) {
         let names = |list: &Located<Doc>| -> Vec<Located<String>> {
             match &list.value {
                 Doc::Text(text) => vec![Located::new(text.clone(), list.at.clone())],
@@ -1819,6 +1830,7 @@ impl<'a> Compiler<'a> {
                 fix.to_owned(),
             );
         };
+        let mut fixed = None;
         let (strategy, key, at) = match (doc.get("key"), doc.get("identity")) {
             (Some(key), Some(_)) => {
                 invalid(
@@ -1827,7 +1839,7 @@ impl<'a> Compiler<'a> {
                     "The operation states both `key` and `identity`.".to_owned(),
                     "Keep one: `key` is the short form of `identity` for `natural` and `composite`.",
                 );
-                return (IdentityStrategy::None, Vec::new());
+                return (IdentityStrategy::None, Vec::new(), None);
             }
             (Some(key), None) => {
                 let strategy = if matches!(key.value, Doc::Text(_)) {
@@ -1843,6 +1855,7 @@ impl<'a> Compiler<'a> {
                     .and_then(|strategy| strategy.parse::<IdentityStrategy>().ok())
                     .unwrap_or(IdentityStrategy::None);
                 let key = identity.get("inputs").map(names).unwrap_or_default();
+                fixed = identity.get("place").map(|place| place.at.clone());
                 (strategy, key, identity.at.clone())
             }
             (None, None) => {
@@ -1855,7 +1868,7 @@ impl<'a> Compiler<'a> {
                         "Add `key:` with the input, or the inputs, that identify the record; or `identity:` with a strategy; or declare the effect `irreversible`.".to_owned(),
                     );
                 }
-                return (IdentityStrategy::None, Vec::new());
+                return (IdentityStrategy::None, Vec::new(), None);
             }
         };
         let mut fine = true;
@@ -1893,6 +1906,31 @@ impl<'a> Compiler<'a> {
                 Some(_) => {}
             }
         }
+        if let Some(place) = &fixed {
+            // The record is the one place every binding names: no input
+            // chooses it, and nothing but `natural` finds a record by its
+            // own key in the system (decision 0252).
+            let why = if strategy != IdentityStrategy::Natural {
+                Some(format!(
+                    "`place: fixed` says the record is found by its own key, the place, and the strategy is `{strategy}`."
+                ))
+            } else if !key.is_empty() {
+                Some("`place: fixed` says no input chooses the record, and the identity names inputs.".to_owned())
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.error(
+                    codes::PLACE_NOT_FIXED,
+                    Stage::Analyze,
+                    place,
+                    why,
+                    "Write `identity: {strategy: natural, place: fixed}` with no `inputs`, or name the inputs that are the record's key and leave out `place`.".to_owned(),
+                );
+                return (IdentityStrategy::None, Vec::new(), None);
+            }
+            return (strategy, Vec::new(), fixed);
+        }
         let count_fits = match strategy {
             IdentityStrategy::Natural => key.len() == 1,
             IdentityStrategy::Composite => !key.is_empty(),
@@ -1921,9 +1959,13 @@ impl<'a> Compiler<'a> {
             fine = false;
         }
         if fine {
-            (strategy, key.into_iter().map(|name| name.value).collect())
+            (
+                strategy,
+                key.into_iter().map(|name| name.value).collect(),
+                None,
+            )
         } else {
-            (IdentityStrategy::None, Vec::new())
+            (IdentityStrategy::None, Vec::new(), None)
         }
     }
 
@@ -2012,7 +2054,7 @@ impl<'a> Compiler<'a> {
                     field_type: Some(field_type),
                 });
             }
-            let (strategy, key) = self.identity(doc, effect, &inputs);
+            let (strategy, key, fixed) = self.identity(doc, effect, &inputs);
             let info = OpInfo {
                 name,
                 doc: doc.clone(),
@@ -2022,6 +2064,7 @@ impl<'a> Compiler<'a> {
                 outputs,
                 strategy,
                 key,
+                fixed,
                 commit_points: doc
                     .get("commit_points")
                     .and_then(Located::as_int)
@@ -2165,6 +2208,7 @@ impl<'a> Compiler<'a> {
             (names::RECORD, record_type()),
         ]);
         let mut bindings = Vec::new();
+        let mut review = OpReview::default();
         let mut fine = true;
         // Whatever a pack marks, a write saves at least once and a read
         // saves nothing: the count is what puts an intent in the ledger.
@@ -2345,9 +2389,12 @@ impl<'a> Compiler<'a> {
                     operation: info,
                     env: steps_env.clone(),
                 };
-                lowering.lower(&resolved, &cx)
+                lowering.lower(&resolved, &cx).map(|lowered| {
+                    let statement = lowering.statement(&resolved, &lowered, &cx);
+                    (lowered, statement)
+                })
             };
-            let lowered = match lowered {
+            let (lowered, statement) = match lowered {
                 Ok(lowered) => lowered,
                 Err(problems) => {
                     self.problems.extend(problems);
@@ -2355,6 +2402,37 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             };
+            if let Some(written) = &info.fixed {
+                match self.fixed_place_of(lowering.as_ref(), &registered.pack, &resolved, &lowered)
+                {
+                    Ok(place) => match &review.place {
+                        Some(first) if *first != place => {
+                            self.error(
+                                codes::PLACE_NOT_FIXED,
+                                Stage::Analyze,
+                                &binding.at,
+                                format!(
+                                    "This binding names the place `{}` of `{}` files on `{}`, and an earlier binding names `{}` of `{}` files on `{}`; the record is one place.",
+                                    shown(&place.name), place.kind, place.surface,
+                                    shown(&first.name), first.kind, first.surface
+                                ),
+                                "Name the same place in every binding of the operation, or write each place's operation on its own.".to_owned(),
+                            );
+                            fine = false;
+                        }
+                        _ => review.place = Some(place),
+                    },
+                    Err((message, fix)) => {
+                        let at = if binding.at.file == written.file {
+                            binding.at.clone()
+                        } else {
+                            written.clone()
+                        };
+                        self.error(codes::PLACE_NOT_FIXED, Stage::Analyze, &at, message, fix);
+                        fine = false;
+                    }
+                }
+            }
             let evidence = lowering.evidence(&resolved, &lowered);
             let by = LoweredBy {
                 lowering: lowering.as_ref(),
@@ -2364,18 +2442,21 @@ impl<'a> Compiler<'a> {
                 evidence,
             };
             match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
-                Some(surface) => bindings.push(BindingPlan {
-                    mode,
-                    verb,
-                    status,
-                    surface,
-                    act: lowered.act,
-                    confirm: lowered.confirm,
-                    read_back: lowered.read_back,
-                    lookup: lowered.lookup,
-                    settle_ms: lowered.settle_ms,
-                    evidence,
-                    precondition,
+                Some(surface) => bindings.push({
+                    review.bindings.push((mode.clone(), surface, statement));
+                    BindingPlan {
+                        mode,
+                        verb,
+                        status,
+                        surface,
+                        act: lowered.act,
+                        confirm: lowered.confirm,
+                        read_back: lowered.read_back,
+                        lookup: lowered.lookup,
+                        settle_ms: lowered.settle_ms,
+                        evidence,
+                        precondition,
+                    }
                 }),
                 None => fine = false,
             }
@@ -2383,6 +2464,7 @@ impl<'a> Compiler<'a> {
         if !fine {
             return None;
         }
+        self.reviews.insert(info.name.clone(), review);
         let key: Vec<InputIndex> = info
             .key
             .iter()
@@ -2429,6 +2511,83 @@ impl<'a> Compiler<'a> {
             },
             examples: Vec::new(),
             decision_points: Vec::new(),
+        })
+    }
+
+    /// The fixed place one binding names, held to what the file kind that
+    /// declares it says of the documents on the binding's surface
+    /// (decision 0252). A lowering names the place; only its file kind,
+    /// reading the target's own document, can say that the place is fixed.
+    fn fixed_place_of(
+        &self,
+        lowering: &dyn Lowering,
+        pack: &str,
+        resolved: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+    ) -> Result<PlaceReview, (String, String)> {
+        let mode = resolved.mode;
+        let Some(named) = lowering.fixed_place(resolved) else {
+            return Err((
+                format!("The operation's record is one fixed place, and this `{mode}` binding names no fixed place."),
+                "Name one place the target's files fix, in the way the mode's pack reads it; or give the operation the inputs that are the record's key and leave out `place: fixed`.".to_owned(),
+            ));
+        };
+        let Some(surface) = self.model.surface(lowered.surface.as_str()) else {
+            return Err((
+                format!("The `{mode}` binding acts on a surface the target does not declare."),
+                "Correct the pack's lowering.".to_owned(),
+            ));
+        };
+        let kind = &named.kind;
+        let owned = self.set.file_kind(kind, surface.kind).filter(|registered| {
+            registered.pack == pack
+                || lowering
+                    .reads()
+                    .iter()
+                    .any(|(read, of)| read == kind && of == surface.kind)
+        });
+        let Some(registered) = owned else {
+            return Err((
+                format!(
+                    "The `{mode}` binding names a place of `{kind}` files, which its pack neither owns nor reads for `{}` surfaces.",
+                    surface.kind
+                ),
+                "Correct the pack's lowering: a fixed place is declared by a file kind of its own pack.".to_owned(),
+            ));
+        };
+        let declared = self
+            .model
+            .entries
+            .get(&(kind.clone(), surface.kind.clone()))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(|doc| {
+                self.model
+                    .surface_of(doc, kind, self.set)
+                    .is_some_and(|on| on.name == surface.name)
+            })
+            .any(|doc| {
+                registered
+                    .item
+                    .fixed_places(doc)
+                    .iter()
+                    .any(|place| place.value.name == named.name)
+            });
+        if !declared {
+            return Err((
+                format!(
+                    "The `{mode}` binding names `{}`, which no `{kind}` file on the surface `{}` declares a fixed place.",
+                    shown(&named.name),
+                    surface.name
+                ),
+                "Name a place that always exists and that no input chooses, or give the operation the inputs that are the record's key and leave out `place: fixed`.".to_owned(),
+            ));
+        }
+        Ok(PlaceReview {
+            surface: surface.name.clone(),
+            kind: kind.clone(),
+            name: named.name,
         })
     }
 
@@ -3669,6 +3828,78 @@ impl<'a> Compiler<'a> {
 
     // ---- tests/ and fixtures/ ----
 
+    /// The place, from 0, of the binding a test names with `binding:`
+    /// (audit finding AC-6): of its operation's bindings, the one of that
+    /// mode, or, where `position` is given, the one at that place, counted
+    /// from 1, which must be of that mode. A retired binding never runs, so
+    /// no test of one is taken. `None`, with an error, otherwise.
+    fn tested_binding(&mut self, tool: usize, named: &Located<Doc>) -> Option<usize> {
+        let refuse = |this: &mut Self, message: String| {
+            this.error(
+                codes::TEST_BINDING_UNKNOWN,
+                Stage::Resolve,
+                &named.at,
+                message,
+                "Name the binding by its `mode`, and by its `position` among the operation's bindings, counted from 1, where two share the mode.".to_owned(),
+            );
+            None
+        };
+        let ToolRuns::Operation(operation) = self.tools[tool].runs else {
+            return refuse(
+                self,
+                "A test of a pipeline names no binding: each of its operations is chosen for as it would be live.".to_owned(),
+            );
+        };
+        let mode = named.text("mode").unwrap_or_default().to_owned();
+        let position = named
+            .get("position")
+            .and_then(|position| position.as_int())
+            .and_then(|position| usize::try_from(position).ok())
+            .and_then(|position| position.checked_sub(1));
+        let bindings = &self.op_plans[operation.get()].0.bindings;
+        let of_mode: Vec<usize> = bindings
+            .iter()
+            .enumerate()
+            .filter(|(at, binding)| {
+                binding.mode.as_str() == mode && position.is_none_or(|position| position == *at)
+            })
+            .map(|(at, _)| at)
+            .collect();
+        let found = match of_mode.as_slice() {
+            [one] => *one,
+            [] => {
+                return refuse(
+                    self,
+                    format!(
+                        "The operation has no binding of the mode `{}`{}.",
+                        shown(&mode),
+                        position.map_or_else(String::new, |at| format!(" at position {}", at + 1))
+                    ),
+                );
+            }
+            _ => {
+                return refuse(
+                    self,
+                    format!(
+                        "The operation has more than one binding of the mode `{}`, and the test does not say which by `position`.",
+                        shown(&mode)
+                    ),
+                );
+            }
+        };
+        if bindings[found].status == BindingStatus::Retired {
+            return refuse(
+                self,
+                format!(
+                    "The binding {} of the mode `{}` is retired, and a retired binding never runs.",
+                    found + 1,
+                    shown(&mode)
+                ),
+            );
+        }
+        Some(found)
+    }
+
     fn tests(&mut self) {
         let Some(schema) = k::schema_of(k::TEST) else {
             return;
@@ -3834,12 +4065,20 @@ impl<'a> Compiler<'a> {
                 ) else {
                     continue;
                 };
+                let binding = match doc.get("binding") {
+                    Some(named) => match self.tested_binding(tool, named) {
+                        Some(position) => Some(position),
+                        None => continue,
+                    },
+                    None => None,
+                };
                 if !fine {
                     continue;
                 }
                 if kind == TestKind::Offline {
                     tested.insert(tool_name.to_owned());
                 }
+                self.test_bindings.push(binding);
                 self.tests.push(TestPlan {
                     name,
                     tool: ToolIndex::new(index(tool)),
@@ -4255,60 +4494,6 @@ fn destination_problem(text: &str) -> Option<&'static str> {
         return Some("it is the address that stands for every address");
     }
     None
-}
-
-fn review_of(plan: &Plan) -> ReviewSummary {
-    let surface_names = |indices: &[SurfaceIndex]| -> Vec<SurfaceName> {
-        indices
-            .iter()
-            .filter_map(|index| plan.surface(*index).map(|surface| surface.name.clone()))
-            .collect()
-    };
-    let mut items: Vec<ReviewItem> = plan
-        .operations
-        .iter()
-        .map(|operation| ReviewItem {
-            tool: operation.name.clone(),
-            effect: operation.effect,
-            hazard: operation.hazard,
-            commit_points: operation.commit_points,
-            surfaces: surface_names(&operation.manifest.surfaces),
-            destinations: operation.manifest.destinations.clone(),
-            uploads: operation.manifest.uploads.clone(),
-            downloads: operation.manifest.downloads.clone(),
-        })
-        .collect();
-    for pipeline in &plan.pipelines {
-        let mut surfaces = BTreeSet::new();
-        let mut destinations = BTreeSet::new();
-        let mut uploads = BTreeSet::new();
-        let mut downloads = BTreeSet::new();
-        for step in &pipeline.steps {
-            if let Some(operation) = plan.operation(step.operation) {
-                surfaces.extend(operation.manifest.surfaces.iter().copied());
-                destinations.extend(operation.manifest.destinations.iter().cloned());
-                uploads.extend(operation.manifest.uploads.iter().cloned());
-                downloads.extend(operation.manifest.downloads.iter().cloned());
-            }
-        }
-        let surfaces: Vec<SurfaceIndex> = surfaces.into_iter().collect();
-        items.push(ReviewItem {
-            tool: pipeline.name.clone(),
-            effect: pipeline.effect,
-            hazard: pipeline.hazard,
-            commit_points: 0,
-            surfaces: surface_names(&surfaces),
-            destinations: destinations.into_iter().collect(),
-            uploads: uploads.into_iter().collect(),
-            downloads: downloads.into_iter().collect(),
-        });
-    }
-    items.sort_by(|a, b| {
-        (b.hazard, b.effect)
-            .cmp(&(a.hazard, a.effect))
-            .then_with(|| a.tool.cmp(&b.tool))
-    });
-    ReviewSummary { items }
 }
 
 /// The level a registered rule's finding has, for a caller that shows it.

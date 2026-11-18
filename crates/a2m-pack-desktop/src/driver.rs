@@ -1,19 +1,27 @@
-//! The `desktop` driver, for reads: it finds the application the surface
-//! declares, already running in the engine's own session, and carries out
-//! `goto`, `wait`, `read`, and the discoverer's `snapshot` through the
-//! look-only back end.
+//! The `desktop` driver: it finds the application the surface declares,
+//! already running in the engine's own session, and carries out `goto`,
+//! `wait`, `read`, `set`, `invoke`, and the discoverer's `snapshot` through
+//! the back end.
 //!
 //! | Step | What it does |
 //! | --- | --- |
 //! | `goto` | Finds the one window of the application with the screen's role and title, waiting for the application to signal one until the step's deadline |
-//! | `wait` | Reads the window's tree, and again each time the application signals a change, until the screen's `ready` condition holds or the deadline passes |
+//! | `wait` | Reads the window's tree, and again each time the application signals a change, until the screen's `ready` condition holds or the deadline passes; then, for a record with a key, proves the window shows that record |
 //! | `read` | Reads each field's value, or each column of the table as a list. A control that holds a secret is refused, never read |
+//! | `set` | Linux only. Finds the field in a fresh walk, proves again the application's process, sets its whole text through its editable-text interface, and reads the field: a value the field does not hold as it was set stops the run before anything is saved |
+//! | `invoke` | Linux only. Finds the action's element, proves the process again, refuses to act when the window already shows the action's confirmation or a refusal, does the element's named action, and waits, by the application's signals, for the confirmation, a refusal the screen declares, or the end of the application |
 //! | `snapshot` | The shape of every window of the application: roles, the names that are the window's shape, the structure. Never a value |
 //!
 //! Nothing here starts a program, and nothing reaches another application:
-//! the back end asks the bus daemon which process owns each application's
-//! connection and asks an application nothing until it is proven to be
-//! the program the surface declares.
+//! the back end asks the system which process owns each application's
+//! connection (the bus daemon on Linux) or window (Windows), or which
+//! process runs the program (the process table on macOS), and asks an
+//! application nothing until it is proven to be the program the surface
+//! declares. A `set` or an `invoke` is done only in a posture that may act,
+//! holds the driver's one desktop from its first `set` to the end of its
+//! committing `invoke`, and sends no key and no pointer event. On Windows
+//! and macOS a write stops before anything is sent, as `writes_not_built`
+//! (decision 0218).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -21,15 +29,17 @@ use std::sync::Arc;
 use a2m_auth::SessionLease;
 use a2m_core::{FailureClass, Step, Value, Values};
 use a2m_provider::{
-    BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, PrepareContext, Prepared,
-    StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
+    Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use serde_json::json;
+#[cfg(target_os = "linux")]
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, READ, SNAPSHOT, WAIT};
-use crate::model::{PAYLOAD_FORMAT, ReadStep, Screen, ScreenSection, SurfaceFields};
+use crate::lower::{GOTO, INVOKE, KEY_ARG, READ, SET, SNAPSHOT, WAIT};
+use crate::model::{Cond, PAYLOAD_FORMAT, ReadStep, Screen, ScreenSection, SurfaceFields};
 use crate::screens::{PACK, SCREEN_KIND};
 use crate::tree::{El, Miss, Node, Tree};
 
@@ -41,11 +51,23 @@ pub(crate) struct DesktopDriver {
     /// The session bus, when not the one the engine's environment names.
     session: Option<Arc<str>>,
     limits: Limits,
+    /// The one desktop this driver changes: held by one write at a time,
+    /// from its first `set` to the end of its committing `invoke`, so that
+    /// two runs never type into one desktop at once. The scheduler's
+    /// exclusive key (`exclusive = "screen"`) serializes writes on one
+    /// surface first; this holds where two surfaces share one desktop.
+    #[cfg(target_os = "linux")]
+    desk: Arc<Mutex<()>>,
 }
 
 impl DesktopDriver {
     pub(crate) fn new(session: Option<Arc<str>>, limits: Limits) -> Self {
-        Self { session, limits }
+        Self {
+            session,
+            limits,
+            #[cfg(target_os = "linux")]
+            desk: Arc::new(Mutex::new(())),
+        }
     }
 }
 
@@ -58,6 +80,16 @@ struct Held {
     /// The window the last `goto` found.
     window: Option<El>,
     limits: Limits,
+    posture: Posture,
+    /// What proved the application's process at prepare, proved again
+    /// before every act.
+    #[cfg(target_os = "linux")]
+    proof: crate::backend::Proof,
+    #[cfg(target_os = "linux")]
+    desk: Arc<Mutex<()>>,
+    /// The desktop, while this binding's write holds it.
+    #[cfg(target_os = "linux")]
+    holding: Option<OwnedMutexGuard<()>>,
 }
 
 fn unsent(error: &AxError, program: &str) -> StepFailure {
@@ -188,7 +220,8 @@ impl Held {
         }
     }
 
-    async fn wait(&self, step: &Step, deadline: Deadline) -> Result<Observed, StepFailure> {
+    async fn wait(&self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
+        let deadline = input.deadline;
         let (name, screen) = self.screen(step)?;
         let ready = screen.ready.clone();
         // Listen first, then look: a change between the two is not lost.
@@ -197,33 +230,12 @@ impl Held {
             .watch(&self.app)
             .await
             .map_err(|error| unsent(&error, &self.program))?;
+        let what = format!("the screen `{}`'s condition", shown(name));
         loop {
             let tree = self.walk(deadline).await?;
-            let mut texts = BTreeMap::new();
-            for (at, node) in tree.nodes.iter().enumerate() {
-                if node.has_text && !node.secret && condition_reads(&ready, node) {
-                    texts.insert(at, self.text(node).await?);
-                }
-            }
-            let mut text_of = |node: &Node| {
-                if node.secret {
-                    return None;
-                }
-                tree.nodes
-                    .iter()
-                    .position(|known| known.el == node.el)
-                    .and_then(|at| texts.get(&at).cloned())
-                    .or_else(|| (!node.has_text).then(|| node.name.clone()))
-            };
-            match tree.holds(&ready, &mut text_of) {
-                Ok(true) => return Ok(Observed::default()),
-                Ok(false) => {}
-                Err(miss) => {
-                    return Err(missed(
-                        miss,
-                        &format!("the screen `{}`'s condition", shown(name)),
-                    ));
-                }
+            if self.holds(&tree, &ready, &what).await? {
+                self.shows_record(step, screen, &tree, input).await?;
+                return Ok(Observed::default());
             }
             if !watch
                 .next(deadline)
@@ -328,6 +340,548 @@ impl Held {
         })
     }
 
+    /// For a step that carries the record's key: whether the window shows
+    /// exactly that record, in the screen's field of each key input's
+    /// name. A window that shows another record is a stop: nothing is
+    /// done in it.
+    async fn shows_record(
+        &self,
+        step: &Step,
+        screen: &Screen,
+        tree: &Tree,
+        input: &StepInput<'_>,
+    ) -> Result<(), StepFailure> {
+        for arg in &step.args {
+            let Some(key) = arg.name.strip_prefix(KEY_ARG) else {
+                continue;
+            };
+            let want = value_text(input.args.get(&arg.name))
+                .ok_or_else(|| codes::not_usable("a part of the record's key is not text"))?;
+            let field = screen
+                .fields
+                .get(key)
+                .ok_or_else(|| codes::not_usable("its key is shown by no field of its screen"))?;
+            let at = tree
+                .one(&field.locate)
+                .map_err(|miss| missed(miss, &format!("the field `{}`", shown(key))))?;
+            if self.text(&tree.nodes[at]).await? != want {
+                return Err(unexpected(format!(
+                    "The window shows another record than the one the run is for: its field `{}` does not show the record's key. Nothing was done in it.",
+                    shown(key)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// What every act proves on the walk it acts on, just before it acts,
+    /// whatever system's acting half carries it out: that the window still
+    /// shows the record the run is for (the check `wait` makes, again,
+    /// since the application may have moved to another record since), and
+    /// that the application shows no window that no screen of the target
+    /// names, such as a dialog raised since the `wait`. Either is a stop,
+    /// with nothing sent (unknown means stop).
+    // Only Linux has an acting half in this version; Windows and macOS
+    // reach this once theirs are built, and until then it has no caller
+    // there.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    async fn before_act(
+        &self,
+        step: &Step,
+        screen: &Screen,
+        tree: &Tree,
+        input: &StepInput<'_>,
+    ) -> Result<(), StepFailure> {
+        self.shows_record(step, screen, tree, input).await?;
+        let windows = self
+            .look
+            .windows(&self.app)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let known = |role: &str, title: &str| {
+            self.sections
+                .values()
+                .flat_map(|section| section.values())
+                .any(|screen| screen.window.role == role && screen.window.title == title)
+        };
+        if let Some(stranger) = windows
+            .iter()
+            .find(|window| !known(window.role, &window.title))
+        {
+            return Err(unexpected(format!(
+                "The application shows a window of the role `{}` that no screen of the target names, such as a dialog; nothing is done while one is open. Nothing was sent.",
+                stranger.role
+            ))
+            .with_said(stranger.title.clone()));
+        }
+        Ok(())
+    }
+
+    /// Whether the run's posture lets a step act on the application. A
+    /// field is set in a live run and against a declared test record; an
+    /// action is done in a live run, and, against a test record, only when
+    /// it is the commit point.
+    fn may_act(&self, step: &Step) -> Result<(), StepFailure> {
+        let allowed = match self.posture {
+            Posture::Live => true,
+            Posture::Sandbox { test_records: true } => step.kind == SET || step.commits,
+            Posture::Sandbox {
+                test_records: false,
+            }
+            | Posture::Discovery => false,
+        };
+        if allowed {
+            return Ok(());
+        }
+        Err(StepFailure::not_sent(codes::failure(
+            FailureClass::Policy,
+            a2m_provider::codes::READ_ONLY_POSTURE,
+            format!(
+                "A `{}` step acts on the application, and this run may not act so.",
+                step.kind
+            ),
+            "Run the operation live, or against a declared test record.",
+        )))
+    }
+
+    /// Takes the driver's one desktop for this binding's write, waiting
+    /// for another write to end until the step's deadline.
+    #[cfg(target_os = "linux")]
+    async fn hold(&mut self, deadline: Deadline) -> Result<(), StepFailure> {
+        if self.holding.is_some() {
+            return Ok(());
+        }
+        let wait = Arc::clone(&self.desk).lock_owned();
+        match tokio::time::timeout_at(deadline.at(), wait).await {
+            Ok(guard) => {
+                self.holding = Some(guard);
+                Ok(())
+            }
+            Err(_) => Err(StepFailure::not_sent(codes::failure(
+                FailureClass::Busy,
+                codes::SESSION_IN_USE,
+                "Another write held this desktop until the step's deadline; two runs never type into one desktop at once. Nothing was sent.".to_owned(),
+                "Run the tool again once the other write has ended.",
+            ))),
+        }
+    }
+
+    /// Whether a condition holds on this walk, its texts read where it
+    /// names one.
+    async fn holds(&self, tree: &Tree, cond: &Cond, what: &str) -> Result<bool, StepFailure> {
+        let mut texts = BTreeMap::new();
+        for (at, node) in tree.nodes.iter().enumerate() {
+            if node.has_text && !node.secret && condition_reads(cond, node) {
+                texts.insert(at, self.text(node).await?);
+            }
+        }
+        let mut text_of = |node: &Node| {
+            if node.secret {
+                return None;
+            }
+            tree.nodes
+                .iter()
+                .position(|known| known.el == node.el)
+                .and_then(|at| texts.get(&at).cloned())
+                .or_else(|| (!node.has_text).then(|| node.name.clone()))
+        };
+        tree.holds(cond, &mut text_of)
+            .map_err(|miss| missed(miss, what))
+    }
+
+    /// The first variant of the screen the walk shows, with what the
+    /// element its condition names says: the application's own words.
+    #[cfg(target_os = "linux")]
+    async fn variant_shown(
+        &self,
+        tree: &Tree,
+        screen: &Screen,
+    ) -> Result<Option<(String, Option<String>)>, StepFailure> {
+        for (name, variant) in &screen.variants {
+            let what = format!("the variant `{}`", shown(name));
+            if self.holds(tree, &variant.when, &what).await? {
+                let said = match first_locator(&variant.when)
+                    .and_then(|locator| tree.one(std::slice::from_ref(locator)).ok())
+                {
+                    Some(at) if !tree.nodes[at].secret => self.text(&tree.nodes[at]).await.ok(),
+                    _ => None,
+                };
+                return Ok(Some((name.clone(), said)));
+            }
+        }
+        Ok(None)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn set(&mut self, step: &Step, _input: &StepInput<'_>) -> Result<Observed, StepFailure> {
+        self.may_act(step)?;
+        Err(codes::writes_not_built())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn invoke(
+        &mut self,
+        step: &Step,
+        _input: &StepInput<'_>,
+    ) -> Result<Observed, StepFailure> {
+        self.may_act(step)?;
+        Err(codes::writes_not_built())
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn set(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
+        use crate::backend::{Acted, Settable};
+        use crate::model::SetStep;
+
+        self.may_act(step)?;
+        let (name, screen) = self.screen(step)?;
+        let payload: SetStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let field = screen
+            .fields
+            .get(&payload.field)
+            .ok_or_else(|| codes::not_usable("the field it sets is not on its screen"))?
+            .clone();
+        let name = name.to_owned();
+        let text = value_text(input.args.get(crate::lower::VALUE_ARG)).ok_or_else(|| {
+            codes::not_usable(format!(
+                "the value for the field `{}` is not one a text control takes",
+                shown(&payload.field)
+            ))
+        })?;
+        let deadline = input.deadline;
+        self.hold(deadline).await?;
+        let what = format!(
+            "the field `{}` of the screen `{}`",
+            shown(&payload.field),
+            shown(&name)
+        );
+        let tree = self.walk(deadline).await?;
+        let at = tree
+            .one(&field.locate)
+            .map_err(|miss| missed(miss, &what))?;
+        let node = tree.nodes[at].clone();
+        let (_, screen) = self.screen(step)?;
+        self.before_act(step, screen, &tree, input).await?;
+        if node.secret {
+            return Err(StepFailure::not_sent(codes::failure(
+                FailureClass::Policy,
+                codes::PASSWORD_SET_REFUSED,
+                format!(
+                    "{what} holds a secret; it is never set from an input a caller can see. Nothing was sent."
+                ),
+                "Leave the field out. Signing in to a desktop application is not built in this version.",
+            )));
+        }
+        let hands = self.look.hands(&self.proof);
+        hands
+            .prove(&self.app, &node)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let refused = |code, why: String, next: &str| {
+            StepFailure::not_sent(codes::failure(
+                FailureClass::UnknownVariant,
+                code,
+                format!("{what} {why}. Nothing was sent."),
+                next,
+            ))
+        };
+        match hands
+            .settable(&node)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?
+        {
+            Settable::Yes => {}
+            Settable::ReadOnly => {
+                return Err(refused(
+                    codes::FIELD_READ_ONLY,
+                    "takes no value now: the application shows it read-only".to_owned(),
+                    "Look at the application; the field may be locked for this record.",
+                ));
+            }
+            Settable::NoInterface => {
+                return Err(refused(
+                    codes::UNEXPECTED_CONTROL,
+                    "offers no text that may be set".to_owned(),
+                    "Take a snapshot of the window and correct the screen's field.",
+                ));
+            }
+        }
+        let sent_then = |error: &AxError| StepFailure::unknown(error.failure(&self.program));
+        match hands.set_text(&node, &text).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(StepFailure::answered(codes::failure(
+                    FailureClass::UnknownVariant,
+                    codes::FIELD_READ_ONLY,
+                    format!(
+                        "The application did not take the value for {what}. Nothing was saved."
+                    ),
+                    "Look at the application; the field may be locked for this record.",
+                )));
+            }
+            Err(Acted::NotSent(error)) => return Err(unsent(&error, &self.program)),
+            Err(Acted::Unknown(error)) => return Err(sent_then(&error)),
+        }
+        // The field is asked what it holds now: an application that
+        // changed the value (cut it, formatted it) stops the run here,
+        // before anything is saved. This proves the field took the value,
+        // never that the application stored it: the operation's read-back,
+        // a window reached afresh and read where it shows what is stored,
+        // is that proof.
+        let held = self
+            .look
+            .text(&node, &self.limits)
+            .await
+            .map_err(|error| sent_then(&error))?;
+        if held != text {
+            return Err(StepFailure::answered(codes::failure(
+                FailureClass::UnknownVariant,
+                codes::VALUE_NOT_HELD,
+                format!(
+                    "After it was set, {what} holds another value than the one set: the application changed it. Nothing was saved."
+                ),
+                "Give a value the field holds as it is written, such as a shorter one.",
+            )));
+        }
+        Ok(Observed {
+            captures: vec![acting(vec![
+                a2m_telemetry::Detail::new("step", "set"),
+                a2m_telemetry::Detail::new("screen", name),
+                a2m_telemetry::Detail::new("field", payload.field),
+                a2m_telemetry::Detail::new("strategy", "editable_text"),
+            ])],
+            ..Observed::default()
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn invoke(
+        &mut self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<Observed, StepFailure> {
+        self.may_act(step)?;
+        self.hold(input.deadline).await?;
+        let result = self.invoke_held(step, input).await;
+        // A write holds the desktop until its commit point is done, as it
+        // ended.
+        if step.commits {
+            self.holding = None;
+        }
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn invoke_held(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<Observed, StepFailure> {
+        use crate::backend::{Acted, Heard};
+        use crate::model::InvokeStep;
+
+        let deadline = input.deadline;
+        let (name, screen) = self.screen(step)?;
+        let payload: InvokeStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let action = screen
+            .actions
+            .get(&payload.action)
+            .ok_or_else(|| codes::not_usable("the action it does is not on its screen"))?;
+        if action.commits != step.commits {
+            return Err(codes::not_usable(
+                "the step and its action disagree on whether the action saves",
+            ));
+        }
+        let what = format!(
+            "the action `{}` of the screen `{}`",
+            shown(&payload.action),
+            shown(name)
+        );
+        let tree = self.walk(deadline).await?;
+        let at = tree
+            .one(&action.locate)
+            .map_err(|miss| missed(miss, &what))?;
+        let node = tree.nodes[at].clone();
+        let hands = self.look.hands(&self.proof);
+        hands
+            .prove(&self.app, &node)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        // Listen first, then look, then act: a change after the act is not
+        // lost.
+        let mut watch = self
+            .look
+            .watch(&self.app)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        // What the window shows after the action is its answer only if it
+        // was not there before: a window that already shows the
+        // confirmation, or a refusal, could not tell its answer from it.
+        let confirm = format!("the confirmation of {what}");
+        if self.holds(&tree, &action.confirm, &confirm).await? {
+            return Err(unexpected(format!(
+                "Before {what}, the window already shows the action's confirmation, so its answer could not be told from it. The action was not done."
+            )));
+        }
+        if let Some((variant, said)) = self.variant_shown(&tree, screen).await? {
+            let refused = StepFailure::not_sent(codes::failure(
+                FailureClass::Rejected,
+                codes::APP_VALIDATION_ERROR,
+                format!(
+                    "Before {what}, the window shows the variant `{}`, so its answer could not be told from it. The action was not done.",
+                    shown(&variant)
+                ),
+                "Correct the values and run the tool again; the application refused them before the action.",
+            ));
+            return Err(match said {
+                Some(said) => refused.with_said(said),
+                None => refused,
+            });
+        }
+        // Last before the act, on the walk it acts on: the record, and no
+        // window the screens do not name.
+        self.before_act(step, screen, &tree, input).await?;
+        match hands.perform(&node, &action.perform).await {
+            Ok(Some(true)) => {}
+            Ok(None) => {
+                return Err(StepFailure::not_sent(codes::failure(
+                    FailureClass::UnknownVariant,
+                    codes::UNEXPECTED_CONTROL,
+                    format!(
+                        "{what} offers no action named `{}` exactly once. Nothing was sent.",
+                        shown(&action.perform)
+                    ),
+                    "Take a snapshot of the window and correct the action's `perform`.",
+                )));
+            }
+            Ok(Some(false)) => {
+                return Err(StepFailure::answered(codes::failure(
+                    FailureClass::UnknownVariant,
+                    codes::UNEXPECTED_CONTROL,
+                    format!("The application said it did not do {what}."),
+                    "Look at the application; the action may not be offered for this record.",
+                )));
+            }
+            Err(Acted::NotSent(error)) => return Err(unsent(&error, &self.program)),
+            Err(Acted::Unknown(_)) => {
+                return Err(self.no_confirmation(step, &what, "the application did not answer it"));
+            }
+        }
+        // From here the action reached the application. What it made of
+        // it is known only when the window shows the action's confirmation,
+        // or a refusal the screen declares, neither of which was there
+        // before.
+        loop {
+            let Ok(tree) = self.walk(deadline).await else {
+                return Err(self.no_confirmation(step, &what, "then the window could not be read"));
+            };
+            let Ok(confirmed) = self.holds(&tree, &action.confirm, &confirm).await else {
+                return Err(self.no_confirmation(
+                    step,
+                    &what,
+                    "then its confirmation could not be told",
+                ));
+            };
+            let Ok(refused) = self.variant_shown(&tree, screen).await else {
+                return Err(self.no_confirmation(
+                    step,
+                    &what,
+                    "then the window could not be asked which state it is in",
+                ));
+            };
+            match (confirmed, refused) {
+                (true, Some((variant, _))) => {
+                    return Err(self.no_confirmation(
+                        step,
+                        &what,
+                        &format!(
+                            "then the window showed both its confirmation and the variant `{}`",
+                            shown(&variant)
+                        ),
+                    ));
+                }
+                (true, None) => {
+                    return Ok(Observed {
+                        captures: vec![acting(vec![
+                            a2m_telemetry::Detail::new("step", "invoke"),
+                            a2m_telemetry::Detail::new("screen", name),
+                            a2m_telemetry::Detail::new("action", payload.action.as_str()),
+                        ])],
+                        ..Observed::default()
+                    });
+                }
+                (false, Some((variant, said))) => {
+                    // A refusal the window shows after the action, which was
+                    // not there before it, is the application's answer.
+                    let refused = StepFailure::answered(codes::failure(
+                        FailureClass::Rejected,
+                        codes::APP_VALIDATION_ERROR,
+                        format!(
+                            "After {what}, the window shows the variant `{}`.",
+                            shown(&variant)
+                        ),
+                        "Correct the values and run the tool again; the application refused them.",
+                    ));
+                    return Err(match said {
+                        Some(said) => refused.with_said(said),
+                        None => refused,
+                    });
+                }
+                (false, None) => {}
+            }
+            match watch.heard(deadline).await {
+                Ok(Heard::Changed) => {}
+                Ok(Heard::Gone) => {
+                    return Err(self.no_confirmation(
+                        step,
+                        &what,
+                        "then the application exited before it showed its confirmation",
+                    ));
+                }
+                Ok(Heard::Passed) => {
+                    return Err(self.no_confirmation(
+                        step,
+                        &what,
+                        "the window did not show its confirmation in the time the step allows",
+                    ));
+                }
+                Err(_) => {
+                    return Err(self.no_confirmation(
+                        step,
+                        &what,
+                        "then the accessibility bus was lost",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// An action that was sent, whose fate is not known: for one that
+    /// saves, the record is in doubt.
+    #[cfg(target_os = "linux")]
+    fn no_confirmation(&self, step: &Step, what: &str, why: &str) -> StepFailure {
+        let (class, code) = if step.commits {
+            (
+                FailureClass::PossibleCommit,
+                a2m_provider::codes::NO_CONFIRMATION,
+            )
+        } else {
+            (FailureClass::UnknownVariant, codes::UNEXPECTED_PAGE)
+        };
+        StepFailure::unknown(codes::failure(
+            class,
+            code,
+            format!("{what} was done, and {why}."),
+            "Reconcile the record: read it back before anything is written again.",
+        ))
+    }
+
     /// The shape of every window of the application.
     async fn snapshot(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
         let windows = self
@@ -378,14 +932,44 @@ impl Held {
 }
 
 /// Whether a condition reads the text of this element.
-fn condition_reads(cond: &crate::model::Cond, node: &Node) -> bool {
+fn condition_reads(cond: &Cond, node: &Node) -> bool {
     match cond {
-        crate::model::Cond::Visible(_) => false,
-        crate::model::Cond::Text { locate, .. } => {
-            node.role == locate.role && node.name == locate.name
-        }
-        crate::model::Cond::All(all) => all.iter().any(|one| condition_reads(one, node)),
+        Cond::Visible(_) => false,
+        Cond::Text { locate, .. } => node.role == locate.role && node.name == locate.name,
+        Cond::All(all) => all.iter().any(|one| condition_reads(one, node)),
     }
+}
+
+/// The first locator a condition names: where a variant's words are.
+#[cfg(target_os = "linux")]
+fn first_locator(cond: &Cond) -> Option<&crate::model::Locator> {
+    match cond {
+        Cond::Visible(locator)
+        | Cond::Text {
+            locate: locator, ..
+        } => Some(locator),
+        Cond::All(all) => all.iter().find_map(first_locator),
+    }
+}
+
+/// A value as the text a field takes: text, a whole number, or an exact
+/// number in its own written form. Nothing else is set.
+fn value_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Text(text) => Some(text.clone()),
+        Value::Int(number) => Some(number.to_string()),
+        Value::Decimal(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+/// How a step was done, for its trace.
+#[cfg(target_os = "linux")]
+fn acting(means: Vec<a2m_telemetry::Detail>) -> a2m_provider::Capture {
+    a2m_provider::Capture::acting(&a2m_telemetry::Acting {
+        means,
+        measured: Vec::new(),
+    })
 }
 
 fn sections_of(cx: &PrepareContext<'_>) -> Result<BTreeMap<usize, ScreenSection>, StepFailure> {
@@ -448,6 +1032,14 @@ impl Driver for DesktopDriver {
                     return Err(unsent(&error, &program));
                 }
             };
+            #[cfg(target_os = "linux")]
+            let proof = match look.proof(&app, fields.digest.as_deref()) {
+                Ok(proof) => proof,
+                Err(error) => {
+                    look.close().await;
+                    return Err(unsent(&error, &program));
+                }
+            };
             Ok(Prepared::new(Held {
                 look,
                 app,
@@ -455,6 +1047,13 @@ impl Driver for DesktopDriver {
                 sections,
                 window: None,
                 limits: self.limits,
+                posture: cx.posture,
+                #[cfg(target_os = "linux")]
+                proof,
+                #[cfg(target_os = "linux")]
+                desk: Arc::clone(&self.desk),
+                #[cfg(target_os = "linux")]
+                holding: None,
             }))
         })
     }
@@ -473,11 +1072,15 @@ impl Driver for DesktopDriver {
             let observed = if step.kind == GOTO {
                 held.goto(step, deadline).await?
             } else if step.kind == WAIT {
-                held.wait(step, deadline).await?
+                held.wait(step, input).await?
             } else if step.kind == READ {
                 held.read(step, deadline).await?
             } else if step.kind == SNAPSHOT {
                 held.snapshot(deadline).await?
+            } else if step.kind == SET {
+                held.set(step, input).await?
+            } else if step.kind == INVOKE {
+                held.invoke(step, input).await?
             } else {
                 return Err(codes::not_usable(format!(
                     "this version has no `{}` step",
@@ -489,7 +1092,7 @@ impl Driver for DesktopDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", windows, target_os = "macos")) {
             DriverHealth::Ready
         } else {
             DriverHealth::Unavailable(codes::SYSTEM_NOT_BUILT)

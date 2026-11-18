@@ -1,0 +1,20 @@
+operation: example_inbox_set
+title: Replace a note of the inbox
+effect: write
+key: name
+commit_points: 1
+inputs:
+  name: {type: entry_name, description: "The note's name"}
+  content: {type: body, description: "The note"}
+outputs:
+  content: {type: body}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    folder: inbox
+    key: {name: input.name}
+    fields: {content: input.content}
+    read_back: {record: entry}
+description: >
+  Replaces the content of one note of the inbox.

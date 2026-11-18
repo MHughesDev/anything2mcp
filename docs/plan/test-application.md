@@ -1,6 +1,6 @@
 # The test application and the driver conformance suite
 
-Anything2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Phase 0 builds the first part of both; later phases add to them.
+Anything2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Package 0.3 built the first cases and later packages added more; [What is built](#what-is-built) lists each.
 
 ## Principles
 
@@ -54,7 +54,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 25 | Shows one of two layouts depending on a flag | Ordered locators; a new variant stops | 8 |
 | 26 | Switches language and number format | Fixed locale; comparison by code, not label | 8 |
 | 27 | Returns text containing instructions aimed at an agent | Untrusted fields; the manipulation test suite | 3 |
-| 28 | Exists as a small native desktop program with the same data | The desktop driver | 8 |
+| 28 | Exists as a small native desktop program with the same data. Built as `targets/example-desk` for Linux: a test hosts it, and it publishes an accessibility tree over a session bus of the test's own and draws no window. It holds the labelled values of one order, a table of its line items, a control with no accessible name, two controls of one role and name, a password field, a value that appears late, and a Save button, and counts each press of Save as a write and each ask for the password's text ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)). On Windows the same crate builds a window of plain controls in a process of its own, shown on screen without taking the focus, with the same data, and counts each message a client sends its controls ([decision 0209](../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); it is written and has not yet run: its CI job is its first run. A macOS stand is not built | The desktop driver | 8 |
 | 29 | Takes a bearer token or an API key on its JSON interface, and revokes one when told to | Credentials in the HTTP modes; a refused credential is not tried again | 2 |
 | 30 | Serves a description of its JSON interface | Reading a described interface; the description held to what is served | 4 |
 | 31 | Answers in a changed shape when told to | An unknown response shape stops, never guessed at | 1 |
@@ -91,6 +91,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 
 | Case | What is built | What is not |
 | --- | --- | --- |
+| 5 | The note of an order on `/orders/{order}/note`, whose page holds a fresh anti-forgery token in a meta element, a hidden input, and a cookie its script may read; `PUT /api/orders/{order}/note` takes it once, in the header `X-CSRF-Token` or the body field `authenticity_token`, and refuses a write without it, or with one used or not given, with 403; a refused note is answered with 422, quoting the body it was sent. `/__control/notes` reports notes, writes, refusals, and tokens ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) | Forms posted as documents; a token bound to a session |
 | 10, 11 | Case 33 covers the browser's own controls; its page always asks for confirmation | The custom controls of case 10; a dialog that appears only sometimes |
 | 13 | Sign-in by form under `/secure`, a session cookie, sign-out, a lockout after five failures in a row, and a one-time code step switched on by a mode. The control interface counts attempts, failures, and refusals | Sign-in by redirect to a separate identity page |
 | 14 | The control interface expires or revokes every session | Idle and total time limits on a clock |
@@ -102,7 +103,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 31 | The fault "changed shape" renames one field in a JSON answer | |
 | 32 | The four trap pages, each write counted by name | The WebSocket route refuses the upgrade after counting the handshake, so no socket opens |
 | 32 | The `/leaving/{how}/orders/{order}/items/{item}` pages for the interface driver ([decision 0144](../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)): the line-item form that moves itself to the other loopback name on load (`load`), after Save (`click`), or opens a window on it (`window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at a trap route that counts what arrives | |
-| 33 | The delivery-details page and its JSON routes | No automated test drives the page's script; that waits for the interface driver |
+| 33 | The delivery-details page and its JSON routes | No automated test drives the page's script: the interface driver exists, and none of its tests uses this page yet |
 | 34 | A redirect to the other loopback name on the same port | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
@@ -111,7 +112,7 @@ The fault "redirect after commit" was added after case 17 ([decision 0139](../de
 - **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.
-- The form was driven once by hand in a real browser, located by role and label: an update, a second save, a validation message, and a create all behaved. No automated test covers the page's script yet; the first one comes with the interface driver.
+- The line-item form is driven by the interface driver's tests, in `crates/a2m-pack-web-ui/tests/driver.rs`, in a browser the engine starts: a write stored once and read back, and a write the application refuses.
 - The product's crates may use the application in their tests only. `tools/docs_audit.py` refuses it, and every other crate under `targets/`, as an ordinary dependency.
 
 As of 2026-11-17 the stands for the other kinds of system are built too. Each follows the principles above, and its README lists its cases, its control interface, and its faults.

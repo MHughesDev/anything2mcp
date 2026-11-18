@@ -75,8 +75,8 @@ summary = "Every endpoint states the shape of its response."
 
 [[lint_rules]]
 code = "http.effect_method"
-level = "warning"
-summary = "An endpoint marked `read` uses a method HTTP marks safe."
+level = "error"
+summary = "An endpoint marked `read` uses a method HTTP marks safe, or says with `read_asserted` that one it does not mark safe only reads."
 
 [[lint_rules]]
 code = "http.signed_endpoint"
@@ -119,6 +119,14 @@ code = "unexpected_status"
 [[failure_codes]]
 class = "unknown_variant"
 code = "response_too_large"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "document_type_refused"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "answer_holds_secret"
 
 [[failure_codes]]
 class = "transient"

@@ -1,13 +1,13 @@
 # Action catalog
 
-The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 220](../spec/2-kernel/220-actions-and-the-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
+The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 220](../spec/2-kernel/220-actions-and-the-authoring-interface.md)). Every action listed is defined in the registry; one that has a handler is served, and one that has none answers `action_not_built`. Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
 
 | Face | Form | For `target.probe` |
 | --- | --- | --- |
 | Command | `anything2mcp <noun> <verb>` | `anything2mcp target probe` |
 | MCP tool | `a2m_<noun>_<verb>` | `a2m_target_probe` |
 | REST | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` |
-| SDK | `client.<noun>.<verb>()` | `client.target.probe()` |
+| SDK | One method for each action, named from its noun and verb: `client.<noun>_<verb>()` in Python, `client.<noun><Verb>()` in Node | `client.target_probe()`, `client.targetProbe()` |
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record.
 
@@ -27,7 +27,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `run.undo` | Build the reverse diff of a completed write run, for approval | Operator | No | 9 |
 | `run.trace` | Summary of a run's trace, with links to artifacts | Viewer | No | 1 |
 | `session.status` | Whether each target is signed in for the caller | Viewer | use | 2 |
-| `session.login` | Ask the caller's person to sign in to a target | Viewer | use | 2 |
+| `session.login` | Ask the caller's person to sign in to a target; the person gives any credential on the engine's own page, never through an input | Viewer | use | 2 |
 | `session.revoke` | End one of the caller's own sessions | Viewer | No | 2 |
 
 ## Building a target
@@ -46,7 +46,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `spec.import` | Operations from an OpenAPI, GraphQL, or OData description, or an upstream MCP server | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
 | `draft.write` | Write a draft file after validation and lint | Builder | build | 5 |
-| `draft.delete` | Remove a draft file of the project; a published version keeps its copy | Builder | build | 5 |
+| `draft.delete` | Remove draft files of the project, one or several, all or none; a published version keeps its copy | Builder | build | 5 |
 | `draft.lint` | Compile drafts and report every problem | Builder | build | 1 |
 | `draft.try` | Run a draft binding in the sandbox | Builder | build | 5 |
 | `test.run` | Run the publish gates and return evidence | Builder | build | 3 |
@@ -78,7 +78,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
 | `version.publish` | Publish a reviewed version; a person, never an agent | Publisher | No | 5 |
-| `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial; for a write, a person | Publisher | No | 4 |
+| `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial, or a shadow binding on its run of exact matches; for a write or a shadow binding, a person | Publisher | No | 4 |
 | `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6 |
 | `version.rollback` | Make an earlier version current | Publisher | No | 5 |
 | `version.bundle` | Pack a version into a signed file | Publisher | No | 6 |
@@ -113,7 +113,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `doctor.run` | Check browser, key store, network, sessions, clock; print fixes | Local user | No | 2 |
 | `browser.install` | Fetch a pinned browser | Local user | No | 1 |
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8 |
-| `client.connect` | Write the configuration for an MCP client | Local user | No | 5 |
+| `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
 | `trace.show`, `trace.export` | View or export a run's evidence | Auditor | No | 1 |
 | `action.search`, `action.describe`, `action.run` | Reach any action without listing it | Any | use and build | 5 |
 | `docs.get` | Built-in reference pages | Any | No | 5 |

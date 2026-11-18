@@ -18,7 +18,7 @@ use a2m_core::{
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
-    Reconciled, RecordIntent, RecordRef, RetentionClass, Settled,
+    Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, ShadowOutcome,
 };
 use a2m_provider::{BoxFuture, DiscoveryReport};
 use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
@@ -126,6 +126,33 @@ pub struct PassedOver {
     pub class: FailureClass,
     /// The code of the reason.
     pub code: FailureCode,
+}
+
+/// How a binding in shadow compared with the binding that did the real work
+/// of a live read (decision 0207). The implementation keeps it in the
+/// ledger with the job's run and lease, through `Shadows::record`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowCompared {
+    /// The operation called.
+    pub operation: OperationName,
+    /// The shadow binding: its place, its mode, and its digest.
+    pub shadow: crate::BindingPin,
+    /// The binding that did the real work, whose outputs the caller was
+    /// given.
+    pub verified: crate::BindingPin,
+    /// Whether the operation writes. Always false today: the shadow of a
+    /// write is not built.
+    pub writes: bool,
+    /// How it compared: the names of the outputs that differed and how,
+    /// never a value.
+    pub outcome: ShadowOutcome,
+    /// The inputs of the call it was made beside. The ledger keeps only
+    /// the workspace's keyed digest of them, which is never shown: what
+    /// lets it count distinct inputs (decision 0251).
+    pub input: Values,
+    /// What the shadow read cost the system, in the rate budget's units:
+    /// one per step it was granted (decision 0251).
+    pub requests: u32,
 }
 
 /// Something the engine tells the control plane while it runs a job.
@@ -406,4 +433,50 @@ pub trait Control: Send + Sync {
     /// memory only, scrubs them, and stores none of them as they are.
     /// Nothing by default.
     fn step_observed(&self, _step: &a2m_core::Step, _observed: Option<&Values>) {}
+
+    /// Whether the control plane keeps shadow comparisons. Only then does
+    /// the engine run a binding in shadow beside a live read: a shadow that
+    /// could not be counted would cost the system for nothing. False by
+    /// default.
+    fn keeps_shadow(&self) -> bool {
+        false
+    }
+
+    /// A rate budget of `want` requests on the surface for a binding in
+    /// shadow: all of them at once, or none. It never waits, and it never
+    /// takes a budget below the share it leaves for callers' own reads, as
+    /// a watch's check does not (decisions 0247 and 0251): a shadow is a
+    /// second read of a person's system, and never takes what a caller's
+    /// read needs. Answers whether it was granted.
+    ///
+    /// By default nothing is granted, so a binding in shadow on a surface
+    /// that declares a rate is not compared.
+    fn shadow_rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<bool, Failure>> {
+        let _ = (surface, want);
+        Box::pin(async { Ok(false) })
+    }
+
+    /// Keeps how a binding in shadow compared, in the ledger, under the
+    /// job's run and lease. A failure is the engine's to ignore: a shadow
+    /// never changes what the caller is given. The engine calls it only
+    /// after the call's result was sent, and within what is left of the
+    /// job's shadow budget (decision 0251).
+    ///
+    /// By default the control plane keeps none, and says so with `busy`,
+    /// `shadow_not_kept`.
+    fn shadow<'a>(&'a self, compared: ShadowCompared) -> BoxFuture<'a, Result<(), Failure>> {
+        let _ = compared;
+        Box::pin(async move {
+            Err(codes::fail(
+                FailureClass::Busy,
+                codes::SHADOW_NOT_KEPT,
+                "The control plane keeps no shadow comparisons.",
+                "Nothing to do; the call's result is the verified binding's.",
+            ))
+        })
+    }
 }

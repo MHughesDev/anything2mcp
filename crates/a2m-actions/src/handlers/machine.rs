@@ -144,6 +144,42 @@ handler!(
             }
         }
 
+        // The engine's own folders: closed to every other account.
+        let paths = kernel.paths().clone();
+        let home = tokio::task::spawn_blocking(move || crate::paths::open_to_others(&paths))
+            .await
+            .unwrap_or(crate::paths::OpenFolders::NotChecked);
+        checks.push(match home {
+            crate::paths::OpenFolders::Closed => check(
+                "home",
+                DoctorState::Healthy,
+                "The engine's own folders are this user's alone.",
+                "",
+            ),
+            crate::paths::OpenFolders::Open(folders) => check(
+                "home",
+                DoctorState::ConfigDrift,
+                format!(
+                    "Other accounts may enter the engine's own folders: {}. What they hold is sealed, and is still not to be left where others can list and copy it.",
+                    folders
+                        .iter()
+                        .map(|folder| format!("`{}`", folder.display()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                format!(
+                    "Close each to every account but this user's ({}), or start the engine, which closes the folders it uses.",
+                    if cfg!(unix) { "`chmod 700` on each" } else { "remove every other account from its access list" }
+                ),
+            ),
+            crate::paths::OpenFolders::NotChecked => check(
+                "home",
+                DoctorState::Unknown,
+                "Who may enter the engine's own folders is not read on this operating system yet; the engine gives each an access list that names only this user when it starts.",
+                "",
+            ),
+        });
+
         // The key store.
         checks.push(match &kernel.inner.vault {
             Some(vault) => {

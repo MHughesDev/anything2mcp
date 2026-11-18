@@ -147,6 +147,66 @@ pub(crate) async fn compile_in(
     .await
 }
 
+/// The next step for drafts that compile, chosen on the gates a publish
+/// runs (decision 0219): the same publish compile, which refuses an
+/// operation with no offline test, and the same offline tests. Only drafts
+/// that pass both are pointed at `ready`, the publish; otherwise the hint
+/// names the step that can succeed. Nothing is stored: an offline test runs
+/// in a store of its own.
+pub(crate) async fn publish_next(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+    ready: Next,
+) -> Next {
+    let tests = |when: String| Next::new("test.run", json!({"target": target.as_str()}), &when);
+    let Ok(project_folder) = call.project_folder().map(std::path::Path::to_path_buf) else {
+        return ready;
+    };
+    let compiled = match compile_in(
+        kernel,
+        project_folder.clone(),
+        target,
+        CompileMode::Publish,
+        DRAFT_VERSION,
+    )
+    .await
+    {
+        Ok(Ok(compiled)) => compiled,
+        Ok(Err(problems)) => {
+            let untested = crate::offline::without_test(target, &problems);
+            if untested.is_empty() {
+                return Next::new(
+                    "draft.lint",
+                    json!({"target": target.as_str()}),
+                    "after correcting what the publish compile refuses",
+                );
+            }
+            let files: Vec<&str> = untested
+                .iter()
+                .filter_map(|entry| entry["file"].as_str())
+                .collect();
+            return tests(format!(
+                "after writing an offline test with a fixture for each operation that has none ({}), or removing the drafts not wanted with `draft.delete`: a publish needs a passing test of every operation",
+                files.join(", ")
+            ));
+        }
+        Err(_) => return tests("to see whether the publish gates pass".to_owned()),
+    };
+    let world = crate::offline::OfflineWorld {
+        workspace: call.caller.principal.workspace,
+        principal: call.caller.principal.principal.id,
+        vault: kernel.inner.vault.clone(),
+    };
+    match crate::offline::run_gates(kernel, project_folder, target, &compiled, world, None).await {
+        Ok(gates) if gates.passed => ready,
+        Ok(_) => tests(
+            "to see which offline tests did not pass, and correct them before a publish".to_owned(),
+        ),
+        Err(_) => tests("to see whether the publish gates pass".to_owned()),
+    }
+}
+
 /// The version a publish of `target` is stored as: the one given, or the
 /// next whole number. A version the target has already is refused.
 ///
@@ -384,18 +444,21 @@ handler!(
         let compiled =
             compiled_target(kernel, &call, &target, CompileMode::Draft, DRAFT_VERSION).await?;
         let output = match compiled {
-            Ok(compiled) => Output::ok(json!({
-                "target": target.as_str(),
-                "ok": true,
-                "problems": problems_json(&compiled.warnings),
-                "plan_hash": compiled.encoded.hash.to_string(),
-                "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
-            }))
-            .then(Next::new(
-                "version.publish",
-                json!({"target": target.as_str()}),
-                "when a person has reviewed the drafts",
-            )),
+            Ok(compiled) => {
+                let ready = Next::new(
+                    "version.publish",
+                    json!({"target": target.as_str()}),
+                    "when a person has reviewed the drafts",
+                );
+                Output::ok(json!({
+                    "target": target.as_str(),
+                    "ok": true,
+                    "problems": problems_json(&compiled.warnings),
+                    "plan_hash": compiled.encoded.hash.to_string(),
+                    "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
+                }))
+                .then(publish_next(kernel, &call, &target, ready).await)
+            }
             Err(problems) => Output::ok(json!({
                 "target": target.as_str(),
                 "ok": false,
@@ -512,6 +575,7 @@ handler!(
             &target,
             &compiled,
             world,
+            None,
         )
         .await?;
         if !gates.passed {

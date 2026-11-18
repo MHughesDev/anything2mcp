@@ -19,6 +19,8 @@ a2m-core = { path = "../a2m-core" }
 a2m-files = { path = "../a2m-files" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
+quick-xml.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -21,6 +21,7 @@ mod draft;
 pub mod kernel;
 mod load;
 mod register;
+mod review;
 mod schema;
 mod source;
 #[cfg(any(test, feature = "testing"))]
@@ -30,10 +31,7 @@ pub use types::UNTRUSTED_TEXT;
 mod view;
 mod yaml;
 
-pub use compile::{
-    COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, ReviewItem, ReviewSummary, compile,
-    lint_one,
-};
+pub use compile::{COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, lint_one};
 pub use diag::{
     DRAFT_CONFLICT, Diagnostic, Diagnostics, LINT_FAILED, Level, PATH_NOT_ALLOWED,
     REGISTRATION_CONFLICT, Stage, TARGET_UNREADABLE,
@@ -48,8 +46,15 @@ pub use load::{
 };
 pub use register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
-    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, NoticeField, Possible,
-    ProgramField, StepCommits, SurfaceKindSpec,
+    DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering, NoticeField,
+    Possible, ProgramField, StepCommits, SurfaceKindSpec,
+};
+pub use review::{
+    BindingReview, BindingStatement, BindingStates, CredentialShown, EnvironmentVariable,
+    NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, ProbeReview, ProgramRun,
+    REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary, RunReview, SCRIPT_NOTICE,
+    SENT_TO_NOT_STATED, Sends, SentAddress, SentGroup, SentTo, SentToReview, SignInReview,
+    Statement, VariableValue,
 };
 pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{
@@ -66,4 +71,5 @@ pub use yaml::{normalize_text, parse as parse_yaml};
 mod tests {
     mod drafter;
     mod example;
+    mod review;
 }

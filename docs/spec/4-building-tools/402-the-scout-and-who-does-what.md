@@ -1,6 +1,6 @@
 # 402. The scout, and who does what
 
-A developer points the runtime at a system and wants tools. This section draws the line between the work the runtime does by itself, the work that stays with the developer or their agent, and the work only a person may do. It also says what the runtime assumes about the world and what it leaves out on purpose. Decisions: [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and [record 0059](../../decisions/0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md).
+A developer points the runtime at a system and wants tools. This section draws the line between the work the runtime does by itself, the work that stays with the developer or their agent, and the work only a person may do. It also says what the runtime assumes about the world and what it leaves out on purpose. Decisions: [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and [record 0059](../../decisions/0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The line
 
@@ -109,22 +109,24 @@ On one machine, with one user, these are light: a prompt from the operating syst
 
 ## What is left out on purpose
 
-| Left out | Because |
-| --- | --- |
-| A model inside the product, or an agent framework | Principles 3 and 4 of [section 103](../1-product/103-design-principles.md). The developer brings their own agent, of any make |
-| A catalog of definitions for real products | [Record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps |
-| Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop |
-| A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
-| Hosting | The product runs where the developer runs it |
-| Guessing | Principle 11. Unknown means stop |
+Each line carries its kind, as [SCOPE.md](../../../SCOPE.md) does: a rule (one of the ten rules in AGENTS.md, or an owner decision), a choice (a design choice in force today), or not yet. A line here describes where the product stands; it is not by itself a reason to refuse an idea ([decision 0230](../../decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)).
+
+| Left out | Because | Kind |
+| --- | --- | --- |
+| A model inside the product, or an agent framework | Principles 3 and 4 of [section 103](../1-product/103-design-principles.md). The developer brings their own agent, of any make | Rule 1, for a model in a run. Choice, for an agent framework |
+| A catalog of definitions for real products | [Record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps | Rule 9 and owner decision 0058 |
+| Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop | Rule 5 |
+| A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) | Choice, for the shell. for clicking by position, rules 1, 3, and 7: reading a picture takes a learned model (rule 1), a click by position cannot be proven against the element it was meant for (rule 3), and a picture that differs from the recorded one is a variant with no rule (rule 7). The owner decided that nothing in a run reads a picture; the scout may keep a screenshot as build-time evidence, which is not built yet ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) |
+| A hosted place to share target files | The product runs where the developer runs it | Owner decision 0058 |
+| Guessing | Principle 11. Unknown means stop | Rule 7 |
 
 ## Settings
 
-Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-configuration.md)). Key names are a draft, as all are until the settings loader is written.
+Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-configuration.md)). The keys are declared in the settings schema of `a2m-actions`, where an unknown key is refused.
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `authoring.scout.run` | `on_request`: only when `scout.run` is called. `on_add`: also when a target is added | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
+| `authoring.scout.run` | `off`: never; `scout.run` is refused by name. `on_request`: only when `scout.run` is called. `on_add`: also when a target is added; that part is not built, so today `on_add` acts as `on_request` (adding a target names `scout run` as the next step) | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
 | `authoring.scout.try_reads` | Whether stage 6 runs | On |
 | `authoring.scout.budget` | Limits on time, requests, and depth for one scout | Small enough that a scout of an ordinary system ends within minutes |
 | `authoring.scout.providers` | Which optional discoverers the scout may use, by name | None. The first-party discoverers are always available |

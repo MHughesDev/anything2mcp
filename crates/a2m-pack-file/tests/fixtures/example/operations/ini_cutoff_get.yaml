@@ -1,0 +1,13 @@
+operation: example_ini_cutoff_get
+title: Read the warehouse cutoff
+effect: read
+inputs: {}
+outputs:
+  cutoff: {type: cutoff}
+bindings:
+  - mode: file
+    verb: read
+    document: ini_settings
+    record: warehouse
+description: >
+  Reads a value followed by a comment, which programs read in two ways.

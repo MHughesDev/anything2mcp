@@ -201,6 +201,24 @@ impl SignInContext<'_> {
         Ok(secret)
     }
 
+    /// Checks, just before a request is sent, that `address` is one the
+    /// target declares for its surfaces. `what` names the setting, for the
+    /// refusal. A provider calls it before every request it makes itself.
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`destination_not_declared`. Nothing was sent.
+    pub fn check_address(&self, what: &str, address: &str) -> Result<(), Failure> {
+        if self.entry.surfaces.destinations.allows(address) {
+            Ok(())
+        } else {
+            Err(failure::destination_not_declared(
+                self.entry.provider.as_str(),
+                what,
+            ))
+        }
+    }
+
     /// Registers a secret the provider made or received, such as a token an
     /// exchange returned or a header value it built. Call it before the
     /// secret goes anywhere else.
@@ -265,6 +283,67 @@ impl fmt::Debug for SignInContext<'_> {
     }
 }
 
+/// One address a sign-in sends a credential, a token, or the person to, and
+/// what it is: a setting of the entry such as `token_endpoint`, or a
+/// surface the entry covers. It is a name and an address, never a value of
+/// a credential.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SignInAddress {
+    /// What the address is, in the words a person reads: `the setting
+    /// `token_endpoint``, or `the surface `http``.
+    pub what: String,
+    /// The address, as the target's files write it.
+    pub address: String,
+}
+
+/// Every address a sign-in through `provider` under `entry` sends a
+/// credential, a token, or the person to: each surface the entry covers,
+/// whose driver is given the session's credentials, and each address the
+/// provider itself sends to.
+#[must_use]
+pub fn sign_in_addresses(provider: &dyn AuthProvider, entry: &AuthEntry) -> Vec<SignInAddress> {
+    let mut out: Vec<SignInAddress> = entry
+        .surfaces
+        .surfaces
+        .iter()
+        .map(|surface| SignInAddress {
+            what: format!("the surface `{}`", surface.name),
+            address: surface.address.clone(),
+        })
+        .collect();
+    out.extend(provider.destinations(entry));
+    out
+}
+
+/// Checks an entry before anything is sent under it: the provider's own
+/// check; every credential it names belongs to `target`; and every address
+/// the provider sends to is one the target declares (decision 0248).
+///
+/// # Errors
+///
+/// The provider's `input`/`auth_settings_invalid`;
+/// `input`/`credential_of_another_target`;
+/// `policy`/`destination_not_declared`.
+pub(crate) fn checked(
+    provider: &dyn AuthProvider,
+    entry: &AuthEntry,
+    target: &a2m_core::TargetName,
+) -> Result<(), Failure> {
+    provider.check(entry)?;
+    for reference in entry.credentials.values() {
+        crate::credentials::belongs_to(reference, target)?;
+    }
+    for sent in provider.destinations(entry) {
+        if !entry.surfaces.destinations.allows(&sent.address) {
+            return Err(failure::destination_not_declared(
+                entry.provider.as_str(),
+                &sent.what,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// An auth provider: how to sign in to one kind of thing, check that the
 /// sign-in holds, recognize a sign of expiry, renew, sign out, and place the
 /// credentials into a driver's client.
@@ -304,6 +383,18 @@ pub trait AuthProvider: Send + Sync {
     ///
     /// `input`/`auth_settings_invalid`.
     fn check(&self, entry: &AuthEntry) -> Result<(), Failure>;
+
+    /// Every address beyond the surfaces the entry covers that this
+    /// provider itself sends a credential, a token, or the person to under
+    /// `entry`, such as an identity service's token endpoint, each with
+    /// the setting that names it. The keeper sends nothing unless each is
+    /// an address the target declares (decision 0248). A provider that
+    /// reaches only the entry's own surfaces, or only places a credential
+    /// into a driver's client, returns none: that is the default.
+    fn destinations(&self, entry: &AuthEntry) -> Vec<SignInAddress> {
+        let _ = entry;
+        Vec::new()
+    }
 
     /// Signs in and returns the session's credentials.
     fn sign_in<'a>(&'a self, cx: &'a SignInContext<'a>)

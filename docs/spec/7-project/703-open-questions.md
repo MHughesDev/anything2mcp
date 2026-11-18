@@ -1,5 +1,7 @@
 # 703. Decisions and open questions
 
+This section lists the decisions taken in the specification and the questions still open. It is a list, not a design, and describes no code.
+
 Decisions taken in this spec:
 
 | Decision | Chosen | Main alternative | Why |
@@ -23,7 +25,7 @@ Decisions taken in this spec:
 | Bot defenses and MFA | Stop and get an allowlist; people complete MFA | Evasion; stored codes | Operates openly |
 | License | MIT | Apache-2.0 | The owner's choice: the shortest and most widely understood terms ([record 0057](../../decisions/0057-the-licence-is-mit.md)) |
 | Example targets | None named; an imaginary `example` app only | Named real applications | Owner's decision; keeps the project general |
-| Package names | `anything2mcp` on pip, crates.io, and npm; `a2m` as the short command and the crate prefix | A shorter name everywhere | `a2m` is another project's package on two registries ([record 0056](../../decisions/0056-one-name-everywhere-anything2mcp.md)) |
+| Package names | `anything2mcp` on pip and npm (not crates.io: [decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)); `a2m` as the short command and the crate prefix | A shorter name everywhere | `a2m` is another project's package on two registries ([record 0056](../../decisions/0056-one-name-everywhere-anything2mcp.md)) |
 | Building interface | Commands and files first, MCP tools second, both generated from one registry | MCP tools only | Context cost; agents are strongest with a shell |
 | Local process model | One engine per user; clients connect over a socket or named pipe | An engine per MCP client | Shared sessions and locks; no open port |
 | pip and npm packages | Ship the binary plus a thin SDK | In-process bindings | Smaller package; no engine logic outside Rust |
@@ -52,7 +54,7 @@ Open questions:
 - [ ] For each real target: what does it send when a record is saved (JSON to an API, form posts, or neither)?
 - [ ] For each real target: do IT and the vendor's terms allow wrapping it, and with which identity mode?
 - [ ] For each real target: is there a test environment or a test record that tests may write to and restore?
-- [ ] Have the package names been reserved on PyPI, crates.io, and npm?
+- [ ] Have the package names been reserved on PyPI and npm?
 - [ ] Which user-presence checks can a background process call on each operating system?
 - [ ] Is long polling fast enough for interactive reads, or is a streaming carrier needed behind the same interface?
 - [ ] Who issues runner certificates: a built-in authority or the organization's own?

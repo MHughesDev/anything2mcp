@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{Failure, FailureClass, Secret, SurfacePlan};
+use a2m_core::{Failure, FailureClass, ScopedHost, Secret, SurfacePlan};
 use a2m_provider::StepFailure;
 use bytes::BytesMut;
 use tokio::runtime::Handle;
@@ -79,8 +79,10 @@ pub(crate) fn server_of(
     fields: &SurfaceFields,
     lease: Option<&SessionLease>,
 ) -> Result<(StoreAt, PoolKey), StepFailure> {
+    // Judged by the one question every check of a plain link asks
+    // (decision 0240): the address as written, never a name.
     let host: Option<IpAddr> = surface.address.parse().ok();
-    let Some(host) = host.filter(IpAddr::is_loopback) else {
+    let Some(host) = host.filter(|ip| !ScopedHost::of_ip(*ip).may_leave_this_machine()) else {
         return Err(StepFailure::not_sent(Failure::new(
             FailureClass::Policy,
             codes::LINK_NOT_ENCRYPTED,

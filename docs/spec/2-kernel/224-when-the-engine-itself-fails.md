@@ -1,6 +1,6 @@
 # 224. When the engine itself fails
 
-Other sections cover what happens when the target system misbehaves, a session ends, or a runner is lost. This section covers Anything2MCP's own parts failing: its database, its key store, its disk, and the subsystems its packs start, such as the web pack's browser. The rule is the same throughout, and each row below is a test.
+Other sections cover what happens when the target system misbehaves, a session ends, or a runner is lost. This section covers Anything2MCP's own parts failing: its database, its key store, its disk, and the subsystems its packs start, such as the web pack's browser. The rule is the same throughout, and each row below is a test. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## Three rules
 

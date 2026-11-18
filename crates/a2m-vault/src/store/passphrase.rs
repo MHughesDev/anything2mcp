@@ -1,10 +1,22 @@
 //! The passphrase route: a root derived from a passphrase given at start.
 //!
-//! For Linux with no desktop session and no key service. It is weaker than
-//! the operating system's store, because anyone who learns the passphrase
-//! and reads the store can open everything; so it is an explicit opt-in, and
-//! `doctor` reports it as weaker. The derivation is Argon2id, which costs
-//! memory as well as time for each guess (decision 0074).
+//! For a machine where this build has no operating-system key store, Linux
+//! among them (decision 0123), and no key service. It is weaker than the
+//! operating system's store, because anyone who learns the passphrase and
+//! reads the store can open everything; `doctor` reports it as weaker.
+//! Where the build has an operating-system key store, choosing this route
+//! instead is an explicit opt-in that only the installation's settings can
+//! make; where the build has none, it is the default, because there is
+//! nothing stronger to move off (decision 0220). The derivation is
+//! Argon2id, which costs memory as well as time for each guess (decision
+//! 0074).
+//!
+//! What the passphrase protects against: a copy of the store, its key
+//! records, and the salt, taken away from the machine or read while no
+//! engine runs, opens nothing without it. What it does not: while the
+//! engine runs, its process holds the derived root in memory, and a program
+//! of the same user that can read that memory, or the environment the
+//! passphrase was given in, can learn it.
 
 use std::fmt;
 use std::fs;
@@ -22,15 +34,48 @@ use crate::failure;
 use crate::material::{KeyMaterial, OsRandom, RandomSource, Wrapped};
 use crate::names::Binding;
 
-/// Whether a person switched the passphrase route on. It is a protected
-/// setting: the caller reads it from settings that only a person can change,
-/// and passes it here, so that choosing this route is always explicit.
+/// The value of the setting `vault.backend` that chooses the operating
+/// system's key store.
+pub const BACKEND_OS_KEY_STORE: &str = "os_keystore";
+
+/// The value of the setting `vault.backend` that chooses the passphrase
+/// route.
+pub const BACKEND_PASSPHRASE: &str = "passphrase";
+
+/// What `vault.backend` is when no settings file sets it: the operating
+/// system's key store where this build has one, and the passphrase route
+/// where it has none (decision 0220). A fact of the build, from the same
+/// `cfg` that chooses the key store's back end.
+pub const DEFAULT_BACKEND: &str = if super::OsKeyStore::IN_THIS_BUILD {
+    BACKEND_OS_KEY_STORE
+} else {
+    BACKEND_PASSPHRASE
+};
+
+/// Whether the passphrase route is chosen. The caller reads it from the
+/// setting `vault.backend`, which only the installation's settings file
+/// can change, and passes it here, so that the route is taken only where
+/// the settings, or the build's default, choose it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassphraseRoute {
     /// The route is off. Asking for it is refused.
     NotEnabled,
-    /// A person switched the route on.
+    /// The route is chosen.
     Enabled,
+}
+
+impl PassphraseRoute {
+    /// The route that the value of `vault.backend` chooses: enabled for
+    /// [`BACKEND_PASSPHRASE`] alone. `None`, a setting nobody could read,
+    /// enables nothing.
+    #[must_use]
+    pub fn of_backend(backend: Option<&str>) -> Self {
+        if backend == Some(BACKEND_PASSPHRASE) {
+            Self::Enabled
+        } else {
+            Self::NotEnabled
+        }
+    }
 }
 
 /// The salt of the derivation: random, not secret, one per installation. It
@@ -168,6 +213,17 @@ impl PassphraseKeyStore {
     /// search but the passphrase itself. Sixteen bytes lets through four
     /// unrelated words or sixteen random characters, and no short password.
     pub const SHORTEST_PASSPHRASE: usize = 16;
+
+    /// The failure for a route that is chosen and given no passphrase:
+    /// `input`/`vault_passphrase_missing`. It names `variable`, the
+    /// environment variable a person sets, and says what the passphrase is
+    /// for. The passphrase comes from a person or the person's environment,
+    /// handed to the engine by the command that starts it, and never from a
+    /// tool call, a request, or a project file.
+    #[must_use]
+    pub fn not_given(variable: &str) -> Failure {
+        failure::passphrase_missing(variable)
+    }
 
     /// Derives the root from `passphrase` and `salt`. This takes on the order
     /// of a second and 64 MiB of memory, on a blocking thread.

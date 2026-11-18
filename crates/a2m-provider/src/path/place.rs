@@ -215,6 +215,13 @@ mod os {
             Ok(mkdirat(&self.0, name, Mode::from_raw_mode(0o777))?)
         }
 
+        /// Makes a new folder of that name that only its owner may enter,
+        /// read, or write: mode `0700`, which the process's mask can only
+        /// narrow. It fails when anything stands at the name.
+        pub(in super::super) fn create_private_dir(&self, name: &OsStr) -> io::Result<()> {
+            Ok(mkdirat(&self.0, name, Mode::from_raw_mode(0o700))?)
+        }
+
         /// Opens the file of that name for reading. A link there is not
         /// followed.
         pub(in super::super) fn open(&self, name: &OsStr) -> io::Result<File> {
@@ -531,6 +538,17 @@ mod os {
         /// at the name, a link included.
         pub(in super::super) fn create_dir(&self, name: &OsStr) -> io::Result<()> {
             fs::create_dir(self.0.join(name))
+        }
+
+        /// Makes a new folder of that name, kept to its owner and the
+        /// system's own identities. It fails when anything stands at the
+        /// name; a folder whose access list cannot be set is removed again.
+        pub(in super::super) fn create_private_dir(&self, name: &OsStr) -> io::Result<()> {
+            let path = self.0.join(name);
+            fs::create_dir(&path)?;
+            crate::supervisor::keep_folder_private(&path).inspect_err(|_| {
+                let _ = fs::remove_dir(&path);
+            })
         }
 
         /// Opens the file of that name for writing, and changes nothing in

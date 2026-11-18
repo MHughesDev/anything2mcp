@@ -819,3 +819,48 @@ fn a_root_of_each_requests_project_resolves_in_that_project_and_never_another() 
         b"one"
     );
 }
+
+/// A folder made private is the engine's user's alone from the moment it
+/// exists, on every system, and the shared check finds it closed: mode
+/// `0700` on Linux and macOS, a protected access list on Windows
+/// (decision 0250). A folder made the ordinary way is left as the
+/// process's defaults make it.
+#[test]
+fn a_private_folder_is_made_closed_to_other_users() {
+    let (_folder, roots) = scene();
+    let project = roots.folder(&root("project"), Access::Write).unwrap();
+    let one = project.join("private").unwrap();
+    one.create_private_dir().unwrap();
+    let many = project.join("deep/er/still").unwrap();
+    many.create_private_dir_all().unwrap();
+    // Made new or not at all.
+    assert!(one.create_private_dir().is_err());
+    for made in [one.as_path().to_path_buf(), many.as_path().to_path_buf()] {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&made).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{}", made.display());
+        }
+        // Whatever the folders above it are, the folder itself passes the
+        // check of a folder the engine made when its parent is closed; on
+        // Windows that reads the access list just set.
+        let verdict = a2m_provider::check_program(
+            &made,
+            &a2m_provider::ProgramTrust::default(),
+            a2m_provider::ProgramRole::Folder,
+        );
+        // The temporary folder of a machine may itself be open to others
+        // (it is, by design, on Linux, with the sticky mark, which the
+        // check accepts); a refusal names a folder above this one.
+        if let Err(a2m_provider::ProgramRefused::Writable(at)) = &verdict {
+            assert!(
+                !at.starts_with(&made),
+                "the private folder itself is open: {}",
+                at.display()
+            );
+        } else {
+            assert_eq!(verdict, Ok(()), "{}", made.display());
+        }
+    }
+}

@@ -1,6 +1,8 @@
 # 308. The file pack
 
-The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it.
+The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+
+The pack also reads a folder as a collection of entries and writes its entries, reads and updates the values of settings files (INI files and property lists), and reads a growing file from where the last read stopped ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)).
 
 A file is the simplest system there is to verify, because the whole of it can be read again after every write. It is also the easiest to damage without noticing, because a careless save rewrites everything the tool did not mean to touch. This section is mostly about the second point.
 
@@ -16,7 +18,7 @@ A file is the simplest system there is to verify, because the whole of it can be
 | What is checked | The template fingerprint; every row validated before anything runs | Every write: intent, replace in one step, read-back by opening the file again |
 | In the ledger | The file's content hash is part of the input hash | Each named place is a record with its own row |
 
-**What they share, and which way the dependency points.** The pack depends on `a2m-sources`, which is in layer 4 and so within a pack's reach ([decision 0061](../../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md)). It uses three things from it: the parsed form of each format the kernel reads, the template fingerprint, and the rules that turn a cell into a typed value, so that a value read through a source and the same value read through a file tool can never disagree. Field types and normalization come from the kernel as for every pack. Everything about writing, locking, and replacing a file is the pack's alone. `a2m-sources` never depends on the pack, and gains no writing code.
+**What they share, and which way the dependency points.** The pack depends on `a2m-sources`, which is in layer 4 and so within a pack's reach ([decision 0061](../../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md)). It uses three things from it: the parsed form of each format the kernel reads, the template fingerprint, and the rules that turn a cell into a typed value, so that a value read through a source and the same value read through a file tool can never disagree. Field types and normalization come from the kernel as for every pack. Everything about writing, locking, and replacing a file is the pack's alone. `a2m-sources` never depends on the pack, and gains no writing code. Settings files are read by the pack's own readers, which give each value's span: no source reads them yet ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)).
 
 To patch a file without disturbing it, the pack needs to know where in the bytes each value sits. The parsed form must therefore carry the position of every value it reads. That is a reading feature, useful to `a2m-sources` for its own error messages, and it is the one addition this pack asks of it.
 
@@ -24,7 +26,7 @@ To patch a file without disturbing it, the pack needs to know where in the bytes
 
 | For | Refused |
 | --- | --- |
-| Reading and writing values at named places: a row by key in a table, a named cell, a key path | Any input that chooses which file is opened |
+| Reading and writing values at named places: a row by key in a table, a named cell, a key path | Any input that chooses which file is opened, but the name of an entry inside a folder the target declares, which is a key held to one name inside it ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) |
 | Adding and removing a row by key in delimited text and structured files | Fixed cell coordinates as a place ([section 210](../2-kernel/210-sources-and-value-normalization.md)) |
 | Saving by writing a new file and replacing the old one in one step | Editing a file in place |
 | | A format the pack cannot write back without loss: such a format is read-only |
@@ -103,7 +105,7 @@ bindings:
 | Field | Meaning |
 | --- | --- |
 | `surface`, `file` (required) | A `file` surface, and a name inside its folder. The name has no `..`, no separator that leaves the folder, and no placeholder |
-| `format` (required) | `delimited`, `json`, `workbook`, `yaml`, `toml`, `xml`, or `text_document`. Which of them can be written is a property of the pack, below |
+| `format` (required) | `delimited`, `json`, `workbook`, `ini`, `property_list`, `yaml`, `toml`, `xml`, or `text_document`. Which of them can be written is a property of the pack, below |
 | `fingerprint` | What identifies this layout, as for a source template. A file that does not match is `drift` |
 | `may_be_open`, `lock_signal` | Whether an application may hold the file open, and the sign that it does: a sibling file the target names, or the operating system's own refusal to share. Absent is not said, never `false`: a binding that writes the file compiles only when the document states `true` or `false` |
 | `records.<kind>` | One kind of named place: a `table` the file defines, or a `sheet` with a header row found by its text; a `cell` by defined name; a `path` in a structured file; `rows` of delimited text |
@@ -111,6 +113,18 @@ bindings:
 | `fields` | Each field's place within the record (`header`, `path`) and its field type. `writable: true` marks a field a binding may set; nothing else is ever set. In delimited text, `may_begin_formula: true` says the column is free text that may begin with `=`, `+`, `-`, or `@` and that no spreadsheet program opens the file |
 
 A key path is a list of keys, never a string to be split, and no input reaches it. An element of a list is chosen by the record's key, as a row is: the binding gives each key field a value, and the driver compares it, typed, with what each element holds. An input cannot add a key to a path, leave the file, or name an element by position ([decision 0103](../../decisions/0103-the-file-pack-as-building-it-settled-it.md)).
+
+## Settings files, folders, and growing files
+
+[Decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md) states each rule; this is what each adds.
+
+| What | Declared in | Reads | Writes |
+| --- | --- | --- | --- |
+| A settings file: an INI file, a property list in its XML form | `documents/`, `format: ini` or `property_list`, a record's `path` and each field's `path` of keys; for INI, `dialect: {separator, quotes}` | `read` of a record's values | `update` of a value that is there, by replacing its bytes alone; nothing added or removed |
+| A folder as a collection of entries | `folders/`: `surface`, `depth` (0 to 4), `max_entries`, `digest_max_bytes`, `content_max_bytes`, `writes`, `may_be_open` | `list` of entries in the order of their names' bytes, to the depth; `read` of one entry by its name, with its digest and its content as text when asked | `create` where no entry has the name, `update` of a file's content, `rename` in the same folder, `delete` of a file or an empty folder (`irreversible`) |
+| A growing file other programs append to | `logs/`: `surface`, `file`, `max_lines`, `max_bytes` | `read` of the complete lines after a position the caller hands back, with the new position and whether the file was `replaced` or `truncated` | None |
+
+A settings file's readers stop by name at every form whose meaning differs between the programs that read such files: an INI line continued, a comment after a value, a value in quotes when the document does not say what quotes are; a property list's document type with declarations of its own, an entity, a binary property list. A folder's entry is named by one name, never followed through a link, and found only under the very name the folder holds: one it holds only in another case is `name_case_conflict` on every system. A growing file is opened for one read and closed, never held, locked, or written.
 
 ## Verbs and steps
 
@@ -167,6 +181,8 @@ A stop after the replace was called and before it was recorded is `possible_comm
 | Delimited text, as in RFC 4180 | Delimiter, the quoting of each field, line endings, encoding and byte-order mark, the last line's ending, rows not named | Yes, first |
 | JSON, as in RFC 8259 | Key order, spacing, the spelling of every number, escapes. A file with a duplicate key is not read at all: it is `file_unreadable` | Yes, first |
 | Workbook | Every part of the package not holding the place, byte for byte; within the sheet, formulas, styles, comments, validation lists, merged ranges, hidden rows and columns. A text value is written into the cell itself, so the shared table of strings is not touched | Yes, after the first two |
+| INI | Comments, order, blank lines, spacing, line endings, the byte-order mark, quotes, the last line's ending | One value at a time, in place ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) |
+| Property list, XML form | The declaration, the document type, comments, references, indentation, element kinds | One value at a time, in place. The binary form is not read |
 | YAML, TOML | Comments, key order, quoting style, anchors, several documents in one file | Read-only until an editor passes the tests. A place reached through an alias is always read-only |
 | XML | Namespaces, comments, entity references, attribute order | Read-only at first |
 | Text documents | Everything | Read-only. Declared fields in a document are an open point |
@@ -204,6 +220,9 @@ The pack declares two effects, both `enforced`: it reads files, and writes files
 | A column whose values are unique in this file, as a key candidate | `inferred`, with `sampled` and `single_variant` |
 | A key structure in a structured file, from the file itself | `inferred` |
 | A published schema for the format, such as a JSON Schema | `inferred`, source `published_description` |
+| A surface's folder: each entry's name, kind, and a file's size, to the bound's depth, never a content; read when the kernel hands no file, from the folder the target names, following no link | `discovered`; `partial`, with `truncated`, where a folder was cut at the depth ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)) |
+| An INI file's sections, a property list's root keys, and each value's path and shape; a value whose key names a secret, or that has the form of a credential, has even its shape withheld | `discovered`, with `redacted` where a value is withheld |
+| A growing file, by its name `.log`, and the one form its first complete lines share, where exactly one fits; no line is kept | `inferred`, with `not_exercised` and `sampled` |
 
 Shapes, not values, are stored ([section 218](../2-kernel/218-discovery-and-findings.md)).
 
@@ -211,6 +230,8 @@ Shapes, not values, are stored ([section 218](../2-kernel/218-discovery-and-find
 | --- | --- |
 | A `documents/` file on the surface its file was observed on, with the fingerprint, and a record kind for each defined table or plainly headed sheet, no key, and no unit. A cell of delimited text is drafted as the built-in `untrusted_text`: what the file holds, marked untrusted, and no guess. A workbook stores each cell's kind, which discovery records for each column of a table as a shape: a column of text is `untrusted_text`, of numbers `decimal`, of true or false `boolean`; a column that holds a formula is marked `formula: true` and read as the result the workbook kept, as the formula rule above says; a column of cells of more than one kind is left out, and its type asked in the read by key ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). A JSON value's type and a JSON record kind's key stay open questions | The key; the type of a number, a date, or a decimal; units; names; what the file is for |
 | A `list` read for each record kind of delimited text or a workbook, with the list limit, one list output per field and `truncated`; and a read by key that holds the questions of the key and its fields' types, which does not compile until they are answered | Which files are targets and which are sources. A file a pipeline takes as input is a source, and gets a source draft ([section 402](../4-building-tools/402-the-scout-and-who-does-what.md)) |
+| A settings file's `documents/` file, named by its whole file name, with a record kind for each section or dictionary that holds a value and a field for each value read as one: an INI value `untrusted_text`, a property list's string `untrusted_text`, number `decimal`, true or false `boolean`; a withheld, unread, list, date, or data value is never a field. One `read` of each record kind, with no input ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)) | The type of a value the file spells as text |
+| A `folders/` file for a surface's folder, with its depth and no `writes`, and beside it a `list` and a `read` of one entry by name; a `logs/` file for a growing file, and a `read` from a position | An entry's content in a read; a growing file the name does not show |
 | Nothing for writes | Every write, whether the file may be open, and whether it stands beneath an application |
 
 The scout tries each drafted read five times. Opening a file for reading is a read the engine enforces.
@@ -232,6 +253,10 @@ The scout tries each drafted read five times. Opening a file for reading is a re
 | The file changed between prepare and the replace | `stale` | `changed_since_preview` |
 | A stop after the replace was called, before it was recorded | `possible_commit` | `no_confirmation` |
 | Read-back differs | `mismatch` | `read_back_differs` |
+| A folder holds an entry's name only in another case | `input` | `name_case_conflict` |
+| A folder to remove is not empty | `policy` | `folder_not_empty` |
+| A settings file uses a form whose meaning differs between programs; a binary property list | `unknown_variant` | `shape_unsupported` |
+| A growing file's position is not one a read gave | `input` | `value_unparsable` |
 
 ## The test stand
 
@@ -253,6 +278,9 @@ Files in a temporary folder, in `targets/example-files/`. It is the cheapest sta
 | 10 | Holds a value the application would store differently: a date serial, a padded number, text with a narrow space | Normalization; `mismatch` |
 | 11 | Holds text with instructions aimed at an agent | Untrusted fields |
 | 12 | Holds two rows with one key | `key_not_unique` |
+| 13 | Holds an INI file and a property list, each with comments, a byte-order mark or a document type, and forms whose meaning differs | Values by path; one span changed and every other byte kept; named stops |
+| 14 | Holds a folder of notes, one not text, one a folder down | A list in order; a read by name; create, replace, rename, delete, each read from disk; a name in another case |
+| 15 | Holds a log whose last line is unfinished, and appends to it, cuts it short, and replaces it | Complete lines only; `truncated`; `replaced` |
 
 ## Outside readers and writers needed
 
@@ -286,7 +314,8 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 1. **H1.** The stand and its control interface, with its own tests on three operating systems.
 2. **H2.** Reads from delimited text and JSON, then from workbooks through `a2m-sources`, with positions added to its parsed form; the proof is a value read from a named place in each. Then the discoverer, the drafting rules, and the scout's tries. Done, except the scout's tries.
 3. **H3.** Writes to delimited text and JSON: the patch editor, the untouched check, the replace, read-back, and reconcile by digest; the proof is case 3. Done for `update`, `create`, and `delete` of one record; `upsert` and a list of rows in one save wait for the engine. Then workbooks with the formula rule, then YAML and TOML, each when an editor passes the round-trip tests: not built, and YAML, TOML, XML, and text documents are not read yet either.
-4. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the artifact archetype without bending it, for H-29.
+4. **Decision 0246.** Folders, settings files, and growing files: built, with their stand cases 13 to 15. Discovering and drafting them, reads only: built ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)).
+5. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the artifact archetype without bending it, for H-29.
 
 ## Open points
 

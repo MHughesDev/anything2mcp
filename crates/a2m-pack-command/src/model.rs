@@ -48,6 +48,22 @@ pub struct Program {
     pub prompts: Vec<String>,
     /// What each exit status means, shared by every command.
     pub exits: BTreeMap<String, ExitMeaning>,
+    /// When the program is the interpreter of fixed pairs: the arguments it
+    /// is always given before a script's path. Every command of such a
+    /// file names its script, and no other command runs on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interpreter: Option<Vec<String>>,
+}
+
+/// A script the target keeps, run by its file's interpreter as a fixed
+/// pair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Script {
+    /// Its path inside the target's folder, names joined by `/`.
+    pub path: String,
+    /// The SHA-256 of its bytes, as 64 hexadecimal characters.
+    pub digest: String,
 }
 
 /// The command that reports the program's version.
@@ -171,6 +187,9 @@ pub struct Command {
     pub assigns: Option<String>,
     /// Its limits.
     pub limits: Limits,
+    /// The script its program, an interpreter, is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<Script>,
 }
 
 /// What kind of value a param takes, which decides how it is written.

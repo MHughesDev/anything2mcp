@@ -3,12 +3,13 @@
 //! Anything2MCP is never tested against a real business application. Everything is
 //! proven against this one, which imitates the hard cases and has a control
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
-//! lists the cases; this crate covers cases 1 to 4, and the parts its README names
+//! lists the cases; this crate covers cases 1 to 5, and the parts its README names
 //! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34.
 //!
 //! It is test equipment, not part of the product, so it sits outside the crate
 //! layering. A product crate may use it in tests only.
 
+pub mod answers;
 mod api;
 pub mod auth;
 mod connection;
@@ -17,7 +18,9 @@ pub mod details;
 mod edges;
 mod escapes;
 pub mod faults;
+pub mod forgery;
 pub mod harness;
+mod identity;
 mod leaving;
 mod openapi;
 mod own_requests;
@@ -26,6 +29,7 @@ pub mod store;
 #[cfg(feature = "tls")]
 pub mod tls;
 mod traps;
+pub mod views;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -54,6 +58,8 @@ pub(crate) struct Inner {
     pub(crate) auth: AuthState,
     pub(crate) deliveries: Deliveries,
     pub(crate) trap_writes: BTreeMap<String, u64>,
+    /// Case 5: the notes a write needs the page's anti-forgery token for.
+    pub(crate) notes: forgery::Notes,
     /// The method and path of every request the application received, outside
     /// the control interface, oldest first, up to [`SEEN_KEPT`].
     pub(crate) seen: Vec<String>,
@@ -71,6 +77,7 @@ impl Default for Inner {
             auth: AuthState::default(),
             deliveries: Deliveries::default(),
             trap_writes: BTreeMap::new(),
+            notes: forgery::seeded(),
             seen: Vec::new(),
         }
     }
@@ -87,7 +94,12 @@ impl AppState {
 /// Faults set through the control interface apply to the pages and the JSON
 /// interface, never to the control interface itself.
 pub fn router() -> Router {
-    let state = AppState::default();
+    router_over(AppState::default())
+}
+
+/// The application over a state that another server, the identity
+/// provider's, shares.
+pub(crate) fn router_over(state: AppState) -> Router {
     let application = Router::new()
         .merge(api::routes())
         .merge(pages::routes())
@@ -98,6 +110,9 @@ pub fn router() -> Router {
         .merge(escapes::routes())
         .merge(leaving::routes())
         .merge(own_requests::routes())
+        .merge(forgery::routes())
+        .merge(views::routes())
+        .merge(answers::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -127,6 +142,12 @@ async fn seen(
     next.run(request).await
 }
 
+/// Serves the identity provider, over the application's state, until the
+/// task is stopped.
+pub(crate) async fn serve_provider(listener: TcpListener, state: AppState) -> std::io::Result<()> {
+    axum::serve(listener, identity::provider_routes().with_state(state)).await
+}
+
 /// Serves a new application on the given listener until the task is stopped.
 ///
 /// Served this way, the fault "lost after commit" can cut a connection.
@@ -135,9 +156,14 @@ async fn seen(
 ///
 /// Returns the error that stopped the server.
 pub async fn serve(listener: TcpListener) -> std::io::Result<()> {
+    serve_over(listener, AppState::default()).await
+}
+
+/// Serves the application over a state that the identity provider shares.
+pub(crate) async fn serve_over(listener: TcpListener, state: AppState) -> std::io::Result<()> {
     axum::serve(
         CuttableListener(listener),
-        router().into_make_service_with_connect_info::<ConnectionHandle>(),
+        router_over(state).into_make_service_with_connect_info::<ConnectionHandle>(),
     )
     .await
 }

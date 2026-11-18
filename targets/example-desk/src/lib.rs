@@ -18,10 +18,27 @@
 //! desktop pack asks it, and never proves anything through the pack's own
 //! read alone.
 //!
-//! It runs on Linux only. Elsewhere [`Session::start`] finds nothing to
-//! start, as on a Linux machine without the programs.
+//! On Windows the same window is made of plain Win32 controls, in a process
+//! of its own that the test starts and stops, and UI Automation reads it
+//! through the proxies the system ships for its standard controls
+//! (decision 0209). Every subclassed control counts the messages a client
+//! sends it, which is what the stand can witness there; a test binary that
+//! starts it declares [`stand_child!`].
+//!
+//! On macOS the same window is made of AppKit's own controls, in a process
+//! of its own that the same harness starts and stops, and the system's
+//! accessibility interface reads it (decision 0244). Its fields, its
+//! password field, and Save are subclasses that count what AppKit's
+//! accessibility asks of them, which is what the stand can witness there.
 
+#[cfg(any(windows, target_os = "macos"))]
+mod child;
+#[cfg(target_os = "macos")]
+mod mac;
+#[cfg(not(any(windows, target_os = "macos")))]
 mod session;
+#[cfg(windows)]
+mod win;
 
 #[cfg(target_os = "linux")]
 mod app;
@@ -29,7 +46,56 @@ mod app;
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[cfg(any(windows, target_os = "macos"))]
+pub use child::{CHILD_TEST, Session};
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use session::Session;
+
+/// Declares, in a test binary, what serves the stand: on Windows and macOS
+/// the stand's process is this test binary, copied and started again with
+/// a variable that makes it serve the stand. On Windows the test this
+/// declares serves it. On macOS, whose windows must be made on a process's
+/// main thread, which no test runs on, a start function this declares
+/// serves it on the main thread before the test harness begins; the system
+/// calls such a function as it loads the program, and it returns at once
+/// in every process that is not the stand's. In every other run, and on
+/// Linux, both return at once. Every test binary that starts a [`Desk`]
+/// declares it once.
+#[macro_export]
+macro_rules! stand_child {
+    () => {
+        /// Serves the desktop stand when this process is the stand's own
+        /// (on Windows); otherwise passes at once.
+        #[test]
+        fn example_desk_stand_child() {
+            $crate::serve_if_child();
+        }
+
+        /// On macOS, serves the desktop stand on the main thread when this
+        /// process is the stand's own, before the test harness begins.
+        // The system calls each function in this section of a program as it
+        // loads the program, on the main thread, before `main`; a function
+        // of the plain C kind that takes nothing is what it calls.
+        #[cfg(target_os = "macos")]
+        #[allow(unsafe_code)]
+        #[used]
+        #[unsafe(link_section = "__DATA,__mod_init_func")]
+        static EXAMPLE_DESK_STAND_START: extern "C" fn() = {
+            extern "C" fn start() {
+                $crate::serve_if_child();
+            }
+            start
+        };
+    };
+}
+
+/// Serves the stand and ends the process, when this process was started
+/// to be the stand on Windows or macOS; otherwise returns at once. Called
+/// by what [`stand_child!`] declares.
+pub fn serve_if_child() {
+    #[cfg(any(windows, target_os = "macos"))]
+    child::serve_if_child();
+}
 
 /// The name the application has on the accessibility bus.
 pub const APPLICATION: &str = "example-desk";
@@ -40,6 +106,13 @@ pub const WINDOW: &str = "Example order";
 pub const SECRET: &str = "secret-for-tests-desk-access-code";
 /// The value that appears late in the field labelled `Tracking`.
 pub const LATE: &str = "TRK-0001";
+/// The most characters the field labelled `New customer` holds: longer
+/// text is cut, as some applications' fields do.
+pub const CUSTOMER_MOST: usize = 24;
+/// What the application shows under `Message` once Save has stored.
+pub const SAVED: &str = "Saved.";
+/// The title of the dialog [`Fault::DialogAfterRead`] raises.
+pub const DIALOG: &str = "Example notice";
 /// The variable that makes a missing program a failure rather than a skip,
 /// for the machine that must run these tests.
 pub const REQUIRE_ENV: &str = "A2M_REQUIRE_DESKTOP";
@@ -103,9 +176,75 @@ pub struct Truth {
     pub asked: BTreeMap<String, u64>,
     /// What the field labelled `Tracking` holds now.
     pub tracking: String,
+    /// What the application stores, by name (`customer`, `status`): what
+    /// the labelled values show, and what a window reached afresh shows.
+    /// It changes only when Save stores.
+    pub stored: BTreeMap<String, String>,
+    /// How many times Save stored. A press that stores nothing (a value
+    /// the application refuses, or a fault) is a write and no store.
+    pub stores: u64,
+    /// Every value set into a field, in order, with its window and its
+    /// label. A password field's value is never kept here.
+    pub sets: Vec<FieldSet>,
+    /// What the field labelled `Message` shows now.
+    pub message: String,
+}
+
+/// One value set into one field of the stand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldSet {
+    /// The title of the window the field is in.
+    pub window: String,
+    /// The field's label.
+    pub field: String,
+    /// The value set, before the field changed it; empty for a password
+    /// field.
+    pub value: String,
+}
+
+/// A fault a test switches on through the control interface. Each fault
+/// of Save holds for the next press only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fault {
+    /// Save stores nothing and says nothing.
+    SaveSilently,
+    /// Save stores, and then the application exits before it confirms.
+    /// [`Desk::restart`] starts it again, with what it stored.
+    ExitAfterSave,
+    /// Save stores, and its confirmation appears once this has passed.
+    ConfirmLate(std::time::Duration),
+    /// The field with this label takes no value from now on.
+    ReadOnly(String),
+    /// Once the field labelled `Order number` has next been read, the
+    /// window shows the order of this number: the application moved to
+    /// another record between a reader's look and its act.
+    AnotherRecordAfterRead(String),
+    /// Once the field labelled `Order number` has next been read, the
+    /// application raises a dialog titled [`DIALOG`], which no screen of
+    /// the example target names.
+    DialogAfterRead,
 }
 
 impl Truth {
+    /// How many times the value of a control was asked for as text: on
+    /// Linux through AT-SPI's text interface, on Windows by a message that
+    /// gets an edit's text, on macOS by AppKit's accessibility asking a
+    /// field for its value. A name is not a value.
+    #[must_use]
+    pub fn values_read(&self) -> u64 {
+        self.asked
+            .iter()
+            .filter(|(member, _)| {
+                member.as_str() == "Text.GetText"
+                    || (member.starts_with("edit:")
+                        && (member.ends_with(".WM_GETTEXT")
+                            || member.ends_with(".EM_GETLINE")
+                            || member.ends_with(".AXValue")))
+            })
+            .map(|(_, times)| *times)
+            .sum()
+    }
+
     /// Whether anything was asked that could change the application: a
     /// press, a text set or typed, a value set, a selection, a focus.
     #[must_use]
@@ -117,9 +256,11 @@ impl Truth {
     }
 }
 
-/// The members of the AT-SPI interfaces that change an application. The
-/// stand answers some of them, so that a test can see whether one was
-/// asked.
+/// The members of the AT-SPI interfaces, the window messages, and the
+/// accessibility requests of AppKit that change an application. The Linux
+/// stand answers some of the members, so that a test can see whether one
+/// was asked; the Windows stand counts the messages its controls are sent;
+/// the macOS stand counts the requests its controls are asked.
 pub const ACTING_MEMBERS: &[&str] = &[
     "DoAction",
     "SetTextContents",
@@ -141,6 +282,27 @@ pub const ACTING_MEMBERS: &[&str] = &[
     "SetPosition",
     "SetExtents",
     "SetSize",
+    "WM_SETTEXT",
+    "EM_REPLACESEL",
+    "EM_SETSEL",
+    "EM_UNDO",
+    "WM_CHAR",
+    "WM_KEYDOWN",
+    "WM_LBUTTONDOWN",
+    "WM_SETFOCUS",
+    "WM_PASTE",
+    "WM_CUT",
+    "WM_CLEAR",
+    "BM_CLICK",
+    "BM_SETCHECK",
+    "BM_SETSTATE",
+    "LVM_SETITEMSTATE",
+    "LVM_SETITEMTEXTW",
+    "LVM_ENSUREVISIBLE",
+    "LVM_SCROLL",
+    "AXPress",
+    "AXSetValue",
+    "AXSetFocused",
 ];
 
 /// Why the stand could not do what a test asked.
@@ -166,6 +328,19 @@ pub fn required() -> bool {
 pub struct Desk {
     #[cfg(target_os = "linux")]
     inner: app::App,
+    #[cfg(any(windows, target_os = "macos"))]
+    inner: child::Stand,
+}
+
+/// Two of the Windows stand's controls, by their window handles in number
+/// form, for the stand's own test of its witness.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Handles {
+    /// Save.
+    pub save: isize,
+    /// The password edit.
+    pub password: isize,
 }
 
 impl fmt::Debug for Desk {
@@ -181,7 +356,8 @@ impl Desk {
     /// # Errors
     ///
     /// When the accessibility bus cannot be reached or the registry does
-    /// not embed the application; on a system other than Linux, always.
+    /// not embed the application; on Windows and macOS, when the stand's
+    /// process does not show its window; on any other system, always.
     pub async fn start(session: &Session, order: Order) -> Result<Self, StandError> {
         #[cfg(target_os = "linux")]
         {
@@ -189,7 +365,13 @@ impl Desk {
                 inner: app::App::start(session.address(), order).await?,
             })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            Ok(Self {
+                inner: child::Stand::start(session, order).await?,
+            })
+        }
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         {
             let _ = (session, order);
             Err(StandError(
@@ -199,25 +381,124 @@ impl Desk {
     }
 
     /// What the stand holds and what it was asked.
+    ///
+    /// # Panics
+    ///
+    /// On Windows and macOS, when the stand's process does not answer: a
+    /// test can prove nothing past a stand that cannot say what it holds,
+    /// and the message says what it did say.
     #[must_use]
     pub fn truth(&self) -> Truth {
         #[cfg(target_os = "linux")]
         {
             self.inner.truth()
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            self.inner.truth().unwrap_or_else(|error| panic!("{error}"))
+        }
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         {
             Truth::default()
+        }
+    }
+
+    /// Save and the password edit, for the stand's own test.
+    #[cfg(windows)]
+    #[must_use]
+    pub fn handles(&self) -> Handles {
+        Handles {
+            save: self.inner.save,
+            password: self.inner.password,
+        }
+    }
+
+    /// The process the stand runs in, for the stand's own test.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn process(&self) -> u32 {
+        self.inner.process()
+    }
+
+    /// The control interface: switches a fault on.
+    ///
+    /// # Errors
+    ///
+    /// When no field has the label a [`Fault::ReadOnly`] names; on any
+    /// system but Linux, always: the write half of the stand is built for
+    /// Linux only.
+    pub fn fault(&self, fault: &Fault) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.fault(fault)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = fault;
+            Err(StandError(
+                "the stand's faults of a write are built for Linux only".to_owned(),
+            ))
+        }
+    }
+
+    /// The control interface: opens a second window of the application,
+    /// titled `title`, with a field labelled `New customer` of its own.
+    ///
+    /// # Errors
+    ///
+    /// When its nodes cannot be published; on any system but Linux,
+    /// always.
+    pub async fn open_window(&self, title: &str) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.open_window(title).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = title;
+            Err(StandError(
+                "the stand's second window is built for Linux only".to_owned(),
+            ))
+        }
+    }
+
+    /// The control interface: starts the application again after it
+    /// exited (or ends it and starts it again), with what it stored, and
+    /// its fields showing the stored values.
+    ///
+    /// # Errors
+    ///
+    /// When it cannot be published again; on any system but Linux,
+    /// always.
+    pub async fn restart(&mut self) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.restart().await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(StandError(
+                "the stand's restart is built for Linux only".to_owned(),
+            ))
         }
     }
 
     /// The control interface: the field labelled `Tracking` shows [`LATE`]
     /// once `after` has passed, and the application signals the change as
     /// a toolkit does.
+    ///
+    /// # Panics
+    ///
+    /// On Windows and macOS, when the stand's process does not take the
+    /// command.
     pub fn show_late(&self, after: std::time::Duration) {
         #[cfg(target_os = "linux")]
         self.inner.show_late(after);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(windows, target_os = "macos"))]
+        self.inner
+            .show_late(after)
+            .unwrap_or_else(|error| panic!("{error}"));
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         let _ = after;
     }
 }

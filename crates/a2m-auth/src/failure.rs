@@ -30,6 +30,19 @@ pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unava
 /// The identity service answered with something that is not a token response.
 pub const UNEXPECTED_RESPONSE: FailureCode = FailureCode::fixed("unexpected_response");
 
+/// A sign-in would send a credential, a token, or the person to an address
+/// the target does not declare for its surfaces in the session's
+/// environment. Nothing was sent (decision 0248).
+pub const DESTINATION_NOT_DECLARED: FailureCode = FailureCode::fixed("destination_not_declared");
+/// An auth entry names a credential reference that belongs to another
+/// target: its first part is not the target's name (decision 0248).
+pub const CREDENTIAL_OF_ANOTHER_TARGET: FailureCode =
+    FailureCode::fixed("credential_of_another_target");
+/// What is stored under a reference does not open for this target: it was
+/// stored for another target, or before a credential was bound to its
+/// target (decision 0248).
+pub const CREDENTIAL_UNREADABLE: FailureCode = FailureCode::fixed("credential_unreadable");
+
 /// This build cannot make HTTPS requests, and an identity service needs one.
 pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
 
@@ -131,6 +144,71 @@ pub(crate) fn credential_missing(reference: &str) -> Failure {
         CREDENTIAL_MISSING,
         format!("Nothing is stored under the credential reference `{reference}`."),
         "Store the credential under that reference, then try again.",
+    )
+}
+
+/// An address a sign-in would send to is not one the target declares.
+/// `what` names the setting or the surface, never a value of a credential.
+pub(crate) fn destination_not_declared(provider: &str, what: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        DESTINATION_NOT_DECLARED,
+        format!(
+            "The sign-in through the provider `{provider}` would send to {what}, and that address is not one the target declares for its surfaces in this environment. Nothing was sent."
+        ),
+        "Declare the address as a surface of the target, or correct the setting in `auth.yaml`, and publish the target again.",
+    )
+}
+
+/// A sign-in declared by drafts would act without its person: a person
+/// must sign in, as for any `needs_login`, on a page that shows them every
+/// address the sign-in sends to (decision 0248).
+pub(crate) fn not_published(what: &'static str) -> Failure {
+    Failure::new(
+        FailureClass::SessionExpired,
+        NEEDS_LOGIN,
+        format!(
+            "This sign-in is declared by the target's drafts, and {what}: only a sign-in a published version declares may, and nothing was sent."
+        ),
+        "Sign in with `anything2mcp session login`: the person is shown every address the sign-in sends to and carries it out themself. Or publish the target.",
+    )
+}
+
+/// The entry names another target's credential. The reference is a name.
+pub(crate) fn credential_of_another_target(reference: &str, target: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        CREDENTIAL_OF_ANOTHER_TARGET,
+        format!(
+            "The credential reference `{reference}` belongs to another target: a reference of the target `{target}` starts with `vault://{target}/`."
+        ),
+        format!(
+            "Name a reference under `vault://{target}/` in `auth.yaml`, and store the credential there."
+        ),
+    )
+}
+
+/// A reference whose first part is not a target's name belongs to none.
+pub(crate) fn reference_names_no_target(reference: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        CREDENTIAL_OF_ANOTHER_TARGET,
+        format!(
+            "The credential reference `{reference}` belongs to no target: its first part must be the name of the target it is for, as in `vault://example/service/token`."
+        ),
+        "Name a reference under `vault://<target>/` in `auth.yaml`, and store the credential there.",
+    )
+}
+
+/// What is stored does not open for this target. The reference is a name.
+pub(crate) fn credential_unreadable(reference: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        CREDENTIAL_UNREADABLE,
+        format!(
+            "What is stored under the credential reference `{reference}` does not open for this target: it was stored before a credential was bound to the target it is for, or for another target."
+        ),
+        "Store the credential again: type it on the sign-in page when an agent asks, or sign in with `anything2mcp session login`.",
     )
 }
 

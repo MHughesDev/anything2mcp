@@ -1,6 +1,6 @@
 # 602. Identity on a shared server
 
-On a company server, every run must answer one question: who does the target application see? Anything2MCP supports four answers, set per target and per toolset, and they can be mixed.
+On a company server, every run must answer one question: who does the target application see? The design gives four answers, set per target and per toolset, and they can be mixed. Not built today: it is the design for a shared server, which comes after the first release.
 
 | Identity mode | The app sees | How it works | Modes it serves | Conditions |
 | --- | --- | --- | --- | --- |

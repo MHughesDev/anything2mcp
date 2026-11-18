@@ -12,7 +12,7 @@ kind = "pack"
 [[modes]]
 name = "file"
 archetype = "artifact"
-verbs = ["read", "list", "update", "create", "delete"]
+verbs = ["read", "list", "update", "create", "delete", "rename"]
 steps = ["open", "locate", "set", "read", "save"]
 commit_steps = ["save"]
 rank = 60
@@ -33,7 +33,7 @@ discoverer = ["file_layout"]
 name = "file_layout"
 archetype = "artifact"
 surface_kinds = ["file"]
-kinds = ["file_layout", "file_key_candidate"]
+kinds = ["file_layout", "file_key_candidate", "file_folder", "file_log"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 67108864, depth = 1 }
@@ -43,12 +43,34 @@ name = "document"
 directory = "documents/"
 surface_kinds = ["file"]
 
+# A folder read and written as a collection of entries (decision 0246).
+[[file_kinds]]
+name = "folder"
+directory = "folders/"
+surface_kinds = ["file"]
+
+# A growing file read from where the last read stopped (decision 0246).
+[[file_kinds]]
+name = "log"
+directory = "logs/"
+surface_kinds = ["file"]
+
 [[finding_kinds]]
 name = "file_layout"
 surface_kinds = ["file"]
 
 [[finding_kinds]]
 name = "file_key_candidate"
+surface_kinds = ["file"]
+
+# A surface's folder, its entries to a depth (decision 0255).
+[[finding_kinds]]
+name = "file_folder"
+surface_kinds = ["file"]
+
+# A growing file, and the form of its lines (decision 0255).
+[[finding_kinds]]
+name = "file_log"
 surface_kinds = ["file"]
 
 [[lint_rules]]
@@ -74,7 +96,7 @@ summary = "A binding that writes a file an application may hold open declares th
 [[lint_rules]]
 code = "file.format_read_only"
 level = "error"
-summary = "A binding writes only a format the pack has a patch editor for: delimited text or JSON."
+summary = "A binding writes only a format the pack has a patch editor for: delimited text or JSON, and a value of an INI file or a property list."
 
 [[drafting_rules]]
 finding_kind = "file_layout"
@@ -82,6 +104,22 @@ file_kind = "document"
 
 [[drafting_rules]]
 finding_kind = "file_layout"
+file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "file_folder"
+file_kind = "folder"
+
+[[drafting_rules]]
+finding_kind = "file_folder"
+file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "file_log"
+file_kind = "log"
+
+[[drafting_rules]]
+finding_kind = "file_log"
 file_kind = "operation"
 
 [[failure_codes]]
@@ -163,6 +201,17 @@ code = "value_unparsable"
 [[failure_codes]]
 class = "input"
 code = "value_out_of_range"
+
+# A folder holds a name that differs from the one given only in case
+# (decision 0246).
+[[failure_codes]]
+class = "input"
+code = "name_case_conflict"
+
+# A folder to remove is not empty (decision 0246).
+[[failure_codes]]
+class = "policy"
+code = "folder_not_empty"
 
 [effects]
 read_roots = ["project", "files"]

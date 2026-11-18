@@ -10,7 +10,7 @@ name: pack-web
 
 **Steps.** `goto`, `wait`, `read`, `set`, `invoke`. Controls built so far: `text`, `textarea`, `number`, `currency`, `measurement`, `select`, `checkbox`. Any other control is refused.
 
-Not built: the modes `page_http` and `site_tools`, platform profiles, and the screen matcher.
+Not built: the mode `site_tools`, `page_http` writes beyond `update` by PUT, platform profiles, and the screen matcher.
 
 ## A screen, from the `example` target
 

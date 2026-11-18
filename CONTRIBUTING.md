@@ -1,18 +1,18 @@
 # Contributing to Anything2MCP
 
-Thank you for wanting to help. This page says how the project works and what a change needs before it can merge. It applies to people and to AI agents alike; agents should also read [AGENTS.md](AGENTS.md), which is the fuller version.
+Thank you for wanting to help. This page says how the project works and what a change needs before it can merge. It applies to people and to AI agents. Agents also follow [AGENTS.md](AGENTS.md), which differs on one point: an agent does not wait for review, and plans, builds, and merges on its own once every check passes (its section "How agents work here").
 
 ## How this project works
 
 - **The design is written down, and it is part of the product.** [docs/spec/](docs/spec/README.md) holds it, one section per file. Code and design change together: when they disagree, one of them is fixed in the same change.
 - **Decisions have records.** A choice between real alternatives gets a numbered file in [docs/decisions/](docs/decisions/README.md). An old record is never rewritten; a new one supersedes it.
 - **The design is a set of bets.** [docs/hypotheses/](docs/hypotheses/README.md) lists them, each with an alternative and a test. Showing that one is wrong is a welcome contribution.
-- **It grows core first, in small proven steps.** The [roadmap](docs/plan/roadmap.md) gives the order. A change that jumps ahead of it will usually be asked to wait.
+- **It grows core first, in small proven steps.** The [roadmap](docs/plan/roadmap.md) gives the order. A person's change that jumps ahead of it will usually be asked to wait.
 
 ## Before you start
 
 - For a bug, open an issue with what you did, what you expected, and what happened.
-- For anything that changes the design or adds a capability, open an issue first and say what problem it solves. It saves you writing something that does not fit.
+- For anything that changes the design or adds a capability, a person opens an issue first and says what problem it solves. It saves writing something that does not fit. An agent writes a decision record instead, as AGENTS.md says.
 - For a security problem, do not open an issue. Follow [SECURITY.md](SECURITY.md).
 
 ## Setting up
@@ -26,7 +26,7 @@ cargo test --workspace
 
 ## What every change must pass
 
-Continuous integration runs these on Windows, macOS, and Linux, and a change merges only when all of them pass. Run them yourself first.
+Continuous integration runs the three `cargo` commands on Windows, macOS, and Linux, and the two audit commands and a check of dependency licences on Linux. A change merges only when all of them pass. Run them yourself first.
 
 ```text
 cargo fmt --all --check
@@ -46,12 +46,16 @@ The documentation audit checks links, counts, names, and the rule that kernel cr
 - **Noted.** Anything a user would notice gets a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md).
 - **In the project's words.** Use the terms in the [glossary](docs/reference/glossary.md) and no synonyms for them.
 
+## Adding a pack
+
+A pack teaches the product one kind of system, and today it is a crate in this repository. [Writing a pack](docs/architecture/writing-a-pack.md) lists its parts as they are in the code, the eight-item entry bar of [spec section 202](docs/spec/2-kernel/202-kernel-and-packs.md) with the place the file pack clears each, and the proofs a pack owes. Open an issue naming the kind of system and its test stand before writing code. A pack outside this repository is not yet possible, because the plug-in protocol is not built.
+
 ## Rules that are never traded away
 
 The ten rules in [AGENTS.md](AGENTS.md) bind every change. The ones contributors meet most often:
 
 - **Nothing in a run calls a model or improvises.** If a step cannot be done as written, it stops with a named failure.
-- **Every write is verified:** recorded before it is attempted, read back, and compared.
+- **Every write is recorded first and proven after:** recorded before it is attempted, read back, and compared. A write that leaves nothing to read back is declared `irreversible`, approved by a person as that, and never called verified.
 - **Secrets never reach a caller,** a log, a trace, a fixture, or an error message.
 - **Name no real application.** Examples, tests, fixtures, file names, and commit messages use the imaginary `example` target or the test stands in `targets/`.
 - **Fixtures are synthetic.** Never commit recorded data from a real system.

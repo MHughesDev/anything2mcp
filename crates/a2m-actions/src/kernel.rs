@@ -593,13 +593,21 @@ impl Kernel {
             if matches!(health.store_health, KeyStoreHealth::Unreachable)
                 && !has(&reasons, Part::Vault)
             {
-                reasons.push(Impaired {
-                    part: Part::Vault,
-                    failure: codes::busy(
+                // A passphrase route that could not be taken was given no
+                // passphrase: there is no key store to unlock (decision
+                // 0220).
+                let failure = if health.store.strength == a2m_vault::StoreStrength::Passphrase {
+                    a2m_vault::PassphraseKeyStore::not_given(crate::paths::PASSPHRASE_VARIABLE)
+                } else {
+                    codes::busy(
                         a2m_vault::codes::KEY_STORE_UNREACHABLE,
                         format!("The key store `{}` does not answer.", health.store.name),
                         "Unlock or start the key store; the engine notices by itself when it returns.",
-                    ),
+                    )
+                };
+                reasons.push(Impaired {
+                    part: Part::Vault,
+                    failure,
                 });
             }
         }
@@ -823,6 +831,15 @@ impl Kernel {
                 "Call `doctor.run` for the fix.",
             )
         })
+    }
+
+    /// Registers a secret a person handed over with the redactor, so that
+    /// it is masked wherever it would appear. With no vault open nothing
+    /// can be sealed either, and the secret is used for nothing.
+    pub(crate) fn register_secret(&self, secret: &a2m_core::Secret) {
+        if let Some(vault) = &self.inner.vault {
+            vault.register(secret);
+        }
     }
 
     pub(crate) fn keeper(&self) -> Result<&Keeper, Failure> {

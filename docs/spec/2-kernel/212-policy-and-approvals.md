@@ -1,6 +1,6 @@
 # 212. Policy and approvals
 
-A policy gate sits between the front doors and the engine. Every call passes through it, and it can only narrow what a run may do. Behind the gate is the policy engine, `a2m-policy`: the one place that decides whether something may happen. Front doors, the scheduler, the engine, and runners all ask it; none of them decides for itself, and no other crate holds a grant. This section says which path each kind of call takes, the controls a call meets in order, how the policy engine decides and records its decisions, how a person approves a write, and the limits and switches beside it. What may be damaged beyond a record, and when a person must consent before discovery, are [section 213](213-effects-hazards-and-consent.md). What a person sees when asked to approve is [section 503](../5-security/503-approval-and-sign-in-surfaces.md). Who may call what, toolsets, and tenancy are [section 214](214-access-control-toolsets-and-tenancy.md). The crate is designed in [`a2m-policy`](../../architecture/crates/a2m-policy.md).
+A policy gate sits between the front doors and the engine. Every call passes through it, and it can only narrow what a run may do. Behind the gate is the policy engine, `a2m-policy`: the one place that decides whether something may happen. Front doors, the scheduler, the engine, and runners all ask it; none of them decides for itself, and no other crate holds a grant. This section says which path each kind of call takes, the controls a call meets in order, how the policy engine decides and records its decisions, how a person approves a write, and the limits and switches beside it. What may be damaged beyond a record, and when a person must consent before discovery, are [section 213](213-effects-hazards-and-consent.md). What a person sees when asked to approve is [section 503](../5-security/503-approval-and-sign-in-surfaces.md). Who may call what, toolsets, and tenancy are [section 214](214-access-control-toolsets-and-tenancy.md). The crate is designed in [`a2m-policy`](../../architecture/crates/a2m-policy.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## Effect classes
 
@@ -22,7 +22,7 @@ An operation's hazard can raise the approval its effect class asks for, and neve
 4. **Preview.** The read steps run and produce a diff of current against proposed values, record by record ([section 208](208-runs-the-ledger-and-resume.md)).
 5. **Approval.** A person approves that exact diff, unless policy pre-approved it (below).
 6. **Limits.** Maximum records per run, rate budgets per surface, quotas per caller, and kill switches.
-7. **Read-back.** Every write is verified.
+7. **Read-back.** Every write is read back and compared, or is declared `irreversible` and approved as that.
 
 The policy engine's order of evaluation makes this exact. For a call that writes:
 

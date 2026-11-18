@@ -8,6 +8,8 @@ Who may change what ([record 0055](0055-agents-plan-build-and-merge-without-wait
 
 Records 0001 to 0054 were written when the product was named Web2MCP, and keep the names of their time. [Record 0056](0056-one-name-everywhere-anything2mcp.md) has the key from the earlier names to the present ones.
 
+Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0235 were set aside for work that did not need them, and were never written. A missing number is not a missing decision.
+
 | # | Decision | Status |
 | --- | --- | --- |
 | 0001 | [Name: Web2MCP](0001-name-web2mcp.md) | Superseded by 0048 |
@@ -206,3 +208,50 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0203 | [Two packs may each draft a file kind of one name, each for its own surfaces](0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md) | Accepted (design decision) |
 | 0204 | [One plain form of a path, a pipe that is waited for, and a socket path that fits](0204-one-plain-form-of-a-path-a-pipe-that-is-waited-for-and-a-socket-path-that-fits.md) | Accepted (design decision) |
 | 0201 | [A resume is never lost, the browser takes no proxy, and no product build speaks a stand's protocol](0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md) | Accepted (design decision) |
+| 0200 | [Evidence names its binding, and a recorded fixture says nothing of the original](0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md) | Accepted (design decision) |
+| 0207 | [A shadow binding reads beside the verified one, and a person promotes it on a run of exact matches](0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md) | Accepted (design decision) |
+| 0208 | [The first release reaches what the person's machine reaches, and serves on that machine only](0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md) | Accepted (owner decision) |
+| 0205 | [A sign-in an agent asks for is carried out by its person on the engine's page](0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md) | Accepted (design decision) |
+| 0206 | [The `page_http` mode writes by PUT, with the page's own token, in an acting tab](0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md) | Accepted (design decision) |
+| 0211 | [Whether the engine may ever act in a session the person already has](0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md) | Accepted (owner decision, by 0242) |
+| 0212 | [Whether an application that offers only pixels is ever reached](0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) | Accepted (owner decision, by 0242) |
+| 0213 | [Whether a target someone else wrote may be loaded, and found](0213-whether-a-target-someone-else-wrote-may-be-loaded-and-found.md) | Accepted (owner decision, by 0242) |
+| 0214 | [Ways through the refusals that keep a person from their own machine](0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md) | Proposed (design decision) |
+| 0215 | [Whether a person may pre-approve an action that leaves nothing to read back](0215-whether-a-person-may-pre-approve-an-action-that-leaves-nothing-to-read-back.md) | Accepted (owner decision, by 0242) |
+| 0209 | [The desktop pack reads Windows applications through UI Automation, on a thread of its own](0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md) | Accepted (design decision) |
+| 0216 | [The command pack on three systems: the check on Windows, the administrators' group, and a script the target keeps](0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md) | Accepted (design decision) |
+| 0217 | [The HTTP pack reads answers that are not JSON](0217-the-http-pack-reads-answers-that-are-not-json.md) | Accepted (design decision) |
+| 0222 | [The product is aware of the network its machine is on](0222-the-product-is-aware-of-the-network-its-machine-is-on.md) | Accepted (owner decision) |
+| 0230 | [The scope is written down on both sides, and it describes without ruling](0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md) | Accepted (owner decision) |
+| 0218 | [The desktop pack writes on Linux through a second closed list, and reads back what is stored](0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md) | Accepted (design decision) |
+| 0231 | [The owner's direction is written in exact words of the agent's own](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md) | Accepted (owner decision) |
+| 0220 | [A first run on Linux needs no administrator's file](0220-a-first-run-on-linux-needs-no-administrators-file.md) | Accepted (design decision) |
+| 0223 | [A network is a place, a recognized network, and a reach](0223-a-network-is-a-place-a-recognized-network-and-a-reach.md) | Proposed (design decision) |
+| 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Accepted (owner decision, by 0242) |
+| 0225 | [Whether anything is ever sent on a network the person has not named](0225-whether-anything-is-ever-sent-on-a-network-the-person-has-not-named.md) | Accepted (owner decision, by 0242) |
+| 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Accepted (owner decision, by 0242) |
+| 0232 | [Whether a credential the machine holds for the person may be used through its holder](0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Accepted (owner decision, by 0242) |
+| 0233 | [Whether being told by another machine is serving it](0233-whether-being-told-by-another-machine-is-serving-it.md) | Accepted (owner decision, by 0242) |
+| 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Accepted (by 0247, which builds it) |
+| 0236 | [A declared setting whose feature is not built is refused by name](0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) | Accepted (design decision) |
+| 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |
+| 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Accepted (owner decision, by 0242) |
+| 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Accepted (owner decision, by 0242) |
+| 0219 | [Shadow bindings reach the product, and what a first run by hand found is mended](0219-shadow-bindings-reach-the-product-and-the-first-hour-is-mended.md) | Accepted (design decision) |
+| 0221 | [The repository is cleaned, and its names say what each thing holds](0221-the-repository-is-cleaned-and-its-names-say-what-each-thing-holds.md) | Accepted (design decision) |
+| 0242 | [The owner takes the recommended answer to every open question](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) | Accepted (owner decision) |
+| 0240 | [One typed reading of where an address is, and one question of a plain link](0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md) | Accepted (design decision) |
+| 0243 | [The machine reads its own network state, and sends nothing](0243-the-machine-reads-its-own-network-state-and-sends-nothing.md) | Accepted (design decision) |
+| 0247 | [A watch keeps only digests, and its due times come from the store's clock](0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md) | Accepted (design decision) |
+| 0241 | [Protected settings loosen only from an administrator's file, and every key says whether it is built](0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) | Accepted (design decision) |
+| 0244 | [The desktop pack reads macOS applications, and every act proves the record again](0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md) | Accepted (design decision) |
+| 0246 | [The file pack reads folders, settings files, and growing files, and writes the first two](0246-the-file-pack-reads-folders-settings-files-and-growing-files.md) | Accepted (design decision) |
+| 0245 | [A web application is signed in to through its own sign-in page, with a credential stored for the person](0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md) | Accepted (design decision) |
+| 0253 | [The key derivation is compiled for speed in every build](0253-the-key-derivation-is-compiled-for-speed-in-every-build.md) | Accepted (design decision) |
+| 0248 | [A sign-in goes only where a published version says, and a credential belongs to its target](0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md) | Accepted (design decision) |
+| 0249 | [The HTTP pack reads in bounded work and sends nothing that may write outside a live run](0249-the-http-pack-reads-in-bounded-work-and-sends-nothing-that-may-write-outside-a-live-run.md) | Accepted (design decision) |
+| 0250 | [One check of who may change a program, and the MCP pack's local server on Windows](0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md) | Accepted (design decision) |
+| 0251 | [The evidence for promoting a shadow binding says what it covers, and a shadow costs what it says](0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md) | Accepted (design decision) |
+| 0252 | [A record that is one fixed place, a review summary that shows what a tool runs, and a sign-in declared before its probe](0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md) | Accepted (design decision) |
+| 0255 | [The file pack discovers and drafts folders, settings files, and growing files as reads](0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md) | Accepted (design decision) |
+| 0254 | [A person signs in in a window of the engine's own browser, and the web pack stops on every declared sign of expiry](0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md) | Accepted (design decision) |

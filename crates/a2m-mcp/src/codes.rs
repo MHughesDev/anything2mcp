@@ -48,7 +48,7 @@ pub(crate) fn answer_lost() -> Failure {
         FailureClass::PossibleCommit,
         ANSWER_LOST,
         "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
-        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs: call `a2m_action_run` with the action `run.list` and `since` the moment the call was sent, and do what that run's `next` says.",
+        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs: call `a2m_action_run` with `action` set to `run.list` and `input` holding `since`, the moment the call was sent, and do what that run's `next` says.",
     )
 }
 

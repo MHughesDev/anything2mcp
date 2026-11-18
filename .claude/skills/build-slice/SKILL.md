@@ -5,7 +5,7 @@ description: Build one slice of the Anything2MCP core, slowly and with proof. Us
 
 # Build one slice
 
-Follow the eight steps in `docs/plan/working-method.md`. This is the checklist form.
+This is the checklist form of the eight steps in `docs/plan/working-method.md`, with reading and planning written out as steps of their own, so it has ten.
 
 ## Before writing code
 

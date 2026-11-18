@@ -532,6 +532,14 @@ mod tests {
             std::env::temp_dir().join(format!("a2m-pack-stream-draft-take-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        // The target has the surface the pack registered `channel` files
+        // for, so that a draft is not refused for living on none (decision
+        // 0203): the refusals below are for what the channel says.
+        std::fs::write(
+            root.join("target.yaml"),
+            "schema_version: 1\ntarget: example\nsurfaces:\n  broker:\n    kind: broker\n    address: \"broker.example.test:7001\"\n    protocol: example-broker/1\n",
+        )
+        .unwrap();
         let report = Drafter::new(&set, &TargetRoot::new(&root))
             .draft(std::slice::from_ref(&finding))
             .unwrap();
@@ -540,6 +548,13 @@ mod tests {
             .iter()
             .map(|(path, _)| path.as_str())
             .collect();
+        // Each is refused for the write it would allow, not for another reason.
+        for (path, why) in &report.refused {
+            assert!(
+                why.contains("drafts nothing that writes"),
+                "{path} was refused for another reason: {why}"
+            );
+        }
         let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
         let exists = root.join("channels").join("tries_a_take.yaml").exists()
             || root.join("channels").join("asks_who_owns.yaml").exists();

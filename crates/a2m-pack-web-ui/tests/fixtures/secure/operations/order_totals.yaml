@@ -1,0 +1,11 @@
+operation: example_order_totals_get
+title: An order's totals
+effect: read
+key: order_id
+inputs: {order_id: {type: text}}
+outputs: {total_quantity: {type: integer}}
+bindings:
+  - {mode: page_http, verb: read, endpoint: order_totals}
+description: >
+  Reads how many items an order holds, from inside the signed-in orders
+  page.

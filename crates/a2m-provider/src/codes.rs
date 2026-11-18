@@ -56,6 +56,9 @@ codes! {
     READ_ONLY_POSTURE = Policy, "read_only_posture";
     /// A launch names a variable that belongs to the engine.
     ENGINE_VARIABLE_REFUSED = Policy, "engine_variable_refused";
+    /// A launch names a variable that makes a program load code other than
+    /// its own.
+    VARIABLE_REFUSED = Policy, "variable_refused";
     /// The provider is not ready here, now.
     PROVIDER_UNAVAILABLE = Busy, "provider_unavailable";
     /// A subsystem's queue is full.

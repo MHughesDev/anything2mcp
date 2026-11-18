@@ -4,7 +4,7 @@
 
 The system has six layers. In the smallest setup all six run inside one process on a laptop; in the largest, the control plane and runners are separate services on separate machines. The layers and their contracts are the same either way.
 
-![system overview · 6 layers](../../assets/system-overview.png)
+![system overview · 6 layers](../assets/system-overview.png)
 
 | Layer | Responsibility | Knows about a specific app? |
 | --- | --- | --- |

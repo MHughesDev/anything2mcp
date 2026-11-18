@@ -291,6 +291,34 @@ pub async fn prepare_reaching(
     lease: Option<&a2m_auth::SessionLease>,
     destinations: &Destinations,
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
+    prepare_within(
+        registry,
+        plan,
+        surface,
+        fence,
+        posture,
+        lease,
+        destinations,
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+/// As [`prepare_reaching`], with a deadline of `within` for the prepare.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a test helper that names every input of a prepare"
+)]
+pub async fn prepare_within(
+    registry: &Registry,
+    plan: &Plan,
+    surface: &SurfaceRef,
+    fence: Fence,
+    posture: Posture,
+    lease: Option<&a2m_auth::SessionLease>,
+    destinations: &Destinations,
+    within: Duration,
+) -> Result<(DriverHandle, Prepared), StepFailure> {
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
     let handle = registry.driver(&mode).unwrap();
     let programs = surface
@@ -306,7 +334,7 @@ pub async fn prepare_reaching(
         surface,
         plan,
         posture,
-        deadline: Deadline::after(Duration::from_secs(30)),
+        deadline: Deadline::after(within),
         redact: &NoSecrets,
         destinations,
         paths: &CheckedPaths::none(),
@@ -560,8 +588,13 @@ impl Sessions {
             )
             .await
             .unwrap();
-        let entry =
-            Arc::new(AuthEntry::new(a2m_pack_mcp::auth_provider()).credential("token", reference));
+        // As the entry of a published version's plan: only such an entry
+        // signs in without its person (decision 0248).
+        let entry = Arc::new(
+            AuthEntry::new(a2m_pack_mcp::auth_provider())
+                .credential("token", reference)
+                .published(),
+        );
         self.keeper
             .sign_in(&key, Arc::clone(&entry), None)
             .await

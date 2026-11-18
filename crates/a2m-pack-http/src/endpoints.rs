@@ -9,6 +9,7 @@ use a2m_files::{
     JsonSchema, KindContext, Level, LintRule, Located, Place, ResolvedView, Stage,
 };
 
+use crate::forms;
 use crate::shape::{Kind, Shape};
 use crate::template::{
     Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
@@ -96,6 +97,31 @@ fn answer_schema() -> JsonSchema {
         .optional("current", JsonSchema::text())
 }
 
+/// The schema of an endpoint's `answer`. What each form takes, and the
+/// fields of an XML or a text answer, are checked as the entry compiles
+/// (decision 0217).
+fn answer_form_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("form", JsonSchema::words(forms::FORMS))
+        .optional(
+            "content_type",
+            JsonSchema::non_empty_list(JsonSchema::text()),
+        )
+        .optional("charset", JsonSchema::words(forms::CHARSETS))
+        .optional("pattern", JsonSchema::text())
+        .optional("namespaces", JsonSchema::map_of(JsonSchema::text()))
+        .optional("fields", JsonSchema::any())
+        .optional("max_depth", JsonSchema::int_between(1, 1024))
+        .optional("max_elements", JsonSchema::int_between(1, 10_000_000))
+}
+
+/// Whether an entry declares an answer in a form other than JSON.
+pub(crate) fn answers_otherwise(doc: &Located<Doc>) -> bool {
+    doc.get("answer")
+        .and_then(|answer| answer.text("form"))
+        .is_some_and(|form| form != "json")
+}
+
 /// The schema of one endpoint entry.
 pub(crate) fn endpoint_schema() -> JsonSchema {
     let status = || JsonSchema::int_between(100, 599);
@@ -110,7 +136,9 @@ pub(crate) fn endpoint_schema() -> JsonSchema {
         .optional("anti_forgery", JsonSchema::any())
         .optional("request_schema", JsonSchema::any())
         .optional("response_schema", JsonSchema::any())
+        .optional("answer", answer_form_schema())
         .required("effect", JsonSchema::words(&["read", "write"]))
+        .optional("read_asserted", JsonSchema::bool())
         .optional(
             "responses",
             JsonSchema::object()
@@ -267,6 +295,7 @@ pub(crate) fn template_of(
         }
     }
 
+    let answer = forms::answer_of(doc, problems).unwrap_or_default();
     let mut shape_of = |key: &str| -> Option<Shape> {
         let written = doc.get(key)?;
         match Shape::from_doc(written) {
@@ -286,8 +315,13 @@ pub(crate) fn template_of(
     let request = shape_of("request_schema");
     // An entry without a response shape is refused by the lint rule
     // `http.no_response_schema`; it compiles to a shape that accepts nothing
-    // but an absent body, so that nothing unchecked can pass.
-    let response = shape_of("response_schema").unwrap_or_else(|| Shape::of(Kind::Null));
+    // but an absent body, so that nothing unchecked can pass. An answer in
+    // another form is the record of the fields it declares.
+    let response = if answers_otherwise(doc) {
+        forms::record_shape(&answer.form)
+    } else {
+        shape_of("response_schema").unwrap_or_else(|| Shape::of(Kind::Null))
+    };
     let mut refuse = |rule: &'static str, at: &Place, message: String, fix: &str| {
         problems.push(problem(rule, Stage::Lower, at, message, fix));
     };
@@ -442,8 +476,10 @@ pub(crate) fn template_of(
             _ => Auth::Session,
         },
         writes: doc.text("effect") == Some("write"),
+        read_asserted: doc.get("read_asserted").and_then(Located::as_bool) == Some(true),
         request,
         response,
+        answer,
         answers,
         idempotency_header,
         version,
@@ -520,8 +556,9 @@ impl FileKind for EndpointKind {
     /// is one HTTP marks safe. An effect that is an open question is not
     /// known to read. A method that is not safe may change something
     /// whatever the entry says: marking such a request `read` is a person's
-    /// judgment, which the lint `http.effect_method` asks them to confirm,
-    /// and a draft never makes it. The answer is the same on every surface
+    /// judgment, which the lint `http.effect_method` refuses until they
+    /// write `read_asserted: true`, and a draft never makes it; the entry is
+    /// still a write to the drafter. The answer is the same on every surface
     /// kind the file kind is registered for.
     fn writes(&self, doc: &Located<Doc>) -> bool {
         let safe = doc
@@ -668,7 +705,7 @@ impl LintRule for NoResponseSchema {
 
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
         entries(view)
-            .filter(|doc| doc.get("response_schema").is_none())
+            .filter(|doc| doc.get("response_schema").is_none() && !answers_otherwise(doc))
             .map(|doc| {
                 problem(
                     "no_response_schema",
@@ -693,32 +730,50 @@ impl LintRule for EffectMethod {
         code("effect_method")
     }
 
+    /// An error (decision 0249): a request the driver sends in a shadow, a
+    /// try, or a discovery must be one that cannot write. An endpoint that
+    /// reads by a method HTTP does not mark safe, such as a search behind
+    /// `POST`, says so with `read_asserted: true`, which is the developer's
+    /// word, and is then sent outside a live run only against an
+    /// environment of kind `test`.
     fn level(&self, _mode: CompileMode) -> Level {
-        Level::Warning
+        Level::Error
     }
 
     fn summary(&self) -> &str {
-        "An endpoint marked `read` uses a method HTTP marks safe."
+        "An endpoint marked `read` uses a method HTTP marks safe, or says with `read_asserted` that one it does not mark safe only reads."
     }
 
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
         entries(view)
-            .filter(|doc| doc.text("effect") == Some("read"))
             .filter_map(|doc| {
                 let method = doc.get("method")?;
                 let safe = method
                     .as_text()
                     .and_then(Method::from_word)
                     .is_some_and(Method::is_safe);
-                (!safe).then(|| {
-                    problem(
+                let reads = doc.text("effect") == Some("read");
+                let asserted = doc.get("read_asserted");
+                let says_so = asserted.and_then(Located::as_bool) == Some(true);
+                match (reads, safe, says_so) {
+                    (true, false, false) => Some(problem(
                         "effect_method",
                         Stage::Lint,
                         &method.at,
                         "The endpoint is marked `read`, and HTTP does not mark its method as safe.",
-                        "Mark the endpoint `write`, or confirm with the system's owner that the request changes nothing.",
-                    )
-                })
+                        "Mark the endpoint `write`; or, once the system's owner confirms that the request changes nothing, add `read_asserted: true`.",
+                    )),
+                    (true, true, true) | (false, _, true) => asserted.map(|asserted| {
+                        problem(
+                            "effect_method",
+                            Stage::Lint,
+                            &asserted.at,
+                            "`read_asserted` belongs only to an endpoint marked `read` whose method HTTP does not mark safe.",
+                            "Remove `read_asserted`.",
+                        )
+                    }),
+                    _ => None,
+                }
             })
             .collect()
     }

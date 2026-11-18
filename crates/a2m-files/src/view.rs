@@ -73,6 +73,9 @@ pub(crate) struct OpInfo {
     pub outputs: Vec<a2m_core::OutputPlan>,
     pub strategy: IdentityStrategy,
     pub key: Vec<String>,
+    /// Where `place: fixed` is written, for an operation whose record is
+    /// one fixed place (decision 0252).
+    pub fixed: Option<Place>,
     pub commit_points: Option<u32>,
 }
 

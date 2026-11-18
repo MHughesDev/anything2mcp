@@ -1,5 +1,7 @@
 # 101. Summary
 
+This section is the product's summary: what it is for, who it is for, what makes it different, and what it does not do. It describes the product as designed; [section 704](../7-project/704-readiness.md) and the [README](../../../README.md) say how much of it is built.
+
 **North Star: latch onto any existing software or system that a person is entitled to use, and expose it to AI agents as deterministic, verified MCP tools.**
 
 **Anything2MCP** is an open-source toolkit. A developer, a person or an agent working for one, installs it, points it at a system that already exists, and builds tools over it. Each tool is a deterministic operation that has been proven to do what it says. Any agent that speaks the Model Context Protocol can call the tools, whoever made it.
@@ -8,11 +10,11 @@
 
 ## Who it is for
 
-| It is for | It is not |
-| --- | --- |
-| A developer, human or agent, who picks it up as they would a library: one install, then pointed at a system | A hosted service, or a product for end users to browse |
-| Any agent that speaks the protocol, a home-built one included. No make of agent is preferred, and nothing in the kernel knows which one is calling | Tied to a model provider. None is required |
-| Targets the developer keeps: a target is a folder in the developer's own repository, loaded from a path or from a package they built | A catalog. The project publishes no tool definitions for real products and hosts no place to share them ([decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)) |
+| It is for | It is not | Kind of "not" |
+| --- | --- | --- |
+| A developer, human or agent, who picks it up as they would a library: one install, then pointed at a system | A hosted service, or a product for end users to browse | Owner [decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) (the user is a developer who installs it) and owner [decision 0169](../../decisions/0169-the-first-release-is-for-one-machine.md) (the first release is for one machine) |
+| Any agent that speaks the protocol, a home-built one included. No make of agent is preferred, and nothing in the kernel knows which one is calling | Tied to a model provider. None is required | Owner [decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md); rule 1 keeps every model out of a run |
+| Targets the developer keeps: a target is a folder in the developer's own repository, loaded from a path or from a package they built | A catalog. The project publishes no tool definitions for real products and hosts no place to share them | Rule 9 and owner [decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target someone else wrote may be loaded, under [section 502](../5-security/502-defending-against-a-manipulated-agent.md)'s rules; that is allowed and not built yet ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) |
 
 The judgment needed to build tools, what things mean and which capabilities matter, is done once, at build time, by the developer or their agent. What the toolkit automates and what it leaves to them is in [section 402](../4-building-tools/402-the-scout-and-who-does-what.md).
 
@@ -29,23 +31,25 @@ Every design decision is weighed against four qualities, in this order when they
 5. **Built by the agent you already have.** Any coding agent builds tools with the toolkit's commands and target files, or through the matching MCP tools. A scout does the mechanical part by itself and never writes to the system.
 6. **Identity done properly.** Each person acts with their own account and permissions, or the toolkit acts with an account of its own. Existing single sign-on and multi-factor sign-ins are reused and kept alive by the session keeper, so nobody approves a sign-in per call. A person's session is used only by that person and agents acting for them.
 7. **Governed.** Administrators decide which tools are exposed to which people and agents, with grants, approvals, limits, and a tamper-evident audit log.
-8. **Runs anywhere, in any shape.** One binary runs on one laptop, as a company server, or as a control plane with runners on other machines, on Windows, macOS, and Linux.
+8. **One binary, on three systems.** One binary runs on Windows, macOS, and Linux. The first release is for one person's machine ([decision 0169](../../decisions/0169-the-first-release-is-for-one-machine.md), [decision 0208](../../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md)); a company server, and a control plane with runners on other machines, are designed and come after it.
 9. **Many ways in.** Agents connect over MCP. Other software uses a REST interface, Python and TypeScript SDKs, or embeds the Rust library.
 
 ## How it is built
 
-The core is written in **Rust** and shipped as **one binary**, installed through **pip, crates.io, or npm**; each route delivers the same binary ([section 605](../6-running-it/605-packaging-and-release.md)). Other languages are used where they fit better: TypeScript for the web pages, Python and TypeScript for the SDKs, shell scripts for the installers, and any language for plug-ins.
+The core is written in **Rust** and shipped as **one binary**, to be installed through **pip or npm**; each route delivers the same binary, and neither is published yet. It is not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) ([section 605](../6-running-it/605-packaging-and-release.md)). Other languages are used where they fit better: TypeScript for the web pages, Python and TypeScript for the SDKs, shell scripts for the installers, and any language for plug-ins.
 
 It is a neutral **kernel** and a set of **packs**. The kernel does what is the same for every kind of system: the engine loop, the ledger, policy, sessions, the compiler, and the front doors. Each pack knows one kind of system and reaches the kernel only through one provider contract ([section 202](../2-kernel/202-kernel-and-packs.md), [section 203](../2-kernel/203-the-provider-contract.md)).
 
 ## What it does not do
 
-| It does not | Because |
-| --- | --- |
-| Run anything unverified | A kind of system is supported only when a write to it can be read back, or is honestly classed `irreversible` |
-| Let a model decide at run time | Discovery and drafting may use any help; a run uses none |
-| Offer a shell, or a statement built from an agent's text | Being able to run a command is not permission to run it. Commands are declared, with typed arguments ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
-| Click by position on a picture of the screen | Nothing can be verified against it |
-| Get in where it is not let in | No stealth, no getting past a sign-in, a bot defence, a licence check, or a device's protection. A block is a named stop |
-| Publish a catalog, or host anything | A target is a folder the developer keeps. The product runs where the developer runs it, and nothing phones home |
-| Arrive all at once | One pack is proven before the next begins. The first usable product is reads and writes on one machine through the web pack |
+Each line carries its kind, as [SCOPE.md](../../../SCOPE.md) does: a rule (one of the ten rules in AGENTS.md, or an owner decision; only the owner changes it), a choice (a design choice in force today, which any agent may change with evidence), or not yet (nothing stands against it; it is not built). A line here describes where the product stands; it is not by itself a reason to refuse an idea ([decision 0230](../../decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)).
+
+| It does not | Because | Kind |
+| --- | --- | --- |
+| Run anything unverified | A kind of system is supported only when a write to it can be read back, or is honestly classed `irreversible` | Rule 3 |
+| Let a model decide at run time | Discovery and drafting may use any help; a run uses none | Rule 1 |
+| Offer a shell, or a statement built from an agent's text | Being able to run a command is not permission to run it. Commands are declared, with typed arguments ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) | Choice, resting on [section 502](../5-security/502-defending-against-a-manipulated-agent.md): no input may change what runs |
+| Click by position on a picture of the screen | Nothing can be verified against it | Rules 1, 3, and 7: reading a picture takes a learned model (rule 1), a click by position cannot be proven against the element it was meant for (rule 3), and a picture that differs from the recorded one is a variant with no rule (rule 7). The owner decided that nothing in a run reads a picture; the scout may keep a screenshot as build-time evidence, which is not built yet ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) |
+| Get in where it is not let in | No stealth, no getting past a sign-in, a bot defence, a licence check, or a device's protection. A block is a named stop | Rule 5 |
+| Publish a catalog, or host a place to share target files | A target is a folder the developer keeps. The product runs where the developer runs it, and nothing phones home | Rule 9 and owner [decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) for the catalog and for hosting. Choice, for phoning home: a convention in AGENTS.md |
+| Arrive all at once | One pack is proven before the next begins. The first usable product is reads and writes on one machine through the web pack | Choice: the [working method](../../plan/working-method.md) |

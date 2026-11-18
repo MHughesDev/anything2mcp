@@ -1,0 +1,26 @@
+# The same text as the constant `PUT` of the web pack's test of writes
+# from inside a page (decision 0206).
+endpoint: example_order_note_put
+surface: app
+method: PUT
+path: "/api/orders/{order_id}/note"
+page: "/orders/{order_id}/note"
+effect: write
+anti_forgery:
+  from: {meta: csrf-token}
+  header: X-CSRF-Token
+  refused:
+    - {status: 403, when: {error: forgery_token_invalid}}
+request_schema:
+  type: object
+  properties: {note: {type: string}}
+  required: [note]
+  additionalProperties: false
+responses:
+  ok: [200]
+  refused:
+    - {status: 422, when: {error: invalid}}
+response_schema:
+  type: object
+  properties: {order_id: {type: string}, note: {type: string}}
+  required: [order_id, note]

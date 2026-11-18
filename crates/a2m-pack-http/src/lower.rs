@@ -486,13 +486,14 @@ impl<'a> Lower<'a, '_> {
                 ValueType::Int => Take::Int,
                 ValueType::Decimal => Take::Decimal,
                 ValueType::Bool => Take::Bool,
+                ValueType::Date => Take::Date,
                 _ => {
                     self.refuse(
                         "output_type",
                         Stage::TypeCheck,
                         at,
                         format!(
-                            "The output `{}` is of a type the HTTP pack cannot take out of an answer yet: only text, whole numbers, exact numbers, truth values, and lists of them.",
+                            "The output `{}` is of a type the HTTP pack cannot take out of an answer yet: only text, whole numbers, exact numbers, truth values, calendar days, and lists of them.",
                             output.name
                         ),
                         "Give the output a field type built on one of those.",
@@ -516,6 +517,7 @@ impl<'a> Lower<'a, '_> {
                     )
                 }
                 Take::Bool => matches!(shape.kind, Kind::Boolean | Kind::Any),
+                Take::Date => matches!(shape.kind, Kind::String | Kind::Any),
             });
             if !fits || stars != usize::from(listed) {
                 self.refuse(

@@ -854,3 +854,35 @@ async fn the_program_started_while_a_variable_of_the_engine_is_set() {
         started.env.keys().collect::<Vec<_>>()
     );
 }
+
+/// The fifth safety audit's PR-2: a launch that sets or passes a variable
+/// that makes a program load other code is refused before anything starts,
+/// whatever the pack in front of the supervisor checked (decision 0250).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_that_names_a_variable_that_loads_other_code_is_refused_and_nothing_starts() {
+    let stand = Stand::start().unwrap();
+    let supervisor = supervisor();
+    for (pass, set) in [
+        (
+            Vec::new(),
+            vec![("LD_PRELOAD".to_owned(), OsString::from("/x.so"))],
+        ),
+        (
+            Vec::new(),
+            vec![("NODE_OPTIONS".to_owned(), OsString::from("--require=/x.js"))],
+        ),
+        (vec!["PYTHONPATH".to_owned()], Vec::new()),
+        (vec!["dyld_insert_libraries".to_owned()], Vec::new()),
+    ] {
+        let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+        launch.env.pass = pass;
+        launch.env.set.extend(set);
+        let refused = supervisor.run(launch, one_shot(60)).await.unwrap_err();
+        assert_eq!(refused.ran, Ran::NotStarted);
+        assert_eq!(
+            (refused.failure.class(), refused.failure.code()),
+            (FailureClass::Policy, &codes::VARIABLE_REFUSED)
+        );
+    }
+    assert!(stand.control().invocations().unwrap().is_empty());
+}

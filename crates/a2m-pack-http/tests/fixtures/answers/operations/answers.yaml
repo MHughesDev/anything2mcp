@@ -1,0 +1,108 @@
+operation: example_namespace_get
+title: Get an answer whose namespace is too long to read
+effect: read
+inputs: {}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: namespace_get
+description: >
+  Reads an answer that is refused at its first element.
+---
+operation: example_control_get
+title: Get an order whose customer holds control characters
+effect: read
+inputs: {}
+outputs:
+  order_id: {type: identifier}
+  customer: {type: untrusted_text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: control_get
+description: >
+  Reads an answer whose value is refused at the pack's boundary.
+---
+operation: example_control_text_get
+title: Get a status line that holds a control character
+effect: read
+inputs: {}
+outputs:
+  orders: {type: integer}
+  text: {type: untrusted_text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: control_text_get
+description: >
+  Reads a text answer whose whole text is refused at the pack's boundary.
+---
+operation: example_status_text_get
+title: Get the status line
+effect: read
+inputs: {}
+outputs:
+  orders: {type: integer}
+  customer: {type: untrusted_text}
+  text: {type: untrusted_text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: status_text_get
+description: >
+  Reads the status line, its whole text, and a group of its pattern.
+---
+operation: example_order_customer_get
+title: Get an order's customer from its XML view
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  customer: {type: untrusted_text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_xml_get
+description: >
+  Reads an order's customer from its XML view.
+---
+operation: example_secret_label_get
+title: Get the length and digest of a label that carries a secret
+effect: read
+inputs: {}
+outputs:
+  length: {type: integer}
+  digest: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: secret_label_get
+description: >
+  Reads a binary label whose body holds a registered secret.
+---
+operation: example_order_search
+title: Search the orders of one status
+effect: read
+inputs:
+  status: {type: identifier, description: "draft or submitted"}
+outputs:
+  orders: {type: identifier, list: true}
+bindings:
+  - mode: http
+    verb: search
+    status: verified
+    endpoint: order_search
+    query: {status: input.status}
+    extract: {orders: "orders.*"}
+description: >
+  Searches the orders of one status, through a search the system serves
+  behind POST.

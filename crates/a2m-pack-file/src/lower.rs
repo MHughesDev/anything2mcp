@@ -20,9 +20,9 @@ use a2m_files::{
 use crate::codes;
 use crate::kind::document_name;
 use crate::model::{
-    Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, PlaceSpec, READ,
-    RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST,
-    VERB_READ, VERB_UPDATE, field_arg, key_arg,
+    Change, DOCUMENT_KIND, DocumentSpec, Expect, FOLDER_KIND, Format, LOCATE, MODE, OPEN,
+    PlaceSpec, READ, RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE,
+    VERB_DELETE, VERB_LIST, VERB_READ, VERB_RENAME, VERB_UPDATE, field_arg, key_arg,
 };
 
 /// A binding that names a document, a record kind, or a field the target
@@ -40,9 +40,9 @@ pub const OPEN_WITHOUT_SIGNAL: LintCode = LintCode::fixed("file.open_without_sig
 pub const FORMAT_READ_ONLY: LintCode = LintCode::fixed("file.format_read_only");
 
 /// How long a step may take when the target states no `step` timeout.
-const STEP_TIMEOUT_MS: u32 = 30_000;
+pub(crate) const STEP_TIMEOUT_MS: u32 = 30_000;
 /// How many rows a list returns when its binding states no limit.
-const LIST_LIMIT: u32 = 1_000;
+pub(crate) const LIST_LIMIT: u32 = 1_000;
 
 /// The lowering of the `file` mode.
 pub struct FileLowering {
@@ -59,8 +59,13 @@ impl FileLowering {
         Self {
             mode,
             schema: JsonSchema::object()
-                .required("document", JsonSchema::name())
-                .required("record", JsonSchema::name())
+                .optional("document", JsonSchema::name())
+                .optional("record", JsonSchema::name())
+                .optional("folder", JsonSchema::name())
+                .optional("log", JsonSchema::name())
+                .optional("digest", JsonSchema::bool())
+                .optional("content", JsonSchema::bool())
+                .optional("from", JsonSchema::expression())
                 .optional("key", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("fields", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("limit", JsonSchema::int_between(1, 1_000_000))
@@ -68,27 +73,34 @@ impl FileLowering {
                     "read_back",
                     JsonSchema::object().required("record", JsonSchema::name()),
                 ),
-            verbs: vec![VERB_READ, VERB_LIST, VERB_UPDATE, VERB_CREATE, VERB_DELETE],
+            verbs: vec![
+                VERB_READ,
+                VERB_LIST,
+                VERB_UPDATE,
+                VERB_CREATE,
+                VERB_DELETE,
+                VERB_RENAME,
+            ],
             step_kinds: vec![OPEN, LOCATE, SET, READ, SAVE],
         }
     }
 }
 
-fn problem(at: &Located<Doc>, message: impl Into<String>, fix: &str) -> Diagnostic {
+pub(crate) fn problem(at: &Located<Doc>, message: impl Into<String>, fix: &str) -> Diagnostic {
     Diagnostic::error(BINDING_INVALID, Stage::Lower, &at.at, message, fix)
 }
 
 /// What every step of one binding shares.
-struct Steps<'a> {
-    section: SectionIndex,
-    document: &'a str,
-    timeout_ms: u32,
-    at: &'a Located<Doc>,
+pub(crate) struct Steps<'a> {
+    pub section: SectionIndex,
+    pub document: &'a str,
+    pub timeout_ms: u32,
+    pub at: &'a Located<Doc>,
 }
 
 impl Steps<'_> {
     #[allow(clippy::too_many_arguments)] // one step's facts, each named where it is called
-    fn step(
+    pub(crate) fn step(
         &self,
         kind: StepKind,
         spec: &StepSpec,
@@ -303,7 +315,7 @@ impl Lowering for FileLowering {
         let verb = binding.verb;
         if *verb == VERB_DELETE {
             EffectClass::Irreversible
-        } else if *verb == VERB_UPDATE || *verb == VERB_CREATE {
+        } else if *verb == VERB_UPDATE || *verb == VERB_CREATE || *verb == VERB_RENAME {
             EffectClass::Write
         } else {
             EffectClass::Read
@@ -333,6 +345,39 @@ impl Lowering for FileLowering {
         cx: &LowerContext<'_>,
     ) -> Result<Lowered, Diagnostics> {
         let fail = |found: Diagnostic| Err(Diagnostics::from(found));
+        let stated: Vec<&str> = ["document", "folder", "log"]
+            .into_iter()
+            .filter(|key| binding.field(key).is_some())
+            .collect();
+        if stated.len() != 1 {
+            return fail(problem(
+                binding.doc,
+                "A `file` binding names one of `document`, `folder`, or `log`.",
+                "Name the document, the folder, or the growing file the binding works on.",
+            ));
+        }
+        if binding.field("folder").is_some() {
+            return crate::lower_folder::lower_folder(binding, cx);
+        }
+        if binding.field("log").is_some() {
+            return crate::lower_folder::lower_log(binding, cx);
+        }
+        for key in ["digest", "content", "from"] {
+            if let Some(found) = binding.field(key) {
+                return fail(problem(
+                    found,
+                    format!("A binding of a document takes no `{key}`."),
+                    "Remove it.",
+                ));
+            }
+        }
+        if *binding.verb == VERB_RENAME {
+            return fail(problem(
+                binding.doc,
+                "A record of a document is not renamed: `rename` gives an entry of a folder a new name.",
+                "Use `update`, or bind a folder.",
+            ));
+        }
         let document_doc = binding.field("document").unwrap_or(binding.doc);
         let document = document_doc.as_text().unwrap_or_default();
         let section = cx.section(&DOCUMENT_KIND, &SURFACE_KIND);
@@ -561,12 +606,16 @@ impl Lowering for FileLowering {
 struct WriteBinding<'a> {
     operation: OperationView<'a>,
     binding: &'a Located<Doc>,
+    /// The document, or the folder, the binding writes.
     document: &'a Located<Doc>,
+    /// Whether it is a folder's file, which has no format.
+    folder: bool,
     surface: Option<SurfaceView<'a>>,
 }
 
 fn write_bindings<'a>(view: &ResolvedView<'a>) -> Vec<WriteBinding<'a>> {
     let documents = view.entries(&DOCUMENT_KIND, &SURFACE_KIND);
+    let folders = view.entries(&FOLDER_KIND, &SURFACE_KIND);
     let mut found = Vec::new();
     for operation in view.operations() {
         let bindings = operation
@@ -575,15 +624,23 @@ fn write_bindings<'a>(view: &ResolvedView<'a>) -> Vec<WriteBinding<'a>> {
             .map(Located::items)
             .unwrap_or_default();
         for binding in bindings {
-            let writes = matches!(binding.text("verb"), Some("update" | "create" | "delete"));
+            let writes = matches!(
+                binding.text("verb"),
+                Some("update" | "create" | "delete" | "rename")
+            );
             if binding.text("mode") != Some(MODE) || !writes {
                 continue;
             }
-            let Some(document) = binding
-                .text("document")
-                .and_then(|name| documents.iter().find(|doc| document_name(doc) == name))
-            else {
-                continue;
+            let named = |key: &str, docs: &'a [Located<Doc>]| {
+                binding
+                    .text(key)
+                    .and_then(|name| docs.iter().find(|doc| document_name(doc) == name))
+            };
+            let (document, folder) = match (named("document", documents), named("folder", folders))
+            {
+                (Some(document), _) => (document, false),
+                (None, Some(folder)) => (folder, true),
+                (None, None) => continue,
             };
             let surface = match document.text("surface") {
                 Some(name) => view.target().surface(name),
@@ -597,6 +654,7 @@ fn write_bindings<'a>(view: &ResolvedView<'a>) -> Vec<WriteBinding<'a>> {
                 operation,
                 binding,
                 document,
+                folder,
                 surface,
             });
         }
@@ -719,9 +777,19 @@ pub fn lint_rules() -> Vec<WriteRule> {
         },
         WriteRule {
             code: FORMAT_READ_ONLY,
-            summary: "A binding writes only a format the pack has a patch editor for: delimited text or JSON.",
+            summary: "A binding writes only a format the pack has a patch editor for: delimited text or JSON, and a value of an INI file or a property list.",
             check: |write, _| {
+                if write.folder {
+                    return None;
+                }
                 let format = write.document.text("format").and_then(Format::from_name);
+                let adds = matches!(write.binding.text("verb"), Some("create" | "delete"));
+                if format.is_some_and(Format::is_settings) && adds {
+                    return Some((
+                        "This binding adds or removes a value of a settings file, whose editor only sets a value that is there.".to_owned(),
+                        "Bind `update` to set a value, or `read` to read one.",
+                    ));
+                }
                 (!format.is_some_and(Format::writable)).then(|| {
                     (
                         "This binding writes a file whose format the pack can read and cannot write back without loss.".to_owned(),

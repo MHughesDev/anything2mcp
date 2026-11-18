@@ -1,0 +1,10 @@
+surface: config_files
+file: example.ini
+format: ini
+dialect: {quotes: strip}
+may_be_open: false
+records:
+  orders:
+    path: [orders]
+    fields:
+      note: {path: [note], type: note, writable: true}

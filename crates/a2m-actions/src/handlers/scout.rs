@@ -28,7 +28,7 @@ use super::build::{off_thread, problems_json, target_folder};
 use super::handler;
 use super::tools::{Tell, plan_to_observe, run_output, submit_discovery, wait_of};
 use crate::codes;
-use crate::dispatch::{Call, Next, Output};
+use crate::dispatch::{Call, ExitClass, Next, Output};
 use crate::kernel::Kernel;
 use crate::tools::FoundTool;
 
@@ -78,6 +78,10 @@ struct Look {
     provider: Option<String>,
     keeps_a_session: bool,
     discoverers: Vec<Json>,
+    /// The provider of the sign-in the target's files declare for it, when
+    /// they declare one: its discovery and its trials then run under the
+    /// caller's person's session.
+    signs_in_with: Option<String>,
 }
 
 impl Look {
@@ -133,6 +137,10 @@ impl Look {
                     provider: entry.map(|entry| entry.provider.to_string()),
                     keeps_a_session: entry.is_some_and(|entry| entry.session),
                     discoverers,
+                    signs_in_with: u32::try_from(position)
+                        .ok()
+                        .and_then(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)))
+                        .map(|auth| auth.provider.to_string()),
                 }
             })
             .collect()
@@ -167,14 +175,21 @@ fn discovery_results(tx: &mut Tx<'_>, run: RunId) -> Result<Vec<Reported>, Failu
 }
 
 /// The state of a surface's identification, from how its discovery ended.
-fn identified_state(state: a2m_core::RunState, failure: Option<FailureClass>) -> &'static str {
+/// A discovery that could not be signed in, because nobody is signed in or
+/// the credential its sign-in names is not stored, needs a person to sign
+/// in (decision 0205).
+fn identified_state(
+    state: a2m_core::RunState,
+    failure: Option<&(FailureClass, a2m_core::FailureCode)>,
+) -> &'static str {
     if !state.is_final() {
         return "working";
     }
     match failure {
         None => "identified",
-        Some(FailureClass::SessionExpired) => "needs_login",
-        Some(FailureClass::Policy | FailureClass::EdgeBlocked) => "refused",
+        Some((FailureClass::SessionExpired, _)) => "needs_login",
+        Some((_, code)) if code == &a2m_auth::codes::CREDENTIAL_MISSING => "needs_login",
+        Some((FailureClass::Policy | FailureClass::EdgeBlocked, _)) => "refused",
         Some(_) => "failed",
     }
 }
@@ -254,6 +269,13 @@ async fn identify(
             "provider": look.provider,
             "keeps_a_session": look.keeps_a_session,
             "discoverers": look.discoverers,
+            // Whether what is found here needed the session: a surface whose
+            // sign-in the files declare is observed only under the caller's
+            // person's session, and nothing of it is found without one.
+            "session": match &look.signs_in_with {
+                Some(provider) => json!({"needed": true, "provider": provider}),
+                None => json!({"needed": false}),
+            },
         });
         let state = match runs.get(look.name.as_str()) {
             None if look.provider.is_none() => {
@@ -321,7 +343,7 @@ async fn identify(
                         })
                         .collect(),
                 );
-                identified_state(row.state, row.failure.as_ref().map(|(class, _)| *class))
+                identified_state(row.state, row.failure.as_ref())
             }
         };
         entry["state"] = json!(state);
@@ -595,6 +617,7 @@ pub(crate) async fn proven_by_scout(
                 "scout_id": scout.to_string(),
                 "level": "executed",
                 "tries": entry["tries"],
+                "binding": entry["binding"],
             })
         }))
 }
@@ -1009,13 +1032,20 @@ enum TryInput {
 /// plan tried, the read, which try it is, and the input. A continuation of
 /// the scout finds the same trial by it, ended or not, and submits none
 /// again (ledger rule 6).
-fn trial_hash(scout: RunId, plan: Digest, try_number: usize, input: &Values) -> Digest {
+fn trial_hash(
+    scout: RunId,
+    plan: Digest,
+    try_number: usize,
+    input: &Values,
+    binding: &a2m_engine::BindingPin,
+) -> Digest {
     let mut hasher = a2m_core::FieldHasher::new();
-    hasher.field("purpose", b"anything2mcp scout trial 1");
+    hasher.field("purpose", b"anything2mcp scout trial 2");
     hasher.field("scout", scout.to_string().as_bytes());
     hasher.field("plan", plan.to_string().as_bytes());
     hasher.field("try", try_number.to_string().as_bytes());
     hasher.field("input", input.digest().to_string().as_bytes());
+    hasher.field("binding", binding.to_json().to_string().as_bytes());
     hasher.finish()
 }
 
@@ -1028,10 +1058,9 @@ async fn trial_of(
     scout: RunId,
     found: &FoundTool,
     input: &Values,
-    try_number: usize,
-    environment: &Environment,
+    (try_number, environment, binding): (usize, &Environment, &a2m_engine::BindingPin),
 ) -> Result<(RunId, bool), Failure> {
-    let hash = trial_hash(scout, found.plan_hash, try_number, input);
+    let hash = trial_hash(scout, found.plan_hash, try_number, input, binding);
     let principal = &call.caller.principal;
     let (workspace, person) = (principal.workspace, principal.principal.id);
     let (tool, at) = (found.tool.name.clone(), environment.clone());
@@ -1048,11 +1077,17 @@ async fn trial_of(
         .await?;
     match earlier {
         Some(run) => Ok((run, false)),
-        None => {
-            super::tools::submit_trial_as(kernel, call, found, input, environment.clone(), hash)
-                .await
-                .map(|run| (run, true))
-        }
+        None => super::tools::submit_trial_as(
+            kernel,
+            call,
+            found,
+            input,
+            environment.clone(),
+            hash,
+            Some(binding.clone()),
+        )
+        .await
+        .map(|run| (run, true)),
     }
 }
 
@@ -1106,7 +1141,10 @@ fn key_from_list(operation: &a2m_core::OperationPlan, proven: &[Proven]) -> TryI
             "It takes an input besides its key that it states no example of; the scout has no value for it.",
         );
     }
-    let Some(surface) = operation.bindings.first().map(|binding| binding.surface) else {
+    let Some(surface) = a2m_engine::default_binding(operation)
+        .and_then(|at| operation.bindings.get(at))
+        .map(|binding| binding.surface)
+    else {
         return TryInput::None("It has no binding to try.");
     };
     let lists: Vec<&Proven> = proven
@@ -1296,6 +1334,15 @@ async fn try_reads(
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "The drafts declare no environment to try it in."}));
             continue;
         };
+        // The scout tries the binding that would act live, and its proof
+        // names that binding and the digest of what it does (audit finding
+        // AC-6).
+        let Some(binding) = a2m_engine::default_binding(operation)
+            .and_then(|at| a2m_engine::BindingPin::of(&plan, operation, at))
+        else {
+            tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Every binding of it is retired."}));
+            continue;
+        };
         let mut results: Vec<Json> = Vec::new();
         let mut kept = Vec::new();
         let mut not_ended = false;
@@ -1315,8 +1362,7 @@ async fn try_reads(
                 scout,
                 &found,
                 &input,
-                try_number,
-                &environment,
+                (try_number, &environment, &binding),
             )
             .await?;
             // A trial made before and found again does not count: the call
@@ -1361,6 +1407,7 @@ async fn try_reads(
             "completed": completed,
             "same": same,
             "level": if state == "proven" { "executed" } else { "reconstructed" },
+            "binding": binding.to_json(),
         });
         if not_ended {
             entry["why"] = json!(format!(
@@ -1382,11 +1429,12 @@ async fn try_reads(
             entry["failure"] = json!({"class": failure["class"], "code": failure["code"]});
         }
         if state == "proven"
-            && let (Some(binding), Some(first)) = (operation.bindings.first(), results.first())
+            && let (Some(acted), Some(first)) =
+                (operation.bindings.get(binding.position), results.first())
         {
             proven.push(Proven {
                 tool: name.clone(),
-                surface: binding.surface,
+                surface: acted.surface,
                 lists: operation
                     .outputs
                     .iter()
@@ -1481,6 +1529,36 @@ fn stopped(
         "scout.run",
         json!({"target": target.as_str()}),
         "to continue from the last finished stage",
+    ))
+}
+
+/// The scout stops, before it drafts, at a surface its person must sign in
+/// to first (decision 0205): `session.login` comes next, then the same scout
+/// again.
+fn needs_sign_in(
+    target: &TargetName,
+    scout: RunId,
+    surface: &Json,
+    done: &BTreeMap<u8, Json>,
+) -> Output {
+    let name = surface["surface"].as_str().unwrap_or_default();
+    Output::ok(json!({
+        "target": target.as_str(),
+        "scout_id": scout.to_string(),
+        "state": "needs_sign_in",
+        "stage": STAGES[1],
+        "stages_done": done.keys().map(|stage| STAGES[usize::from(*stage)]).collect::<Vec<_>>(),
+        "surface": name,
+        "failure": surface.get("failure"),
+        "why": format!(
+            "The surface `{name}` is observed only under a session, and its person is not signed in to it. Nothing was drafted."
+        ),
+    }))
+    .exit(ExitClass::PersonNeeded)
+    .then(Next::new(
+        "session.login",
+        json!({"target": target.as_str(), "surface": name}),
+        "the person signs in; then call `scout.run` again, and the same scout goes on under the session",
     ))
 }
 
@@ -1584,6 +1662,17 @@ handler!(
                     "A discovery run has not ended yet.",
                     &done,
                 ));
+            }
+            // A surface that cannot be observed until its person signs in
+            // stops the scout by name, before anything is drafted from a
+            // look that missed it. The stage is not stored: the next call
+            // of the same scout identifies again, under the session.
+            if let Some(waiting) = identified
+                .surfaces
+                .iter()
+                .find(|surface| surface["state"] == "needs_login")
+            {
+                return Ok(needs_sign_in(&target, id, waiting, &done));
             }
             let declared = declared_sign_ins(kernel, &call, &target).await?;
             let mut result = json!({

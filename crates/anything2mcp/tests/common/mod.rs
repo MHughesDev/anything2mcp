@@ -11,6 +11,7 @@
 )]
 
 pub mod browser;
+pub mod prefixed;
 pub mod proxy;
 pub mod service;
 
@@ -252,6 +253,17 @@ impl Machine {
             "[vault]\nbackend = \"passphrase\"\n",
         )
         .unwrap();
+        self.place = StorePlace::Disk;
+        self.key_store = None;
+        self.passphrase = Some(PASSPHRASE.to_owned());
+        self
+    }
+
+    /// The same machine as a first run finds it where the build has no key
+    /// store of its own (decision 0220): the store on disk, no settings
+    /// file of any layer, and the passphrase in the environment. The vault
+    /// takes the passphrase route by default.
+    pub fn with_default_vault(mut self) -> Self {
         self.place = StorePlace::Disk;
         self.key_store = None;
         self.passphrase = Some(PASSPHRASE.to_owned());

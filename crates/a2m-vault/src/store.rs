@@ -23,7 +23,10 @@ use crate::names::Binding;
 
 pub use memory::MemoryKeyStore;
 pub use os::OsKeyStore;
-pub use passphrase::{PassphraseKeyStore, PassphraseRoute, PassphraseSalt};
+pub use passphrase::{
+    BACKEND_OS_KEY_STORE, BACKEND_PASSPHRASE, DEFAULT_BACKEND, PassphraseKeyStore, PassphraseRoute,
+    PassphraseSalt,
+};
 
 /// A future a trait object can return. The interfaces of this crate are used
 /// as trait objects, so their asynchronous methods return this.

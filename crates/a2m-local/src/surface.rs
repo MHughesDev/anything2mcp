@@ -29,8 +29,8 @@ use a2m_actions::{
     NOW_CANNOT_BE_READ, PersonActAsk, PersonActId, PersonSurface, PresenceAsk, PresenceProof,
     PresenceReport, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
-use a2m_auth::PersonAnswer;
-use a2m_core::{Digest, Failure, PrincipalId, RunId};
+use a2m_auth::{PersonAnswer, PersonAsk};
+use a2m_core::{Digest, Failure, Identity, PrincipalId, RunId};
 use a2m_policy::{Channel as ApprovalChannel, PresenceCheck, PrincipalRef};
 use a2m_telemetry::Clock;
 use a2m_vault::RandomSource;
@@ -53,6 +53,7 @@ use crate::presence::{
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
 const ACT_PAGE: &str = include_str!("pages/act.html");
+const CODE_PAGE: &str = include_str!("pages/code.html");
 /// The most characters of what an act came to that its answer page shows.
 const RESULT_SHOWN: usize = 2_000;
 
@@ -61,6 +62,12 @@ const RESULT_SHOWN: usize = 2_000;
 const CODE_BYTES: usize = 16;
 /// The most a press may send: one short field.
 const PRESS_LIMIT: usize = 256;
+/// The most a press of Carry out may send: the one-time value and, for a
+/// sign-in, the credentials its page asked for (decision 0205).
+const ACT_PRESS_LIMIT: usize = 16 * 1024;
+/// The name a field of a secret has on an act's page: this, then the
+/// secret's role.
+const SECRET_FIELD: &str = "secret.";
 /// The most records of one change a page shows. A change with more cannot
 /// be read in full here, so it cannot be approved here either.
 const RECORDS_SHOWN: usize = 2_000;
@@ -142,6 +149,41 @@ struct Waiting {
     /// The changes a person answered, or whose time ended, newest last. A
     /// run is looked at again after its answer, and gets no second page.
     answered: VecDeque<(RunId, Digest, Answered)>,
+    /// The presses of Carry out being carried out, each with the way a
+    /// request of the session keeper for a code reaches its page.
+    presses: Vec<InFlight>,
+    /// The code pages that wait for a person's one-time code, by the code
+    /// in their address.
+    codes: BTreeMap<String, CodePage>,
+}
+
+/// A press of Carry out being carried out. While it is, the session
+/// keeper's request for a one-time code of the same person is answered on
+/// that press's own page (decision 0205): the press's answer is the page
+/// that asks for the code.
+struct InFlight {
+    id: u64,
+    person: PrincipalId,
+    /// Whether the act is a sign-in: only a sign-in's press is asked for a
+    /// code.
+    signs_in: bool,
+    /// Told the code of the page that asks for a code, once.
+    tell: Option<oneshot::Sender<String>>,
+}
+
+/// A page that waits for a person's one-time code for one sign-in.
+struct CodePage {
+    /// The target and the environment of the sign-in, as the page names
+    /// them.
+    target: String,
+    environment: String,
+    /// The one-time value of the page. A post takes it.
+    once: Option<String>,
+    /// Where the code goes. Taken by the post that carries it.
+    answer: Option<oneshot::Sender<a2m_core::Secret>>,
+    /// The press the code is for, which ends with the act's answer: the
+    /// post that carries the code answers with it.
+    carried: Option<JoinHandle<Response>>,
 }
 
 /// How a page ended.
@@ -412,6 +454,42 @@ async fn guard(State(port): State<u16>, request: Request, next: Next) -> Respons
         );
     }
     next.run(request).await
+}
+
+/// The fields of a form a press sent, `application/x-www-form-urlencoded`,
+/// each name and value decoded. `None` for a body longer than `limit`, or
+/// one that is not such a form of text.
+fn form_of(body: &Bytes, limit: usize) -> Option<Vec<(String, String)>> {
+    fn decoded(part: &str) -> Option<String> {
+        let bytes = part.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut at = 0;
+        while at < bytes.len() {
+            match bytes[at] {
+                b'+' => out.push(b' '),
+                b'%' => {
+                    let hex = part.get(at + 1..at + 3)?;
+                    out.push(u8::from_str_radix(hex, 16).ok()?);
+                    at += 2;
+                }
+                other => out.push(other),
+            }
+            at += 1;
+        }
+        String::from_utf8(out).ok()
+    }
+    if body.len() > limit {
+        return None;
+    }
+    std::str::from_utf8(body)
+        .ok()?
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            Some((decoded(name)?, decoded(value)?))
+        })
+        .collect()
 }
 
 fn once_of(body: &Bytes) -> Option<&str> {
@@ -1097,6 +1175,35 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
     (input, details)
 }
 
+/// The fields of the secrets a sign-in's page asks for, inside the form
+/// of Carry out. Each is empty when served and is never filled in again:
+/// what the person types goes with their press and is shown nowhere.
+fn secrets_html(ask: &PersonActAsk) -> String {
+    use std::fmt::Write as _;
+    if ask.secrets.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<fieldset><legend>Sign-in</legend><p>Type what the system's sign-in needs. It goes with your press to this machine's engine only, is sealed in its vault for you alone, and is never shown to the program that asked.</p>",
+    );
+    for (at, secret) in ask.secrets.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<p><label for=\"secret-{at}\">{}</label> <input id=\"secret-{at}\" name=\"{SECRET_FIELD}{}\" type=\"password\" autocomplete=\"off\"{}>{}</p>",
+            escape(&secret.role),
+            escape(&secret.role),
+            if secret.stored { "" } else { " required" },
+            if secret.stored {
+                " Stored already: leave it empty to use the stored one."
+            } else {
+                ""
+            },
+        );
+    }
+    out.push_str("</fieldset>");
+    out
+}
+
 /// The first characters of an act's identifier, as the page and a prompt
 /// that carries words show them.
 fn short_act(act: PersonActId) -> String {
@@ -1146,6 +1253,7 @@ async fn act_show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> 
                 ("short", &escape(&short_act(act))),
                 ("input", &input),
                 ("details", &details),
+                ("secrets", &secrets_html(&ask)),
                 ("presence", &presence_html(&presence)),
                 ("minutes", &minutes.to_string()),
                 ("code", &escape(&code)),
@@ -1161,6 +1269,9 @@ struct ActPressed {
     action: String,
     person: PrincipalId,
     deadline: Instant,
+    /// What the person typed into the page's fields of secrets, by role.
+    /// It goes to the desk with the proof, and nowhere else.
+    given: a2m_auth::Returned,
 }
 
 /// Takes the act page's one-time value and marks it as pressed, as
@@ -1171,10 +1282,23 @@ fn act_begin(inner: &Inner, code: &str, body: &Bytes) -> Result<ActPressed, Box<
         return Err(Box::new(nothing_here()));
     };
     let expected = found.once.take();
-    let fits = match (expected.as_deref(), once_of(body)) {
+    let fields = form_of(body, ACT_PRESS_LIMIT).unwrap_or_default();
+    let once = fields
+        .iter()
+        .find(|(name, _)| name == "once")
+        .map(|(_, value)| value.as_str());
+    let fits = match (expected.as_deref(), once) {
         (Some(expected), Some(given)) => same(expected, given),
         _ => false,
     };
+    // Each secret is held as one from here on; the desk registers it with
+    // the redactor before it does anything else.
+    let mut given = a2m_auth::Returned::new();
+    for (name, value) in fields {
+        if let Some(role) = name.strip_prefix(SECRET_FIELD) {
+            given = given.with(role, a2m_core::Secret::new(value));
+        }
+    }
     if !fits {
         return Err(Box::new(answer(
             StatusCode::FORBIDDEN,
@@ -1195,6 +1319,7 @@ fn act_begin(inner: &Inner, code: &str, body: &Bytes) -> Result<ActPressed, Box<
         action: found.action.clone(),
         person: found.person,
         deadline: found.deadline,
+        given,
     })
 }
 
@@ -1262,7 +1387,7 @@ fn act_answer(done: &a2m_actions::Response) -> Response {
     }
 }
 
-async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Response) {
+async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, Response) {
     let Some(desk) = inner.desk.get() else {
         return nothing_done(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1341,7 +1466,13 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Resp
     let proof = PresenceProof::new(recorded_check(prompt), pressed.person, inner.clock.now())
         .naming(prompt.as_str())
         .for_act(pressed.act);
-    match desk.carry_out(pressed.act, proof).await {
+    let given = std::mem::take(&mut pressed.given);
+    let carried = if given.is_empty() {
+        desk.carry_out(pressed.act, proof).await
+    } else {
+        desk.carry_out_with(pressed.act, proof, given).await
+    };
+    match carried {
         Ok(done) => (true, act_answer(&done)),
         Err(failure) => nothing_done(StatusCode::FORBIDDEN, failure.message()),
     }
@@ -1352,17 +1483,157 @@ async fn act_confirm(
     Path(code): Path<String>,
     body: Bytes,
 ) -> Response {
-    let pressed = match act_begin(&inner, &code, &body) {
+    let mut pressed = match act_begin(&inner, &code, &body) {
         Ok(pressed) => pressed,
         Err(response) => return *response,
     };
+    drop(body);
+    // While this press is carried out, a request of the session keeper for
+    // this person's one-time code is answered on this press's page.
+    let (tell, told) = oneshot::channel::<String>();
+    let id = {
+        let mut state = inner.state();
+        let id = state
+            .presses
+            .iter()
+            .map(|press| press.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        state.presses.push(InFlight {
+            id,
+            person: pressed.person,
+            signs_in: pressed.action == "session.login",
+            tell: Some(tell),
+        });
+        id
+    };
     // In a task of its own, as a press of Approve is.
-    let carried = tokio::spawn(async move {
-        let (settled, response) = act_confirm_pressed(&inner, &pressed).await;
-        act_finish(&inner, &code, settled);
+    let task = Arc::clone(&inner);
+    let mut carried = tokio::spawn(async move {
+        let (settled, response) = act_confirm_pressed(&task, &mut pressed).await;
+        task.state().presses.retain(|press| press.id != id);
+        act_finish(&task, &code, settled);
         response
     });
-    carried.await.unwrap_or_else(|_| not_carried_out())
+    let asked = tokio::select! {
+        done = &mut carried => return done.unwrap_or_else(|_| not_carried_out()),
+        asked = told => asked.ok(),
+    };
+    let Some(page) = asked else {
+        return carried.await.unwrap_or_else(|_| not_carried_out());
+    };
+    // The sign-in asks for a code: the press's answer is the page that
+    // takes it, and the press goes on in its task until the code comes.
+    let shown = {
+        let mut state = inner.state();
+        match state.codes.get_mut(&page) {
+            Some(found) => {
+                found.carried = Some(carried);
+                found
+                    .once
+                    .clone()
+                    .map(|once| (once, found.target.clone(), found.environment.clone()))
+            }
+            None => None,
+        }
+    };
+    match shown {
+        Some((once, target, environment)) => {
+            page_of_code(&inner, &page, &once, &target, &environment)
+        }
+        None => answer(
+            StatusCode::CONFLICT,
+            "Nothing waits here",
+            "The sign-in asked for a code, and its time ended before the page could be shown. Nothing was signed in.",
+        ),
+    }
+}
+
+/// The page that asks for a one-time code.
+fn page_of_code(
+    inner: &Inner,
+    code: &str,
+    once: &str,
+    target: &str,
+    environment: &str,
+) -> Response {
+    let minutes = inner.window.as_secs().div_ceil(60).max(1);
+    page(
+        StatusCode::OK,
+        fill(
+            CODE_PAGE,
+            &[
+                ("target", &escape(target)),
+                ("environment", &escape(environment)),
+                ("code", &escape(code)),
+                ("once", &escape(once)),
+                ("minutes", &minutes.to_string()),
+            ],
+        ),
+    )
+}
+
+/// A person's one-time code, posted from its page: it goes to the sign-in
+/// that asked for it, once, and the answer is what the act came to.
+async fn code_given(
+    State(inner): State<Arc<Inner>>,
+    Path(code): Path<String>,
+    body: Bytes,
+) -> Response {
+    let fields = form_of(&body, PRESS_LIMIT).unwrap_or_default();
+    drop(body);
+    let value = |name: &str| {
+        fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.clone())
+    };
+    let (sent, carried) = {
+        let mut state = inner.state();
+        let Some(found) = state.codes.get_mut(&code) else {
+            return nothing_here();
+        };
+        let expected = found.once.take();
+        let fits = match (expected.as_deref(), value("once")) {
+            (Some(expected), Some(given)) => same(expected, &given),
+            _ => false,
+        };
+        // Taken out either way: a post that is not from the page ends the
+        // sign-in, which then signs nothing in, and its press ends.
+        let Some(found) = state.codes.remove(&code) else {
+            return nothing_here();
+        };
+        if !fits {
+            return answer(
+                StatusCode::FORBIDDEN,
+                "Nothing was signed in",
+                "The code did not come from the page as it was shown, so the sign-in ended. Ask for it again.",
+            );
+        }
+        let sent = match (found.answer, value("code")) {
+            (Some(answer), Some(given)) if !given.is_empty() => {
+                answer.send(a2m_core::Secret::new(given)).is_ok()
+            }
+            _ => false,
+        };
+        (sent, found.carried)
+    };
+    if !sent {
+        return answer(
+            StatusCode::CONFLICT,
+            "Nothing was signed in",
+            "No code was given, or the sign-in had ended. Ask for the sign-in again.",
+        );
+    }
+    match carried {
+        Some(carried) => carried.await.unwrap_or_else(|_| not_carried_out()),
+        None => answer(
+            StatusCode::OK,
+            "The code was handed on",
+            "The sign-in goes on. The program that asked can call it again to be told how it ended.",
+        ),
+    }
 }
 
 async fn act_decline(
@@ -1459,6 +1730,7 @@ impl LocalSurface {
             .route("/act/{code}", get(act_show))
             .route("/act/{code}/confirm", post(act_confirm))
             .route("/act/{code}/decline", post(act_decline))
+            .route("/code/{code}", post(code_given))
             .fallback(|| async { nothing_here() })
             .layer(axum::middleware::from_fn_with_state(port, guard))
             .with_state(Arc::clone(&self.inner));
@@ -1667,7 +1939,7 @@ impl PersonSurface for LocalSurface {
             Ok(SurfaceLink {
                 url: None,
                 text: format!(
-                    "`{}` needs its person to sign in. Sign in at the window the engine opens for it on this machine, then call again.",
+                    "`{}` needs its person to sign in. Ask for it with `session.login`: the person carries the sign-in out on its page on this machine. Then resume the run.",
                     ask.target
                 ),
             })
@@ -1750,9 +2022,57 @@ impl PersonSurface for LocalSurface {
         })
     }
 
-    fn ask_session(&self, _ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
-        // No notification and no return address are built on one machine
-        // yet, so the session's person cannot be reached from here.
-        Box::pin(async { PersonAnswer::Unreachable })
+    fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
+        Box::pin(async move {
+            // A one-time code is asked for on the page of the person's own
+            // press of Carry out, while it is carried out (decision 0205):
+            // the person is at the page then, and nobody else is asked. No
+            // notification and no return address are built on one machine
+            // yet, so any other request cannot reach the person from here.
+            let (PersonAsk::EnterCode { .. }, Identity::Person(person)) = (&ask.ask, &ask.identity)
+            else {
+                return PersonAnswer::Unreachable;
+            };
+            let inner = &self.inner;
+            let (Ok(code), Ok(once)) = (inner.code(), inner.code()) else {
+                return PersonAnswer::Unreachable;
+            };
+            let (given, got) = oneshot::channel::<a2m_core::Secret>();
+            let tell = {
+                let mut state = inner.state();
+                let Some(tell) = state
+                    .presses
+                    .iter_mut()
+                    .find(|press| press.signs_in && press.person == *person)
+                    .and_then(|press| press.tell.take())
+                else {
+                    return PersonAnswer::Unreachable;
+                };
+                state.codes.insert(
+                    code.clone(),
+                    CodePage {
+                        target: ask.target.to_string(),
+                        environment: ask.environment.to_string(),
+                        once: Some(once),
+                        answer: Some(given),
+                        carried: None,
+                    },
+                );
+                tell
+            };
+            if tell.send(code.clone()).is_err() {
+                inner.state().codes.remove(&code);
+                return PersonAnswer::Unreachable;
+            }
+            let answered = tokio::time::timeout(inner.window, got).await;
+            // The page goes whatever came of it: a code is taken once.
+            inner.state().codes.remove(&code);
+            match answered {
+                Ok(Ok(secret)) => {
+                    PersonAnswer::Done(a2m_auth::Returned::new().with("code", secret))
+                }
+                _ => PersonAnswer::NoAnswer,
+            }
+        })
     }
 }

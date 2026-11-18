@@ -461,6 +461,32 @@ async fn a_driver_is_given_the_running_operations_destinations_and_no_others() {
     assert!(destinations.iter().any(|address| address == ELSEWHERE));
 }
 
+/// No input says where a request goes (section 502): the run's destinations
+/// come from the published plan and the operation's manifest alone, and each
+/// carries the scope its own address gives (decision 0240). An input that
+/// holds an address adds no destination and sets no scope.
+#[tokio::test]
+async fn a_destinations_scope_comes_from_its_address_and_never_from_an_input() {
+    const IN_AN_INPUT: &str = "http://127.0.0.1:9/";
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    let _ = scene
+        .work(JobKind::Execute, ORDER_GET, order(IN_AN_INPUT))
+        .await;
+    let scoped = scene.hooks.scoped_with.lock().unwrap().clone();
+    assert!(!scoped.is_empty());
+    for destinations in &scoped {
+        assert!(!destinations.is_empty());
+        for (address, scope) in destinations {
+            assert_ne!(address, IN_AN_INPUT);
+            assert_eq!(
+                scope.as_ref(),
+                Some(&a2m_core::ScopedHost::of_destination(address)),
+                "{address}"
+            );
+        }
+    }
+}
+
 // ---- point 13: a masked number ----
 
 #[tokio::test]

@@ -346,11 +346,17 @@ fn the_exit_code_follows_the_failure() {
         );
     }
 
-    // A machine whose key store does not answer is degraded: it reads,
-    // and refuses everything that writes, with the way out.
+    // A machine whose vault cannot open reads, and refuses everything that
+    // writes, with the way out. This machine's installation file chooses
+    // the passphrase route on every system (`Bare::installation`), and no
+    // passphrase was given, so the refusal is that failure by name, the
+    // same on Linux, macOS, and Windows (decision 0220).
     let degraded = bare.run(&["target", "add", "example"]);
     assert_eq!(degraded.status.code(), Some(1));
-    assert_eq!(object(&degraded)["error"]["code"], "engine_degraded");
+    assert_eq!(
+        object(&degraded)["error"]["code"],
+        "vault_passphrase_missing"
+    );
     let doctor = text(&bare.run(&["doctor", "run"]).stdout);
     assert!(
         doctor.contains(anything2mcp::PASSPHRASE_VARIABLE),
@@ -474,21 +480,14 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
         "{made}"
     );
 
-    // `add` registers the target, then stops at the first of its actions
-    // that is not built, and says which.
+    // `add` registers the target, scouts it, shows the report, and asks
+    // for the sign-in, which a target that declares none does not need
+    // (decision 0205).
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
-    assert_eq!(add.status.code(), Some(1), "{added}");
+    assert_eq!(add.status.code(), Some(0), "{added}");
     assert_eq!(added["action"], "session.login", "{added}");
-    assert_eq!(added["error"]["code"], "action_not_built");
-    // The step it stopped before was never begun, and the note says what
-    // was done and what was not.
-    let note = added["error"]["message"].as_str().unwrap();
-    assert!(note.contains("stopped before `session.login`"), "{note}");
-    assert!(
-        note.contains("Done: `target.add`, `scout.run`, `scout.report`"),
-        "{note}"
-    );
+    assert_eq!(added["result"]["state"], "not_needed", "{added}");
     let file = bare
         .project
         .path()

@@ -66,6 +66,29 @@ pub const TERMS_TEXT: &str = "documents/terms.txt";
 /// Delimited, comma, LF, three folders down.
 pub const ARCHIVED_STOCK_CSV: &str = "archive/2026/11/stock-2026-11.csv";
 
+/// An INI file: a byte-order mark, CRLF, comments, keys before the first
+/// section, a value in quotes, an empty value, a comment after a value, and
+/// a last line not ended.
+pub const SETTINGS_INI: &str = "config/example.ini";
+/// A property list in its XML form: the declaration and the document type a
+/// property list carries, a comment, a reference, nested dictionaries, an
+/// array, and tabs.
+pub const SETTINGS_PLIST: &str = "config/example.plist";
+/// A folder of notes, read and written as a collection of entries: two text
+/// files, one file that is not text, and a folder holding one more.
+pub const INBOX_FOLDER: &str = "inbox";
+/// The first note of the folder [`INBOX_FOLDER`].
+pub const INBOX_NOTE_ONE: &str = "inbox/note-1.txt";
+/// The second note, CRLF, its last line not ended.
+pub const INBOX_NOTE_TWO: &str = "inbox/note-2.txt";
+/// A file of the folder that is not UTF-8 text.
+pub const INBOX_BINARY: &str = "inbox/scan.bin";
+/// A note one folder down.
+pub const INBOX_DEEP: &str = "inbox/later/note-3.txt";
+/// A growing file: lines that end in LF and in CRLF, and a last line that is
+/// not finished.
+pub const ORDERS_LOG: &str = "logs/orders.log";
+
 /// The one file in the folder outside the root. No tool may ever read or change it.
 pub const OUTSIDE_FILE: &str = "outside.csv";
 
@@ -122,6 +145,19 @@ pub fn files() -> Vec<SeedFile> {
         seed(EMPTY_CSV, Vec::new()),
         seed(TERMS_TEXT, terms_text()),
         seed(ARCHIVED_STOCK_CSV, archived_stock_csv()),
+        seed(SETTINGS_INI, settings_ini()),
+        seed(SETTINGS_PLIST, settings_plist()),
+        seed(
+            INBOX_NOTE_ONE,
+            b"First note of the example inbox.\n".to_vec(),
+        ),
+        seed(
+            INBOX_NOTE_TWO,
+            lines(&["Second note,", "two lines."], "\r\n", false),
+        ),
+        seed(INBOX_BINARY, vec![0x89, 0x45, 0x58, 0x00, 0xFF, 0xFE, 0x0A]),
+        seed(INBOX_DEEP, b"A note one folder down.\n".to_vec()),
+        seed(ORDERS_LOG, orders_log()),
     ]
 }
 
@@ -416,6 +452,70 @@ fn settings_yaml() -> Vec<u8> {
         "\n",
         true,
     )
+}
+
+fn settings_ini() -> Vec<u8> {
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend(lines(
+        &[
+            "; Settings of the imaginary example order-entry system.",
+            "title = example",
+            "",
+            "[orders]",
+            "# every order number starts with this",
+            "prefix = A-",
+            "next_number=103",
+            "note = \"kept as written\"",
+            "empty =",
+            "",
+            "[warehouse W1]",
+            "open = true",
+            "cutoff = 16:30 ; the last pickup",
+        ],
+        "\r\n",
+        false,
+    ));
+    bytes
+}
+
+fn settings_plist() -> Vec<u8> {
+    lines(
+        &[
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<!DOCTYPE plist PUBLIC \"-//Example//DTD PLIST 1.0//EN\" \"http://example.invalid/PropertyList-1.0.dtd\">",
+            "<plist version=\"1.0\">",
+            "<dict>",
+            "\t<!-- Settings of the imaginary example order-entry system. -->",
+            "\t<key>Title</key>",
+            "\t<string>Rails &amp; brackets</string>",
+            "\t<key>NextNumber</key>",
+            "\t<integer>103</integer>",
+            "\t<key>Open</key>",
+            "\t<true/>",
+            "\t<key>Orders</key>",
+            "\t<dict>",
+            "\t\t<key>Prefix</key>",
+            "\t\t<string>A-</string>",
+            "\t\t<key>Rate</key>",
+            "\t\t<real>2.50</real>",
+            "\t</dict>",
+            "\t<key>Warehouses</key>",
+            "\t<array>",
+            "\t\t<string>W1</string>",
+            "\t</array>",
+            "</dict>",
+            "</plist>",
+        ],
+        "\n",
+        true,
+    )
+}
+
+fn orders_log() -> Vec<u8> {
+    let mut bytes = b"2026-11-18T08:00:00 order A-100 drafted\n".to_vec();
+    bytes.extend_from_slice(b"2026-11-18T08:01:00 order A-100 submitted\r\n");
+    bytes.extend_from_slice(b"2026-11-18T08:02:00 order A-101 dra");
+    bytes
 }
 
 fn settings_xml() -> Vec<u8> {

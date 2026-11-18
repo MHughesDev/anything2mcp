@@ -1,0 +1,17 @@
+surface: config_files
+file: example.plist
+format: property_list
+fingerprint: {keys: [Title, NextNumber, Open, Orders, Warehouses]}
+may_be_open: false
+records:
+  general:
+    path: []
+    fields:
+      title: {path: [Title], type: note, writable: true}
+      next_number: {path: [NextNumber], type: integer, writable: true}
+      open: {path: [Open], type: boolean, writable: true}
+  orders:
+    path: [Orders]
+    fields:
+      prefix: {path: [Prefix], type: identifier}
+      rate: {path: [Rate], type: rate, writable: true}

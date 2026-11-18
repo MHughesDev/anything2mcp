@@ -1,6 +1,6 @@
 # 503. Approval and sign-in surfaces
 
-Two moments need a person in front of a screen: approving a write, and signing in. Sections 212 and 215 say that these happen and who may do them. This section says what the person actually sees and what the engine has to build to show it, starting with the single-machine case that Phase 3 needs.
+Two moments need a person in front of a screen: approving a write, and signing in. Sections 212 and 215 say that these happen and who may do them. This section says what the person actually sees and what the engine has to build to show it, starting with the single-machine case. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## What a person must be able to do
 
@@ -22,7 +22,7 @@ A diff of forty records does not fit in a system dialog, and a web page alone co
 
 A person's act an agent asked for is shown the same way, on a page of its own, with a press of Carry out in place of Approve. A publish is pinned to the hash of the plan the page shows; drafts that change before the press publish nothing.
 
-Where the operating system offers no such prompt, step 3 is a native confirmation dialog raised by the engine, showing the tool name and the counts; it is not in the first build. Over SSH, in a container, and on a headless machine there is neither, and nothing on that machine can approve. On Linux the same holds until an administrator has installed the policy file that ships with the product. Section 222 states what each does and does not protect against.
+Where the operating system offers no such prompt, step 3 is a native confirmation dialog raised by the engine, showing the tool name and the counts; it is not in the first build. Over SSH, in a container, and on a headless machine there is neither, and nothing on that machine can approve. On Linux the same holds until a person with administrator rights has installed the policy file that ships in the product's binary: the engine writes a copy into its data directory and names the one command that installs it, which installs the copy only when its bytes are the file the binary carries; the engine never runs it ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)). Section 222 states what each does and does not protect against.
 
 **This is the one exception to section 222.** The engine opens no network port by default, and that stays true: the loopback listener is not a front door, exists only during a pending approval or sign-in, carries no API, and closes when nothing is waiting.
 
@@ -35,7 +35,11 @@ Signing in through a page is the web pack's: its auth providers drive a browser 
 - The engine opens a visible window of its own browser, in the profile for that identity, at the system's sign-in page.
 - The person signs in as they always do. Password managers, MFA prompts, and passkeys work as in any browser window.
 - The session keeper watches for the target's signed-in probe to succeed, then closes the window or leaves it for the first run.
-- The window shows which system and which Anything2MCP identity it is for. The engine never asks for a password in its own interface.
+- The window shows which system and which Anything2MCP identity it is for. The engine never asks for the password of such a sign-in in its own interface.
+
+The window is built for the web pack's `window_login`, `sso_oidc`, and `sso_saml`: the engine waits for the target's declared sign of success rather than the probe, and closes the window ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)). Also built is `form_login`: the person stores the username and password on the engine's own page, the provider fills the application's sign-in page in the engine's browser, and a one-time code the page asks for is asked of the person on the same page, each time ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)).
+
+A sign-in through a provider that holds or exchanges a credential is a person's act an agent asks for with `session.login`, shown on a page of its own as a publish is: the page names the target, the environment, the provider, the vault reference of each credential, whether the sign-in is declared by a published version or only by the drafts, and every address a credential or a token of it is sent to, with an empty field for each credential not stored; its declaration is pinned, so drafts that change before the press sign in nowhere ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)); the press raises the presence prompt and carries what was typed to the engine alone, which seals it for the person. Where the provider then asks for a one-time code, the press's answer is a page that takes it, for that one sign-in ([decision 0205](../../decisions/0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md)).
 
 ## On a server
 

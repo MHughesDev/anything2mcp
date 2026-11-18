@@ -52,6 +52,7 @@ export interface BindingPromoteInput {
   mode: string;
   target: string;
   tool: string;
+  position?: number;
   run_id?: string;
 }
 
@@ -79,7 +80,11 @@ export interface CaptureStopInput {
  * The input of `client.connect`.
  */
 export interface ClientConnectInput {
-  client: string;
+  client?: string;
+  name?: string;
+  print?: boolean;
+  toolset?: "use" | "build";
+  yes?: boolean;
 }
 
 /**
@@ -146,8 +151,9 @@ export type DoctorRunInput = Record<string, never>;
  * The input of `draft.delete`.
  */
 export interface DraftDeleteInput {
-  file: string;
   target: string;
+  file?: string;
+  files?: string[];
 }
 
 /**
@@ -172,6 +178,8 @@ export interface DraftTryInput {
   target: string;
   tool: string;
   input?: Record<string, unknown>;
+  mode?: string;
+  position?: number;
 }
 
 /**
@@ -237,7 +245,9 @@ export interface FixtureRecordInput {
   target: string;
   tool: string;
   input?: Record<string, unknown>;
+  mode?: string;
   name?: string;
+  position?: number;
 }
 
 /**
@@ -470,7 +480,9 @@ export interface SessionEndInput {
 /**
  * The input of `session.list`.
  */
-export type SessionListInput = Record<string, never>;
+export interface SessionListInput {
+  target?: string;
+}
 
 /**
  * The input of `session.login`.
@@ -734,8 +746,9 @@ export declare abstract class Actions {
 
   /**
    * Make the first binding of a drafted operation verified, on the evidence of its
-   * offline tests and a trial. For an operation that writes, a person's act. The engine
-   * action is `binding.promote`.
+   * offline tests and a trial, or a binding in shadow verified, on its run of exact
+   * matches. For an operation that writes, and for a binding in shadow, a person's act.
+   * The engine action is `binding.promote`.
    */
   bindingPromote(input: BindingPromoteInput, options?: CallOptions): Promise<Response>;
 
@@ -757,10 +770,11 @@ export declare abstract class Actions {
   captureStop(input: CaptureStopInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Write the configuration an MCP client needs to reach this engine. The engine action
-   * is `client.connect`.
+   * Give the configuration an MCP client needs to start the bridge for this project:
+   * printed for the `generic` profile, or set in the file a client profile names, shown
+   * first and written by a local person. The engine action is `client.connect`.
    */
-  clientConnect(input: ClientConnectInput, options?: CallOptions): Promise<Response>;
+  clientConnect(input?: ClientConnectInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The outside programs providers need: found or not, with path and digest. The engine
@@ -815,8 +829,9 @@ export declare abstract class Actions {
   doctorRun(input?: DoctorRunInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Remove one draft file of a target from the project; a published version keeps its
-   * own copy. The engine action is `draft.delete`.
+   * Remove draft files of a target from the project, one by `file` or several by
+   * `files`, all or none; a published version keeps its own copy. The engine action is
+   * `draft.delete`.
    */
   draftDelete(input: DraftDeleteInput, options?: CallOptions): Promise<Response>;
 
@@ -1080,8 +1095,10 @@ export declare abstract class Actions {
   sessionList(input?: SessionListInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Ask the caller's person to sign in to one surface of a target. Returns a link for
-   * the person; the agent never sees a credential. The engine action is
+   * Ask the caller's person to sign in to one surface of a target. A credential is
+   * never an input: where one is not stored, the person types it on the engine's own
+   * page, and carries the sign-in out there. Returns that a session exists, for whom,
+   * where, until when, and at which level; never its contents. The engine action is
    * `session.login`.
    */
   sessionLogin(input: SessionLoginInput, options?: CallOptions): Promise<Response>;

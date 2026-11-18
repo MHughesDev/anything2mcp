@@ -1,0 +1,14 @@
+operation: example_ini_orders_get
+title: Read the order settings
+effect: read
+inputs: {}
+outputs:
+  prefix: {type: identifier}
+  next_number: {type: integer}
+bindings:
+  - mode: file
+    verb: read
+    document: ini_settings
+    record: orders
+description: >
+  Reads the order settings from the INI file.

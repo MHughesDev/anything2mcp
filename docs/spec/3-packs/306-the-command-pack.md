@@ -1,6 +1,6 @@
 # 306. The command pack
 
-The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It is the second pack to be built. It was chosen because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The mode is real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires.
+The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It was chosen as the second pack to build because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The mode is real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **It is never a shell.** No command line is ever put together from text an agent supplied, and no program that reads a command line as code is started on an agent's behalf ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
 
@@ -16,12 +16,14 @@ The command pack lets a target be a program: something started with arguments, w
 | A shell, a command interpreter, or any route through one, including the Windows command interpreter behind batch and command-script files | It reads a line as code; nothing typed can survive that |
 | A program whose argument is evaluated as code: an interpreter given inline code, a tool's "execute this" or "run this expression" flag, a template the program expands | A tool that accepts free text and runs it cannot be verified |
 | Finding the program on the search path, or a path that comes from an input | Rule seven, and section 502: no input changes what runs |
-| A program, a directory on the way to it, or a link on the way, that a user other than the engine's can write to or replace. A file or directory a group can write is refused whatever the group | Anyone who can replace the file, or change where its path leads, can choose what runs |
+| A program, a directory on the way to it, or a link on the way, that a user other than the engine's can write to or replace. A file or directory a group can write is refused unless the group is the system's own: on macOS the administrators' group, 80; on Linux none, unless the person names its numeric id in the protected setting `packs.command.admin_groups`. On Windows the owner and access list of each are read, and only the engine's user, the local system account, the Administrators group, and the trusted installer service may hold a right that changes what the path names; a link on the way is refused there ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)) | Anyone who can replace the file, or change where its path leads, can choose what runs |
 | A program whose work is to start the program its arguments name: one that sets a priority, a time limit, a root, or another user for it | Its argument is a program, so a value in it chooses what runs |
 | A terminal. The program never gets one | A screen of text belongs to the terminal kind of [section 106](../1-product/106-what-it-latches-onto.md), not here |
 | Attaching to a program already running, or reading its memory | Section 106 refuses both |
 
-A script that the system ships is allowed only as a fixed pair: the interpreter and the script file, both named by path and both checked by digest, with no input in any position the interpreter reads as code.
+A script is allowed only as a fixed pair: the interpreter, named by path and checked like any program, and a script file the target keeps, named by its path inside the target's folder and checked by digest at every start, with no input in any position the interpreter reads as code ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)). The interpreter is given the fixed arguments its file declares, then the path of a checked copy of the script in the run's own folder, then the command's typed elements. The interpreter is started only in the one form a closed table in the provider contract gives it, in which it reads a script file and takes every element after it as data: the POSIX shell with no fixed argument, Python with `-I`, Windows PowerShell with `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`, and `osascript` with none. An interpreter enters the table only with a test on a system that has it, proving that a value reaches the script as the same bytes; every other interpreter, and every other form, is refused, and the command interpreters that read their whole line as code are refused by name ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). The copy of the script, its folder, and every folder on the way to it must be closed to other users when the interpreter starts.
+
+The digest pins the script: the bytes reviewed at publish are the bytes started. It does not make the script safe. A script is the developer's code on the person's machine, its effect is the developer's declaration as a command's is, and a person reviews it at publish.
 
 ## What the pack brings
 
@@ -116,15 +118,16 @@ commands:
 | `surface`, at the top of the file | A surface of kind `program`. Without it, the target's first one |
 | `digests` (required) | Known builds, by platform. A file with no listed digest does not run ("Failures") |
 | `version` | A command that reports the version, its expected pattern, and the versions the file was written for |
-| `help` | The argument lists discovery may run, with `{command}` standing for the words of a listed command's name, one element each. None are assumed |
+| `help` | The argument lists discovery may run, with `{command}` standing for the words of a listed command's name, one element each. None are assumed. Some programs have a short help and a fuller one; discovery finds only what the declared forms print, so declare the fullest form the program has |
 | `env` | `set`: variables and values; `pass`: names copied from the engine's environment. Nothing else reaches the program. `{session.state_dir}` is a folder the engine owns for the session ("Secrets") |
 | `workdir` | `fresh`, or a named folder inside the allowed roots of section 502 |
 | `stdin` | `none` (closed at once), a param, a secret, or a blob. Never a terminal |
 | `limits` | A time limit and a byte ceiling for each stream. A grace before a forced stop, and more than one start at a time on a surface, are designed and not yet taken: the supervisor has neither ([decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md)) |
 | `prompts` | Patterns that mean the program is asking a person something |
 | `exits` | What each exit status means, shared by every command: `ok`, `absent`, or a failure class. A command may add to it, never change it |
+| `interpreter` | `args`: the fixed arguments that make the program read a script file. The program is then the interpreter of fixed pairs: every command names a `script`, and no help form is declared |
 
-**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`; a text param states its own anchored `pattern`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`.
+**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`; a text param states its own anchored `pattern`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`, and, on an interpreter, `script` (required there: `path` inside the target's folder and `digest`).
 
 **Argument elements.** `args` is the argument list, element by element. Each entry becomes exactly the elements shown, and no element is ever split, joined to another, or read by anything but the program.
 
@@ -174,7 +177,7 @@ The pack adds the four step kinds that section 201 lists for the command archety
 
 ## The driver
 
-**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
+**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. On Windows the owner and access list of the file and of each folder are read instead of a mode, and the folder that holds the program is closed also to another identity adding a file beside it, because a program loads its libraries from there. An access list that cannot be read is a refusal. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
 
 **Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the plan's declared programs and owns the process from then on. A command that writes is started only by the step the plan marks as its commit point, for a record the ledger holds an intent for; the driver checks this itself and does not rely on the compiler.
 
@@ -226,7 +229,7 @@ The lint refuses, by rule: a program on the pack's list of shells, interpreters,
 
 ## Secrets
 
-A credential reaches a program only through `inject` ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)), for one step, and never as an argument, since other programs on the machine can read a process's arguments. A `commands/` file does not compile when it sets or copies a variable named for a credential, holds a literal that looks like one, or gives a value to a flag named for one.
+A credential reaches a program only through `inject` ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)), for one step, and never as an argument, since other programs on the machine can read a process's arguments. A `commands/` file does not compile when it sets or copies a variable named for a credential, holds a literal that looks like one, or gives a value to a flag named for one. Nor when it sets or copies a variable that makes a program load code other than its own, from the provider contract's closed list, which the supervisor refuses again ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)).
 
 | Channel | When |
 | --- | --- |
@@ -348,3 +351,4 @@ Steps 2, 3, 6, and 7 are built in `a2m-pack-command`, except what the [crate's d
 - How a person signs a program in when it keeps its own sign-in and asks for it interactively.
 - Whether the terminal kind becomes an interface mode of this pack, as section 106 asks.
 - Confinement: which operating-system mechanism could make a command's file and network reach `confined` rather than `declared`.
+- Which folders a group can write on an ordinary installation of each system, and so what the refusal above still costs: the administrators' group of macOS now counts as the system's own, and a file in an application bundle owned by an administrator who is not the engine's user is still refused (research brief 35).

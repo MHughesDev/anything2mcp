@@ -17,7 +17,8 @@ use a2m_provider::{Manifest, ProviderName, ProviderSettings, SettingScope, Setti
 use serde_json::{Value as Json, json};
 use toml::de::{DeTable, DeValue};
 
-use super::schema::{self, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
+use super::keeper::{InstallationKeeper, system_installation_folder};
+use super::schema::{self, Built, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
 use crate::codes;
 use crate::paths::Paths;
 
@@ -109,6 +110,9 @@ pub struct Entry {
     pub effective: Effective,
     /// What it does.
     pub doc: String,
+    /// Whether the part it governs is built. A key that is not built keeps
+    /// its default: a value written for it is refused.
+    pub built: Built,
 }
 
 /// One preset, as `config.show` lists it.
@@ -151,6 +155,12 @@ impl SourceFile {
 pub struct Sources {
     /// The installation's settings file, when there is one.
     pub installation: Option<SourceFile>,
+    /// Who may change the installation's settings file. Only a file no
+    /// account but an administrator can change may loosen a protected
+    /// setting or lock a key; any other is held to the rule of the
+    /// person's own layers. [`Sources::read`] checks the file on disk; the
+    /// default is not checked, which is held to the person's rule.
+    pub installation_keeper: InstallationKeeper,
     /// A site's own presets; each file's stem is the preset's name.
     pub presets: Vec<SourceFile>,
     /// The user's settings file.
@@ -190,7 +200,16 @@ impl Sources {
         project: Option<&Path>,
         environment: BTreeMap<String, String>,
     ) -> Result<Self, Failure> {
-        let installation = read_file(&paths.installation_config.join(SETTINGS_FILE_NAME))?;
+        let installation_path = paths.installation_config.join(SETTINGS_FILE_NAME);
+        let installation = read_file(&installation_path)?;
+        // Checked after the read: the check walks the folders, and a file
+        // whose folders are the administrator's alone cannot be changed
+        // between the two by anyone else.
+        let installation_keeper = if installation.is_some() {
+            InstallationKeeper::of_file(&installation_path)
+        } else {
+            InstallationKeeper::default()
+        };
         let user = read_file(&paths.config.join(SETTINGS_FILE_NAME))?;
         let project = match project {
             Some(folder) => read_file(&folder.join(PROJECT_FILE_NAME))?,
@@ -213,6 +232,7 @@ impl Sources {
         }
         Ok(Self {
             installation,
+            installation_keeper,
             presets,
             user,
             project,
@@ -283,6 +303,7 @@ struct Rule {
     protected: Option<Safer>,
     effective: Effective,
     doc: String,
+    built: Built,
     kind: RuleKind,
 }
 
@@ -354,6 +375,7 @@ pub struct Settings {
     refused: Vec<Failure>,
     packs: Vec<Arc<Manifest>>,
     digest: Digest,
+    project_file: Option<PathBuf>,
 }
 
 impl Settings {
@@ -397,7 +419,7 @@ impl Settings {
     pub fn load_all(sources: &Sources) -> (Self, Vec<Failure>) {
         let mut loader = Loader::new(sources);
         loader.run(sources);
-        loader.finish()
+        loader.finish(sources.project.as_ref().map(|file| file.path.clone()))
     }
 
     /// The settings of the empty configuration: every default, the Solo
@@ -477,6 +499,34 @@ impl Settings {
         &self.refused
     }
 
+    /// The project file whose values are layer 6, as the sources named it:
+    /// for an engine, the project file of the folder it was started in.
+    #[must_use]
+    pub fn project_file(&self) -> Option<&Path> {
+        self.project_file.as_deref()
+    }
+
+    /// What the project file wrote, key by key, as the loader took it:
+    /// every value of layer 6, whether or not a higher layer overrode it.
+    #[must_use]
+    pub fn project_values(&self) -> BTreeMap<String, Value> {
+        self.entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                let value = if entry.layer == Layer::Project {
+                    Some(&entry.value)
+                } else {
+                    entry
+                        .overridden
+                        .iter()
+                        .find(|lower| lower.layer == Layer::Project)
+                        .map(|lower| &lower.value)
+                }?;
+                Some((key.clone(), value.clone()))
+            })
+            .collect()
+    }
+
     /// The digest of the effective settings: every key and value, in order.
     /// Recorded at each start, so that a change between two starts is seen.
     #[must_use]
@@ -536,6 +586,15 @@ impl Settings {
             out.insert("origin".to_owned(), json!(entry.origin));
             out.insert("protected".to_owned(), json!(entry.protected));
             out.insert("locked".to_owned(), json!(entry.locked));
+            out.insert("built".to_owned(), json!(entry.built.is_built()));
+            if let Built::No {
+                instead,
+                arrives_with,
+            } = entry.built
+            {
+                out.insert("instead".to_owned(), json!(instead));
+                out.insert("arrives_with".to_owned(), json!(arrives_with));
+            }
             if !entry.overridden.is_empty() {
                 out.insert(
                     "overridden".to_owned(),
@@ -599,6 +658,9 @@ impl Settings {
                 }
             }).collect::<Vec<_>>(),
             "locks": self.locks,
+            // The one project file the engine applies, to every request
+            // (decision 0241): the folder it started in.
+            "project_file": self.project_file.as_ref().map(|path| path.display().to_string()),
             "refused": self.refused.iter().map(|failure| json!({
                 "class": failure.class().to_string(),
                 "code": failure.code().to_string(),
@@ -621,6 +683,8 @@ struct Loader {
     problems: Vec<Failure>,
     packs: Vec<Arc<Manifest>>,
     serve: bool,
+    /// Why the installation's file may not loosen, when it may not.
+    installation_held: Option<String>,
 }
 
 impl Loader {
@@ -639,6 +703,7 @@ impl Loader {
                     scope: setting.scope,
                     effective: setting.effective,
                     doc: setting.doc.to_owned(),
+                    built: setting.built,
                 },
             );
         }
@@ -656,6 +721,7 @@ impl Loader {
                         scope: pack_scope(decl.scope),
                         effective: Effective::NextStart,
                         doc: decl.doc.clone(),
+                        built: Built::Yes,
                     },
                 );
             }
@@ -667,6 +733,10 @@ impl Loader {
             problems: Vec::new(),
             packs: sources.packs.clone(),
             serve: sources.serve,
+            installation_held: sources
+                .installation
+                .as_ref()
+                .and_then(|_| sources.installation_keeper.why_not()),
         }
     }
 
@@ -877,7 +947,20 @@ impl Loader {
                 match value.get_ref() {
                     DeValue::Table(inner) => stack.push((key, inner)),
                     _ if key == "locks.keys" => {
-                        if !installation {
+                        if installation && let Some(why) = self.installation_held.clone() {
+                            self.problems.push(Failure::new(
+                                a2m_core::FailureClass::Policy,
+                                codes::SETTING_PROTECTED,
+                                format!(
+                                    "{origin}: the installation's settings file may lock keys only when no account but an administrator can change it, and {why}."
+                                ),
+                                format!(
+                                    "Remove `[locks]` from this file. An administrator locks keys in the installation's settings file in {}, which no other account can change; under `{}` the installation's folder is the person's own, and no lock is taken from it.",
+                                    system_installation_folder(),
+                                    crate::paths::HOME_VARIABLE
+                                ),
+                            ));
+                        } else if !installation {
                             self.problems.push(Failure::new(
                                 a2m_core::FailureClass::Policy,
                                 codes::SETTING_PROTECTED,
@@ -919,6 +1002,7 @@ impl Loader {
                 protected: setting.protected,
                 effective: setting.effective,
                 doc: setting.doc.to_owned(),
+                built: setting.built,
                 kind: RuleKind::Kernel(setting.kind),
             });
         }
@@ -937,6 +1021,7 @@ impl Loader {
             }),
             effective: Effective::NextStart,
             doc: decl.doc.clone(),
+            built: Built::Yes,
             kind: RuleKind::Pack {
                 manifest: Arc::clone(manifest),
                 key: setting.to_owned(),
@@ -975,6 +1060,27 @@ impl Loader {
             ));
             return;
         };
+        // A key whose part is not built is refused from every layer, a
+        // value equal to its default too: a written value states an intent
+        // nothing can honour (decision 0236).
+        if let Built::No {
+            instead,
+            arrives_with,
+        } = rule.built
+        {
+            self.problems.push(invalid(
+                &raw.origin,
+                format!(
+                    "`{}` is a setting whose part is not built yet, so a value would have no effect. {instead}",
+                    raw.key
+                ),
+                format!(
+                    "Remove `{}` from this layer. It arrives with {arrives_with}.",
+                    raw.key
+                ),
+            ));
+            return;
+        }
         let value = match raw.value {
             Written::Typed(value) => Some(value),
             Written::Text(text) => rule.read(&text),
@@ -1041,6 +1147,29 @@ impl Loader {
             ));
             return;
         }
+        let held = (layer == Layer::Installation)
+            .then(|| self.installation_held.clone())
+            .flatten();
+        if let Some(why) = &held
+            && let Some(safer) = rule.protected
+            && let Some(current) = &current
+            && safer.loosens(current, &value)
+        {
+            self.problems.push(Failure::new(
+                a2m_core::FailureClass::Policy,
+                codes::SETTING_PROTECTED,
+                format!(
+                    "{}: `{}` is a protected setting, and the installation's settings file may loosen it only when no account but an administrator can change the file, and {why}.",
+                    raw.origin, raw.key
+                ),
+                format!(
+                    "Remove the key from this file, or set it to a value that tightens it. To loosen it, an administrator writes it in the installation's settings file in {}, which no other account can change; under `{}` the installation's folder is the person's own, and no loosening is taken from it.",
+                    system_installation_folder(),
+                    crate::paths::HOME_VARIABLE
+                ),
+            ));
+            return;
+        }
         if layer.only_tightens()
             && let Some(safer) = rule.protected
             && let Some(current) = &current
@@ -1055,7 +1184,10 @@ impl Loader {
                     raw.key,
                     layer.as_str()
                 ),
-                "A person loosens it with `anything2mcp config set`, which asks for proof of presence; on a server, in the installation's settings file.",
+                format!(
+                    "Remove the key from this layer, or set it to a value that tightens it. A loosening is taken only from the installation's settings file in {}, which an administrator writes and no other account can change; `anything2mcp config set`, which would let a person loosen it with proof of presence, is not built yet.",
+                    system_installation_folder()
+                ),
             ));
             return;
         }
@@ -1082,32 +1214,12 @@ impl Loader {
                 scope: rule.scope,
                 effective: rule.effective,
                 doc: rule.doc,
+                built: rule.built,
             },
         );
     }
 
-    fn finish(mut self) -> (Settings, Vec<Failure>) {
-        // No outbound proxy is built yet (decision 0197): a value would have
-        // no effect, and a person who set one would believe their traffic
-        // goes through it. It is refused by name, and left out.
-        let proxied = self
-            .entries
-            .get("network.proxy")
-            .filter(|entry| entry.value.as_text().is_some_and(|text| !text.is_empty()))
-            .map(|entry| entry.origin.clone());
-        if let Some(origin) = proxied {
-            if let Some(entry) = self.entries.get_mut("network.proxy") {
-                entry.value = Value::Text(String::new());
-                entry.layer = Layer::Default;
-                "the built-in default".clone_into(&mut entry.origin);
-                entry.overridden.clear();
-            }
-            self.problems.push(codes::input(
-                codes::SETTINGS_INVALID,
-                format!("{origin}: `network.proxy` is set, and no outbound proxy is supported yet, so the value would have no effect."),
-                "Remove `network.proxy`; traffic goes straight to each target, as the network allows.",
-            ));
-        }
+    fn finish(mut self, project_file: Option<PathBuf>) -> (Settings, Vec<Failure>) {
         let locked: Vec<String> = self
             .entries
             .keys()
@@ -1130,6 +1242,7 @@ impl Loader {
             refused: self.problems.clone(),
             packs: self.packs,
             digest: hasher.finish(),
+            project_file,
         };
         (settings, self.problems)
     }

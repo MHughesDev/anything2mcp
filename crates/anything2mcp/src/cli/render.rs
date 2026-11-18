@@ -63,18 +63,51 @@ fn empty(value: &Json) -> &'static str {
     }
 }
 
+/// Whether a field holds a moment: the faces name every moment `at` or
+/// `<something>_at`, as whole milliseconds since 1970 in UTC.
+fn is_moment(name: &str, value: &Json) -> bool {
+    (name == "at" || name.ends_with("_at")) && value.is_i64()
+}
+
+/// A moment of whole milliseconds since 1970 in UTC, in RFC 3339 form, as
+/// a person reads it at a terminal (decision 0219). The machine-readable
+/// form keeps the number. `None` for a moment no calendar date holds.
+fn moment(millis: i64) -> Option<String> {
+    let days = i32::try_from(millis.div_euclid(86_400_000)).ok()?;
+    let in_day = millis.rem_euclid(86_400_000);
+    let date = a2m_core::Date::from_days(days).ok()?;
+    let (hours, minutes) = (in_day / 3_600_000, in_day / 60_000 % 60);
+    let (seconds, rest) = (in_day / 1_000 % 60, in_day % 1_000);
+    Some(format!(
+        "{date}T{hours:02}:{minutes:02}:{seconds:02}.{rest:03}Z"
+    ))
+}
+
 /// Lays a JSON value out as indented lines: `name: value` for a field, a
 /// dash for an item of a list.
 fn lines(value: &Json, indent: usize, out: &mut String) {
+    laid_out(value, indent, true, out);
+}
+
+/// [`lines`]. `moments` says whether a field named as a moment is printed
+/// as one: the engine's own fields are, and the values of a tool's
+/// `result`, which are the system's, are printed as the result carries
+/// them.
+fn laid_out(value: &Json, indent: usize, moments: bool, out: &mut String) {
     let pad = " ".repeat(indent);
     match value {
         Json::Object(map) if !map.is_empty() => {
             for (name, value) in map {
-                if is_scalar(value) {
+                if moments
+                    && is_moment(name, value)
+                    && let Some(at) = value.as_i64().and_then(moment)
+                {
+                    out.push_str(&format!("{pad}{name}: {at}\n"));
+                } else if is_scalar(value) {
                     out.push_str(&format!("{pad}{name}: {}\n", shown(value, indent + 2)));
                 } else {
                     out.push_str(&format!("{pad}{name}:\n"));
-                    lines(value, indent + 2, out);
+                    laid_out(value, indent + 2, moments && name != "result", out);
                 }
             }
         }
@@ -84,7 +117,7 @@ fn lines(value: &Json, indent: usize, out: &mut String) {
                     out.push_str(&format!("{pad}- {}\n", shown(item, indent + 2)));
                 } else {
                     out.push_str(&format!("{pad}-\n"));
-                    lines(item, indent + 2, out);
+                    laid_out(item, indent + 2, moments, out);
                 }
             }
         }
@@ -192,6 +225,22 @@ fn json_line(response: &Json) -> String {
 ///
 /// Standard error is for a person in both forms, and text for a terminal
 /// is too, so both pass [`visible`] whole. JSON passes [`json_line`].
+/// The readable summary of a scout's report a response carries, and the
+/// command that prints the whole report.
+fn report_summary<'a>(response: &'a Json, tree: &Tree) -> Option<(&'a str, String)> {
+    let action = response.get("action").and_then(Json::as_str)?;
+    if action != "scout.run" && action != "scout.report" {
+        return None;
+    }
+    let result = response.get("result")?;
+    let summary = result.get("text").and_then(Json::as_str)?;
+    let target = result.get("target").and_then(Json::as_str)?;
+    let args = serde_json::json!({"target": target});
+    let whole = command_line(tree, "scout.report", &args)
+        .unwrap_or_else(|| format!("anything2mcp scout report {target}"));
+    Some((summary, format!("{whole} --json")))
+}
+
 pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finished {
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -199,7 +248,12 @@ pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finish
         stdout.push_str(&json_line(response));
         stdout.push('\n');
     } else {
-        if let Some(result) = response.get("result") {
+        if let Some((summary, whole)) = report_summary(response, tree) {
+            // A scout's report is hundreds of lines: at a terminal its
+            // readable summary, and how to print the whole (decision 0219).
+            stdout.push_str(summary.trim_end());
+            stdout.push_str(&format!("\n\nThe whole report, as JSON:\n  {whole}\n"));
+        } else if let Some(result) = response.get("result") {
             lines(&without_said(result), 0, &mut stdout);
         }
         if let Some(next) = response.get("next") {
@@ -242,6 +296,58 @@ mod tests {
 
     use super::{lines, show};
     use crate::cli::parse::Tree;
+
+    /// Decision 0219: at a terminal a scout's report is its summary and the
+    /// command that prints the whole; as JSON it is whole.
+    #[test]
+    fn a_scouts_report_is_its_summary_at_a_terminal_and_whole_as_json() {
+        let response = json!({
+            "ok": true,
+            "action": "scout.run",
+            "result": {
+                "target": "example",
+                "report_hash": "abc",
+                "text": "Scout of `example`, report abc.\nOpen questions: 0.",
+                "content": {"found": [{"kind": "screen", "level": "observed"}]},
+            },
+        });
+        let tree = Tree::empty();
+        let text = show(&response, 0, &tree, false).stdout;
+        assert!(
+            text.starts_with("Scout of `example`, report abc."),
+            "{text}"
+        );
+        assert!(text.contains("scout report example --json"), "{text}");
+        assert!(!text.contains("observed"), "{text}");
+        let json = show(&response, 0, &tree, true).stdout;
+        assert!(json.contains("\"observed\""), "{json}");
+    }
+
+    /// Decision 0219: at a terminal a moment is printed in RFC 3339 form;
+    /// the machine-readable form keeps the number.
+    #[test]
+    fn a_moment_is_printed_as_a_date_and_time_at_a_terminal_and_kept_as_a_number_in_json() {
+        let response = json!({
+            "ok": true,
+            "action": "session.list",
+            "result": {
+                "sessions": [{"expires_at": 1_800_000_000_123_i64, "not_looked_at": ["a"]}],
+                "at": 0,
+                "count": 1_800_000_000_123_i64,
+            },
+        });
+        let tree = Tree::empty();
+        let text = show(&response, 0, &tree, false).stdout;
+        assert!(
+            text.contains("expires_at: 2027-01-15T08:00:00.123Z"),
+            "{text}"
+        );
+        assert!(text.contains("at: 1970-01-01T00:00:00.000Z"), "{text}");
+        // A number that is not named a moment stays a number.
+        assert!(text.contains("count: 1800000000123"), "{text}");
+        let json = show(&response, 0, &tree, true).stdout;
+        assert!(json.contains("\"expires_at\":1800000000123"), "{json}");
+    }
 
     #[test]
     fn text_a_system_returned_reaches_a_terminal_as_text_and_is_never_obeyed() {

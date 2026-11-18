@@ -1,6 +1,6 @@
 # 221. The tool surface agents see
 
-Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the system.
+Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the system. This section designs that surface. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **No client is special.** Any client that speaks the protocol is served alike, whoever made it, a home-built runtime included. Nothing in the kernel knows which make of agent is calling, and conformance is tested against the protocol with at least two unrelated clients. A client's quirk, where one must be handled, is data in a profile ([decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). The guidance on list sizes below is cited from client makers' published advice and applies to every client.
 
@@ -34,7 +34,7 @@ Every tool is generated from published files, so names, descriptions, and result
 
 **A repeated call.** A call that may write can carry an idempotency key of the caller's own, in its `_meta` as `anything2mcp/idempotency_key` or as the `idempotency_key` argument of `a2m_tool_call`. Made again with the same key, it gives back the run the first call started and starts no other; this is what an agent does after a lost answer. Without a key, it lists its runs since the call was sent with `run.list` first ([section 222](222-front-doors-and-the-local-engine.md)).
 
-**Results.** Structured content with a published output schema, plus a one-line summary. Concise by default, paginated by cursor, size-capped with a note when truncated. Every non-success names the next call:
+**Results.** Structured content with a published output schema, plus a one-line summary. Concise by default. A result larger than the setting `tools.result_cap_bytes` (262,144 bytes by default) is not returned: in its place the caller gets a result that says it was truncated, which limit cut it, and its size, and a warning says to ask for less. Lists are paged by `limit` and `offset` (`tool.search`) or by `after` (`run.list`); there is no cursor, and the MCP tool list is one page; a target's own result is neither paged nor cut to a part: it is returned whole or not at all. A cursor over a target's results, and a cut that keeps part of a result, are not built yet. Every non-success names the next call:
 
 ```json
 {

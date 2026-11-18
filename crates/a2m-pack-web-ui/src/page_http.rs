@@ -1,25 +1,39 @@
-//! The `page_http` mode: a read made as a request from inside the page,
-//! with the page's own session (decision 0190).
+//! The `page_http` mode: a request made from inside the page, with the
+//! page's own session (decisions 0190 and 0206).
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |
-//! | `read` | `goto` the page that makes the request, `request` | | |
-//! | the write verbs | Not served: the compiler refuses them, and an operation declared to write, by name | | |
+//! | `read` | `goto` the page that makes the request, in an observing tab; `request` | | |
+//! | `update` | `goto` the page, in an acting tab; `request`, a PUT with the page's own anti-forgery token, marked as the commit point | | `goto` and `request` of the read entry `read_back` names, in an observing tab |
+//! | the other write verbs | Not served: the compiler refuses them as verbs the mode does not declare | | |
 //!
-//! The `goto` sends an observing tab to the page the entry names and waits,
-//! as every `goto` does, for its document to load: that is the named
-//! condition the request waits on. The `request` step makes the read from
-//! inside that page through the browser engine's read, which takes no
-//! method and sends GET alone, checks the status, the media type, and the
-//! answer's shape against the entry, and only then gives the values the
-//! operation names. Checking and extracting are inside the step, so no
-//! unchecked answer is held between two steps.
+//! The `goto` sends a tab to the page the entry names and waits, as every
+//! `goto` does, for its document to load: that is the named condition the
+//! request waits on. A page that answers from another path, as a sign-in
+//! page does once the session has ended, stops the step before anything
+//! is sent. The `request` step makes the request from inside that page
+//! through the browser engine, checks the status and the answer's shape
+//! against the entry, and only then gives the values the operation names.
+//! Checking and extracting are inside the step, so no unchecked answer is
+//! held between two steps.
 //!
-//! Every run of this mode has an observing tab, whatever the run's
+//! A read is made with the engine's read, which takes no method and sends
+//! GET alone, in the observing tab every session opens at prepare, in every
 //! posture: the browser fails every request of the page that could change
-//! the system, beneath the read.
+//! the system, beneath the read. A write is made with the engine's write,
+//! which only an acting tab has: the tab is opened in the same profile at
+//! the write's `goto`, after the engine stored the record's intent, and
+//! only in a posture that may act. The page's anti-forgery token is read by
+//! the browser engine from the page, where the entry says, in the same call
+//! that sends the write, and never leaves the page.
+//!
+//! A page that writes by itself as it loads in the acting tab does so as
+//! part of the write's own steps, after the intent; only the read-back
+//! verifies the record. That is the limit decision 0195 states for the
+//! `ui` mode, and it holds here the same.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
@@ -27,13 +41,17 @@ use a2m_core::{
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Verb,
 };
 use a2m_files::{
-    Diagnostics, JsonSchema, LowerContext, Lowered, Lowering, Place, Possible, ResolvedBinding,
-    Stage, StepCommits,
+    Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
+    ResolvedBinding, Stage, StepCommits,
 };
-use a2m_pack_web_browser::{Address, Browsers, Look, ObserveTab, PagePath, SafeRequests};
+use a2m_pack_web_browser::{
+    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
+    FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
+    Primitive, ProfileKey, SafeRequests, TokenFrom, TokenTo, Visibility, WriteMethod,
+};
 use a2m_provider::{
-    BoxFuture, Cleanup, Driver, DriverHealth, Observed, PrepareContext, Prepared, StepFailure,
-    StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
+    StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::Detail;
 use serde::{Deserialize, Serialize};
@@ -44,33 +62,48 @@ use crate::driver::{
     TabSetup, acting, browser_failure, fail, refusal, segment, tab_setup, until, within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
-use crate::model::{PAYLOAD_FORMAT, ReadItem};
-use crate::requests::{Kind, PageRequest, REQUEST_KIND, RequestSection, pattern};
-use crate::screens::{PACK, WEB_SURFACE, problem};
+use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
+use crate::requests::{Kind, PageRequest, REQUEST_KIND, RequestSection, WriteForm, pattern};
+use crate::screens::{PACK, SCREEN_KIND, WEB_SURFACE, problem};
+use crate::sign_in::{ExpirySigns, session_ended};
 
 /// The name of the mode.
 pub const PAGE_HTTP_MODE: &str = "page_http";
 
-/// The step that makes the read from inside the page, checks its answer,
-/// and gives its values.
+/// The step that makes the request from inside the page, checks its
+/// answer, and gives its values.
 pub const REQUEST: StepKind = StepKind::fixed("request");
 
-/// What the name of a `request` step's argument starts with.
+/// What the name of a `request` step's argument for a path starts with.
 pub(crate) const PATH_ARG: &str = "path.";
+/// What the name of a `request` step's argument for a body field starts
+/// with.
+pub(crate) const BODY_ARG: &str = "body.";
 
-/// The one verb this mode serves. A write verb is not one the manifest
-/// declares, so the compiler refuses it as `kernel.unknown_verb`; a read
-/// verb on an operation declared to write is refused here, as
-/// `web.page_http_writes`.
+/// The verbs that read. A read verb on an operation declared to write is
+/// refused here, as `web.page_http_writes`.
 const READ_VERBS: &[&str] = &["read"];
+/// The verbs that write: `update`, by PUT (decision 0206). Every other
+/// write verb is not one the manifest declares, so the compiler refuses it
+/// as `kernel.unknown_verb`.
+const WRITE_VERBS: &[&str] = &["update"];
 
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
+
+/// The longest a `goto` that landed on another address waits for a page
+/// the target declares as a sign of expiry to show. The page has loaded by
+/// then; this bounds a wait on a named condition, it is not a sleep.
+const EXPIRY_LOOK: Duration = Duration::from_secs(5);
 
 /// The payload of a `request` step.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub(crate) struct RequestStep {
     /// The values given, each from the answer's top-level name of `from`.
     pub outputs: Vec<ReadItem>,
+    /// For a write: the body's fields the step's arguments fill, each under
+    /// [`BODY_ARG`] and its name.
+    #[serde(default)]
+    pub body: Vec<String>,
 }
 
 /// The lowering of the `page_http` mode.
@@ -85,8 +118,18 @@ impl PageHttpLowering {
     pub(crate) fn new(mode: Mode) -> Self {
         Self {
             mode,
-            schema: JsonSchema::object().required("endpoint", JsonSchema::name()),
-            verbs: READ_VERBS.iter().map(|verb| Verb::fixed(verb)).collect(),
+            schema: JsonSchema::object()
+                .required("endpoint", JsonSchema::name())
+                .optional("body", JsonSchema::map_of(JsonSchema::expression()))
+                .optional(
+                    "read_back",
+                    JsonSchema::object().required("endpoint", JsonSchema::name()),
+                ),
+            verbs: READ_VERBS
+                .iter()
+                .chain(WRITE_VERBS)
+                .map(|verb| Verb::fixed(verb))
+                .collect(),
             step_kinds: vec![GOTO, REQUEST],
         }
     }
@@ -170,6 +213,382 @@ fn holes_of(
     args
 }
 
+/// One entry as a lowering uses it.
+struct Found {
+    name: String,
+    section: SectionIndex,
+    entry: PageRequest,
+}
+
+/// The entry a binding, or its `read_back`, names.
+fn found(cx: &LowerContext<'_>, part: &Located<Doc>) -> Result<Found, Diagnostics> {
+    let named = part.get("endpoint");
+    let name = named.and_then(|named| named.as_text()).unwrap_or_default();
+    let name_at = named.map_or(&part.at, |named| &named.at);
+    let found = cx
+        .section(&REQUEST_KIND, &WEB_SURFACE)
+        .and_then(|(index, section)| {
+            let decoded = if section.format == PAYLOAD_FORMAT {
+                section.payload.decode::<RequestSection>().ok()
+            } else {
+                None
+            };
+            decoded
+                .and_then(|section| section.get(name).cloned())
+                .map(|entry| (index, entry))
+        });
+    let Some((section, entry)) = found else {
+        return Err(Diagnostics::from(problem(
+            "unknown_endpoint",
+            Stage::Resolve,
+            name_at,
+            format!(
+                "No file under `page_requests/` defines a page request named `{}` on a surface of the kind `web`.",
+                shown(name)
+            ),
+            "Name a page request that `page_requests/` defines.",
+        )));
+    };
+    Ok(Found {
+        name: name.to_owned(),
+        section,
+        entry,
+    })
+}
+
+fn encoded<T: Serialize>(value: &T, at: &Place, problems: &mut Diagnostics) -> PackPayload {
+    match PackPayload::encode(value) {
+        Ok(encoded) => encoded,
+        Err(failure) => {
+            problems.push(problem(
+                "not_encodable",
+                Stage::Lower,
+                at,
+                failure.message().to_owned(),
+                "Report this to the web pack's author.",
+            ));
+            PackPayload::none()
+        }
+    }
+}
+
+/// The `goto` and `request` of a read of an entry: the steps of a `read`,
+/// and of a write's read-back.
+fn read_steps(
+    cx: &LowerContext<'_>,
+    found: &Found,
+    at: &Place,
+    problems: &mut Diagnostics,
+) -> Vec<Step> {
+    let payload = outputs(cx, &found.entry, at, problems);
+    let mut goto = step(
+        cx,
+        GOTO,
+        found.section,
+        &found.name,
+        FailsAs {
+            class: FailureClass::UnknownVariant,
+            code: codes::UNEXPECTED_PAGE,
+        },
+    );
+    goto.args = holes_of(cx, &found.entry.page, REACH_ARG, at, problems);
+    goto.payload = encoded(
+        &GotoStep {
+            tab: TabKind::Observe,
+        },
+        at,
+        problems,
+    );
+    let mut request = step(
+        cx,
+        REQUEST,
+        found.section,
+        &found.name,
+        FailsAs {
+            class: FailureClass::Drift,
+            code: codes::RESPONSE_SCHEMA_MISMATCH,
+        },
+    );
+    request.args = holes_of(cx, &found.entry.path, PATH_ARG, at, problems);
+    request.payload = encoded(&payload, at, problems);
+    vec![goto, request]
+}
+
+impl PageHttpLowering {
+    fn lower_read(
+        binding: &ResolvedBinding<'_>,
+        cx: &LowerContext<'_>,
+        found: &Found,
+    ) -> Result<Lowered, Diagnostics> {
+        let mut problems = Diagnostics::new();
+        let at = &binding.doc.at;
+        if found.entry.write.is_some() {
+            problems.push(problem(
+                "effect_mismatch",
+                Stage::Analyze,
+                at,
+                format!(
+                    "The verb `{}` reads, and the page request `{}` writes.",
+                    binding.verb,
+                    shown(&found.name)
+                ),
+                "Bind a read to a page request with `method: GET` and `effect: read`.",
+            ));
+        }
+        for key in ["body", "read_back"] {
+            if let Some(stray) = binding.field(key) {
+                problems.push(problem(
+                    "read_acts",
+                    Stage::Analyze,
+                    &stray.at,
+                    format!(
+                        "The verb `{}` reads, and the binding states `{key}`, which belongs to a write.",
+                        binding.verb
+                    ),
+                    "Remove it, or bind a verb that writes.",
+                ));
+            }
+        }
+        let mut act = read_steps(cx, found, at, &mut problems);
+        // A read of one record may find none, when the entry declares how
+        // the application says so.
+        if !found.entry.absent.is_empty() {
+            for step in &mut act {
+                step.lookup = true;
+            }
+        }
+        if !problems.is_empty() {
+            return Err(problems);
+        }
+        Ok(Lowered {
+            surface: surface_of(&found.entry, at)?,
+            act,
+            confirm: Vec::new(),
+            read_back: Vec::new(),
+            lookup: Vec::new(),
+            settle_ms: 0,
+            prefer_response: false,
+        })
+    }
+
+    fn lower_write(
+        binding: &ResolvedBinding<'_>,
+        cx: &LowerContext<'_>,
+        found: &Found,
+    ) -> Result<Lowered, Diagnostics> {
+        let mut problems = Diagnostics::new();
+        let at = &binding.doc.at;
+        let Some(write) = &found.entry.write else {
+            return Err(Diagnostics::from(problem(
+                "page_http_writes",
+                Stage::Analyze,
+                at,
+                format!(
+                    "The verb `{}` writes, and the page request `{}` is a read: a write from inside the page is made only through an entry that declares it, written by a person.",
+                    binding.verb,
+                    shown(&found.name)
+                ),
+                "Write the entry with `method: PUT`, `effect: write`, its body, its answers, and its `anti_forgery`, or bind the write in the `ui` mode.",
+            )));
+        };
+        // The record is read back through an entry that reads, on the same
+        // surface, and says how the application answers for a record that
+        // does not exist.
+        let Some(read_back) = binding.field("read_back") else {
+            return Err(Diagnostics::from(problem(
+                "read_back_missing",
+                Stage::Analyze,
+                at,
+                "A write from inside the page names the read entry its record is read back through, under `read_back`.",
+                "Add `read_back: {endpoint: ...}` with a page request that reads the record by its key.",
+            )));
+        };
+        let reader = found_part(cx, read_back)?;
+        if reader.entry.write.is_some() {
+            problems.push(problem(
+                "effect_mismatch",
+                Stage::Analyze,
+                &read_back.at,
+                format!(
+                    "The record is read back through `{}`, which writes.",
+                    shown(&reader.name)
+                ),
+                "Name a page request that reads.",
+            ));
+        }
+        if reader.entry.absent.is_empty() {
+            problems.push(problem(
+                "read_back_never_absent",
+                Stage::Analyze,
+                &read_back.at,
+                format!(
+                    "The record is read back through `{}`, which declares no status for a record that does not exist.",
+                    shown(&reader.name)
+                ),
+                "Add `responses: {absent: [404]}` to the entry, with the status the application answers.",
+            ));
+        }
+        if reader.entry.surface != found.entry.surface {
+            problems.push(problem(
+                "read_back_elsewhere",
+                Stage::Analyze,
+                &read_back.at,
+                "The record is read back on another surface than the one it is written on.",
+                "Name a page request of the same surface.",
+            ));
+        }
+        let body_args = body_of(cx, binding, &found.name, write, &mut problems);
+        let mut goto = step(
+            cx,
+            GOTO,
+            found.section,
+            &found.name,
+            FailsAs {
+                class: FailureClass::UnknownVariant,
+                code: codes::UNEXPECTED_PAGE,
+            },
+        );
+        goto.args = holes_of(cx, &found.entry.page, REACH_ARG, at, &mut problems);
+        goto.payload = encoded(&GotoStep { tab: TabKind::Act }, at, &mut problems);
+        let mut request = step(
+            cx,
+            REQUEST,
+            found.section,
+            &found.name,
+            FailsAs {
+                class: FailureClass::UnknownVariant,
+                code: codes::UNEXPECTED_STATUS,
+            },
+        );
+        request.args = holes_of(cx, &found.entry.path, PATH_ARG, at, &mut problems);
+        request.payload = encoded(
+            &RequestStep {
+                outputs: Vec::new(),
+                body: body_args.iter().map(|(field, _)| field.clone()).collect(),
+            },
+            at,
+            &mut problems,
+        );
+        request
+            .args
+            .extend(body_args.into_iter().map(|(_, arg)| arg));
+        // The one step that saves: the PUT, once the intent is stored.
+        request.commits = true;
+        let mut back = read_steps(cx, &reader, &read_back.at, &mut problems);
+        for step in &mut back {
+            step.lookup = true;
+        }
+        if !problems.is_empty() {
+            return Err(problems);
+        }
+        Ok(Lowered {
+            surface: surface_of(&found.entry, at)?,
+            act: vec![goto, request],
+            confirm: Vec::new(),
+            read_back: back,
+            lookup: Vec::new(),
+            settle_ms: 0,
+            prefer_response: false,
+        })
+    }
+}
+
+fn found_part(cx: &LowerContext<'_>, part: &Located<Doc>) -> Result<Found, Diagnostics> {
+    found(cx, part)
+}
+
+fn surface_of(entry: &PageRequest, at: &Place) -> Result<SurfaceName, Diagnostics> {
+    SurfaceName::new(&entry.surface).map_err(|_| {
+        Diagnostics::from(problem(
+            "unknown_endpoint",
+            Stage::Resolve,
+            at,
+            "The page request's surface has no well-formed name.",
+            "Name a surface the target declares.",
+        ))
+    })
+}
+
+/// The arguments of a write's body, each an expression of the binding's
+/// `body` for a field the entry declares, of a type its kind takes.
+fn body_of(
+    cx: &LowerContext<'_>,
+    binding: &ResolvedBinding<'_>,
+    name: &str,
+    write: &WriteForm,
+    problems: &mut Diagnostics,
+) -> Vec<(String, StepArg)> {
+    let mut args = Vec::new();
+    let given = binding
+        .field("body")
+        .map(Located::entries)
+        .unwrap_or_default();
+    for entry in given {
+        let field = &entry.key.value;
+        let Some(kind) = write.fields.get(field) else {
+            problems.push(problem(
+                "body_undeclared",
+                Stage::Resolve,
+                &entry.key.at,
+                format!(
+                    "The page request `{}` declares no body field named `{}`.",
+                    shown(name),
+                    shown(field)
+                ),
+                "Add the field to the entry's `request_schema`, or remove it from the binding.",
+            ));
+            continue;
+        };
+        match cx.expr(&entry.value, None) {
+            Ok(index) => {
+                let fits = cx.expr_type(index).is_some_and(|ty| match kind {
+                    Kind::String => matches!(ty, ValueType::Text | ValueType::Choice),
+                    Kind::Integer => ty == ValueType::Int,
+                    Kind::Boolean => ty == ValueType::Bool,
+                    _ => false,
+                });
+                if !fits {
+                    problems.push(problem(
+                        "value_type",
+                        Stage::TypeCheck,
+                        &entry.value.at,
+                        format!(
+                            "The value for the body field `{}` is not of the kind the entry declares, `{}`.",
+                            shown(field),
+                            kind.word()
+                        ),
+                        "Give a value of that kind: text for a string, a whole number for an integer, a truth value for a boolean.",
+                    ));
+                }
+                args.push((
+                    field.clone(),
+                    StepArg {
+                        name: format!("{BODY_ARG}{field}"),
+                        value: index,
+                    },
+                ));
+            }
+            Err(wrong) => problems.push(wrong),
+        }
+    }
+    for required in &write.required {
+        if !given.iter().any(|entry| entry.key.value == *required) {
+            problems.push(problem(
+                "body_incomplete",
+                Stage::Resolve,
+                &binding.doc.at,
+                format!(
+                    "The page request `{}` requires the body field `{}`, and the binding gives it no value.",
+                    shown(name),
+                    shown(required)
+                ),
+                "Add the field under the binding's `body`.",
+            ));
+        }
+    }
+    args
+}
+
 impl Lowering for PageHttpLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
@@ -187,15 +606,26 @@ impl Lowering for PageHttpLowering {
         &self.step_kinds
     }
 
-    /// Neither step saves: a `goto` reaches a page, and a `request` is a
-    /// GET, which the browser engine's read cannot send any other way.
-    fn commits(&self, _kind: &StepKind) -> StepCommits {
-        StepCommits::Never
+    /// A `request` saves exactly when its entry writes, and the lowering
+    /// marks it then; the driver refuses the mismatch both ways. A `goto`
+    /// never saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == REQUEST {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
     }
 
+    /// The HTTP pack's rule, for one meaning of a verb across the modes: a
+    /// verb that reads is a read; an `update` that names how its record is
+    /// read back is a write, and one that names nothing is `irreversible`,
+    /// since what was written could never be found again.
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
         if READ_VERBS.contains(&binding.verb.as_str()) {
             EffectClass::Read
+        } else if binding.field("read_back").is_some() {
+            EffectClass::Write
         } else {
             EffectClass::Irreversible
         }
@@ -206,14 +636,16 @@ impl Lowering for PageHttpLowering {
     }
 
     fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+        let reads = READ_VERBS.contains(&binding.verb.as_str());
         match strategy {
-            IdentityStrategy::None | IdentityStrategy::Natural | IdentityStrategy::Composite
-                if READ_VERBS.contains(&binding.verb.as_str()) =>
+            IdentityStrategy::None if reads => Possible::Yes,
+            IdentityStrategy::Natural | IdentityStrategy::Composite
+                if reads || binding.field("read_back").is_some() =>
             {
                 Possible::Yes
             }
             _ => Possible::No(
-                "a `page_http` binding only reads in this version of the web pack.".to_owned(),
+                "a `page_http` write is an `update` of a record found again by its key, through the read its `read_back` names.".to_owned(),
             ),
         }
     }
@@ -223,104 +655,23 @@ impl Lowering for PageHttpLowering {
         binding: &ResolvedBinding<'_>,
         cx: &LowerContext<'_>,
     ) -> Result<Lowered, Diagnostics> {
-        let mut problems = Diagnostics::new();
         let at = &binding.doc.at;
-        // The write half needs what this version does not have: the
-        // anti-forgery token the page holds, sent without being read out of
-        // the page; a commit point the request marks; and a read-back that
-        // tells the new state from the old. Until it is designed, a write is
-        // refused by name.
         let reads = READ_VERBS.contains(&binding.verb.as_str());
-        if !reads || cx.operation().effect() != EffectClass::Read {
+        if reads && cx.operation().effect() != EffectClass::Read {
             return Err(Diagnostics::from(problem(
                 "page_http_writes",
                 Stage::Analyze,
                 at,
-                "A `page_http` binding only reads in this version: a write from inside the page needs the anti-forgery token the page holds, a commit point, and a read-back, which are not designed yet.",
-                "Bind the write in the `ui` mode, or make this a read with `effect: read` and the verb `read`.",
+                "A `page_http` read is bound to an operation declared to write. A write from inside the page is an `update` through an entry that declares it.",
+                "Make this a read with `effect: read`, or bind the write with the verb `update` to a write entry.",
             )));
         }
-        let named = binding.doc.get("endpoint");
-        let name = named.and_then(|named| named.as_text()).unwrap_or_default();
-        let name_at = named.map_or(at, |named| &named.at);
-        let found = cx
-            .section(&REQUEST_KIND, &WEB_SURFACE)
-            .and_then(|(index, section)| {
-                let decoded = if section.format == PAYLOAD_FORMAT {
-                    section.payload.decode::<RequestSection>().ok()
-                } else {
-                    None
-                };
-                decoded
-                    .and_then(|section| section.get(name).cloned())
-                    .map(|entry| (index, entry))
-            });
-        let Some((section, entry)) = found else {
-            return Err(Diagnostics::from(problem(
-                "unknown_endpoint",
-                Stage::Resolve,
-                name_at,
-                format!(
-                    "No file under `page_requests/` defines a page request named `{}` on a surface of the kind `web`.",
-                    shown(name)
-                ),
-                "Name a page request that `page_requests/` defines.",
-            )));
-        };
-        let surface = SurfaceName::new(&entry.surface).map_err(|_| {
-            Diagnostics::from(problem(
-                "unknown_endpoint",
-                Stage::Resolve,
-                name_at,
-                "The page request's surface has no well-formed name.",
-                "Name a surface the target declares.",
-            ))
-        })?;
-        let payload = outputs(cx, &entry, name_at, &mut problems);
-        let mut goto = step(
-            cx,
-            GOTO,
-            section,
-            name,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_PAGE,
-            },
-        );
-        goto.args = holes_of(cx, &entry.page, REACH_ARG, name_at, &mut problems);
-        let mut request = step(
-            cx,
-            REQUEST,
-            section,
-            name,
-            FailsAs {
-                class: FailureClass::Drift,
-                code: codes::RESPONSE_SCHEMA_MISMATCH,
-            },
-        );
-        request.args = holes_of(cx, &entry.path, PATH_ARG, name_at, &mut problems);
-        match PackPayload::encode(&payload) {
-            Ok(encoded) => request.payload = encoded,
-            Err(failure) => problems.push(problem(
-                "not_encodable",
-                Stage::Lower,
-                at,
-                failure.message().to_owned(),
-                "Report this to the web pack's author.",
-            )),
+        let found = found(cx, binding.doc)?;
+        if reads {
+            Self::lower_read(binding, cx, &found)
+        } else {
+            Self::lower_write(binding, cx, &found)
         }
-        if !problems.is_empty() {
-            return Err(problems);
-        }
-        Ok(Lowered {
-            surface,
-            act: vec![goto, request],
-            confirm: Vec::new(),
-            read_back: Vec::new(),
-            lookup: Vec::new(),
-            settle_ms: 0,
-            prefer_response: false,
-        })
     }
 }
 
@@ -404,11 +755,46 @@ impl PageHttpDriver {
     }
 }
 
-/// What one run holds: its observing tab and the page requests of its plan.
+/// What a session keeps to open its acting tab, once a write's `goto` asks
+/// for it.
+struct ToAct {
+    browsers: Browsers,
+    profile: ProfileKey,
+    environment: PageEnvironment,
+    origins: Origins,
+}
+
+/// What one run holds: its tabs and the page requests of its plan.
+///
+/// Every session has an observing tab, opened at prepare, in which every
+/// read runs. An acting tab, in the same profile, is opened only when a
+/// write's `goto` asks for one, and only in a posture that may act.
 struct Session {
-    tab: ObserveTab,
+    looking: ObserveTab,
+    acting: Option<ActTab>,
+    /// The tab the last `goto` chose.
+    on: TabKind,
+    /// How to open the acting tab; `None` in a posture that may only look.
+    to_act: Option<ToAct>,
     origin: String,
     sections: BTreeMap<usize, RequestSection>,
+    /// The signs the target declares that the session has ended.
+    expiry: ExpirySigns,
+    /// What the run may do. A write is sent in a live run, and against a
+    /// declared test record for the step marked as the commit point.
+    posture: Posture,
+}
+
+/// What a write's answer is, by what its entry declares.
+enum Verdict {
+    /// A status that means it was written, in the declared shape.
+    Written,
+    /// The application refused the page's token.
+    TokenRefused,
+    /// The application refused the values, with what it said.
+    Refused(Option<String>),
+    /// Anything else: whether it was written is not known.
+    Unknown(String),
 }
 
 impl Session {
@@ -424,7 +810,54 @@ impl Session {
             .ok_or_else(|| codes::not_usable("the page request it names is not in the plan"))
     }
 
-    async fn goto(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
+    /// What every tab refused since it was last asked.
+    fn refused(&self, what: &str) -> Option<a2m_core::Failure> {
+        let mut refused = self.looking.blocked();
+        if let Some(acting) = &self.acting {
+            refused.extend(acting.blocked());
+        }
+        refusal(&refused, what)
+    }
+
+    /// The tab for a `goto`: the acting tab only for a write's own `goto`,
+    /// opened then, in a posture that may act; the observing tab in every
+    /// other case. A plan compiled before a `goto` said its tab held reads
+    /// alone, so a `goto` that does not say is the observing tab's.
+    async fn choose(&mut self, step: &Step) -> Result<(), StepFailure> {
+        let wanted = if step.payload.is_none() {
+            TabKind::Observe
+        } else {
+            step.payload
+                .decode::<GotoStep>()
+                .map(|goto| goto.tab)
+                .map_err(|_| codes::not_usable("its payload does not decode"))?
+        };
+        let Some(to_act) = self.to_act.as_ref().filter(|_| wanted == TabKind::Act) else {
+            self.on = TabKind::Observe;
+            return Ok(());
+        };
+        if self.acting.is_none() {
+            let browser = to_act
+                .browsers
+                .open(&to_act.profile, Visibility::Background)
+                .await
+                .map_err(|error| browser_failure(&error, "the start of the browser"))?;
+            let tab = browser
+                .acting_tab(&to_act.environment, &to_act.origins)
+                .await
+                .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
+            self.acting = Some(tab);
+        }
+        self.on = TabKind::Act;
+        Ok(())
+    }
+
+    async fn goto(
+        &mut self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
+        self.choose(step).await?;
         let (name, entry) = self.entry(step)?;
         let mut path = String::new();
         for part in &entry.page {
@@ -448,29 +881,57 @@ impl Session {
         }
         let address = Address::new(&made).map_err(StepFailure::not_sent)?;
         let what = format!("the page of the request `{name}`");
-        let loaded = self
-            .tab
-            .goto(&address, until(step, input))
-            .await
-            .map_err(|error| browser_failure(&error, &what))?;
-        let inside = loaded
-            .address
-            .strip_prefix(&self.origin)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
-        if !inside {
+        let deadline = until(step, input);
+        let loaded = match (self.on, &self.acting) {
+            (TabKind::Act, Some(tab)) => tab.goto(&address, deadline).await,
+            _ => self.looking.goto(&address, deadline).await,
+        }
+        .map_err(|error| browser_failure(&error, &what))?;
+        let Some(rest) = loaded.address.strip_prefix(&self.origin) else {
             return Err(StepFailure::answered(codes::surface_not_declared(
                 "The address the page moved to",
+            )));
+        };
+        if !(rest.is_empty() || rest.starts_with(['/', '?', '#'])) {
+            return Err(StepFailure::answered(codes::surface_not_declared(
+                "The address the page moved to",
+            )));
+        }
+        // The page must be the one asked for. One answered from another
+        // path, as a sign-in page is once the session has ended, holds
+        // neither the session nor the token the request needs: nothing is
+        // sent from it.
+        let landed = rest.split(['?', '#']).next().unwrap_or_default();
+        if landed != path {
+            if let Some(sign) = self.expiry_shown(deadline).await? {
+                return Err(StepFailure::not_sent(session_ended(format!(
+                    "The page of the request `{name}` was answered with the screen `{}`",
+                    shown(&sign)
+                ))));
+            }
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::UnknownVariant,
+                codes::UNEXPECTED_PAGE,
+                format!(
+                    "The page of the request `{name}` was answered from another address, as a sign-in page is when the session has ended. Nothing was sent from it."
+                ),
+                "Sign in again if the session has ended; otherwise look at where the application sends the page, and correct the entry's `page`.",
             )));
         }
         let status = loaded
             .status
             .map_or_else(|| "none".to_owned(), |status| status.to_string());
+        let tab = match self.on {
+            TabKind::Act => "act",
+            TabKind::Observe => "observe",
+        };
         Ok(StepOutcome::Done(Observed {
             captures: vec![acting(
                 vec![
                     Detail::new("step", "goto"),
                     Detail::new("request", name),
                     Detail::new("page", pattern(&entry.page)),
+                    Detail::new("tab", tab),
                     Detail::new("status", status),
                 ],
                 Vec::new(),
@@ -479,16 +940,47 @@ impl Session {
         }))
     }
 
-    async fn request(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
-        let (name, entry) = self.entry(step)?;
-        let payload: RequestStep = step
-            .payload
-            .decode()
-            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+    /// The screen the target declares as a sign of expiry that the page
+    /// in the tab the last `goto` chose shows, if one does: waited for as
+    /// a named condition, up to [`EXPIRY_LOOK`].
+    async fn expiry_shown(&self, deadline: Deadline) -> Result<Option<String>, StepFailure> {
+        if self.expiry.screens.is_empty() {
+            return Ok(None);
+        }
+        let any = Primitive::Any(
+            self.expiry
+                .screens
+                .iter()
+                .map(|(_, ready)| ready.primitive())
+                .collect(),
+        );
+        let bounded = Deadline::after(EXPIRY_LOOK.min(deadline.remaining()));
+        match self.look(&any, bounded).await {
+            Ok(()) => {}
+            Err(BrowserError::Timeout { .. }) => return Ok(None),
+            Err(error) => return Err(browser_failure(&error, "the page's state")),
+        }
+        for (sign, ready) in &self.expiry.screens {
+            let once = Deadline::after(Duration::from_millis(250).min(bounded.remaining()));
+            match self.look(&ready.primitive(), once).await {
+                Ok(()) => return Ok(Some(sign.clone())),
+                Err(BrowserError::Timeout { .. }) => {}
+                Err(error) => return Err(browser_failure(&error, "the page's state")),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Waits for a condition in the tab the last `goto` chose.
+    async fn look(&self, condition: &Primitive, deadline: Deadline) -> Result<(), BrowserError> {
+        match (self.on, &self.acting) {
+            (TabKind::Act, Some(tab)) => tab.wait(condition, deadline).await,
+            _ => self.looking.wait(condition, deadline).await,
+        }
+    }
+
+    /// The path of a request, from the step's arguments.
+    fn path_of(entry: &PageRequest, input: &StepInput<'_>) -> Result<PagePath, StepFailure> {
         let mut values = BTreeMap::new();
         for part in &entry.path {
             if let crate::model::Segment::Hole(hole) = part {
@@ -497,10 +989,41 @@ impl Session {
             }
         }
         // The browser engine checks the values again as it makes the path.
-        let path = PagePath::fill(&pattern(&entry.path), &values).map_err(StepFailure::not_sent)?;
+        PagePath::fill(&pattern(&entry.path), &values).map_err(StepFailure::not_sent)
+    }
+
+    async fn request(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
+        let (name, entry) = self.entry(step)?;
+        match &entry.write {
+            Some(write) => self.write(step, input, name, entry, write).await,
+            None if step.commits => Err(codes::not_usable(
+                "it is marked as a commit point, and its page request reads",
+            )),
+            None => self.read(step, input, name, entry).await,
+        }
+    }
+
+    async fn read(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+        name: &str,
+        entry: &PageRequest,
+    ) -> Result<StepOutcome, StepFailure> {
+        let payload: RequestStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let path = Self::path_of(entry, input)?;
         let what = format!("the request `{name}`");
+        // A read runs in the observing tab, whichever tab the last `goto`
+        // chose (decision 0195).
         let answer = self
-            .tab
+            .looking
             .read_from_page(&path, until(step, input))
             .await
             .map_err(|error| browser_failure(&error, &what))?;
@@ -511,7 +1034,23 @@ impl Session {
             Detail::new("status", answer.status.to_string()),
             Detail::new("media_type", shown(&answer.media_type)),
         ];
-        if answer.status != 200 {
+        // A status the target declares as a sign that the session has
+        // ended. The prepare refused an entry that reads the same status
+        // as a record or as its absence.
+        if self.expiry.statuses.contains(&answer.status) {
+            return Err(StepFailure::answered(session_ended(format!(
+                "The request `{name}` was answered with the status {}",
+                answer.status
+            ))));
+        }
+        if step.lookup && entry.absent.contains(&answer.status) {
+            means.push(Detail::new("found", "absent"));
+            return Ok(StepOutcome::Absent(Observed {
+                captures: vec![acting(means, Vec::new())],
+                ..Observed::default()
+            }));
+        }
+        if !entry.is_ok(answer.status) {
             return Err(StepFailure::answered(fail(
                 FailureClass::UnknownVariant,
                 codes::UNEXPECTED_STATUS,
@@ -519,46 +1058,10 @@ impl Session {
                     "The request `{name}` was answered with the status {}, which it does not declare.",
                     answer.status
                 ),
-                "Look at what the application answers; this version reads an answer of status 200 only.",
+                "Look at what the application answers; the entry declares the statuses it reads.",
             )));
         }
-        let json = answer.media_type == "application/json" || answer.media_type.ends_with("+json");
-        let body: Option<Json> = if json {
-            serde_json::from_str(&answer.body).ok()
-        } else {
-            None
-        };
-        let Some(Json::Object(fields)) = body else {
-            return Err(mismatch(name, "the answer is not a JSON object".to_owned()));
-        };
-        for required in &entry.required {
-            if !fields.contains_key(required) {
-                return Err(mismatch(
-                    name,
-                    format!(
-                        "the answer lacks `{}`, which it declares as required",
-                        shown(required)
-                    ),
-                ));
-            }
-        }
-        for (field, value) in &fields {
-            match entry.properties.get(field) {
-                Some(kind) if !kind.fits(value) => {
-                    return Err(mismatch(
-                        name,
-                        format!("the answer's `{}` is not a {}", shown(field), kind.word()),
-                    ));
-                }
-                None if entry.closed => {
-                    return Err(mismatch(
-                        name,
-                        "the answer holds a name it does not declare, and it declares that it holds no other".to_owned(),
-                    ));
-                }
-                _ => {}
-            }
-        }
+        let fields = checked(name, entry, &answer).map_err(|why| mismatch(name, why))?;
         let mut observed = Observed::default();
         for item in &payload.outputs {
             let value = match fields.get(&item.from) {
@@ -589,6 +1092,310 @@ impl Session {
         observed.captures.push(acting(means, Vec::new()));
         Ok(StepOutcome::Done(observed))
     }
+
+    /// The one request of a write: a PUT from inside the page in the
+    /// acting tab, with the page's own token. Every failure before the
+    /// request may have left says so (`NotSent`); after it, only an answer
+    /// the entry declares as a refusal settles it, and every other outcome
+    /// leaves the write in doubt, never "not written".
+    async fn write(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+        name: &str,
+        entry: &PageRequest,
+        write: &WriteForm,
+    ) -> Result<StepOutcome, StepFailure> {
+        // The driver's own guard: a request whose entry writes is sent
+        // only as the commit point, in a posture that may write that step.
+        if !step.commits {
+            return Err(codes::not_usable(
+                "its page request writes, and it is not marked as the commit point",
+            ));
+        }
+        let may = match self.posture {
+            Posture::Live | Posture::Sandbox { test_records: true } => true,
+            Posture::Sandbox {
+                test_records: false,
+            }
+            | Posture::Discovery => false,
+        };
+        if !may {
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::Policy,
+                a2m_provider::codes::READ_ONLY_POSTURE,
+                format!("The request `{name}` writes, and this run may not write."),
+                "Run the operation live, or against a declared test record.",
+            )));
+        }
+        let tab = match (self.on, &self.acting) {
+            (TabKind::Act, Some(tab)) => tab,
+            _ => {
+                return Err(codes::not_usable(
+                    "a write is sent only from the acting tab its own `goto` reached the page in",
+                ));
+            }
+        };
+        let payload: RequestStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let path = Self::path_of(entry, input)?;
+        let mut fields = BTreeMap::new();
+        for field in &payload.body {
+            let kind = write.fields.get(field).ok_or_else(|| {
+                codes::not_usable("it fills a body field its entry does not declare")
+            })?;
+            let value = match (kind, input.args.get(&format!("{BODY_ARG}{field}"))) {
+                (Kind::String, Some(Value::Text(text))) => FieldValue::Text(text.clone()),
+                (Kind::Integer, Some(Value::Int(number))) => FieldValue::Whole(*number),
+                (Kind::Boolean, Some(Value::Bool(flag))) => FieldValue::Truth(*flag),
+                (_, None) => continue,
+                _ => {
+                    return Err(StepFailure::not_sent(fail(
+                        FailureClass::Input,
+                        codes::STEP_NOT_USABLE,
+                        format!(
+                            "The value for the body field `{}` of the request `{name}` is not of the kind its entry declares.",
+                            shown(field)
+                        ),
+                        "Give a value of the declared kind.",
+                    )));
+                }
+            };
+            fields.insert(field.clone(), value);
+        }
+        if let Some(missing) = write
+            .required
+            .iter()
+            .find(|field| !fields.contains_key(*field))
+        {
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::Input,
+                codes::STEP_NOT_USABLE,
+                format!(
+                    "The request `{name}` requires the body field `{}`, and it was given no value.",
+                    shown(missing)
+                ),
+                "Give the operation the input the field is made from.",
+            )));
+        }
+        let token = match &write.token {
+            None => None,
+            Some(token) => {
+                let from = match token.from.as_str() {
+                    "meta" => TokenFrom::Meta(token.from_name.clone()),
+                    "input" => TokenFrom::Input(token.from_name.clone()),
+                    "cookie" => TokenFrom::Cookie(token.from_name.clone()),
+                    _ => {
+                        return Err(codes::not_usable(
+                            "its token is read from a place this version does not know",
+                        ));
+                    }
+                };
+                let to = match token.to.as_str() {
+                    "header" => TokenTo::Header(token.to_name.clone()),
+                    "field" => TokenTo::Field(token.to_name.clone()),
+                    _ => {
+                        return Err(codes::not_usable(
+                            "its token goes to a place this version does not know",
+                        ));
+                    }
+                };
+                Some(AntiForgery { from, to })
+            }
+        };
+        let method = WriteMethod::from_word(&write.method)
+            .filter(|method| *method == WriteMethod::Put)
+            .ok_or_else(|| codes::not_usable("its method is not one this version sends"))?;
+        let encoding = match write.encoding.as_str() {
+            "json" => BodyEncoding::Json,
+            "form" => BodyEncoding::Form,
+            _ => {
+                return Err(codes::not_usable(
+                    "its body is written in a way this version does not know",
+                ));
+            }
+        };
+        let made =
+            PageWrite::new(method, path, encoding, fields, token).map_err(StepFailure::not_sent)?;
+        let what = format!("the request `{name}`");
+        let answer = match tab.write_from_page(&made, until(step, input)).await {
+            Ok(answer) => answer,
+            Err(error) if error.dispatch() == Dispatch::NotSent => {
+                let failed = browser_failure(&error, &what);
+                return Err(StepFailure::not_sent(failed.failure));
+            }
+            // From here the write may have reached the application.
+            Err(error) => {
+                return Err(in_doubt(name, &format!("then {error}")));
+            }
+        };
+        let mut means = vec![
+            Detail::new("step", "request"),
+            Detail::new("request", name),
+            Detail::new("method", method.as_str()),
+            Detail::new("path", pattern(&entry.path)),
+            Detail::new("fields", payload.body.join(",")),
+            Detail::new(
+                "token",
+                write.token.as_ref().map_or_else(
+                    || "none".to_owned(),
+                    |token| format!("{}:{}", token.from, token.to),
+                ),
+            ),
+            Detail::new("status", answer.status.to_string()),
+        ];
+        match verdict(name, entry, write, &answer) {
+            Verdict::Written => {
+                means.push(Detail::new("answer", "written"));
+                Ok(StepOutcome::Done(Observed {
+                    captures: vec![acting(means, Vec::new())],
+                    ..Observed::default()
+                }))
+            }
+            // Never taken for "not written": a browser sends a write again
+            // by itself when a connection it reused closed before any
+            // answer, and the token the page gave was then used by the
+            // first, which may have landed. Measured with the stand's
+            // fault "lost after commit" (decision 0206).
+            Verdict::TokenRefused => Err(StepFailure::unknown(fail(
+                FailureClass::PossibleCommit,
+                a2m_provider::codes::NO_CONFIRMATION,
+                format!(
+                    "The application refused the request `{name}` for its anti-forgery token, with an answer the entry declares for that: the page's token is stale or used, perhaps by an earlier sending of this same write."
+                ),
+                "Reconcile the record: read it back before anything is written again; then run the tool again, and the page is loaded afresh with a new token.",
+            ))),
+            // In doubt as well, for the same reason: the refusal may answer
+            // a second sending of a write whose first sending landed, and
+            // the record moved on under it (decision 0245, after audit
+            // finding S3). The record is read back before it is settled.
+            Verdict::Refused(said) => {
+                let refused = StepFailure::unknown(fail(
+                    FailureClass::PossibleCommit,
+                    a2m_provider::codes::NO_CONFIRMATION,
+                    format!(
+                        "The application refused the request `{name}` with the status {}, which the entry declares as a refusal of its values; the browser may have sent it twice, so the refusal can answer a second sending of a write that landed.",
+                        answer.status
+                    ),
+                    "Reconcile the record: read it back before anything is written again; if it did not change, correct the values and run the tool again.",
+                ));
+                Err(match said {
+                    Some(said) => refused.with_said(said),
+                    None => refused,
+                })
+            }
+            Verdict::Unknown(why) => Err(in_doubt(name, &why)),
+        }
+    }
+}
+
+/// A write that may have reached the application, and of which nothing
+/// says what became of it: in doubt, reconciled by reading the record
+/// before anything is sent again.
+fn in_doubt(name: &str, why: &str) -> StepFailure {
+    StepFailure::unknown(fail(
+        FailureClass::PossibleCommit,
+        a2m_provider::codes::NO_CONFIRMATION,
+        format!("The request `{name}` was sent from inside the page, and {why}."),
+        "Reconcile the record: read it back before anything is written again.",
+    ))
+}
+
+/// What a write's answer is, by its entry. A status the entry does not
+/// declare, a declared refusal whose fields do not match, and a written
+/// status in a shape the entry does not declare are all unknown.
+fn verdict(name: &str, entry: &PageRequest, write: &WriteForm, answer: &PageAnswer) -> Verdict {
+    // An answer that quoted the page's token was withheld in the page: no
+    // word of it is read, and nothing says what became of the write.
+    if answer.withheld {
+        return Verdict::Unknown(
+            "its answer quoted the page's anti-forgery token, so the page withheld it whole"
+                .to_owned(),
+        );
+    }
+    let json = answer.media_type == "application/json" || answer.media_type.ends_with("+json");
+    let body: Option<Json> = if json {
+        serde_json::from_str(&answer.body).ok()
+    } else {
+        None
+    };
+    if entry.is_ok(answer.status) {
+        return match checked(name, entry, answer) {
+            Ok(_) => Verdict::Written,
+            Err(why) => Verdict::Unknown(format!(
+                "it was answered with the status {} in a shape the entry does not declare: {why}",
+                answer.status
+            )),
+        };
+    }
+    let token_refused = write
+        .token
+        .iter()
+        .flat_map(|token| &token.refused)
+        .any(|declared| declared.matches(answer.status, body.as_ref()));
+    if token_refused {
+        return Verdict::TokenRefused;
+    }
+    if write
+        .refused
+        .iter()
+        .any(|declared| declared.matches(answer.status, body.as_ref()))
+    {
+        let said = body
+            .as_ref()
+            .and_then(|body| body.get("message"))
+            .and_then(Json::as_str)
+            .map(str::to_owned);
+        return Verdict::Refused(said);
+    }
+    Verdict::Unknown(format!(
+        "it was answered with the status {}, which the entry does not declare",
+        answer.status
+    ))
+}
+
+/// The answer's object, when it is the shape the entry declares; otherwise
+/// where it differs, never quoting a value.
+fn checked(
+    _name: &str,
+    entry: &PageRequest,
+    answer: &PageAnswer,
+) -> Result<serde_json::Map<String, Json>, String> {
+    let json = answer.media_type == "application/json" || answer.media_type.ends_with("+json");
+    let body: Option<Json> = if json {
+        serde_json::from_str(&answer.body).ok()
+    } else {
+        None
+    };
+    let Some(Json::Object(fields)) = body else {
+        return Err("the answer is not a JSON object".to_owned());
+    };
+    for required in &entry.required {
+        if !fields.contains_key(required) {
+            return Err(format!(
+                "the answer lacks `{}`, which it declares as required",
+                shown(required)
+            ));
+        }
+    }
+    for (field, value) in &fields {
+        match entry.properties.get(field) {
+            Some(kind) if !kind.fits(value) => {
+                return Err(format!(
+                    "the answer's `{}` is not a {}",
+                    shown(field),
+                    kind.word()
+                ));
+            }
+            None if entry.closed => {
+                return Err("the answer holds a name it does not declare, and it declares that it holds no other".to_owned());
+            }
+            _ => {}
+        }
+    }
+    Ok(fields)
 }
 
 /// The answer is not the shape the entry declares: `drift`, as the HTTP
@@ -609,12 +1416,15 @@ impl PageHttpDriver {
         cx: &PrepareContext<'_>,
         lease: Option<&SessionLease>,
     ) -> Result<Session, StepFailure> {
+        let setup = tab_setup(cx, lease)?;
+        setup.place_state(&self.browsers, cx.deadline).await?;
         let TabSetup {
             origin,
             profile,
             environment,
             origins,
-        } = tab_setup(cx, lease)?;
+            state: _,
+        } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
         for (position, section) in cx.plan.packs.iter().enumerate() {
@@ -638,19 +1448,77 @@ impl PageHttpDriver {
                     .map_err(|_| codes::not_usable("its page requests do not decode"))?,
             );
         }
-        // Whatever the run's posture, the tab only observes: the browser
-        // fails every request of the page that could change the system,
-        // and none is marked safe.
-        let tab = self
+        // The target's signs that the session has ended: its screens, of
+        // this pack, and the statuses of an answer.
+        let mut screens = BTreeMap::new();
+        for (position, section) in cx.plan.packs.iter().enumerate() {
+            let own = section.pack == PACK
+                && section.kind == SCREEN_KIND
+                && section.surface_kind == surface.kind;
+            if !own {
+                continue;
+            }
+            if section.format != PAYLOAD_FORMAT {
+                return Err(codes::not_usable(format!(
+                    "its screens are in format {}, and this pack reads format {PAYLOAD_FORMAT}",
+                    section.format
+                )));
+            }
+            screens.insert(
+                position,
+                section
+                    .payload
+                    .decode::<ScreenSection>()
+                    .map_err(|_| codes::not_usable("its screens do not decode"))?,
+            );
+        }
+        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &screens)
+            .map_err(codes::not_usable)?;
+        // A status that is both a sign of expiry and a record, or its
+        // absence, could not be told apart: unknown means stop.
+        for (name, entry) in sections.values().flatten() {
+            let read_as = entry
+                .absent
+                .iter()
+                .chain(&entry.ok)
+                .chain(entry.ok.is_empty().then_some(&200));
+            if let Some(status) = read_as
+                .into_iter()
+                .find(|status| expiry.statuses.contains(status))
+            {
+                return Err(codes::not_usable(format!(
+                    "the page request `{}` reads the status {status}, which the target also declares as a sign that the session has ended",
+                    shown(name)
+                )));
+            }
+        }
+        // Every session looks through an observing tab, in which the
+        // browser fails every request of the page that could change the
+        // system, and none is marked safe. Every read runs there.
+        let looking = self
             .browsers
             .observer()
             .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
+        let may_act = matches!(
+            cx.posture,
+            Posture::Live | Posture::Sandbox { test_records: true }
+        );
         Ok(Session {
-            tab,
+            looking,
+            acting: None,
+            on: TabKind::Observe,
+            to_act: may_act.then(|| ToAct {
+                browsers: self.browsers.clone(),
+                profile,
+                environment,
+                origins,
+            }),
             origin,
             sections,
+            expiry,
+            posture: cx.posture,
         })
     }
 }
@@ -675,7 +1543,7 @@ impl Driver for PageHttpDriver {
                 .state::<Session>()
                 .ok_or_else(|| codes::not_usable("it was prepared by another driver"))?;
             let what = format!("the start of a `{}` step", step.kind);
-            if let Some(failure) = refusal(&session.tab.blocked(), &what) {
+            if let Some(failure) = session.refused(&what) {
                 return Err(StepFailure::not_sent(failure));
             }
             let done = if step.kind == GOTO {
@@ -688,10 +1556,25 @@ impl Driver for PageHttpDriver {
                     step.kind
                 )));
             };
-            // What the tab refused during the step undoes what it read: the
-            // page tried to leave, or to write.
+            // What a tab refused during the step undoes what it read: the
+            // page tried to leave, or to write where it may only read. After
+            // a write was sent, it leaves the write in doubt.
             let what = format!("the end of a `{}` step", step.kind);
-            match refusal(&session.tab.blocked(), &what) {
+            match session.refused(&what) {
+                Some(failure)
+                    if step.commits
+                        && !matches!(&done, Err(failed) if failed.sent == a2m_provider::Sent::NotSent) =>
+                {
+                    Err(StepFailure::unknown(fail(
+                        FailureClass::PossibleCommit,
+                        a2m_provider::codes::NO_CONFIRMATION,
+                        format!(
+                            "The write was sent from inside the page, and then the page did something no rule covers: {}",
+                            failure.message()
+                        ),
+                        "Reconcile the record: read it back before anything is written again.",
+                    )))
+                }
                 Some(failure) => Err(StepFailure::not_sent(failure)),
                 None => done,
             }

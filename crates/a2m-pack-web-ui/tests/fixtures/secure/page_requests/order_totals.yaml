@@ -1,0 +1,16 @@
+# An order's totals, read from inside the signed-in orders page with the
+# page's own session (decision 0190). When the session has ended, the page
+# is answered with the sign-in page, and the request with 401: both are
+# declared in `auth.yaml` as signs of expiry.
+endpoint: order_totals
+surface: app
+method: GET
+path: "/secure/api/orders/{order_id}/totals"
+page: "/secure/orders"
+effect: read
+response_schema:
+  type: object
+  required: [order_id, total_quantity]
+  properties:
+    order_id: {type: string}
+    total_quantity: {type: integer}

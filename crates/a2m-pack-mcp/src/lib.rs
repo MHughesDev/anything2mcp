@@ -17,10 +17,10 @@
 //! only as a value of a field type that marks it, or in a description's
 //! untrusted part.
 //!
-//! Not built: HTTPS, the protocol's authorization flow, a credential for a
-//! local server program, a local server program on Windows, answers sent as
-//! an event stream, and the drafting of a pass-through operation. Each is a
-//! named failure or is named in the crate's design.
+//! HTTPS needs the feature `tls`; without it an `https` upstream is refused.
+//! Not built: the protocol's authorization flow, a credential for a local
+//! server program, a local server program on Windows, and answers sent as an
+//! event stream. Each is a named failure or is named in the crate's design.
 //!
 //! The product crate registers the pack with one call:
 //! `builder.add_pack(&a2m_pack_mcp::pack())`.

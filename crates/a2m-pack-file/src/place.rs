@@ -70,6 +70,24 @@ impl Identity {
     }
 }
 
+/// What tells one file from another for as long as it grows: the device and
+/// the file's number on Unix, and elsewhere the moment it was made, which
+/// safe code is given and which an append does not change. Text, to be
+/// digested into a position and never shown as it is.
+#[cfg(unix)]
+pub(crate) fn lasting_identity(metadata: &Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+}
+
+/// See the Unix form.
+#[cfg(not(unix))]
+pub(crate) fn lasting_identity(metadata: &Metadata) -> Option<String> {
+    let made = metadata.created().ok()?;
+    let since = made.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(format!("made:{}", since.as_nanos()))
+}
+
 /// How many names a file has. Only Unix says; elsewhere it is not known.
 #[cfg(unix)]
 fn link_count(metadata: &Metadata) -> Option<u64> {
@@ -116,6 +134,56 @@ impl Folder {
     /// What the pack may do in the folder.
     pub(crate) fn access(&self) -> Access {
         self.access
+    }
+
+    /// The folder as the roots' check resolved it, for listing its entries.
+    /// Never a base to build a path from text: a name is added only through
+    /// [`Folder::beside`], [`Folder::file`], or [`Folder::below`].
+    pub(crate) fn listed_path(&self) -> Result<PathBuf, StepFailure> {
+        self.present()?;
+        Ok(self.checked.as_path().to_path_buf())
+    }
+
+    /// A folder below this one, by a relative path whose parts are each one
+    /// name, for reading a folder's entries a declared depth down. The
+    /// roots' check sees the path, and refuses a form no path may take and a
+    /// link that leads out of the root; a link at any part is refused here,
+    /// whatever it leads to.
+    pub(crate) fn below(&self, relative: &str) -> Result<Self, StepFailure> {
+        let mut at = self.checked.as_path().to_path_buf();
+        for part in relative.split('/') {
+            if !is_one_name(part) {
+                return Err(StepFailure::not_sent(not_allowed(
+                    "its name is not a name inside the surface's folder",
+                )));
+            }
+            at.push(part);
+            match fs::symlink_metadata(&at) {
+                Ok(found) if found.file_type().is_dir() => {}
+                Ok(found) if found.file_type().is_symlink() => {
+                    return Err(StepFailure::not_sent(not_allowed(
+                        "a link stands in the way to it, and a folder's entries are reached by no link",
+                    )));
+                }
+                Ok(_) => {
+                    return Err(StepFailure::not_sent(not_allowed(
+                        "a part of its name is not a folder",
+                    )));
+                }
+                Err(error) if gone(&error) => return Err(missing()),
+                Err(_) => {
+                    return Err(StepFailure::not_sent(unavailable(
+                        "is in a folder that cannot be looked at",
+                    )));
+                }
+            }
+        }
+        let checked = self.checked.join(relative).map_err(StepFailure::not_sent)?;
+        Ok(Self {
+            checked,
+            root: self.root.clone(),
+            access: self.access,
+        })
     }
 
     /// Looks, at the moment of use, that the folder is still the folder the

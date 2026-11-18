@@ -111,6 +111,26 @@ pub struct Truth {
     pub unauthorized: u64,
     /// How many notifications that the tool list changed were sent.
     pub announcements: u64,
+    /// Every start of the stdio program over this state folder, oldest
+    /// first, as the program itself saw it.
+    #[serde(default)]
+    pub starts: Vec<StartRecord>,
+}
+
+/// One start of the stdio program, as the program saw itself: what a test
+/// asks to prove what the program was given, never what the engine says it
+/// gave.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartRecord {
+    /// Its process identifier.
+    pub process: u32,
+    /// Its arguments after its own name, element for element, as text.
+    pub args: Vec<String>,
+    /// The names of every variable in its environment.
+    pub env: Vec<String>,
+    /// The process identifier of the process it started on purpose, with
+    /// `--grandchild`, which lingers until it is ended.
+    pub grandchild: Option<u32>,
 }
 
 /// Where a connection is in the handshake.

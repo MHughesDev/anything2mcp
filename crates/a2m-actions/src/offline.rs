@@ -32,8 +32,9 @@ use a2m_core::{
     RunState, TestKind, TestPlan, ToolRuns, Value, Values, WorkspaceId,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence, GuardQuestion,
-    JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant, ToolRef,
+    BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence,
+    GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant,
+    ToolRef,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld, NewBlob,
@@ -853,10 +854,10 @@ pub(crate) async fn run_test(
     plan: &Arc<Plan>,
     plan_hash: Digest,
     world: &OfflineWorld,
-    test: &TestPlan,
+    tested: (&TestPlan, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> TestOutcome {
-    run_test_with_result(engine, plan, plan_hash, world, test, fixture)
+    run_test_with_result(engine, plan, plan_hash, world, tested, fixture)
         .await
         .0
 }
@@ -868,10 +869,10 @@ pub(crate) async fn run_test_with_result(
     plan: &Arc<Plan>,
     plan_hash: Digest,
     world: &OfflineWorld,
-    test: &TestPlan,
+    tested: (&TestPlan, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> (TestOutcome, Json) {
-    let outcome = run_one(engine, plan, plan_hash, world, test, fixture).await;
+    let outcome = run_one(engine, plan, plan_hash, world, tested, fixture).await;
     (outcome.0, outcome.1.unwrap_or(Json::Null))
 }
 
@@ -880,14 +881,57 @@ async fn run_one(
     plan: &Arc<Plan>,
     plan_hash: Digest,
     world: &OfflineWorld,
-    test: &TestPlan,
+    tested: (&TestPlan, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> (TestOutcome, Option<Json>) {
-    let outcome = run_body(engine, plan, plan_hash, world, test, fixture).await;
-    match outcome {
+    let shown = tested.1.as_ref().map(BindingPin::to_json);
+    let outcome = run_body(engine, plan, plan_hash, world, tested, fixture).await;
+    // Every outcome names the binding that ran, and the digest of what it
+    // does: evidence names its binding (audit finding AC-6).
+    let (mut outcome, got) = match outcome {
         Ok((outcome, got)) => (outcome, Some(got)),
         Err(outcome) => (outcome, None),
+    };
+    if let (Some(shown), Json::Object(detail)) = (shown, &mut outcome.detail) {
+        detail.insert("binding".to_owned(), shown);
     }
+    (outcome, got)
+}
+
+/// What a test of an operation is promoted on, where a `binding.promote`
+/// asks: the binding being promoted, which a test that names no binding
+/// then runs, because once promoted it is the operation's first verified
+/// binding and would act live.
+#[derive(Debug, Clone)]
+pub(crate) struct Promoting {
+    pub(crate) operation: a2m_core::OperationName,
+    pub(crate) position: usize,
+}
+
+/// The binding a test runs: the one its file names (`named`, the place
+/// `a2m_files::Compiled::test_bindings` holds), else the one being
+/// promoted, else the one that would act live (`default_binding`). `None`
+/// for a test of a pipeline, whose operations are chosen for as live, and
+/// where the operation has no binding that may run.
+pub(crate) fn test_pin(
+    plan: &Plan,
+    test: &TestPlan,
+    named: Option<usize>,
+    promoting: Option<&Promoting>,
+) -> Option<BindingPin> {
+    let tool = plan.tools.get(test.tool.get())?;
+    let ToolRuns::Operation(index) = tool.runs else {
+        return None;
+    };
+    let operation = plan.operation(index)?;
+    let position = named
+        .or_else(|| {
+            promoting
+                .filter(|promoting| promoting.operation == operation.name)
+                .map(|promoting| promoting.position)
+        })
+        .or_else(|| a2m_engine::default_binding(operation))?;
+    BindingPin::of(plan, operation, position)
 }
 
 async fn run_body(
@@ -895,7 +939,7 @@ async fn run_body(
     plan: &Arc<Plan>,
     plan_hash: Digest,
     world: &OfflineWorld,
-    test: &TestPlan,
+    (test, binding): (&TestPlan, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> Result<(TestOutcome, Json), TestOutcome> {
     let Some(tool) = plan.tools.get(test.tool.get()) else {
@@ -995,6 +1039,7 @@ async fn run_body(
         snapshot: None,
         conditions: Conditions::default(),
         pin: None,
+        binding,
         parallelism: Parallelism::default(),
         lease: LeaseClock::unbounded(),
         capture: CaptureLevel::Minimal,
@@ -1180,11 +1225,18 @@ impl GateRun {
             .missing
             .iter()
             .map(|test| {
-                format!(
-                    "{} ({})",
-                    test["test"].as_str().unwrap_or_default(),
-                    test["state"].as_str().unwrap_or_default()
-                )
+                let state = test["state"].as_str().unwrap_or_default();
+                match test["test"].as_str().filter(|name| !name.is_empty()) {
+                    Some(name) => format!("{name} ({state})"),
+                    None => match test["binding"]["mode"].as_str() {
+                        Some(mode) => format!(
+                            "{} binding {} `{mode}` ({state})",
+                            test["tool"].as_str().unwrap_or_default(),
+                            test["binding"]["position"]
+                        ),
+                        None => format!("{} ({state})", test["tool"].as_str().unwrap_or_default()),
+                    },
+                }
             })
             .collect();
         codes::input(
@@ -1311,6 +1363,113 @@ pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<Chec
     Ok(at)
 }
 
+/// What the gate lacks for each binding that may act once the version is
+/// published (audit finding AC-6): every `verified` binding, and the one a
+/// `binding.promote` is making so, needs a passing offline test that ran
+/// that binding, and, for an operation that writes, one whose save was sent
+/// through it and compared. Where no binding of a write may act yet, a
+/// passing test of any binding that sent the save is asked for, as before
+/// (decision 0196). Each lack is named by its tool and its binding.
+fn untested_bindings(
+    plan: &Plan,
+    results: &[Json],
+    missing: &[Json],
+    promoting: Option<&Promoting>,
+    target: &a2m_core::TargetName,
+) -> Vec<Json> {
+    let mut lacks = Vec::new();
+    let next = json!({"action": "test.run", "input": {"target": target.as_str()}});
+    for tool in &plan.tools {
+        let ToolRuns::Operation(index) = tool.runs else {
+            continue;
+        };
+        let Some(operation) = plan.operation(index) else {
+            continue;
+        };
+        let name = tool.name.as_str();
+        let tested = |position: Option<usize>, sends: bool| {
+            results.iter().any(|test| {
+                test["tool"] == name
+                    && test["kind"] == "offline"
+                    && test["state"] == "passed"
+                    && (!sends || test["path"] == PATH_SENDS)
+                    && position.is_none_or(|position| {
+                        test["binding"]["position"].as_u64() == u64::try_from(position + 1).ok()
+                    })
+            })
+        };
+        let any_test = results
+            .iter()
+            .any(|test| test["tool"] == name && test["kind"] == "offline");
+        let already = missing.iter().any(|test| test["tool"] == name);
+        if !any_test || already {
+            continue;
+        }
+        let writes = operation.effect != EffectClass::Read;
+        let acting: Vec<usize> = operation
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(position, binding)| {
+                binding.status == a2m_core::BindingStatus::Verified
+                    || promoting.is_some_and(|promoting| {
+                        promoting.operation == operation.name && promoting.position == *position
+                    })
+            })
+            .map(|(position, _)| position)
+            .collect();
+        if acting.is_empty() {
+            if writes && !tested(None, true) {
+                lacks.push(json!({
+                    "test": "",
+                    "tool": name,
+                    "state": "no_save_sent",
+                    "reason": format!("No passing offline test of this write sends its save: each expects nothing to be sent. Add a test whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`."),
+                    "next": next,
+                }));
+            }
+            continue;
+        }
+        for position in acting {
+            let Some(pin) = BindingPin::of(plan, operation, position) else {
+                continue;
+            };
+            let (state, reason) = if !tested(Some(position), false) {
+                (
+                    "binding_untested",
+                    format!(
+                        "No passing offline test ran the binding {} (`{}`) of this operation, which may act once published. Add a test that names it with `binding: {{mode: {}, position: {}}}`, or that names no binding when it is the operation's first verified one.",
+                        position + 1,
+                        pin.mode,
+                        pin.mode,
+                        position + 1
+                    ),
+                )
+            } else if writes && !tested(Some(position), true) {
+                (
+                    "no_save_sent",
+                    format!(
+                        "No passing offline test sent this write's save through the binding {} (`{}`) and compared it. Add a test of that binding whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`.",
+                        position + 1,
+                        pin.mode
+                    ),
+                )
+            } else {
+                continue;
+            };
+            lacks.push(json!({
+                "test": "",
+                "tool": name,
+                "binding": pin.to_json(),
+                "state": state,
+                "reason": reason,
+                "next": next,
+            }));
+        }
+    }
+    lacks
+}
+
 /// Runs the publish gates this build has on a compiled target: the schema
 /// and lint gate, which compiling for publishing passed, and every offline
 /// test of the plan against its fixture.
@@ -1325,6 +1484,7 @@ pub(crate) async fn run_gates(
     target: &a2m_core::TargetName,
     compiled: &a2m_files::Compiled,
     world: OfflineWorld,
+    promoting: Option<Promoting>,
 ) -> Result<GateRun, Failure> {
     let sources = compiled.plan.header.sources;
     use crate::handlers::build::{off_thread, problems_json, target_folder};
@@ -1372,12 +1532,23 @@ pub(crate) async fn run_gates(
     // across its waits. So the tests run on a thread of their own, driven
     // by this same runtime, as the runner loop runs a job.
     let (runs_plan, hash) = (Arc::clone(&plan), compiled.encoded.hash);
+    // Each test runs the binding it is evidence for (audit finding AC-6).
+    let pins: Vec<Option<BindingPin>> = plan
+        .tests
+        .iter()
+        .enumerate()
+        .map(|(at, test)| {
+            let named = compiled.test_bindings.get(at).copied().flatten();
+            test_pin(&plan, test, named, promoting.as_ref())
+        })
+        .collect();
     let runtime = tokio::runtime::Handle::current();
     let outcomes = tokio::task::spawn_blocking(move || {
         runtime.block_on(async move {
             let mut outcomes = Vec::new();
-            for (test, fixture) in runs_plan.tests.iter().zip(fixtures) {
-                outcomes.push(run_test(&engine, &runs_plan, hash, &world, test, fixture).await);
+            for ((test, fixture), pin) in runs_plan.tests.iter().zip(fixtures).zip(pins) {
+                outcomes
+                    .push(run_test(&engine, &runs_plan, hash, &world, (test, pin), fixture).await);
             }
             outcomes
         })
@@ -1421,33 +1592,13 @@ pub(crate) async fn run_gates(
         }
         results.push(shown);
     }
-    // A write is proved by a test that sent its save: a test of the path on
-    // which nothing is sent does not by itself pass the gate for it
-    // (decision 0196).
-    let mut writing: Vec<String> = plan
-        .tests
-        .iter()
-        .filter(|test| test.kind == TestKind::Offline && writes(&plan, test))
-        .filter_map(|test| plan.tools.get(test.tool.get()))
-        .map(|tool| tool.name.to_string())
-        .collect();
-    writing.sort();
-    writing.dedup();
-    for tool in writing {
-        let sends = results.iter().any(|test| {
-            test["tool"] == tool.as_str() && test["state"] == "passed" && test["path"] == PATH_SENDS
-        });
-        let already = missing.iter().any(|test| test["tool"] == tool.as_str());
-        if !sends && !already {
-            missing.push(json!({
-                "test": "",
-                "tool": tool,
-                "state": "no_save_sent",
-                "reason": format!("No passing offline test of this write sends its save: each expects nothing to be sent. Add a test whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`."),
-                "next": {"action": "test.run", "input": {"target": target.as_str()}},
-            }));
-        }
-    }
+    missing.extend(untested_bindings(
+        &plan,
+        &results,
+        &missing,
+        promoting.as_ref(),
+        target,
+    ));
     let offline: Vec<&Json> = results
         .iter()
         .filter(|test| test["kind"] == "offline")

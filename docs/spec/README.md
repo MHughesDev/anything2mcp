@@ -1,6 +1,8 @@
 # Anything2MCP specification
 
-What Anything2MCP does and why, one section per file, in seven parts. Each section states the design as it stands; nothing here has to be reconciled with anything else here. Read part 1 the first time. After that, open only the sections a task touches.
+What Anything2MCP does and why, one section per file, in seven parts. Each section states the design as it stands, and no section outranks another: when two disagree, one of them is out of date and is corrected. Read part 1 the first time. After that, open only the sections a task touches.
+
+The specification describes the design, not the code. Much of it is built: the first paragraph of each section says whether what it describes is built today, and [section 704](7-project/704-readiness.md) gives the state of every section in one table, with where the detail is kept.
 
 How the code is arranged is in [the architecture](../architecture/README.md). Interfaces, once settled, are in the [technical reference](../reference/technical-reference.md). The order of work is the [roadmap](../plan/roadmap.md). Why each choice was made is in the [decision records](../decisions/README.md).
 

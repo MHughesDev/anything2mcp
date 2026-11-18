@@ -4,12 +4,13 @@
 Usage, from the repository root:
 
     python3 tools/docs_audit.py                 # check; exit 1 on any finding
-    python3 tools/docs_audit.py --write-sources # also regenerate docs/references/sources.md
+    python3 tools/docs_audit.py --write-sources # also regenerate docs/reference/sources.md
     python3 tools/docs_audit.py --root DIR      # check another copy of the repository
 
 Standard library only; Python 3.11 or newer. Run it after any change under docs/, AGENTS.md,
 README.md, or any crate's Cargo.toml. tools/test_docs_audit.py proves it fails when it should.
 """
+import json
 import re
 import sys
 import tomllib
@@ -49,7 +50,7 @@ def internal_dependencies(manifest, kinds=("dependencies", "dev-dependencies", "
 def write_sources(md):
     by_file, urls = {}, set()
     for k, v in md.items():
-        if k.startswith("docs/references/"):
+        if k == "docs/reference/sources.md":
             continue
         seen = []
         for label, target in links(v):
@@ -67,8 +68,7 @@ def write_sources(md):
         out += [f"## {k}", ""]
         out += [f"- [{label}](<{t}>)" if "(" in t else f"- [{label}]({t})" for label, t in items]
         out.append("")
-    (docs / "references").mkdir(exist_ok=True)
-    (docs / "references" / "sources.md").write_text("\n".join(out), encoding="utf-8")
+    (docs / "reference" / "sources.md").write_text("\n".join(out), encoding="utf-8")
     print(f"sources.md: {len(urls)} URLs from {len(by_file)} documents")
 
 
@@ -222,6 +222,17 @@ def main():
         m = re.search(pat, dr)
         if not m or int(m.group(1)) != n:
             note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
+    n_journal = len([k for k in md if re.match(r"docs/journal/\d{4}-", k)])
+    n_designs = len([k for k in md if re.match(r"docs/architecture/crates/[a-z0-9-]+\.md$", k)])
+    n_plan = len([k for k in md if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md"])
+    n_reviews = len([k for k in md if re.match(r"docs/reviews/[a-z0-9-]+\.md$", k) and k != "docs/reviews/README.md"])
+    for label, n, pat in (("journal entries", n_journal, r"\| (\d+) entries \|"),
+                          ("crate designs", n_designs, r"\| (\d+) designs and"),
+                          ("plan documents", n_plan, r"sorts them by kind \| (\d+) \|"),
+                          ("review documents", n_reviews, r"lists them \| (\d+) \|")):
+        m = re.search(pat, dr)
+        if not m or int(m.group(1)) != n:
+            note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
     m = re.search(r"\| (\d+) research briefs still to run", md["docs/research/README.md"])
     if not m or int(m.group(1)) != len(briefs):
         note("counts", f"docs/research/README.md gives {m.group(1) if m else 'no number'} briefs; there are {len(briefs)}")
@@ -238,7 +249,7 @@ def main():
         if re.search(r"\b(three|five) identity modes\b", v):
             note("sets", f"{k}: an identity-mode count other than four")
 
-    # 12. Skills, journal, and hypotheses are well formed and indexed.
+    # 12. Skills, the journal, the plan folder, and the hypotheses are well formed and indexed.
     for k, v in md.items():
         if k.startswith(".claude/skills/") and k.endswith("SKILL.md"):
             head = v.split("---")
@@ -251,6 +262,14 @@ def main():
     for k in md:
         if re.match(r"docs/journal/\d{4}-", k) and Path(k).name not in journal:
             note("journal", f"{k} is not listed in docs/journal/README.md")
+    plan_index = md.get("docs/plan/README.md", "")
+    for k in md:
+        if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md" and f"({Path(k).name})" not in plan_index:
+            note("plans", f"{k} is not listed in docs/plan/README.md")
+    reviews_index = md.get("docs/reviews/README.md", "")
+    for k in md:
+        if re.match(r"docs/reviews/[a-z0-9-]+\.md$", k) and k != "docs/reviews/README.md" and f"({Path(k).name})" not in reviews_index:
+            note("reviews", f"{k} is not listed in docs/reviews/README.md")
     register = md.get("docs/hypotheses/README.md", "")
     ids = re.findall(r"^\| (H-\d+) \|", register, re.M)
     if len(ids) != len(set(ids)):
@@ -349,6 +368,20 @@ def main():
                                 "every package carries the same version")
         except (tomllib.TOMLDecodeError, KeyError) as e:
             note("release", f"cannot read a version from Cargo.toml or bindings/python/pyproject.toml: {e!r}")
+            crate_version = None
+        launcher = repo / "bindings" / "npm" / "anything2mcp" / "package.json"
+        if crate_version and launcher.is_file():
+            try:
+                package = json.loads(launcher.read_text(encoding="utf-8"))
+                carried = {"the npm launcher": package["version"]}
+                carried.update({f"its optional dependency {name}": version
+                                for name, version in package.get("optionalDependencies", {}).items()})
+                for what, version in carried.items():
+                    if version != crate_version:
+                        note("release", f"the workspace is version {crate_version} and {what} is {version}; "
+                                        "every package carries the same version")
+            except (json.JSONDecodeError, KeyError) as e:
+                note("release", f"cannot read a version from bindings/npm/anything2mcp/package.json: {e!r}")
         licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
         if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
             note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
@@ -357,7 +390,7 @@ def main():
     earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")
     history = ("docs/decisions/", "docs/journal/", "docs/archive/", "docs/plan/publishing-setup.md",
                "docs/research/10-", "docs/research/12-",
-               "docs/references/sources.md",
+               "docs/reference/sources.md",
                "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
     kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}
     skipped = {".git", "target", "__pycache__", "dist", ".venv", "venv", "node_modules", "site-packages"}
@@ -392,6 +425,14 @@ def main():
             if c in layer and (not stated or int(stated.group(1)) != layer[c]):
                 note("designs", f"docs/architecture/crates/{c}.md must state layer {layer[c]} in its Facts table, "
                                 f"as the layering table does")
+
+    # 17. The reference's table of failure codes is the one the crates' own tables give
+    #     (tools/failure_codes.py writes it; this holds the two together).
+    if (repo / "crates").is_dir() and "failure-codes:begin" in ref:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import failure_codes
+        for problem in failure_codes.check(repo):
+            note("codes", problem)
 
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "

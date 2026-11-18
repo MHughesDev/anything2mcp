@@ -1201,6 +1201,11 @@
          "mode": {
           "type": "string"
          },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+         },
          "run_id": {
           "type": "string"
          },
@@ -1286,6 +1291,9 @@
                 "when"
                ],
                "type": "object"
+              },
+              "position": {
+               "type": "integer"
               },
               "promoted": {
                "type": "boolean"
@@ -1455,6 +1463,9 @@
                ],
                "type": "object"
               },
+              "position": {
+               "type": "integer"
+              },
               "promoted": {
                "type": "boolean"
               },
@@ -1570,7 +1581,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Make the first binding of a drafted operation verified, on the evidence of its offline tests and a trial. For an operation that writes, a person's act.",
+    "summary": "Make the first binding of a drafted operation verified, on the evidence of its offline tests and a trial, or a binding in shadow verified, on its run of exact matches. For an operation that writes, and for a binding in shadow, a person's act.",
     "x-action": "binding.promote"
    }
   },
@@ -2180,16 +2191,29 @@
         "properties": {
          "client": {
           "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "print": {
+          "type": "boolean"
+         },
+         "toolset": {
+          "enum": [
+           "use",
+           "build"
+          ]
+         },
+         "yes": {
+          "type": "boolean"
          }
         },
-        "required": [
-         "client"
-        ],
+        "required": [],
         "type": "object"
        }
       }
      },
-     "required": true
+     "required": false
     },
     "responses": {
      "200": {
@@ -2213,8 +2237,33 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "before": {},
+            "block": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "change": {
+             "type": "string"
+            },
+            "client": {
+             "type": "string"
+            },
+            "entry": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "file": {
+             "type": "string"
+            },
+            "name": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -2241,9 +2290,18 @@
               "when"
              ],
              "type": "object"
+            },
+            "written": {
+             "type": "boolean"
             }
            },
-           "required": [],
+           "required": [
+            "client",
+            "name",
+            "entry",
+            "block",
+            "written"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -2285,8 +2343,33 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "before": {},
+            "block": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "change": {
+             "type": "string"
+            },
+            "client": {
+             "type": "string"
+            },
+            "entry": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "file": {
+             "type": "string"
+            },
+            "name": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -2313,9 +2396,18 @@
               "when"
              ],
              "type": "object"
+            },
+            "written": {
+             "type": "boolean"
             }
            },
-           "required": [],
+           "required": [
+            "client",
+            "name",
+            "entry",
+            "block",
+            "written"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -2347,7 +2439,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Write the configuration an MCP client needs to reach this engine.",
+    "summary": "Give the configuration an MCP client needs to start the bridge for this project: printed for the `generic` profile, or set in the file a client profile names, shown first and written by a local person.",
     "x-action": "client.connect"
    }
   },
@@ -4596,13 +4688,18 @@
          "file": {
           "type": "string"
          },
+         "files": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
          "target": {
           "type": "string"
          }
         },
         "required": [
-         "target",
-         "file"
+         "target"
         ],
         "type": "object"
        }
@@ -4639,6 +4736,25 @@
             },
             "file": {
              "type": "string"
+            },
+            "files": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "digest": {
+                "type": "string"
+               },
+               "file": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "file",
+               "digest"
+              ],
+              "type": "object"
+             },
+             "type": "array"
             },
             "next": {
              "additionalProperties": false,
@@ -4688,9 +4804,8 @@
            },
            "required": [
             "target",
-            "file",
+            "files",
             "removed",
-            "digest",
             "ok",
             "problems"
            ],
@@ -4743,6 +4858,25 @@
             "file": {
              "type": "string"
             },
+            "files": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "digest": {
+                "type": "string"
+               },
+               "file": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "file",
+               "digest"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -4791,9 +4925,8 @@
            },
            "required": [
             "target",
-            "file",
+            "files",
             "removed",
-            "digest",
             "ok",
             "problems"
            ],
@@ -4828,7 +4961,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Remove one draft file of a target from the project; a published version keeps its own copy.",
+    "summary": "Remove draft files of a target from the project, one by `file` or several by `files`, all or none; a published version keeps its own copy.",
     "x-action": "draft.delete"
    }
   },
@@ -5309,6 +5442,14 @@
           "properties": {},
           "required": [],
           "type": "object"
+         },
+         "mode": {
+          "type": "string"
+         },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
          },
          "target": {
           "type": "string"
@@ -7126,8 +7267,16 @@
           "required": [],
           "type": "object"
          },
+         "mode": {
+          "type": "string"
+         },
          "name": {
           "type": "string"
+         },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
          },
          "target": {
           "type": "string"
@@ -7170,6 +7319,12 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "binding": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "files": {
              "items": {
               "type": "string"
@@ -7178,6 +7333,12 @@
             },
             "fixture": {
              "type": "string"
+            },
+            "limits": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
             },
             "next": {
              "additionalProperties": false,
@@ -7229,6 +7390,12 @@
             },
             "tool": {
              "type": "string"
+            },
+            "trial": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
             }
            },
            "required": [
@@ -7284,6 +7451,12 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "binding": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "files": {
              "items": {
               "type": "string"
@@ -7292,6 +7465,12 @@
             },
             "fixture": {
              "type": "string"
+            },
+            "limits": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
             },
             "next": {
              "additionalProperties": false,
@@ -7343,6 +7522,12 @@
             },
             "tool": {
              "type": "string"
+            },
+            "trial": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
             }
            },
            "required": [
@@ -14660,7 +14845,11 @@
       "application/json": {
        "schema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+         "target": {
+          "type": "string"
+         }
+        },
         "required": [],
         "type": "object"
        }
@@ -14690,8 +14879,11 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "complete": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -14718,9 +14910,21 @@
               "when"
              ],
              "type": "object"
+            },
+            "sessions": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "sessions",
+            "complete"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -14762,8 +14966,11 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "complete": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -14790,9 +14997,21 @@
               "when"
              ],
              "type": "object"
+            },
+            "sessions": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "sessions",
+            "complete"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -14891,38 +15110,148 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "environment": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "for": {
+               "type": "string"
+              },
+              "level": {
+               "enum": [
+                "confirmed",
+                "held"
+               ]
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "provider": {
                "type": "string"
               },
-              "when": {
+              "session": {
+               "type": "string"
+              },
+              "session_state": {
+               "type": "string"
+              },
+              "signed_in_at": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "signed_in",
+                "signing_in",
+                "not_needed"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "why": {
                "type": "string"
               }
              },
              "required": [
+              "state",
+              "target"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -14963,38 +15292,148 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "environment": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "for": {
+               "type": "string"
+              },
+              "level": {
+               "enum": [
+                "confirmed",
+                "held"
+               ]
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "provider": {
                "type": "string"
               },
-              "when": {
+              "session": {
+               "type": "string"
+              },
+              "session_state": {
+               "type": "string"
+              },
+              "signed_in_at": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "signed_in",
+                "signing_in",
+                "not_needed"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "why": {
                "type": "string"
               }
              },
              "required": [
+              "state",
+              "target"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -15025,7 +15464,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Ask the caller's person to sign in to one surface of a target. Returns a link for the person; the agent never sees a credential.",
+    "summary": "Ask the caller's person to sign in to one surface of a target. A credential is never an input: where one is not stored, the person types it on the engine's own page, and carries the sign-in out there. Returns that a session exists, for whom, where, until when, and at which level; never its contents.",
     "x-action": "session.login"
    }
   },
@@ -15086,8 +15525,11 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "environment": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -15114,9 +15556,23 @@
               "when"
              ],
              "type": "object"
+            },
+            "session": {
+             "type": "string"
+            },
+            "state": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "session",
+            "target",
+            "environment",
+            "state"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -15158,8 +15614,11 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "environment": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -15186,9 +15645,23 @@
               "when"
              ],
              "type": "object"
+            },
+            "session": {
+             "type": "string"
+            },
+            "state": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "session",
+            "target",
+            "environment",
+            "state"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -15507,8 +15980,107 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "bindings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "against_verified_now": {
+                "type": "boolean"
+               },
+               "binding": {
+                "type": "string"
+               },
+               "distinct_inputs": {
+                "type": "integer"
+               },
+               "environments": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "evidence_from": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "first_at": {
+                "type": "integer"
+               },
+               "in_a_row": {
+                "type": "integer"
+               },
+               "last_at": {
+                "type": "integer"
+               },
+               "last_mismatch": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "matches": {
+                "type": "integer"
+               },
+               "mismatches": {
+                "type": "integer"
+               },
+               "mode": {
+                "type": "string"
+               },
+               "not_compared": {
+                "type": "integer"
+               },
+               "not_promotable": {
+                "type": "string"
+               },
+               "operation": {
+                "type": "string"
+               },
+               "promotable": {
+                "type": "boolean"
+               },
+               "promoted": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "requests": {
+                "type": "integer"
+               },
+               "threshold": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "operation",
+               "mode",
+               "binding",
+               "matches",
+               "mismatches",
+               "not_compared",
+               "in_a_row",
+               "distinct_inputs",
+               "evidence_from",
+               "requests",
+               "against_verified_now",
+               "environments",
+               "threshold",
+               "promotable",
+               "first_at",
+               "last_at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -15535,9 +16107,15 @@
               "when"
              ],
              "type": "object"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "bindings"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -15579,8 +16157,107 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "bindings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "against_verified_now": {
+                "type": "boolean"
+               },
+               "binding": {
+                "type": "string"
+               },
+               "distinct_inputs": {
+                "type": "integer"
+               },
+               "environments": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "evidence_from": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "first_at": {
+                "type": "integer"
+               },
+               "in_a_row": {
+                "type": "integer"
+               },
+               "last_at": {
+                "type": "integer"
+               },
+               "last_mismatch": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "matches": {
+                "type": "integer"
+               },
+               "mismatches": {
+                "type": "integer"
+               },
+               "mode": {
+                "type": "string"
+               },
+               "not_compared": {
+                "type": "integer"
+               },
+               "not_promotable": {
+                "type": "string"
+               },
+               "operation": {
+                "type": "string"
+               },
+               "promotable": {
+                "type": "boolean"
+               },
+               "promoted": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "requests": {
+                "type": "integer"
+               },
+               "threshold": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "operation",
+               "mode",
+               "binding",
+               "matches",
+               "mismatches",
+               "not_compared",
+               "in_a_row",
+               "distinct_inputs",
+               "evidence_from",
+               "requests",
+               "against_verified_now",
+               "environments",
+               "threshold",
+               "promotable",
+               "first_at",
+               "last_at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -15607,9 +16284,15 @@
               "when"
              ],
              "type": "object"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "bindings"
+           ],
            "type": "object"
           },
           "warnings": {

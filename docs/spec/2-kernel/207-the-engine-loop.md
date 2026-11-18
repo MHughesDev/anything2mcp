@@ -1,11 +1,11 @@
 # 207. The engine loop
 
-Every operation call in every run goes through the same eight-part engine loop, whatever the mode. Drivers fill in how each part is done. A pipeline step calls its operation once, or once per row. A write repeats parts 4 to 8 for each commit point; a read skips parts 4 and 7.
+Every operation call in every run goes through the same eight-part engine loop, whatever the mode. Drivers fill in how each part is done. A pipeline step calls its operation once, or once per row. A write repeats parts 4 to 8 for each commit point; a read skips parts 4 and 7. Built today: the loop runs reads and verified writes.
 
 The engine runs only compiled plans, and it never opens the store, calls the policy engine, or reads a target file. Everything it needs from outside its loop it asks for through one interface, `Control`: the plan by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, and sending events and evidence. In one process `a2m-actions` answers those calls directly; on a runner on another machine `a2m-runner` answers them over the link, so the same engine runs unchanged where there is no store ([`a2m-engine`](../../architecture/crates/a2m-engine.md)). It reaches a driver only through a handle from the registry, which refuses a step that commits unless it carries the token the ledger gave for the recorded intent. The engine names no mode, driver, or pack.
 
 1. **Guard.** Session valid, surface healthy, no edge block, policy allows the call.
-2. **Choose.** Take the plan's bindings in their declared order, pick the first verified one whose driver is ready and whose surface has not drifted, and record why.
+2. **Choose.** Take the plan's bindings in their declared order, pick the first verified one whose driver is ready and whose surface has not drifted, and record why. A binding in `shadow` is never chosen; beside a live read it reads too, after the chosen one, and what it returns is compared and counted, never returned ([section 201](201-archetypes-and-modes.md#shadow-and-promotion)).
 3. **Prepare.** Get a session lease from the session keeper, through `Control`, and let the driver acquire what the binding needs: in the web pack a page or a cookie jar; elsewhere a fresh token, an open connection, or an open file.
 4. **Intend.** For a write, take the record lock, make the freshness check, then record the intended values in the ledger before acting, all through `Control` ([section 208](208-runs-the-ledger-and-resume.md)). The ledger answers a recorded intent with the token the driver's handle requires.
 5. **Act.** The driver performs the step.

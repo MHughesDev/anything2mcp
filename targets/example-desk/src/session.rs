@@ -150,6 +150,23 @@ impl Session {
     pub fn address(&self) -> &str {
         &self.address
     }
+
+    /// The session bus a desktop pack reads instead of the engine's own:
+    /// this one.
+    #[must_use]
+    pub fn bus(&self) -> Option<&str> {
+        Some(&self.address)
+    }
+
+    /// The program that runs the stand, by its absolute path: the test's
+    /// own, which hosts it. A surface names it.
+    #[must_use]
+    pub fn program(&self) -> String {
+        std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
 }
 
 impl Drop for Session {

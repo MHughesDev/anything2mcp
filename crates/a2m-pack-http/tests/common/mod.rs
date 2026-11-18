@@ -561,7 +561,8 @@ impl Signed {
             vault,
             keeper,
             key,
-            entry: Arc::new(entry.credential(role, reference)),
+            // A run's sign-in is a published version's (decision 0248).
+            entry: Arc::new(entry.credential(role, reference).published()),
         }
     }
 

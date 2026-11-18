@@ -488,6 +488,92 @@ fn ends_at_once(paths: &Paths) -> crate::Launch {
     }
 }
 
+/// The variable that turns [`child_stops_by_name`] into an engine started
+/// on demand that cannot open its vault.
+const CHILD_STOPS: &str = "A2M_LOCAL_TEST_CHILD_STOPS";
+
+/// One engine of the test below: it writes the line an engine that cannot
+/// open its vault writes as it stops, and ends. Run on its own it does
+/// nothing.
+#[test]
+fn child_stops_by_name() {
+    if std::env::var_os(CHILD_STOPS).is_none() {
+        return;
+    }
+    let why = a2m_vault::PassphraseKeyStore::not_given("A2M_VAULT_PASSPHRASE");
+    eprintln!("{}", crate::stopped_line(&why));
+}
+
+/// Decision 0220. An engine started on demand that cannot open its vault
+/// ends and says why; the client answers with that failure, by name, and
+/// the next command starts a fresh engine instead of finding one that
+/// lingers. A stopped line of another process is not taken for its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_engine_started_on_demand_that_stops_by_name_is_answered_by_that_name() {
+    let (_folder, paths) = home("stops");
+    let log = crate::Launch::log_of(&paths);
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    // A line another process wrote, which names another failure.
+    let other = Failure::new(
+        FailureClass::Busy,
+        codes::CHANNEL_UNAVAILABLE,
+        "Another engine's words.",
+        "Not for this client.",
+    );
+    let forged =
+        crate::stopped_line(&other).replacen(&format!(" {} ", std::process::id()), " 1 ", 1);
+    std::fs::write(
+        &log,
+        format!(
+            "{forged}
+"
+        ),
+    )
+    .unwrap();
+    let stops = || crate::Launch {
+        program: std::env::current_exe().unwrap(),
+        args: vec![
+            "--exact".to_owned(),
+            "tests::channel::child_stops_by_name".to_owned(),
+            "--nocapture".to_owned(),
+        ],
+        cwd: std::env::temp_dir(),
+        environment: std::collections::BTreeMap::from([(CHILD_STOPS.to_owned(), "1".to_owned())]),
+        log: log.clone(),
+        input: None,
+    };
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    for start in 1..=2 {
+        let failure = within(
+            "a start of an engine that stops by name",
+            connector.connect_or_start(&paths, stops(), Duration::from_secs(20)),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            failure.code(),
+            &a2m_vault::codes::VAULT_PASSPHRASE_MISSING,
+            "{failure:?}"
+        );
+        assert_eq!(failure.class(), FailureClass::Input, "{failure:?}");
+        assert!(
+            failure.message().contains("stopped before it answered"),
+            "{failure:?}"
+        );
+        assert!(
+            failure.next_step().contains("`A2M_VAULT_PASSPHRASE`"),
+            "{failure:?}"
+        );
+        assert!(
+            failure.next_step().contains(&log.display().to_string()),
+            "{failure:?}"
+        );
+        // Each command started an engine of its own: none lingered.
+        let written = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(written.matches(crate::STARTED_LINE).count(), start);
+    }
+}
+
 /// A data directory so deep that its socket's path is longer than the
 /// system takes: the engine stops by name before it makes anything, and a
 /// client is told the same, at once, and starts no engine.

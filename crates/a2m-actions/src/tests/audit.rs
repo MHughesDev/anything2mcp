@@ -709,6 +709,7 @@ async fn a_tool_that_is_not_the_one_the_decision_was_made_for_is_not_run() {
         project: None,
         project_refused: None,
         presence: None,
+        given: None,
         decided: Some((a2m_core::EffectClass::Read, a2m_core::Hazard::None)),
     };
     let handler = crate::handlers::handler_for("tool.call").unwrap();

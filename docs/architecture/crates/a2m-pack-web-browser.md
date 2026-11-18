@@ -10,7 +10,7 @@ The base of the web pack: a browser engine that speaks the DevTools protocol to 
 | Layer | 9, Pack bases |
 | May depend on | Layers 1 to 5 |
 | Depends on | `a2m-core` for `Failure`, `Redact`, `Digest`, `Availability`, and the names of a profile key; `a2m-provider` for the pack context: the scoped supervisor, checked paths, the redactor, and `Deadline`. Outside: `tokio`, `serde`, and `serde_json`, and nothing else. The base is a DevTools-protocol client of the crate's own ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)); there is no outside base library |
-| Built in | Slice 0.4 chose the base. Slice 1.1 built the client, launch, tabs, locating, reading, waiting, snapshots, input, the observing tab, and in-page requests. Package 2.3 the visible window. Package 8.5 the hard cases |
+| Roadmap packages | Slice 0.4 chose the base. Slice 1.1 built the client, launch, tabs, locating, reading, waiting, snapshots, input, the observing tab, and in-page requests. Package 2.3 the visible window. Package 8.5 the hard cases |
 | Carries out | Spec sections [302](../../spec/3-packs/302-the-web-pack-browser-engine.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (profiles and tabs), [204](../../spec/2-kernel/204-supervising-subsystems.md) (for the browser), [225](../../spec/2-kernel/225-performance.md) (the browser budgets); decisions [0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md), [0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md), [0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md), [0110](../../decisions/0110-the-browser-engines-interface-as-building-it-settled-it.md), [0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md), [0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md) |
 
 ## Owns
@@ -74,7 +74,7 @@ impl Browsers {
 
 pub struct ProfileKey { pub target: TargetName, pub environment: Environment, pub identity: Identity }
 impl ProfileKey { pub fn place(&self) -> String; }        // the data directory, relative to the root
-#[non_exhaustive] pub enum Visibility { Background }
+#[non_exhaustive] pub enum Visibility { Background, Window { notice: String } }   // a window: always started afresh (decision 0254)
 pub enum BrowserHealth { Idle, Busy, Exited }
 pub struct OpenBrowser { pub profile, pub subsystem: SubsystemId, pub product: String,
                          pub program_digest: Digest, pub verified: bool, pub tabs: usize,
@@ -86,7 +86,18 @@ impl Browser {
     pub fn health(&self) -> BrowserHealth;
     pub fn product(&self) -> &str;                         // what the browser reports itself to be
     pub fn subsystem(&self) -> SubsystemId;
+    /// The cookies of the browser's context for `origins`' hosts (decision 0245). Values are `Secret`s.
+    pub async fn export_state(&self, origins: &Origins, deadline: Deadline) -> Result<BrowserState, BrowserError>;
+    /// Places them, unless the state of the same `mark` was placed already. True when placed now.
+    /// A cookie for none of `origins`' hosts refuses the whole state (`ForeignOrigin`; decision 0254).
+    pub async fn import_state(&self, mark: &str, state: &BrowserState, origins: &Origins, deadline: Deadline) -> Result<bool, BrowserError>;
+    /// A tab a person signs in in: held to both lists, its helper looking at `look_on` alone, no network event.
+    pub async fn sign_in_tab(&self, env: &PageEnvironment, look_on: &Origins, pass_through: &Origins) -> Result<ActTab, BrowserError>;
+    pub fn shows_window(&self) -> bool;
 }
+pub struct BrowserState { pub cookies: Vec<StateCookie> }   // Debug shows names only; not serializable
+pub struct StateCookie { pub name, pub value: Secret, pub domain, pub path, pub expires: Option<serde_json::Number>,
+                         pub http_only: bool, pub secure: bool, pub same_site: Option<String> }
 
 pub struct Observer;                                       // a `Browsers` that can only look
 impl Observer {
@@ -119,7 +130,23 @@ impl ActTab {
     pub async fn input(&self, element: &Element, how: &Input, deadline: Deadline) -> Result<(), BrowserError>;
     pub async fn fetch(&self, request: &PageRequest, deadline: Deadline) -> Result<PageResponse, BrowserError>;
     pub async fn answer_dialog(&self, how: &DialogAnswer, deadline: Deadline) -> Result<(), BrowserError>;
+    /// A write from inside the page, with the page's own token read and sent in the same call (decision 0206).
+    pub async fn write_from_page(&self, write: &PageWrite, deadline: Deadline) -> Result<PageAnswer, BrowserError>;
+    /// Where the tab's document is, and the origins of its frames, by the browser's word (decision 0254).
+    pub async fn address(&self, deadline: Deadline) -> Result<String, BrowserError>;
+    pub async fn frame_origins(&self, deadline: Deadline) -> Result<Vec<String>, BrowserError>;
+    /// A count of documents loaded and refusals; a wait for it to grow; a wait for a condition that ends on a change.
+    pub fn changes(&self) -> u64;
+    pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError>;
+    pub async fn wait_unless_changed(&self, until: &Primitive, seen: u64, deadline: Deadline) -> Result<bool, BrowserError>;
 }
+pub enum WriteMethod { Post, Put, Patch, Delete }          // the closed list; GET is the read's
+pub enum TokenFrom { Meta(String), Input(String), Cookie(String) }  pub enum TokenTo { Header(String), Field(String) }
+pub struct AntiForgery { pub from: TokenFrom, pub to: TokenTo }
+pub enum FieldValue { Text(String), Whole(i64), Truth(bool) }  pub enum BodyEncoding { Json, Form }
+impl PageWrite { pub fn new(method: WriteMethod, path: PagePath, encoding: BodyEncoding,
+    fields: BTreeMap<String, FieldValue>, token: Option<AntiForgery>) -> Result<Self, Failure>; }  // every name plain; no header the browser sets
+pub enum TokenProblem { Missing, Several, Unusable }       // BrowserError::Token(_): nothing was sent
 impl ActTab { pub fn blocked(&self) -> Vec<RequestShape>; }       // NAVIGATION, POPUP, DOWNLOAD: what it refused, taken out
 impl ObserveTab { pub fn blocked(&self) -> Vec<RequestShape>; }   // those, and every request and socket it refused
 impl ObserveTab { pub fn record_exchanges(&self); pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges;
@@ -129,7 +156,8 @@ pub fn plain_segment(text: &str) -> bool;                  // letters, digits, `
 pub const MAX_SEGMENT_BYTES: usize;                         // 512
 pub struct PagePath;                                        // a pattern with each `{placeholder}` one plain segment
 impl PagePath { pub fn fill(pattern: &str, values: &BTreeMap<String, String>) -> Result<Self, Failure>; pub fn as_str(&self) -> &str; }
-pub struct PageAnswer { pub status: u16, pub media_type: String, pub body: String }   // no header; the body redacted
+pub struct PageAnswer { pub status: u16, pub media_type: String, pub body: String,
+                        pub withheld: bool }   // no header; the body redacted; withheld: a write's answer quoted its token
 
 pub struct Loaded { pub address: String, pub title: String, pub status: Option<u16> }
 pub struct Element;                                        // one element of one page generation and one tab
@@ -161,7 +189,7 @@ pub const MASK: &str;                                      // what a snapshot sh
 /// Whether a request reached the page. The crate above decides what that means for a write.
 pub enum Dispatch { Sent, NotSent, Unknown }
 pub enum Reason { NotVisible, Disabled, NotEditable, Obscured, WrongControl, NoSuchOption }
-pub enum LaunchReason { NotInstalled, Supervisor(Failure), NotOwned(String), NoAnswer(String), DataDirectory(Failure) }
+pub enum LaunchReason { NotInstalled, NoScreen, Supervisor(Failure), NotOwned(String), NoAnswer(String), DataDirectory(Failure) }
 pub struct RequestShape { pub method: String, pub address: String }
 pub enum BrowserError {
     NotFound, Ambiguous { count: usize }, NotActionable(Reason),
@@ -213,8 +241,12 @@ Contracts that the signatures do not show:
 - **An address that is kept carries no query.** A snapshot's address, the address of a `PageResponse`, and every address `blocked()` reports are cut at the query, where tokens travel. `Loaded.address` keeps its query, redacted, because the crates above decide by it; it is not for showing.
 - **An in-page request follows no redirect.** A redirect's next address was checked by nobody, so the answer is `RequestFailed` and what the first request did is for the crate above to find out. `page_http` follows none either.
 - **A read from inside the page cannot send anything but a read** ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). `read_from_page` takes no method, header, body, or origin: the helper makes the address from the page's own origin and a `PagePath`, refuses a page with no origin, checks the page's origin against the tab's in the same call, fetches with GET, the page's cookies of the same origin and nothing more, and stops reading past `max_read_chars` (`TooLarge`). A value that is not one plain segment is refused by `PagePath::fill`, `input`, `address_value_refused`, and nothing is sent. Only an observing tab has the call, so its guard still fails any request of the page that could write; a test sends POST from the same page and the application sees none. No credential is read out of the page: the answer's headers are not returned.
+- **A write from inside the page is an acting tab's, and its token never leaves the page** ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). `write_from_page` is on `ActTab` alone; an observing tab has none, and its browser fails the request beneath it. The method is from a closed list, the path a `PagePath`, every name of a field, a header, or a token's place plain, and the one header that may be named is the token's, never one the browser or the connection sets. The helper finds the token where the write says (a `meta` by name, a hidden `input` by name, or a cookie the page's script may read), refuses before `fetch` a token missing, two different ones, or one not of a token's form (`BrowserError::Token`, not sent), sends once with the page's cookies of the same origin and no redirect followed, replaces every copy of the token in the answer before the answer leaves the page, and hands back no text of an error. The browser itself may send the request again when the connection closed unanswered: measured, a PUT was sent twice.
 - **What is typed is not printed.** The debug form of `Input` gives the length of a text, and that of `PageRequest` the names of its headers and the length of its body. The fields are plain text all the same: the crates above hold a password in a `String` until it is typed.
-- **A data directory is its owner's alone.** On Linux and macOS it is set to mode 0700 before the browser starts on it, and one that is still open to others afterwards is refused. The browser's cookie store is written under a key that is no secret, so the folder is what keeps a session; the browser's own files are 0600 and 0700, measured. On Windows the folder takes its parent's access list and the engine reads none.
+- **A data directory is its owner's alone.** On Linux and macOS it is set to mode 0700 before the browser starts on it, and one that is still open to others afterwards is refused; the browser's own files are 0600 and 0700, measured. On Windows the folder takes its parent's access list and the engine reads none.
+- **Nothing a page stores is written to the data directory** ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)). The browser makes a context of its own when it starts (`Target.createBrowserContext`), every tab is opened in it, and downloads are denied and permissions refused for it as for the default context. It keeps cookies and page storage in memory: a test signs in through the test application's page, closes the browser, and finds the session cookie in no file. A browser that does not make the context is closed as not owned. A session's state leaves the browser only through `export_state`, as `Secret`s, and returns through `import_state`, once for each mark, so a cookie the application changed since is kept.
+- **The page's service worker is passed by in both kinds of tab** (decision 0245, audit finding M6), so a write from inside the page reaches the application as sent, and no worker answers it.
+- **A write's answer that quotes its token in any spelling is withheld whole in the page** (decision 0245, audit finding S4): after JSON escapes, character references, and percent-encoding are undone, in any case, the token or its first half is looked for; on a match `PageAnswer::withheld` is set and the body is empty. Measured ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md), audit finding M7): an acting tab's network events cannot be switched off, since the service worker is passed by only while they are on; they carry no body of a request the page's script makes (`maxPostDataSize` of one byte). A form a document posts, the cookies, and a token in a header still cross, in the events the record names; none of those fields is parsed or kept. A sign-in tab hears no network event.
 - **Looking at the disk for a launch is off the async threads:** finding the program and making the folder run on a blocking thread. `availability()` is not async and looks when it is called.
 
 ### Two postures
@@ -243,7 +275,7 @@ In an `ActTab` the page may write, and three rows still hold: the tab's own docu
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-pack-web-ui` | `Browsers::new` inside its `Pack::register`; `Browsers::open`, `ActTab` and `Look` for the `ui` and `site_tools` drivers; `Observer`, `ObserveTab::read_from_page`, `PagePath`, and `plain_segment` for `page_http` and the `ui` driver's `goto`; `Visibility::Window`, `export_state`, and `import_state` for its auth providers, once they are built |
+| `a2m-pack-web-ui` | `Browsers::new` inside its `Pack::register`; `Browsers::open`, `ActTab` and `Look` for the `ui` and `site_tools` drivers; `Observer`, `ObserveTab::read_from_page`, `ActTab::write_from_page`, `PageWrite`, `PagePath`, and `plain_segment` for `page_http` and the `ui` driver's `goto`; `Visibility::Window`, `export_state`, and `import_state` for its auth providers, once they are built |
 | `a2m-pack-web-probe` | `Observer` only: observing tabs, `Look`, `blocked()` |
 | `anything2mcp` | Nothing of this crate by name. It registers the web pack, which builds the one `Browsers` and hands its `observer()` to the discoverers |
 
@@ -254,10 +286,11 @@ It calls the scoped supervisor in `a2m-provider` to start and stop browser proce
 | State | Where | Lifetime |
 | --- | --- | --- |
 | Open browsers, by profile, with tab and run counts | Memory | The engine process |
-| A browser's data directory | `profiles/<target>/<environment>/<kind>-<digest>/` in the data directory | Until the session is revoked. Erasing it is not built |
+| A browser's data directory | `profiles/<target>/<environment>/<kind>-<digest>/` in the data directory: the browser's own preferences and caches, no cookie and no page storage | Until the session is revoked. Erasing it is not built |
+| Cookies and page storage of its pages | The browser's in-memory context | The browser process |
 | Known browser digests | The settings group of the pack that builds the `Browsers`, under `browser_digests` | Read at start, by `BrowserSettings::with_pack_settings` |
 
-It owns no table. A session's saved state will be sealed by `export_state` and stored by the session keeper, not here.
+It owns no table. A session's state is taken out by `export_state` and sealed and stored by the session keeper, not here.
 
 ## Failures
 
@@ -326,8 +359,8 @@ A test finds its browser as the product does: in the known places. Two variables
 5. Done: `input` with `Dispatch` reported, `answer_dialog`, and `fetch` from inside the page.
 6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets. Done after the safety audit ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)): `Origins` on every tab; the lock on a tab's moves; downloads denied, permissions refused, and windows closed; the lock of a frame in another process; the private data directory; the settings reader for digests.
 7. Not built, slice 1.6: declared frames; the check of a helper's match against the browser's own accessibility query; recycling; the stable-position check before a click; `Input::Scroll`; one telemetry span per round trip group.
-8. Not built, package 2.3: `Visibility::Window`, `export_state`, `import_state`, the watching tab.
-9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); a read from inside the page, GET alone, in an observing tab ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
+8. Done in part ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): the in-memory context, `export_state` and `import_state` of cookies. Done ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)): `Visibility::Window` with its notice tab, the sign-in tab, the screen a window needs on Linux, `import_state` held to the run's origins, a test screen (`test_support::Screen`), run here on a virtual display. Not built: page storage in a session's state, the watching tab.
+9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); a read from inside the page, GET alone, in an observing tab ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). A write from inside the page with the page's own token, in an acting tab alone ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
 
 ## Open points
 
@@ -346,4 +379,5 @@ A test finds its browser as the product does: in the known places. Two variables
 - Whether the browser's sandbox starts on the hosted Linux build machine as it is.
 - Fetching and pinning a Chromium build without another project's installer ([research note 09](../../research/09-rust-building-blocks.md)). The `browser.install` action needs it.
 - Whether a GET that a page treats as an action can be recognized at this level, or only by the probe's rules above. [Section 402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) leaves it to Phase 4.
+- A write from inside the page is sent again by the browser itself when its connection closes with no answer (decision 0206). No option of the page's `fetch` stops it. A crate above takes every answer to a write as the answer to the last sending, and builds only a write that sending twice leaves as once.
 - Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser on a copy of the profile. Copying a profile is what decision 0032 avoids. The point above is one reason to doubt it.

@@ -10,7 +10,7 @@ scratch directory if you do not want your own), then, from
 The document is written with sorted keys and one-space indentation so that
 a change in the engine shows as a small difference. Run the generators
 afterwards: ``tools/generate_actions.py`` here, and
-``../npm/client/tools/generate.js``. Standard library only.
+``../npm/scripts/generate-actions.js``. Standard library only.
 """
 
 from __future__ import annotations

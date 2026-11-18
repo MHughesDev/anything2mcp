@@ -129,8 +129,12 @@ pub struct PageAnswer {
     /// The media type, in lowercase, without its parameters; empty when
     /// the answer states none.
     pub media_type: String,
-    /// The body.
+    /// The body. Empty when it was withheld.
     pub body: String,
+    /// True when a write's answer quoted the page's anti-forgery token, in
+    /// some spelling, and its body was withheld whole in the page: the
+    /// token never leaves it (decision 0245). Always false for a read.
+    pub withheld: bool,
 }
 
 #[cfg(test)]

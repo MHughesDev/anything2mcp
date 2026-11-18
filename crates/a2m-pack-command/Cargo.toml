@@ -18,7 +18,9 @@ serde.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 
-[target.'cfg(unix)'.dependencies]
+# The frozen copy of the check before decision 0250, which one test
+# compares with the provider's.
+[target.'cfg(unix)'.dev-dependencies]
 rustix.workspace = true
 
 [dev-dependencies]

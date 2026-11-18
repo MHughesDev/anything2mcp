@@ -1,10 +1,10 @@
 # Target file formats
 
-Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the JSON Schemas are written from in Phase 0, task B3.
+Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the schemas in the code were written from: the kernel's file kinds in `a2m-files` (package B4), and each pack's own kinds in its crate. Where this page and the schemas in the code differ, the code is what loads, and one of the two is to be corrected.
 
 This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
 
-**Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The other packs bring their own, each given field by field in its spec section and listed [below](#kinds-the-other-packs-bring): `commands/` (command pack), `statements/` (data pack), `documents/` (file pack), `channels/` and `schemas/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
+**Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The other packs bring their own, each given field by field in its spec section and listed [below](#kinds-the-other-packs-bring): `commands/` (command pack), `statements/` (data pack), `documents/`, `folders/`, and `logs/` (file pack), `channels/` and `schemas/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
 
 Conventions: names are lowercase with underscores. *Required* fields are marked. A field that takes an *expression* takes CEL ([expressions](#expressions)). A field that takes a *condition* takes one of the [conditions](#conditions).
 
@@ -30,7 +30,7 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | Field | Meaning |
 | --- | --- |
 | `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's. A field the pack marks as naming a program takes an absolute path, and the plan declares that program for the surface; a relative path is `kernel.program_invalid` |
-| `origin`, `base`, `address`, `app` | The address for the kind: a web origin (`web`), an API base address (`http`), an MCP server address (`mcp`; a local server also names its `program` and `digest`), or a desktop application identifier. Other kinds have their own, given in their pack's section and listed [below](#kinds-the-other-packs-bring) |
+| `origin`, `base`, `address`, `app` | The address for the kind: a web origin (`web`), an API base address (`http`), an MCP server address (`mcp`; a local server also names its `program` and `digest`), or a desktop application (`desktop`: `program`, its absolute path, which is its address, with `application` and optionally `digest`, as given [below](#kinds-the-other-packs-bring)). Other kinds have their own, given in their pack's section and listed [below](#kinds-the-other-packs-bring) |
 | `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
@@ -54,13 +54,13 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `surfaces` (required) | The surfaces this entry covers |
 | `mode` (required) | `use_existing`, `managed_session`, or `custom` |
 | `provider` (required) | An auth provider from the technical reference |
-| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile |
+| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile, except in a draft: there a probe that names nothing, where no operation file has that name, compiles as not yet drafted, with the warning `kernel.probe_pending`, and the sign-in is marked as not confirmed ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 | `probe_inputs` | For a probe that is an operation: the inputs it is called with. Every required input with no default is given here, so the probe can be run as written |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
 | `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know is refused by the provider's own check when the version is published, because the compiler holds no list of providers. Never a credential |
-| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`. References only |
+| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`, whose first part is the target's own name: a reference of another target is refused ([decision 0248](../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)). References only |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
 | `movable` | `auto` or `false`; `false` pins the session to its runner |
 
@@ -139,6 +139,8 @@ Tried in order; the first that matches exactly one element and passes the finger
 
 Position alone, and XPath, are not accepted.
 
+A desktop screen uses `{role, name}` alone, both exact, with a role from the desktop pack's closed list of role words; its `control` is `desktop_text` ([decision 0202](../decisions/0202-the-desktop-packs-control-has-a-name-of-its-own.md)). An element with no accessible name cannot be located.
+
 ### Conditions
 
 | Condition | True when |
@@ -156,7 +158,7 @@ There is no condition that waits for a length of time or for the network to go q
 
 ## `endpoints/*.yaml`
 
-Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the same form, for reads, from a folder of its own, `page_requests/`: `endpoint`, `surface`, `method: GET`, `path`, `effect: read`, and `response_schema`, with one more field, `page`, the path of the page that makes the request ([decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)).
+Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the same form from a folder of its own, `page_requests/`: `endpoint`, `surface`, `method`, `path`, `effect`, `responses` (`ok`, `absent`, and for a write `refused`), and `response_schema`, with one more field, `page`, the path of the page that makes the request ([decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). A read is `method: GET`, `effect: read`. A write is `method: PUT`, `effect: write`, with `request_schema`, `request_encoding` (`json` or `form`), and `anti_forgery`: `from` one of `meta`, `input` (a hidden input), or `cookie`, each with the name the page uses, then one `header` or one `field` it is sent in, and `refused`, the answers by which the application refuses the token; or the word `none` for an endpoint that takes no token. `POST`, `PATCH`, and `DELETE` do not compile yet, and no drafting rule writes a write entry ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)).
 
 | Field | Meaning |
 | --- | --- |
@@ -166,14 +168,44 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the s
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `request_schema`, `response_schema` (response required for a JSON answer) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `answer` | The form of the answer, below. Left out, the answer is JSON, checked against `response_schema` |
 | `responses` | The answers the endpoint declares. `ok`: accepted statuses, 200 unless given. `absent`: statuses that mean the record does not exist, on a lookup. `refused`, `conflict`, `unavailable`: lists of a `status` with an optional `when`, a map from a top-level field of the body to the text it must hold; a `conflict` may name the field that holds the record's version now, as `current`. An answer that matches nothing declared stops the step |
 | `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
 | `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
+| `read_asserted` | `true` on an endpoint marked `read` whose method HTTP does not mark safe, such as a search behind `POST`: the developer's word that it changes nothing. Without it such an endpoint does not compile; with it, it is sent outside a live run only against an environment of kind `test` ([decision 0249](../decisions/0249-the-http-pack-reads-in-bounded-work-and-sends-nothing-that-may-write-outside-a-live-run.md)) |
 | `idempotency_header` | Header that carries the record's idempotency token, if the application accepts one |
 | `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}`. A binding on an endpoint that sends a version names a `read_back` endpoint that reads one |
 | `volatile` | Request fields to ignore when comparing with a shadow |
+
+**The answer's form** ([decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)). `answer.form` is `json`, `xml`, `text`, or `bytes`; `answer.content_type` lists the media types the answer's `Content-Type` must be one of, `application/*+xml` standing for a family. Unless listed: `xml` takes `application/xml`, `text/xml`, and `application/*+xml`; `text` takes `text/plain`; `bytes` takes `application/octet-stream`; `json` is not checked. An answer that is not JSON has no `response_schema`: the values it declares are its record, which a binding's `extract` names as it names a JSON body's properties.
+
+| Form | Fields | The record |
+| --- | --- | --- |
+| `xml` | `namespaces`: prefix to URI, the only prefixes a path may use; `fields`: a map of fields by name, each `path` or `each`; `max_depth` (64 unless set) and `max_elements` (100,000) | A `path` is steps from the root element joined by `/`, each a name or `prefix:name`, the last may be `@name` for an attribute; otherwise the element's text, its two ends' white space removed. `type` is `string` (the default), `integer`, `number`, or `boolean`; `required: false` lets the path match nothing. `each` is a path to a repeated element and gives a list: with `fields`, of records whose paths start at that element; without, of the elements' text. A path that matches nothing where required, or more than one place, stops the read. No function, predicate, axis, wildcard, or nested `each` |
+| `text` | `charset`: `utf-8` (the default), `us-ascii`, or `iso-8859-1`; `pattern`: a regular expression the whole text must match; `fields`: the `type` and `required` of its named groups | `text`, the whole body; and one field for each named group of the pattern |
+| `bytes` | None | `length`, a whole number, and `digest`, the SHA-256 of the body as 64 hexadecimal characters |
+
+```yaml
+endpoint: order_xml_get
+surface: api
+method: GET
+path: "/views/xml/orders/{order_id}"
+effect: read
+responses: {absent: [404]}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    status: {path: "o:order/@status"}
+    customer: {path: "o:order/o:customer"}
+    items:
+      each: "o:order/o:items/o:item"
+      fields:
+        item_code: {path: "@code"}
+        quantity: {path: "o:quantity", type: integer}
+```
 
 ## Kinds the other packs bring
 
@@ -184,10 +216,13 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `endpoints/` | `endpoint`, [above](#endpointsyaml) | `http`: `base`, and `unencrypted_credentials`, which is `accepted` only on a surface that may send a credential over plain `http` to another machine; any other value, or none, refuses it ([decision 0188](../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)) | [Section 303](../spec/3-packs/303-the-http-pack.md); [`a2m-pack-http`](../architecture/crates/a2m-pack-http.md) |
 | `commands/` | `command` | `program`: `path`, and `digest` | [Section 306](../spec/3-packs/306-the-command-pack.md); [`a2m-pack-command`](../architecture/crates/a2m-pack-command.md) |
 | `statements/` | `statement` | `database`: `file`, `store`, and `root`. A read-back read is written `effect: read` with `form: table` and a `record`: it is the one read of a record by its key, and the pack writes its text ([decision 0141](../decisions/0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md)) | [Section 307](../spec/3-packs/307-the-data-pack.md); [`a2m-pack-data`](../architecture/crates/a2m-pack-data.md) |
-| `documents/` | `document` | `file`: `folder`, and `root`. A document that a binding writes must state `may_be_open`, `true` or `false`; a field of delimited text whose value may begin with `=`, `+`, `-`, or `@` must say `may_begin_formula: true`, or such a value is refused ([decision 0149](../decisions/0149-the-file-pack-after-its-safety-audit.md)) | [Section 308](../spec/3-packs/308-the-file-pack.md); [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md) |
+| `documents/` | `document` | `file`: `folder`, and `root`. A document that a binding writes must state `may_be_open`, `true` or `false`; a field of delimited text whose value may begin with `=`, `+`, `-`, or `@` must say `may_begin_formula: true`, or such a value is refused ([decision 0149](../decisions/0149-the-file-pack-after-its-safety-audit.md)). Its formats include `ini` and `property_list`, which are read and updated one value at a time ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | [Section 308](../spec/3-packs/308-the-file-pack.md); [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md) |
+| `folders/` | `folder` | `file`, as for `documents/` | `depth` (0 to 4), `max_entries`, `digest_max_bytes`, `content_max_bytes`, `writes` (any of `create`, `update`, `rename`, `delete`), and `may_be_open`, which must be `false` where anything is written. [Decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md); [section 308](../spec/3-packs/308-the-file-pack.md); [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md) |
+| `logs/` | `log` | `file`, as for `documents/` | `file`, `encoding` (`utf-8`), `max_lines`, and `max_bytes`. Read only. [Decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md); [section 308](../spec/3-packs/308-the-file-pack.md); [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md) |
 | `channels/`, `schemas/` | `channel`, `message_schema` | `broker`: `address`, and `protocol` | [Section 309](../spec/3-packs/309-the-stream-pack.md); [`a2m-pack-stream`](../architecture/crates/a2m-pack-stream.md) |
 | `registers/` | `register` | `device_link`: `address`, `protocol`, `unit`, and `serials`, the serial of the device in each environment, by the environment's name; a write is refused where none is declared for the run's environment; the layout of a published register map that the pack drafts a map from is given in the pack's design ([decision 0137](../decisions/0137-a-device-is-held-to-its-serial-a-write-frame-is-recorded-before-it-is-sent-and-a-run-has-a-frame-ceiling.md)) | [Section 310](../spec/3-packs/310-the-device-pack.md); [`a2m-pack-device`](../architecture/crates/a2m-pack-device.md) |
-| `page_requests/` | `page_request`, [`endpoints/`](#endpointsyaml) in form, for reads, with one more field, `page` | `web`, as for `screens/` | [`a2m-pack-web-ui`](../architecture/crates/a2m-pack-web-ui.md); [decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md) |
+| `page_requests/` | `page_request`, [`endpoints/`](#endpointsyaml) in form, for reads and for writes by PUT, with one more field, `page` | `web`, as for `screens/` | [`a2m-pack-web-ui`](../architecture/crates/a2m-pack-web-ui.md); [decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md) |
+| `screens/` | `screen`, [above](#screensyaml), with `control: desktop_text` | `desktop`: `program`, the absolute path of the application's program, which is its address; `application`, the name it gives itself on the accessibility bus; and optionally `digest`, the SHA-256 of the program. Reads only, on Linux only ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) | [Section 305](../spec/3-packs/305-the-desktop-pack.md); [`a2m-pack-desktop`](../architecture/crates/a2m-pack-desktop.md) |
 | `mappings/` | `mapping` | `mcp`: `address`; a local server also names its `program` and `digest`; `unencrypted_credentials: accepted` as on an `http` surface ([decision 0188](../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)) | [Section 304](../spec/3-packs/304-the-mcp-pack.md); [`a2m-pack-mcp`](../architecture/crates/a2m-pack-mcp.md) |
 
 ## `operations/*.yaml`
@@ -196,7 +231,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | --- | --- |
 | `operation` (required) | The tool name: `{target}_{module}_{object}_{verb}`. The module part is left out when the target declares no `modules`. The verb in the name is a plain word for callers; it need not be one of the built-in verbs a binding uses |
 | `effect` (required) | `read`, `write`, or `irreversible` |
-| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write` |
+| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write`. With `natural` and no `inputs`, `place: fixed` says the record is the one place every binding names in the target's files, which its file kind declares fixed; no input is its key ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1 for a write, and at least 1; a read states none; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
@@ -281,6 +316,7 @@ An `expression` and `rows` read `row`, the record of the row's cells by header t
 | `inputs` (required) | Inputs to call with |
 | `expect` (required) | The expected result, or the expected trace signature |
 | `restore` | For live write tests: true to put the original values back afterwards |
+| `binding` | For a test of an operation: the binding it tests, `{mode: <mode>, position: <n>}`, the position counted from 1 among the operation's bindings and needed only where two share the mode. Without it, the test runs the binding that would act live: the first `verified`, else the first not retired. The result names the binding that ran and the digest of what it does; the publish gate asks a passing test of every binding that may act ([decision 0200](../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)) |
 
 A fixture folder holds a marker file stating that it was scrubbed, `fixture.yaml` with `scrubbed: true`, and the recorded answers an offline test is replayed from ([decisions 0177](../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md) and [0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)):
 
@@ -290,11 +326,17 @@ A fixture folder holds a marker file stating that it was scrubbed, `fixture.yaml
 | `<name>.request.json` | For a committing step: the values the engine must send it, by argument name, an object or a list in the order the saves are sent. Compared field by field with what was sent; a save sent with no recorded request fails the test |
 | Any other file | A file a step or a source reads. A pipeline's source is named by the test's input `source`, a file of this folder, read through the checked paths |
 
+An answer file holds what the step observed, not the system's raw answer: for an HTTP read, the named values its extract step takes from the answer, which are the operation's outputs and any value the plan also asks for, such as a version. A list is a JSON list of values. A record is an object with one entry named `record`; a bare object is refused as a value. So an operation with the outputs `customer` and `lines`, where `lines` is a list of records, has this answer file:
+
+```json
+{"customer": "Example Customer One", "lines": [{"record": {"item_code": "L-300", "quantity": 2}}]}
+```
+
 A step with no answer left fails the test as `fixture_no_answer`, and nothing is sent. In `expect`, a field the result does not hold may name the run itself: `state` (its end state, `completed` unless given), `records_verified` (records read back and matched, or found unchanged), `failure` (the code it stopped with), and `sent` (how many saves were sent). A test of a write runs in a ledger of its own, thrown away when it ends.
 
 A write's fixture answers the look before the save and the read-back after it differently, so the step they share is answered by a list, in order: the record as it was (or `null`, absent), then as the save left it. One object would answer both, find the record unchanged, and send nothing. A write's test must have `<name>.request.json`, and passes only when what was sent equals it; without one it is `not_run`. A test that expects the record to hold the intended values already, and nothing to be sent, says `sent: 0`: it proves that path, and by itself does not pass the publish gate for the write ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 
-`fixture.record` writes a read's fixture folder and its test from one real read in the sandbox: each step's answer as above, every value redacted and then put in place of by a synthetic one of its type and shape (text by text of its length class made of characters the original does not hold, the same original by the same text everywhere; a choice by another declared code; numbers by fixed numbers of their scale; dates, moments, and lengths of time by fixed ones; `true`, `false`, and `null` kept; lists cut to three items, each by the list's field type), the test's `expect` the replay's own result. A value whose type has no rule stops it, and nothing is written.
+`fixture.record` writes a read's fixture folder and its test from one real read in the sandbox, through the binding it is given by `mode` and `position` or else the one that would act live: each step's answer as above, every value redacted and then put in place of by a made-up one chosen without looking at the original, except for what the replay needs ([decision 0200](../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)): text by text of one fixed alphabet and one length for its kind of type, chosen by its place, and in a key field the same original by the same text, so the test's input and the fixture agree; a choice by its type's first declared code, whatever it was; whole numbers by `1`, exact numbers, and numbers shown as text, by `1` of the type's places; dates, moments, and lengths of time by fixed ones; `true` and `false` alternating by place; `null` kept; lists cut to three items and otherwise kept, each by the list's field type. A name in an answer is kept only where the operation declares it as an output, its declared record type lists it, or the target's files state it for what the steps refer to; every other key is put in place of by a made-up key. The test's `expect` is the replay's own result. A value whose type has no rule stops it, and nothing is written; each file is made new, and on any failure the files written are removed.
 
 ## Expressions
 

@@ -1,11 +1,17 @@
 //! What the tests share: a registry that holds only the desktop pack, on a
-//! session bus of the test's own; the fixture target compiled through it;
-//! the driver prepared through the registry's handle; and discovery through
-//! the read-only port.
+//! session of the test's own; the fixture target compiled through it; the
+//! driver prepared through the registry's handle; and discovery through
+//! the read-only port. The same tests run against the stand on every
+//! system that has one: on Linux a tree on a session bus of the test's
+//! own, on Windows a window of plain controls and on macOS a window of
+//! AppKit's controls, each in a process of its own, which is this test
+//! binary started again (hence [`example_desk::stand_child`]).
 //!
-//! A test that needs the session bus and the accessibility bus says it was
-//! skipped on a machine that has neither, unless `A2M_REQUIRE_DESKTOP=1`
-//! says the machine must have them: then it fails.
+//! A test that needs the stand says it was skipped on a machine that
+//! cannot give one (no session bus and accessibility bus on Linux, no
+//! interactive desktop on Windows, no permission to use the accessibility
+//! interface on macOS), unless `A2M_REQUIRE_DESKTOP=1` says the machine
+//! must: then it fails, and says why.
 
 #![allow(
     dead_code,
@@ -32,6 +38,8 @@ use a2m_provider::{
 };
 use a2m_telemetry::TelemetrySettings;
 use example_desk::{Desk, Order, Session};
+
+example_desk::stand_child!();
 
 /// A folder under the system's temporary folder, removed when dropped.
 pub struct Folder(PathBuf);
@@ -132,23 +140,17 @@ pub fn fixture_copy(into: &Path, path: &str, change: impl Fn(&str) -> String) {
     std::fs::write(&file, change(&text)).unwrap();
 }
 
-/// The program that hosts the stand: this test's own.
-pub fn program() -> String {
-    std::fs::canonicalize(std::env::current_exe().unwrap())
-        .unwrap()
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// A session of the test's own with the stand's application on it, or
 /// `None` when this machine cannot give one.
 pub struct Scene {
     pub folder: Folder,
-    pub session: Session,
     pub desk: Option<Desk>,
+    pub session: Session,
     pub registry: Registry,
     pub plan: Plan,
     pub surface: SurfaceRef,
+    /// The program that runs the stand, which the surface names.
+    pub program: String,
 }
 
 impl Scene {
@@ -165,7 +167,7 @@ impl Scene {
     async fn with(name: &str, application: bool) -> Option<Self> {
         let Some(session) = Session::start().unwrap() else {
             eprintln!(
-                "skipped: this machine has no session bus and accessibility bus to give the desktop stand"
+                "skipped: this machine cannot give the desktop stand a session (on Linux a session bus and an accessibility bus, on Windows an interactive desktop, on macOS this program's permission to use the accessibility interface)"
             );
             return None;
         };
@@ -175,19 +177,21 @@ impl Scene {
         } else {
             None
         };
-        let registry = registry(folder.path(), Some(session.address()));
+        let registry = registry(folder.path(), session.bus());
         let plan = match compile_at(&registry, &fixture()) {
             Ok(compiled) => compiled.plan,
             Err(problems) => panic!("{}", shown(&problems)),
         };
-        let surface = surface_of(&plan);
+        let program = session.program();
+        let surface = surface_of(&plan, &program);
         Some(Self {
             folder,
-            session,
             desk,
+            session,
             registry,
             plan,
             surface,
+            program,
         })
     }
 
@@ -237,8 +241,44 @@ impl Scene {
         result
     }
 
+    /// The same read, which on failure says what the window holds: its
+    /// shape, as the pack's discoverer gives it. A failing test's message
+    /// is all a reader of a remote machine's run has.
+    pub async fn read_or_explain(&self, operation: &str, within: Duration) -> Values {
+        match self.read(operation, within).await {
+            Ok(values) => values,
+            Err(failure) => panic!(
+                "`{operation}` stopped: {}\nThe window, as the pack sees it:\n{}",
+                failure.failure,
+                self.explain().await
+            ),
+        }
+    }
+
+    /// The shape of the application's windows, as the pack's discoverer
+    /// gives it, cut to a few thousand characters; or why it could not be
+    /// taken.
+    pub async fn explain(&self) -> String {
+        const KEPT: usize = 12_000;
+        match self.discovered().await {
+            Ok(findings) => findings
+                .iter()
+                .map(|finding| finding.found().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .chars()
+                .take(KEPT)
+                .collect(),
+            Err(why) => format!("(no shape: {why})"),
+        }
+    }
+
     /// The pack's discoverer, run against the session.
     pub async fn discover(&self) -> Vec<Finding> {
+        self.discovered().await.unwrap()
+    }
+
+    async fn discovered(&self) -> Result<Vec<Finding>, String> {
         let description = SurfaceDescription {
             kind: SurfaceKind::new("desktop").unwrap(),
             archetype: Archetype::Interface,
@@ -249,7 +289,7 @@ impl Scene {
         let (handle, prepared) = self
             .prepare(a2m_provider::Posture::Discovery)
             .await
-            .unwrap();
+            .map_err(|failure| failure.failure.to_string())?;
         let port = ReadOnlyPort::new(handle, prepared);
         let focus = Values::new();
         let scope = DiscoveryScope {
@@ -261,10 +301,11 @@ impl Scene {
             focus: &focus,
         };
         let mut kept = Kept(Vec::new());
-        discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+        let said = discoverer.discover(&port, &scope, &mut kept).await;
         let (handle, prepared) = port.into_parts();
         handle.release(prepared, false).await;
-        kept.0
+        said.map_err(|failure| failure.to_string())?;
+        Ok(kept.0)
     }
 
     /// A target folder with only a `target.yaml` whose surface is this
@@ -273,7 +314,7 @@ impl Scene {
         let root = Folder::new("drafted");
         let target = std::fs::read_to_string(fixture().join("target.yaml"))
             .unwrap()
-            .replace("/opt/example/bin/example-desk", &program());
+            .replace("/opt/example/bin/example-desk", &yaml_text(&self.program));
         std::fs::write(root.path().join("target.yaml"), target).unwrap();
         let report = Drafter::new(self.registry.compiler_set(), &TargetRoot::new(root.path()))
             .draft(findings)
@@ -282,9 +323,16 @@ impl Scene {
     }
 }
 
-pub fn surface_of(plan: &Plan) -> SurfaceRef {
+/// A path as it stands inside the fixture's double-quoted string: a
+/// Windows path's backslashes doubled.
+fn yaml_text(path: &str) -> String {
+    path.replace('\\', "\\\\")
+}
+
+/// The plan's surface, at the address of the program that runs the stand.
+pub fn surface_of(plan: &Plan, program: &str) -> SurfaceRef {
     let mut surface = plan.surfaces[0].clone();
-    surface.address = program();
+    surface.address = program.to_owned();
     SurfaceRef {
         target: plan.header.target.clone(),
         environment: Environment::new("test").unwrap(),
@@ -353,4 +401,262 @@ pub fn every_file(root: &Path) -> Vec<(PathBuf, String)> {
         }
     }
     out
+}
+
+// ---- a write: arguments, a real store, real intent tokens ----
+
+/// The arguments of a step, as the engine would evaluate them. Every
+/// expression of the fixtures is `input.<name>`.
+pub fn args(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+    let mut args = Values::new();
+    for arg in &step.args {
+        let source = &plan.expression(arg.value).unwrap().source;
+        let name = source
+            .strip_prefix("input.")
+            .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));
+        if let Some(value) = inputs.get(name) {
+            args.insert(arg.name.clone(), value.clone());
+        }
+    }
+    args
+}
+
+/// Carries out steps in order through the handle, as the engine would:
+/// each with its arguments evaluated, and, for a write, the committing
+/// step with the ledger's token for the record.
+pub async fn run_with(
+    plan: &Plan,
+    handle: &DriverHandle,
+    prepared: &mut Prepared,
+    steps: &[Step],
+    inputs: &Values,
+    write: Option<&Write>,
+    within: Duration,
+) -> Result<Values, StepFailure> {
+    let mut values = Values::new();
+    for step in steps {
+        let args = args(plan, step, inputs);
+        let input = StepInput::new(&args, Deadline::after(within));
+        let input = match write {
+            Some(write) => input.for_record(write.record(), Some(&write.key), None),
+            None => input,
+        };
+        let authority = match write {
+            Some(write) if step.commits => Authority::Write(&write.token),
+            _ => Authority::Read,
+        };
+        let outcome = handle.act(prepared, step, &input, authority).await?;
+        let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+        for (name, value) in observed.values {
+            values.insert(name, value);
+        }
+    }
+    Ok(values)
+}
+
+impl Scene {
+    /// Prepares the driver for the write's run and lease number, in a
+    /// posture.
+    pub async fn prepare_for(
+        &self,
+        write: Option<&Write>,
+        posture: a2m_provider::Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle();
+        let supervisor = handle.supervisor(Vec::new());
+        let destinations = Destinations::new([self.surface.surface.address.clone()]);
+        let (run, epoch) = write.map_or((RunId::from_bytes([7; 16]), Epoch::new(1)), |write| {
+            (write.fence.run, write.fence.epoch)
+        });
+        let cx = PrepareContext {
+            run,
+            epoch,
+            surface: &self.surface,
+            plan: &self.plan,
+            posture,
+            deadline: Deadline::after(Duration::from_secs(20)),
+            redact: &NoSecrets,
+            destinations: &destinations,
+            paths: &CheckedPaths::none(),
+            supervisor: &supervisor,
+        };
+        let prepared = handle.prepare(&cx, None).await?;
+        Ok((handle, prepared))
+    }
+
+    /// Runs one list of a binding's steps, prepared afresh and released
+    /// after, as the engine runs the act of a write or its read-back.
+    pub async fn steps(
+        &self,
+        steps: &[Step],
+        inputs: &Values,
+        write: Option<&Write>,
+        posture: a2m_provider::Posture,
+        within: Duration,
+    ) -> Result<Values, StepFailure> {
+        let (handle, mut prepared) = self.prepare_for(write, posture).await?;
+        let result = run_with(
+            &self.plan,
+            &handle,
+            &mut prepared,
+            steps,
+            inputs,
+            write,
+            within,
+        )
+        .await;
+        handle.release(prepared, result.is_err()).await;
+        result
+    }
+}
+
+struct Counted(AtomicU64);
+
+impl a2m_vault::RandomSource for Counted {
+    fn fill(&self, out: &mut [u8]) -> Result<(), a2m_core::Failure> {
+        for chunk in out.chunks_mut(a2m_core::Digest::LENGTH) {
+            let number = self.0.fetch_add(1, Ordering::SeqCst);
+            let block = a2m_core::Digest::of(&number.to_le_bytes());
+            chunk.copy_from_slice(&block.as_bytes()[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
+fn counted() -> Arc<Counted> {
+    Arc::new(Counted(AtomicU64::new(0)))
+}
+
+async fn store() -> a2m_ledger::Store {
+    let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+        a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
+    ));
+    let config = a2m_ledger::StoreConfig::in_memory()
+        .with_clock(clock)
+        .with_random(counted());
+    let store = a2m_ledger::Store::open(config).await.unwrap();
+    let vault = Arc::new(a2m_vault::Vault::with_random(
+        Arc::new(a2m_vault::MemoryKeyStore::with_random(counted())),
+        Arc::new(store.key_records()),
+        counted(),
+    ));
+    store.attach(vault).await.unwrap();
+    store
+}
+
+/// A write run for one record, approved, with its intent stored: what the
+/// engine holds when it reaches the commit point. The approval is the
+/// ledger's test stand-in for the policy engine's, used once.
+pub struct Write {
+    pub fence: a2m_ledger::Fence,
+    pub key: a2m_core::RecordKey,
+    pub token: a2m_ledger::IntentToken,
+}
+
+impl Write {
+    pub async fn new(operation: &str, key: &str) -> Self {
+        use a2m_core::{Digest, EffectClass, OperationName, PrincipalId, RunState, TargetName};
+        use a2m_ledger::{Durability, NewRun, Opened, PlannedRecord, RecordIntent, RetentionClass};
+
+        let store = store().await;
+        let key = a2m_core::RecordKey::new(vec![a2m_core::Value::from(key)]).unwrap();
+        let intended = Digest::of(&key.canonical_bytes());
+        let operation = OperationName::new(operation).unwrap();
+        let planned = key.clone();
+        let fence = store
+            .write(Durability::Synced, move |tx| {
+                let fence = {
+                    let mut ledger = tx.ledger();
+                    let Opened::New(opened) = ledger.open_run(NewRun {
+                        workspace: a2m_core::WorkspaceId::from_bytes([1; 16]),
+                        principal: PrincipalId::from_bytes([1; 16]),
+                        client_label: "test".to_owned(),
+                        tool_name: operation.clone(),
+                        tool_kind: a2m_ledger::ToolKind::Operation,
+                        target: TargetName::new("example").unwrap(),
+                        target_version: Digest::of(b"plan"),
+                        environment: Environment::new("test").unwrap(),
+                        identity: None,
+                        effect: EffectClass::Write,
+                        input_hash: intended,
+                        input: None,
+                        retention: RetentionClass::Long,
+                    })?
+                    else {
+                        panic!("the run exists already");
+                    };
+                    let fence = ledger.new_epoch(opened.run)?;
+                    ledger.set_state(&fence, RunState::Validating, None)?;
+                    ledger.plan_records(
+                        &fence,
+                        &[PlannedRecord {
+                            step_seq: 0,
+                            record_seq: 0,
+                            key: planned,
+                            operation,
+                            intended,
+                            intended_values: None,
+                            before: None,
+                            unchanged: false,
+                        }],
+                    )?;
+                    ledger.store_diff(&fence, Digest::of(b"diff"), None)?;
+                    ledger.set_state(&fence, RunState::NeedsApproval, None)?;
+                    fence
+                };
+                let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+                tx.ledger().begin_writes(&fence, clearance)?;
+                Ok(fence)
+            })
+            .await
+            .unwrap();
+        let record = a2m_ledger::RecordRef {
+            run: fence.run,
+            step_seq: 0,
+            record_seq: 0,
+        };
+        store
+            .write(Durability::Synced, move |tx| {
+                tx.ledger().take_lock(&fence, record).map(|_| ())
+            })
+            .await
+            .unwrap();
+        let token = store
+            .store_intents(
+                &fence,
+                vec![RecordIntent {
+                    record,
+                    intended,
+                    mode: None,
+                }],
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        Self { fence, key, token }
+    }
+
+    pub fn record(&self) -> a2m_ledger::RecordRef {
+        a2m_ledger::RecordRef {
+            run: self.fence.run,
+            step_seq: 0,
+            record_seq: 0,
+        }
+    }
+}
+
+/// The field type's own rule for an output, as the engine loads it.
+pub fn normalizer(plan: &Plan, operation: &str, output: &str) -> a2m_expr::Normalizer {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|known| known.name.as_str() == operation)
+        .unwrap();
+    let output = operation
+        .outputs
+        .iter()
+        .find(|known| known.name == output)
+        .unwrap();
+    let field_type = &plan.field_types[output.field_type.unwrap().get()];
+    a2m_expr::Normalizer::load(plan.expression(field_type.normalizer.unwrap()).unwrap()).unwrap()
 }

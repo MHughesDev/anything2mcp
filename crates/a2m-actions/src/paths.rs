@@ -16,6 +16,11 @@ pub const APP_FOLDER: &str = "anything2mcp";
 /// The variable that puts everything under one directory.
 pub const HOME_VARIABLE: &str = "A2M_HOME";
 
+/// The environment variable a person sets the vault's passphrase in, for a
+/// machine whose vault takes its root key from one. Only the command that
+/// starts the engine reads it, and hands it to the engine on a pipe.
+pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
+
 /// The family of operating system, which decides the conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OsFamily {
@@ -244,6 +249,45 @@ impl Paths {
                 ))
             }
         }
+    }
+}
+
+/// Which of the engine's own folders other accounts may enter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OpenFolders {
+    /// Each that exists is closed to every other account.
+    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
+    Closed,
+    /// These may be entered, or listed, by another account.
+    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
+    Open(Vec<PathBuf>),
+    /// This build does not read who may on this operating system.
+    NotChecked,
+}
+
+/// Which of the data, configuration, cache, and runtime folders another
+/// account may enter or list: on Unix, any of the group's or others' bits
+/// on the folder. Touches the disk. On Windows the access list is not read
+/// here: the engine sets it when it starts.
+pub(crate) fn open_to_others(paths: &Paths) -> OpenFolders {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let open: Vec<PathBuf> = [&paths.data, &paths.config, &paths.cache, &paths.runtime]
+            .into_iter()
+            .filter(|folder| std::fs::metadata(folder).is_ok_and(|found| found.mode() & 0o077 != 0))
+            .cloned()
+            .collect();
+        if open.is_empty() {
+            OpenFolders::Closed
+        } else {
+            OpenFolders::Open(open)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = paths;
+        OpenFolders::NotChecked
     }
 }
 

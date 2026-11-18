@@ -1,6 +1,6 @@
 # Steps, snapshots, and diffs
 
-Three internal formats that several parts of the system share: the steps a compiled plan is made of, the snapshot an agent sees of a screen, and the diff a person approves. Design drafts, fixed in the phase noted for each.
+Three internal formats that several parts of the system share: the steps a compiled plan is made of, the snapshot an agent sees of a screen, and the diff a person approves. All three are built: the steps as the plan's types in `a2m-core`, the snapshot in the browser engine, and the diff with its hash in the engine and the ledger (package 3.5). Where this page and the code differ, the code is right and this page is to be corrected.
 
 ## Steps
 
@@ -19,7 +19,7 @@ The compiler lowers each binding's verb into a fixed list of steps ([spec sectio
 | | `handle` | Deal with a declared variant, such as a dialog |
 | | `upload`, `download` | Attach or receive a file |
 | `ui` only | `observe` | Capture the response for a named endpoint while the page acts |
-| `page_http`, `http` | `token` | Fetch a declared anti-forgery token |
+| `http` | `token` | Fetch a declared anti-forgery token. `page_http` has no such step: its `request` reads the page's token inside the page in the same call that sends the write ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) |
 | | `request` | Send a request built from an endpoint and expressions |
 | | `validate` | Check the response against its schema |
 | | `extract` | Take values out of the response |

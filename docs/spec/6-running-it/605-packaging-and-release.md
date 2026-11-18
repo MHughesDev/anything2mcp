@@ -1,6 +1,6 @@
 # 605. Packaging and release
 
-What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today.
+What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today. Built today: the wheel and the npm packages are built and checked in CI; nothing is published.
 
 ## The repository
 
@@ -16,6 +16,7 @@ anything2mcp/
     a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
     a2m-vault/            # envelope encryption, key-store back ends, redactor
     a2m-telemetry/        # traces, metrics, OpenTelemetry export
+    a2m-netstate/         # this machine's own network state, read from the system; sends nothing
     a2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
     a2m-policy/           # grants, effect classes, approvals, limits
     a2m-auth/             # auth providers, auth discovery, session keeper
@@ -104,7 +105,7 @@ One name on every route ([decision 0056](../../decisions/0056-one-name-everywher
 | Product and repository | Anything2MCP, at `MHughesDev/anything2mcp` |
 | Command | `anything2mcp`, with `a2m` as a short name for the same program. Documents use the full name |
 | Python package and import | `anything2mcp` |
-| Crate on crates.io | `anything2mcp`, the binary and the library facade |
+| Crate | `anything2mcp`, the binary and the library facade; not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) |
 | Kernel and pack crates | `a2m-*` and `a2m-pack-*` |
 | npm package | `anything2mcp` |
 | Built-in tool prefix | `a2m_` |
@@ -114,7 +115,7 @@ One name on every route ([decision 0056](../../decisions/0056-one-name-everywher
 
 `a2m` is never a package name: it belongs to other projects on two registries. There are no alias packages under earlier names; the placeholders that exist under them stay where they are, and [publishing setup](../../plan/publishing-setup.md) says what to do with each.
 
-**A name is held only by a published release.** A registry account, or a publisher configured in advance, reserves nothing. On the date publishing setup records, none of the three names was held: PyPI waits for the first run of the release workflow, and crates.io and npm each need one first publish from the owner's account. Until a row there says held, the name can be lost.
+**A name is held only by a published release.** A registry account, or a publisher configured in advance, reserves nothing. On the date publishing setup records, neither of the two names was held: PyPI waits for the first run of the release workflow, and npm needs one first publish from the owner's account. The product is installed through pip and npm and is not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). The first version is 0.1.0, published when the first hour works from a published package ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). Until a row there says held, the name can be lost.
 
 **One binary is shipped.** `a2m` is a link to it, or the smallest launcher a route supports, on each install route ([decision 0063](../../decisions/0063-the-kernels-interfaces-as-the-crate-designs-settle-them.md)). The workspace builds two small binary targets from one module for convenience; the package build is where the link replaces the second target, because two shipped copies would count twice against the size target. The output names the product whatever name started it, and a test runs both names with the same arguments and compares. On pip, `a2m` is a script of a few lines beside the binary that replaces itself with it, about 11 ms over the binary on Linux, and on Windows an `a2m.cmd` beside it that runs the program with every argument ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)); on npm both names are one launcher, about 43 ms, over the 30 ms budget for starting a command ([research note 21](../../research/21-wheel-and-npm-packaging.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). Other routes are hypothesis H-39; `a2m.cmd` is written and has not yet run on Windows.
 
@@ -207,7 +208,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 
 ## The Rust crate
 
-- `cargo install anything2mcp` builds the binary from source.
+- Building the binary from source with `cargo` is how it is built today. The crate is not published to crates.io, so `cargo install anything2mcp` is not a route ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)).
 - Only the product crate is published. The `a2m-*` and `a2m-pack-*` crates are parts of one workspace, and are published only if embedding the engine as a library ever needs them, by a decision record.
 - All crates share one version number.
 
@@ -218,7 +219,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - A container image for servers.
 - An offline bundle for networks with no internet access: the binary, the wheels, and a pinned browser.
 
-Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)).
+Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)), which is the default there, so a first run needs no settings file ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)).
 
 ## Versions
 
@@ -236,12 +237,12 @@ Publishing cannot be undone. A published version can be yanked, and never replac
 2. Build the binary for every platform; run the full test and benchmark suites on each.
 3. Build wheels, npm packages, installers, and the container image from those same binaries. Nothing is recompiled per package.
 4. Sign every artifact, and attach a software bill of materials and build provenance. Builds are reproducible, and dependencies are audited in CI.
-5. Publish only after everything has built and passed: crates.io, then the release page, then PyPI, then npm, then the container image, then Homebrew and winget.
+5. Publish only after everything has built and passed: the release page, then PyPI, then npm, then the container image, then Homebrew and winget.
 6. Publishing to registries uses short-lived credentials issued to that one workflow, `.github/workflows/release.yml`, never stored tokens, wherever the registry supports it. Nobody publishes from their own machine, and an agent never handles a registry token.
 
 A bad release is yanked from each registry, the changelog says why, and a fixed version with a higher number supersedes it. Published versions are never overwritten and never deleted.
 
-**Today.** The workflow builds eight platform wheels and a source distribution with maturin on every pull request that touches the pip package, checks them together with `twine check` (it expects eight wheels and one source distribution), and publishes them only from a tag or a manual start, through one gated job and PyPI's trusted publishing in a GitHub environment named `pypi` ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). The package is the real pre-alpha software and no longer a placeholder. All eight wheels and the source distribution have been built and checked by the workflow on pull requests; it has never published. It also packs the eight npm platform packages, each with the binary taken from its wheel, and the launcher, checks the nine together, writes a list of the Rust dependencies in the binary for each target, and publishes to npm through a second gated job in a GitHub environment named `npm`, with npm's trusted publishing ([decision 0186](../../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)). The npm jobs have not run yet. The eight platform packages and the launcher must each be published once by the owner, in an npm organization named `anything2mcp`, before trusted publishing can take over. crates.io is blocked by `publish = false` in the workspace and by the `a2m-*` crates, none of which is published; that needs a decision of its own ([research note 21](../../research/21-wheel-and-npm-packaging.md)). crates.io and npm offer trusted publishing only to a name that already exists, so each needs one first publish by the owner before the workflow can take over. Signing, a bill of materials in a standard format with licence texts, the other registries, and the standalone installers are package 5.5.
+**Today.** The workflow builds eight platform wheels and a source distribution with maturin on every pull request that touches the pip package, checks them together with `twine check` (it expects eight wheels and one source distribution), and publishes them only from a tag or a manual start, through one gated job and PyPI's trusted publishing in a GitHub environment named `pypi` ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). The package is the real pre-alpha software and no longer a placeholder. All eight wheels and the source distribution have been built and checked by the workflow on pull requests; it has never published. It also packs the eight npm platform packages, each with the binary taken from its wheel, and the launcher, checks the nine together, writes a list of the Rust dependencies in the binary for each target, and publishes to npm through a second gated job in a GitHub environment named `npm`, with npm's trusted publishing ([decision 0186](../../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)). The npm jobs have not run yet. The eight platform packages and the launcher must each be published once by the owner, in an npm organization named `anything2mcp`, before trusted publishing can take over. The product is not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) ([research note 21](../../research/21-wheel-and-npm-packaging.md)). npm offers trusted publishing only to a name that already exists, so it needs one first publish by the owner before the workflow can take over. Signing, a bill of materials in a standard format with licence texts, the other registries, and the standalone installers are package 5.5.
 
 ## Updates
 

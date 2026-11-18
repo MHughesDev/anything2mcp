@@ -440,7 +440,11 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
 
     // 5. Its tests. The gates refuse every operation that has no offline
     // test, and name both ways on: a test, or the draft removed.
-    let untested = desk.ok(&["test", "example"]).await;
+    // Gates that did not pass are a failed action: exit code 1, with the
+    // refusal a publish would give (decision 0219).
+    let (code, untested) = desk.run(&["test", "example"]).await;
+    assert_eq!(code, Some(1), "{untested}");
+    assert_eq!(untested["error"]["code"], "publish_gates_not_passed");
     let missing = untested["result"]["missing"].as_array().unwrap().clone();
     let entry = missing
         .iter()

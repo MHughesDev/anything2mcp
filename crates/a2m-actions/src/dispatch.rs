@@ -9,6 +9,7 @@
 //! redactor on its way out.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use a2m_core::{DecisionId, EffectClass, Failure, FailureClass, Hazard, Redact, Values};
 use a2m_policy::{
@@ -441,6 +442,12 @@ pub struct Call {
     pub project_refused: Option<Failure>,
     /// Proof that a person is present, when the action needed it.
     pub presence: Option<PresenceProof>,
+    /// What a person gave on the page of a person's act, beside the input,
+    /// by name: a credential for a sign-in (decision 0205). Each value was
+    /// registered with the redactor when it was handed over, is never part
+    /// of the input, and is given to no caller. `None` for every call that
+    /// did not come from such a page.
+    pub given: Option<Arc<a2m_auth::Returned>>,
     /// The effect class and hazard the dispatcher's decision was made for.
     /// For `tool.call` these are the published tool's, as it stood when
     /// the decision was made; the handler refuses a tool that has another
@@ -458,6 +465,7 @@ impl std::fmt::Debug for Call {
             .field("decision", &self.decision)
             .field("project", &self.project.is_some())
             .field("presence", &self.presence.is_some())
+            .field("given", &self.given.is_some())
             .field("decided", &self.decided)
             .finish_non_exhaustive()
     }
@@ -683,20 +691,57 @@ impl Kernel {
         let health = self.health();
         let effect = self.effect_of(&def, &input).await;
         let effect_class = effect.as_ref().map_or(EffectClass::Read, |found| found.0);
-        if !health.allows(def.needs, effect_class) {
-            return Err(Refused::new(
-                codes::busy(
+        // A vault that was never attached because the person did not give
+        // what it needs, its passphrase, refuses every action that needs
+        // the store, a read too, by that failure's own name: a read that
+        // starts a run would fail later, at the store, by a name that
+        // does not say why (decision 0220). A key store that does not
+        // answer leaves the reads that need no secret running, as before.
+        let unattached = if self.inner.vault.is_none() && def.needs != HealthNeed::Nothing {
+            health.reasons.iter().find(|reason| {
+                reason.part == crate::health::Part::Vault
+                    && reason.failure.class() == a2m_core::FailureClass::Input
+            })
+        } else {
+            None
+        };
+        if unattached.is_some() || !health.allows(def.needs, effect_class) {
+            // The refusal carries its cause's own fix (decision 0220). A
+            // cause that is something the person gives and did not, such
+            // as the vault's passphrase, is the refusal itself: it is
+            // named by its own code, and running `doctor.run` would not
+            // help.
+            let cause = unattached.or_else(|| {
+                health
+                    .reasons
+                    .iter()
+                    .find(|reason| reason.part.when_impaired() == health.state)
+            });
+            let refusal = match cause {
+                Some(cause) if cause.failure.class() == a2m_core::FailureClass::Input => {
+                    cause.failure.clone()
+                }
+                _ => codes::busy(
                     codes::ENGINE_DEGRADED,
                     format!(
                         "The engine is {}: {}.",
                         health.state.as_str(),
                         health.cause()
                     ),
-                    "Call `doctor.run` for the fix, then try again.",
+                    match cause {
+                        Some(cause) => format!(
+                            "{} Then try again; `doctor.run` lists every cause.",
+                            cause.failure.next_step()
+                        ),
+                        None => "Call `doctor.run` for the fix, then try again.".to_owned(),
+                    },
                 ),
-                effect_class,
-            )
-            .then(Next::new("doctor.run", json!({}), "now")));
+            };
+            return Err(Refused::new(refusal, effect_class).then(Next::new(
+                "doctor.run",
+                json!({}),
+                "now",
+            )));
         }
 
         // The `Nothing` actions report on the engine and must answer when
@@ -774,6 +819,20 @@ impl Kernel {
             },
             None => (None, None),
         };
+        // A project file the engine does not apply is said, never passed
+        // over in silence (decision 0241).
+        let project_warning = match &project {
+            Some(folder) => {
+                let (folder, kernel) = (folder.clone(), self.clone());
+                tokio::task::spawn_blocking(move || {
+                    crate::project::settings_differ(&folder, kernel.settings())
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+            None => None,
+        };
         let call = Call {
             input,
             caller: request.caller,
@@ -782,12 +841,16 @@ impl Kernel {
             project,
             project_refused,
             presence,
+            given: None,
             decided,
         };
         let mut output = self
             .run_handler(&def, call)
             .await
             .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+        if let Some(warning) = project_warning {
+            output = output.warn(warning);
+        }
         if idempotency_key.is_some() && !READS_KEY.contains(&def.name.as_str()) {
             output = output.warn(format!(
                 "`{}` starts no run, so the idempotency key was not used.",
@@ -843,8 +906,23 @@ impl Kernel {
             )
         })
         .await
-        .unwrap_or(Err("it could not be looked at"))
-        .map_err(refuse)
+        .unwrap_or_else(|_| {
+            Err(crate::project::ProjectRefused {
+                why: "it could not be looked at".to_owned(),
+                fix: None,
+            })
+        })
+        .map_err(|refused| match refused.fix {
+            Some(fix) => codes::input(
+                codes::PATH_NOT_ALLOWED,
+                format!(
+                    "The project folder of this call is not used: {}.",
+                    refused.why
+                ),
+                fix,
+            ),
+            None => refuse(&refused.why),
+        })
     }
 
     /// Asks the role's person surface for proof that a person is present.

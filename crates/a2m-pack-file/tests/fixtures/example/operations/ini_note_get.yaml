@@ -1,0 +1,13 @@
+operation: example_ini_note_get
+title: Read the order note
+effect: read
+inputs: {}
+outputs:
+  note: {type: note}
+bindings:
+  - mode: file
+    verb: read
+    document: ini_settings
+    record: orders_note
+description: >
+  Reads a quoted value from the INI file, whose document does not say what quotes are.

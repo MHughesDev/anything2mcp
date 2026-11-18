@@ -37,6 +37,7 @@ button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer
 <div class="presses">
 <form method="post" action="/act/{{code}}/confirm">
 <input type="hidden" name="once" value="{{once}}">
+{{secrets}}
 <button type="submit">Carry out</button>
 </form>
 <form method="post" action="/act/{{code}}/decline">

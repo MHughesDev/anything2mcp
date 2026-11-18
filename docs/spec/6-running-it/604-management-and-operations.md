@@ -1,6 +1,6 @@
 # 604. Management and operations
 
-What it takes to keep an installation running from day to day: what an administrator can see and do, upgrades, backup, retention, alerts, the parts that daily use needs, and the cost of ownership. Every function here is an action in the registry, so whatever the admin console shows is also a command, a REST route, and an SDK method, and can be scripted ([section 220](../2-kernel/220-actions-and-the-authoring-interface.md)). The console has no route of its own into the kernel.
+What it takes to keep an installation running from day to day: what an administrator can see and do, upgrades, backup, retention, alerts, the parts that daily use needs, and the cost of ownership. Every function here is an action in the registry, so whatever the admin console shows is also a command, a REST route, and an SDK method, and can be scripted ([section 220](../2-kernel/220-actions-and-the-authoring-interface.md)). The console has no route of its own into the kernel. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## What an administrator can do
 

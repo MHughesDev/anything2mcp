@@ -229,6 +229,41 @@ pub(crate) fn environment() -> EnvAllowlist {
     }
 }
 
+/// What a browser with a window is given of the engine's environment so
+/// that it can show one: the variables that name the screen, passed as
+/// they are. `None` on Linux when neither an X display nor a Wayland
+/// display is named; on Windows and macOS a program reaches the person's
+/// desktop with none of them. `named`, from a test, is the X display to use
+/// in place of the engine's own.
+pub(crate) fn screen(named: Option<&str>) -> Option<EnvAllowlist> {
+    let mut screen = EnvAllowlist {
+        pass: Vec::new(),
+        set: Vec::new(),
+    };
+    if !cfg!(unix) || cfg!(target_os = "macos") {
+        return Some(screen);
+    }
+    if let Some(display) = named {
+        screen
+            .set
+            .push(("DISPLAY".to_owned(), OsString::from(display)));
+        return Some(screen);
+    }
+    let named = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    if !named("DISPLAY") && !named("WAYLAND_DISPLAY") {
+        return None;
+    }
+    for name in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XAUTHORITY",
+    ] {
+        screen.pass.push(name.to_owned());
+    }
+    Some(screen)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,108 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_core::{Digest, FieldBase, FileKindName, Hazard, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
-    KindContext, Located, Place, Stage, expr_text,
+    KindContext, Located, Place, RelPath, Stage, expr_text,
 };
 
 use crate::codes::{self, FILE_KIND, FOLDER, SURFACE_KIND, lint};
 use crate::model::{
     Arg, Command, Effect, ExitMeaning, JsonField, JsonKind, Limits, Matching, Output, Param,
-    ParamKind, Program, SECTION_FORMAT, Section, VersionCheck,
+    ParamKind, Program, SECTION_FORMAT, Script, Section, VersionCheck,
 };
 use crate::pattern;
-
-/// The file names a program surface may not have: shells, interpreters
-/// that take code as an argument, and programs whose work is to start the
-/// program their arguments name. Compared without a `.exe` suffix and
-/// without regard to case.
-///
-/// The list is a net for a mistake, and it is not complete: many programs
-/// can be told to run another through some option of their own. What
-/// holds for those is the review of the target's files, where a command's
-/// arguments are shown.
-pub(crate) const SHELLS_AND_INTERPRETERS: &[&str] = &[
-    "sh",
-    "bash",
-    "dash",
-    "zsh",
-    "ksh",
-    "csh",
-    "tcsh",
-    "fish",
-    "ash",
-    "busybox",
-    "cmd",
-    "command",
-    "powershell",
-    "pwsh",
-    "wscript",
-    "cscript",
-    "python",
-    "python2",
-    "python3",
-    "perl",
-    "ruby",
-    "node",
-    "nodejs",
-    "deno",
-    "bun",
-    "php",
-    "lua",
-    "tclsh",
-    "osascript",
-    "awk",
-    "gawk",
-    "sed",
-    "env",
-    "xargs",
-    "nohup",
-    "sudo",
-    "su",
-    "ssh",
-    "eval",
-    "exec",
-    // More interpreters.
-    "pythonw",
-    "ipython",
-    "rscript",
-    "r",
-    "java",
-    "javaw",
-    "jshell",
-    "jrunscript",
-    "irb",
-    "wish",
-    "expect",
-    "mshta",
-    // Programs that start the program their arguments name.
-    "nice",
-    "ionice",
-    "timeout",
-    "stdbuf",
-    "chroot",
-    "doas",
-    "pkexec",
-    "runuser",
-    "setsid",
-    "setpriv",
-    "unshare",
-    "nsenter",
-    "taskset",
-    "chrt",
-    "flock",
-    "time",
-    "watch",
-    "script",
-    "strace",
-    "ltrace",
-    "find",
-    "parallel",
-    "systemd-run",
-    "start-stop-daemon",
-    "wsl",
-    "rundll32",
-    "forfiles",
-];
 
 /// One-letter flags that hand their value to something that runs it,
 /// matched as written: `-C` is a folder to many programs.
@@ -144,13 +51,23 @@ const CODE_FLAG_WORDS: &[&str] = &[
 /// A cluster of one-letter flags, such as `-xc`, is not recognised: what a
 /// cluster means is the program's own.
 pub(crate) fn runs_its_value(flag: &str) -> bool {
+    let slashed = flag.starts_with('/');
     let name = flag
         .strip_prefix('/')
         .unwrap_or_else(|| flag.trim_start_matches('-'));
     let name = name.split(['=', ':']).next().unwrap_or(name);
-    CODE_FLAG_LETTERS.contains(&name)
+    // An option written with `/` is read without regard to case by the
+    // programs that take one; the Windows command interpreter's `/c`, `/k`,
+    // and `/r` each run what follows them.
+    let slash_letter = slashed && SLASH_CODE_LETTERS.contains(&name.to_ascii_lowercase().as_str());
+    slash_letter
+        || CODE_FLAG_LETTERS.contains(&name)
         || CODE_FLAG_WORDS.contains(&name.to_ascii_lowercase().as_str())
 }
+
+/// One-letter options written with `/` that hand what follows to something
+/// that runs it, compared without regard to case.
+const SLASH_CODE_LETTERS: &[&str] = &["c", "k", "r"];
 
 /// Words that name a credential when they end a variable's or a flag's
 /// name, as in `EXAMPLE_TOOL_TOKEN` and `--password`.
@@ -219,22 +136,11 @@ fn joined_value(element: &str) -> Option<(&str, &str)> {
         .flatten()
 }
 
-/// Whether a program's path names a shell or an interpreter.
+/// Whether a program's path names a shell or an interpreter, a program that
+/// starts another, or a script by its suffix. The list is the provider
+/// contract's, shared with every pack that starts a program (decision 0250).
 pub(crate) fn is_shell_or_interpreter(path: &str) -> bool {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let lower = name.to_ascii_lowercase();
-    let stem = lower
-        .strip_suffix(".exe")
-        .or_else(|| lower.strip_suffix(".com"))
-        .unwrap_or(&lower);
-    // A versioned name, such as `python3.12`, is the same program.
-    let base = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-    SHELLS_AND_INTERPRETERS.contains(&stem)
-        || SHELLS_AND_INTERPRETERS.contains(&base)
-        || lower.ends_with(".bat")
-        || lower.ends_with(".cmd")
-        || lower.ends_with(".ps1")
-        || lower.ends_with(".sh")
+    a2m_provider::is_shell_or_interpreter(path)
 }
 
 fn limits_schema() -> JsonSchema {
@@ -282,7 +188,11 @@ pub(crate) fn schema() -> JsonSchema {
         .optional("stdin", JsonSchema::words(&["none"]))
         .optional("limits", limits_schema())
         .optional("prompts", JsonSchema::list(JsonSchema::text()))
-        .optional("exits", exits_schema());
+        .optional("exits", exits_schema())
+        .optional(
+            "interpreter",
+            JsonSchema::object().required("args", JsonSchema::list(JsonSchema::scalar())),
+        );
     let param = JsonSchema::object()
         .required("type", JsonSchema::field_type())
         .optional("required", JsonSchema::bool())
@@ -342,7 +252,13 @@ pub(crate) fn schema() -> JsonSchema {
             "reaches",
             JsonSchema::object().optional("network", JsonSchema::list(JsonSchema::text())),
         )
-        .optional("limits", limits_schema());
+        .optional("limits", limits_schema())
+        .optional(
+            "script",
+            JsonSchema::object()
+                .required("path", JsonSchema::text())
+                .required("digest", JsonSchema::text()),
+        );
     JsonSchema::object()
         .optional("surface", JsonSchema::surface())
         .required("program", program)
@@ -758,6 +674,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
             );
             continue;
         }
+        if a2m_provider::redirects_loading(name) {
+            found.bad(
+                "loader_variable",
+                &entry.key.at,
+                format!(
+                    "The variable `{}` makes a program load code other than its own, or run code at its start.",
+                    codes::shown(name)
+                ),
+                "Remove it. A program runs its own code; what it loads is never chosen through its environment.",
+            );
+            continue;
+        }
         if names_a_credential(name) {
             found.bad(
                 "secret_variable",
@@ -812,6 +740,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
             );
             continue;
         }
+        if a2m_provider::redirects_loading(&scalar(name)) {
+            found.bad(
+                "loader_variable",
+                &name.at,
+                format!(
+                    "The variable `{}` makes a program load code other than its own, or run code at its start, and copying it from the engine's own environment would hand the program whatever that environment holds.",
+                    codes::shown(&scalar(name))
+                ),
+                "Remove it. A program runs its own code; what it loads is never chosen through its environment.",
+            );
+            continue;
+        }
         if names_a_credential(&scalar(name)) {
             found.bad(
                 "secret_variable",
@@ -841,6 +781,113 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         limits: limits(doc.get("limits"), Limits::default(), found),
         prompts,
         exits: exits(doc.get("exits"), &BTreeMap::new(), found),
+        interpreter: interpreter(doc, found),
+    }
+}
+
+/// The fixed arguments of a program declared as the interpreter of fixed
+/// pairs. They come before the script's path, and none of them may be a
+/// flag that hands what follows it to something that runs it: the script's
+/// path follows, and the typed values after it.
+fn interpreter(doc: &Located<Doc>, found: &mut Found) -> Option<Vec<String>> {
+    let block = doc.get("interpreter")?;
+    let args = block.get("args");
+    let fixed = texts(args);
+    if fixed.iter().any(|text| text.contains('\0')) {
+        found.bad(
+            "arg_malformed",
+            &block.at,
+            "An element of an argument list holds a NUL character.".to_owned(),
+            "Remove the character: no program can be given it.",
+        );
+    }
+    if let Some(flag) = fixed
+        .iter()
+        .find(|text| text.starts_with(['-', '/']) && runs_its_value(text))
+    {
+        found.bad(
+            "code_flag",
+            &block.at,
+            format!(
+                "The interpreter is given `{}`, which hands what follows it to something that runs it.",
+                codes::shown(flag)
+            ),
+            "Give the interpreter the fixed arguments of its one form, in which it reads a script file and takes what follows as data: for Python `-I`, for Windows PowerShell `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`.",
+        );
+    }
+    if !doc
+        .get("help")
+        .map(Located::items)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        found.bad(
+            "script_malformed",
+            &block.at,
+            "An interpreter has no help forms: discovery never runs one.".to_owned(),
+            "Remove `help` from a file that declares an `interpreter`.",
+        );
+    }
+    Some(fixed)
+}
+
+/// The script a command of an interpreter's file names: a path inside the
+/// target's folder and the digest of its bytes.
+fn script(name: &str, doc: &Located<Doc>, shared: &Program, found: &mut Found) -> Option<Script> {
+    let block = doc.get("script");
+    match (block, shared.interpreter.is_some()) {
+        (None, false) => None,
+        (Some(block), false) => {
+            found.bad(
+                "script_malformed",
+                &block.at,
+                format!("The command `{name}` names a script, and its file declares no `interpreter`."),
+                "Declare the interpreter under `program.interpreter`, with the arguments that make it read a script file.",
+            );
+            None
+        }
+        (None, true) => {
+            found.bad(
+                "script_malformed",
+                &doc.at,
+                format!(
+                    "The command `{name}` names no script, and its program is an interpreter: an interpreter is given a script the target keeps, or nothing."
+                ),
+                "Add `script: {path: ..., digest: ...}` to the command.",
+            );
+            None
+        }
+        (Some(block), true) => {
+            let path = block
+                .text("path")
+                .filter(|path| RelPath::new(path).is_ok())
+                .map(str::to_owned);
+            if path.is_none() {
+                found.bad(
+                    "script_malformed",
+                    &block.at,
+                    format!("The script of the command `{name}` is not named by a path inside the target's folder."),
+                    "Name the script by its path inside the target's folder, names joined by `/`, with no `..`, no drive, and no leading `/`.",
+                );
+            }
+            let digest = block
+                .text("digest")
+                .and_then(|text| text.strip_prefix("sha256:"))
+                .and_then(|hex| hex.parse::<Digest>().ok())
+                .map(|digest| digest.to_string());
+            if digest.is_none() {
+                found.bad(
+                    "digest_invalid",
+                    &block.at,
+                    "A digest is `sha256:` and 64 lowercase hexadecimal characters.".to_owned(),
+                    "Write the SHA-256 of the script's file, as `sha256:` and its 64 characters.",
+                );
+            }
+            Some(Script {
+                path: path?,
+                digest: digest?,
+            })
+        }
     }
 }
 
@@ -1315,10 +1362,12 @@ fn command(
         }
     };
     let limits = limits(doc.get("limits"), shared.limits, found);
+    let script = script(name, doc, shared, found);
     if found.problems.len() != before {
         return None;
     }
     Some(Command {
+        script,
         program: index,
         effect,
         params,
@@ -1506,6 +1555,19 @@ mod tests {
             "/opt/timeouts",
         ] {
             assert!(!is_shell_or_interpreter(allowed), "{allowed}");
+        }
+    }
+
+    /// The fifth safety audit's PR-1 and M4: the command interpreter's `/k`
+    /// and `/r` run what follows them as `/c` does, and it reads options in
+    /// either case. A dash before the letter is another program's flag.
+    #[test]
+    fn the_command_interpreters_options_that_run_their_value_are_known_in_either_case() {
+        for runs in ["/k", "/K", "/r", "/R", "/C", "/c"] {
+            assert!(runs_its_value(runs), "{runs}");
+        }
+        for plain in ["-k", "-r", "-R", "/x"] {
+            assert!(!runs_its_value(plain), "{plain}");
         }
     }
 

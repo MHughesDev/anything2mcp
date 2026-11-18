@@ -9,15 +9,17 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, RawSign, SessionLease};
+use a2m_core::EnvironmentKind;
 use a2m_core::{
     Failure, FailureClass, FailureCode, Redact, Secret, Step, SurfaceIndex, Value, Values,
 };
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, PrepareContext, Prepared,
+    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail, record_headers};
@@ -25,9 +27,11 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
+use crate::forms::{AnswerSpec, Charset, Form, Unread, ascii_if_said, refused_control};
 use crate::json::Json;
 use crate::link;
 use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
+use crate::shape::Shape;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
     ProbeStep, RequestStep, Take, VersionSource, build, parse_path,
@@ -208,6 +212,15 @@ impl Answer {
             .find(|(known, _)| known == name)
             .map(|(_, value)| value.as_str())
     }
+
+    /// Every value of a header the answer carries, in order.
+    fn headers_named(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(known, _)| known == name)
+            .map(|(_, value)| value.as_str())
+            .collect()
+    }
 }
 
 /// What `prepare` acquires: the client, the surface's address, the
@@ -227,6 +240,10 @@ struct Session {
     /// What this pass knows of a record's version: by the endpoint that
     /// read the record and the record's key.
     versions: BTreeMap<(String, Vec<u8>), Known>,
+    /// What the run may do to the system, and whether its environment is
+    /// of kind `test`: the driver's own read-only guard (decision 0249).
+    posture: Posture,
+    test_environment: bool,
 }
 
 /// What a pass knows of one record's version, from reading the record
@@ -454,6 +471,11 @@ impl HttpDriver {
             expiry,
             answer: None,
             versions: BTreeMap::new(),
+            posture: cx.posture,
+            test_environment: cx
+                .plan
+                .environment_named(&cx.surface.environment)
+                .is_some_and(|environment| environment.kind == EnvironmentKind::Test),
         })
     }
 }
@@ -884,6 +906,7 @@ impl HttpDriver {
                 "the endpoint `{name}` writes, and the step is not marked as a commit point"
             )));
         }
+        may_send(session, &name, &template, step)?;
         let payload: RequestStep = step
             .payload
             .decode()
@@ -1024,6 +1047,52 @@ impl HttpDriver {
     }
 }
 
+/// The driver's own read-only guard (decision 0249). A request that may
+/// change something, by its method or by its endpoint's `effect`, is sent
+/// in a live run; outside one it is sent only as the commit point of a
+/// write to a declared test record, in the context the engine prepared for
+/// that write, or, for an endpoint whose `read_asserted` says that a
+/// method HTTP does not mark safe only reads, against an environment of
+/// kind `test`. A discovery sends none. Refused, nothing is sent.
+fn may_send(
+    session: &Session,
+    name: &str,
+    template: &EndpointTemplate,
+    step: &Step,
+) -> Result<(), StepFailure> {
+    let may_change = template.writes || !template.method.is_safe();
+    if !may_change {
+        return Ok(());
+    }
+    let allowed = match session.posture {
+        Posture::Live => true,
+        Posture::Sandbox { test_records } => {
+            if step.commits {
+                test_records
+            } else {
+                template.read_asserted && session.test_environment
+            }
+        }
+        Posture::Discovery => false,
+    };
+    if allowed {
+        return Ok(());
+    }
+    Err(StepFailure::not_sent(codes::failure(
+        FailureClass::Policy,
+        a2m_provider::codes::READ_ONLY_POSTURE,
+        format!(
+            "The endpoint `{name}` is reached by {}, which may change the system, and this run may not change it; nothing was sent.",
+            template.method.word()
+        ),
+        if template.read_asserted {
+            "Run the operation live, or try it against an environment of kind `test`."
+        } else {
+            "Run the operation live, or against a declared test record."
+        },
+    )))
+}
+
 /// A step that judges a held answer and cannot be carried out as written.
 /// When the answer held is a write's, the write was sent and its verdict
 /// stays unread: the record is in doubt, never "not written".
@@ -1063,15 +1132,91 @@ fn said_by_refusal(body: Option<&Json>, redact: &dyn Redact) -> Option<String> {
     ["message", "detail", "error"]
         .iter()
         .find_map(|field| match body.get(field)? {
-            Json::Text(text) => Some(redact.redact(text)),
+            // Text with a control character this pack never returns is
+            // left out whole (decision 0249).
+            Json::Text(text) if !refused_control(text) => Some(redact.redact(text)),
             _ => None,
         })
 }
 
-fn validate(
+/// What reading an answer gave, off the engine's async threads.
+enum Read {
+    /// An answer of a status the endpoint accepts: its record, checked
+    /// against the declared shape, or why it is refused.
+    Accepted(Result<Json, Unread>),
+    /// An answer of any other status: its body, when it is JSON, to match
+    /// the declared answers against.
+    Other(Option<Json>),
+}
+
+/// Reads an answer's body: parses it in its declared form and checks its
+/// record against the declared shape, for an accepted status; parses it as
+/// JSON, for any other. All of it runs on a blocking thread, never on the
+/// engine's async threads, and stops once `stop` is set.
+fn read_body(
+    spec: &AnswerSpec,
+    shape: &Shape,
+    accepted: bool,
+    said: Option<Charset>,
+    body: &[u8],
+    redact: &dyn Redact,
+    stop: &AtomicBool,
+) -> Read {
+    if !accepted {
+        return Read::Other(Json::parse_until(body, Some(stop)).ok());
+    }
+    let record = if spec.form != Form::Json {
+        spec.read(body, said, redact, stop)
+    } else if body.is_empty() {
+        Ok(Json::Null)
+    } else {
+        ascii_if_said(body, said).and_then(|()| {
+            Json::parse_until(body, Some(stop)).map_err(|error| {
+                Unread::Shape(format!(
+                    "the body is not JSON at byte {}, where {}",
+                    error.at, error.what
+                ))
+            })
+        })
+    };
+    Read::Accepted(record.and_then(|json| shape.check(&json).map(|()| json).map_err(Unread::Shape)))
+}
+
+/// How work handed to a blocking thread ended.
+enum OffThread<T> {
+    Done(T),
+    /// The deadline came first. The work is told to stop and is not waited
+    /// for.
+    OutOfTime,
+    /// The thread ended without an answer.
+    Lost,
+}
+
+/// Runs `work` on a blocking thread, and waits for it until `until`. At the
+/// deadline the flag `work` is handed is set, and the step goes on without
+/// waiting: an async thread of the engine is never held by an answer.
+async fn off_thread<T: Send + 'static>(
+    until: tokio::time::Instant,
+    work: impl FnOnce(&AtomicBool) -> T + Send + 'static,
+) -> OffThread<T> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let task = tokio::task::spawn_blocking(move || work(&flag));
+    tokio::select! {
+        biased;
+        joined = task => joined.map_or(OffThread::Lost, OffThread::Done),
+        () = tokio::time::sleep_until(until) => {
+            stop.store(true, Ordering::Relaxed);
+            OffThread::OutOfTime
+        }
+    }
+}
+
+async fn validate(
     session: &mut Session,
     step: &Step,
-    redact: &dyn Redact,
+    input: &StepInput<'_>,
+    redact: &Arc<dyn Redact>,
 ) -> Result<StepOutcome, StepFailure> {
     let (name, template) = judged_endpoint(session, step)?;
     let answer = held_answer(&mut session.answer, &name)?;
@@ -1080,37 +1225,110 @@ fn validate(
         return Ok(StepOutcome::Absent(Observed::default()));
     }
     let status = answer.status;
-    if template.answers.ok.contains(&status) && !answer.absent {
-        let shape = &template.response;
-        let drift = |why: String| {
-            answered(failure_of(
-                FailureClass::Drift,
-                codes::RESPONSE_SCHEMA_MISMATCH,
+    let accepted = template.answers.ok.contains(&status) && !answer.absent;
+    let drift = |why: String| {
+        answered(failure_of(
+            FailureClass::Drift,
+            codes::RESPONSE_SCHEMA_MISMATCH,
+            format!(
+                "The answer of the endpoint `{name}` does not fit the shape the endpoint declares: {why}."
+            ),
+            "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
+        ))
+    };
+    // The answer's content type is held to its declared form: a page
+    // answered in place of the data stops here. JSON with no content type
+    // declared is not checked, as before (decision 0217).
+    let said = if accepted {
+        template
+            .answer
+            .check_content_type(&answer.headers_named("content-type"))
+            .map_err(drift)?
+    } else {
+        None
+    };
+    let body = std::mem::take(&mut answer.body);
+    let (spec, shape, clean) = (
+        template.answer.clone(),
+        template.response.clone(),
+        Arc::clone(redact),
+    );
+    let read = match off_thread(until(step, input), move |stop| {
+        let read = read_body(&spec, &shape, accepted, said, &body, clean.as_ref(), stop);
+        (body, read)
+    })
+    .await
+    {
+        OffThread::Done((body, read)) => {
+            answer.body = body;
+            read
+        }
+        OffThread::OutOfTime if answer.wrote => {
+            return Err(in_doubt(
+                &name,
+                "its answer was not read in the time the step allows",
+            ));
+        }
+        OffThread::OutOfTime => {
+            return Err(answered(failure_of(
+                FailureClass::Transient,
+                a2m_provider::codes::TIMEOUT,
                 format!(
-                    "The answer of the endpoint `{name}` does not fit the shape the endpoint declares: {why}."
+                    "The answer of the endpoint `{name}` was not read in the time the step allows."
                 ),
-                "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
-            ))
-        };
-        // A body that is not JSON is never read as nothing, whatever the
-        // shape: a page answered in place of the data stops here.
-        let json = if answer.body.is_empty() {
-            Json::Null
-        } else {
-            Json::parse(&answer.body).map_err(|error| {
-                drift(format!(
-                    "the body is not JSON at byte {}, where {}",
-                    error.at, error.what
-                ))
-            })?
-        };
-        shape.check(&json).map_err(drift)?;
-        answer.json = Some(json);
-        return Ok(StepOutcome::Done(Observed::default()));
-    }
+                "Run the tool again, or raise the step's timeout in the target's defaults.",
+            )));
+        }
+        OffThread::Lost => {
+            return Err(cannot_judge(
+                Some(answer),
+                "its answer could not be read".to_owned(),
+            ));
+        }
+    };
+    let body = match read {
+        Read::Accepted(record) => {
+            // A body that is not JSON is never read as nothing, whatever the
+            // shape: a page answered in place of the data stops here.
+            let json = record.map_err(|unread| match unread {
+                Unread::Shape(why) => drift(why),
+                Unread::DocumentType => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::DOCUMENT_TYPE_REFUSED,
+                    format!(
+                        "The answer of the endpoint `{name}` declares a document type, which is never read; no value was taken from it."
+                    ),
+                    "Ask the system's owner for the answer without a document type, or read it another way.",
+                )),
+                Unread::TooLarge(why) => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::RESPONSE_TOO_LARGE,
+                    format!(
+                        "The answer of the endpoint `{name}` is past a bound of what is read: {why}."
+                    ),
+                    "Raise `max_depth` or `max_elements` under the endpoint's `answer` if the answer is meant to be that large; the other bounds are fixed.",
+                )),
+                Unread::HoldsSecret => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::ANSWER_HOLDS_SECRET,
+                    format!(
+                        "The answer of the endpoint `{name}` holds a registered secret, so neither its length nor its digest is returned."
+                    ),
+                    "Ask the system's owner why the answer carries the credential, or read it another way.",
+                )),
+                // The flag is set only at the deadline, which was met here.
+                Unread::Stopped => cannot_judge(
+                    Some(answer),
+                    "its reading was stopped".to_owned(),
+                ),
+            })?;
+            answer.json = Some(json);
+            return Ok(StepOutcome::Done(Observed::default()));
+        }
+        Read::Other(body) => body,
+    };
 
     // Not accepted. Which of the answers the endpoint declares is it?
-    let body = Json::parse(&answer.body).ok();
     let is = |answers: &[crate::template::Answer]| {
         answers
             .iter()
@@ -1171,7 +1389,7 @@ fn validate(
             ),
             "Correct the input the system refused, then run the tool again.",
         ));
-        return Err(match said_by_refusal(body.as_ref(), redact) {
+        return Err(match said_by_refusal(body.as_ref(), redact.as_ref()) {
             Some(said) => refused.with_said(said),
             None => refused,
         });
@@ -1203,6 +1421,7 @@ fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
             (Take::Decimal, Json::Text(text)) => {
                 a2m_core::Decimal::parse(text).ok().map(Value::Decimal)
             }
+            (Take::Date, Json::Text(text)) => text.parse().ok().map(Value::Date),
             _ => None,
         };
     };
@@ -1224,6 +1443,16 @@ fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
         },
         Json::Null => Some(Value::Null),
         _ => None,
+    }
+}
+
+/// Whether a value taken, or an entry of it, is text that holds a control
+/// character this pack never returns.
+fn holds_control(value: &Value) -> bool {
+    match value {
+        Value::Text(text) => refused_control(text),
+        Value::List(items) => items.iter().any(holds_control),
+        _ => false,
     }
 }
 
@@ -1265,6 +1494,20 @@ impl HttpDriver {
                     "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs.",
                 ))
             })?;
+            // Of every form, a value is data, and never a control
+            // character but a tab or a line break (decision 0249).
+            if holds_control(&value) {
+                return Err(StepFailure::answered(failure_of(
+                    FailureClass::Drift,
+                    codes::RESPONSE_SCHEMA_MISMATCH,
+                    format!(
+                        "The answer of the endpoint `{name}` holds a control character at `{}`, which is never returned as the operation's output `{}`.",
+                        wanted.path.join("."),
+                        wanted.name
+                    ),
+                    "Ask the system's owner why the value carries a control character; a tab and a line break are kept.",
+                )));
+            }
             values.insert(wanted.name.clone(), value);
         }
         // What the pass now knows of the record's version, read through
@@ -1397,7 +1640,7 @@ impl Driver for HttpDriver {
             if step.kind == REQUEST {
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
-                validate(session, step, self.redact.as_ref())
+                validate(session, step, input, &self.redact).await
             } else if step.kind == EXTRACT {
                 self.extract(session, step, input)
             } else if step.kind == PROBE {
@@ -1438,7 +1681,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{Answer, Expiry, Origin, Session, taken};
+    use super::{Answer, Expiry, OffThread, Origin, Session, off_thread, taken};
     use crate::codes;
     use crate::json::Json;
     use crate::template::{Built, Method, Take};
@@ -1493,6 +1736,8 @@ mod tests {
             expiry: Expiry::default(),
             answer: None,
             versions: BTreeMap::new(),
+            posture: a2m_provider::Posture::Live,
+            test_environment: false,
         }
     }
 
@@ -1610,5 +1855,29 @@ mod tests {
             Some(Value::List(vec![Value::from("x"), Value::from("y")]))
         );
         assert_eq!(taken(&json, &path("t.x"), Take::Text), None);
+    }
+
+    /// Work handed off the async threads that does not end by the deadline
+    /// is left there, and told to stop: on a runtime of one thread, the
+    /// deadline still fires while the work runs, so the thread was never
+    /// held (decision 0249).
+    #[tokio::test(flavor = "current_thread")]
+    async fn work_that_outlasts_the_deadline_is_left_and_told_to_stop() {
+        use std::sync::atomic::Ordering;
+        let (told, heard) = std::sync::mpsc::channel();
+        let until = tokio::time::Instant::now() + std::time::Duration::from_millis(50);
+        let outcome = off_thread(until, move |stop| {
+            while !stop.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
+            told.send(()).unwrap();
+        })
+        .await;
+        assert!(matches!(outcome, OffThread::OutOfTime));
+        heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let done = off_thread(until + std::time::Duration::from_secs(30), |_| 7).await;
+        assert!(matches!(done, OffThread::Done(7)));
     }
 }

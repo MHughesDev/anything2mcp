@@ -4,9 +4,13 @@
 //!
 //! The token endpoint comes from the target's auth file and from nowhere
 //! else. It must be `https`, or `http` to a loopback address written as an
-//! IP address; `localhost` is a name, not one (decision 0188). Nothing an identity
-//! service answers is put into a failure: only the standard's own error
-//! names are read, and each maps to a fixed sentence.
+//! IP address; `localhost` is a name, not one (decision 0188). It and the
+//! authorization endpoint must also be addresses the target declares for
+//! its surfaces: each is checked by the keeper before the work begins, and
+//! again just before each request (decision 0248). A redirect is never
+//! followed. Nothing an identity service answers is put into a failure:
+//! only the standard's own error names are read, and each maps to a fixed
+//! sentence.
 
 use std::time::Duration;
 
@@ -22,7 +26,9 @@ use crate::key::AuthEntry;
 use crate::material::Material;
 use crate::name::ProviderName;
 use crate::person::{PersonAnswer, PersonAsk, PersonReason};
-use crate::provider::{AuthProvider, ExpirySign, ProviderNeeds, RawSign, SignInContext, SignedIn};
+use crate::provider::{
+    AuthProvider, ExpirySign, ProviderNeeds, RawSign, SignInAddress, SignInContext, SignedIn,
+};
 use crate::sink::CredentialSink;
 
 const CLIENT_CREDENTIALS: &str = "oauth_client_credentials";
@@ -55,6 +61,20 @@ fn endpoint_ok(url: &str) -> bool {
         && !authority.is_empty()
         && parsed.host_str().is_some_and(|host| !host.is_empty())
         && (secure || crate::link::loopback(&parsed))
+}
+
+/// The addresses named by `names` that the entry sets, for
+/// [`AuthProvider::destinations`].
+fn named_addresses(entry: &AuthEntry, names: &[&str]) -> Vec<SignInAddress> {
+    names
+        .iter()
+        .filter_map(|name| {
+            entry.optional(name).map(|address| SignInAddress {
+                what: format!("the setting `{name}`"),
+                address: address.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn endpoint<'a>(entry: &'a AuthEntry, name: &str) -> Result<&'a str, Failure> {
@@ -136,6 +156,7 @@ async fn exchange(
     }
     let body = form(&pairs);
 
+    cx.check_address("the setting `token_endpoint`", url)?;
     let http = client(url)?;
     let mut request = http
         .post(url)
@@ -150,6 +171,13 @@ async fn exchange(
             .unwrap_or_else(|| failure::upstream_unavailable("it did not answer"))
     })?;
     let status = response.status();
+    if status.is_redirection() {
+        // Not followed: the credential goes to the address the auth file
+        // names and nowhere else.
+        return Err(failure::unexpected_response(
+            "it answered with a redirect, which is not followed",
+        ));
+    }
     let mut answer = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
         .chunk()
@@ -334,6 +362,10 @@ impl AuthProvider for ClientCredentials {
         Ok(())
     }
 
+    fn destinations(&self, entry: &AuthEntry) -> Vec<SignInAddress> {
+        named_addresses(entry, &["token_endpoint"])
+    }
+
     fn sign_in<'a>(
         &'a self,
         cx: &'a SignInContext<'a>,
@@ -398,6 +430,7 @@ impl AuthorizationCode {
     async fn with_consent(cx: &SignInContext<'_>) -> Result<Material, Failure> {
         let entry = cx.entry();
         let authorize = endpoint(entry, "authorization_endpoint")?;
+        cx.check_address("the setting `authorization_endpoint`", authorize)?;
         let client_id = entry.required("client_id")?;
         let back = cx.return_address().ok_or_else(|| {
             failure::needs_login("no surface here can receive the answer to a sign-in link")
@@ -538,6 +571,10 @@ impl AuthProvider for AuthorizationCode {
         endpoint(entry, "token_endpoint")?;
         entry.required("client_id")?;
         client_auth(entry).map(|_| ())
+    }
+
+    fn destinations(&self, entry: &AuthEntry) -> Vec<SignInAddress> {
+        named_addresses(entry, &["authorization_endpoint", "token_endpoint"])
     }
 
     fn sign_in<'a>(

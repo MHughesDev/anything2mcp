@@ -1,0 +1,12 @@
+# Design review results
+
+This folder holds the results of design review rounds: what a round looked at, what it found, and where each finding went. A review describes and proposes; it decides nothing by itself. Decisions are in [docs/decisions/](../decisions/README.md), and a review points to the records it raised.
+
+A round is run one lens at a time, by the procedure in the [design review lenses](../plan/design-review-lenses.md) and the `design-review` skill in `.claude/skills/`. Its report is filed here, named for the lens or the question and the date. A review that draws a map or a table of its own files it here too, beside the report.
+
+| Document | What it holds |
+| --- | --- |
+| [coverage-review-2026-11-18.md](coverage-review-2026-11-18.md) | The round by lens 15, coverage: for every way software on a personal computer can be read or changed from outside itself, whether the design has a place for it and whether that place is right; the findings, most important first, each with where it went |
+| [coverage-map.md](coverage-map.md) | The map the coverage review drew: one row per mechanism by which a program on a person's computer can reach other software, and where each falls in the design today |
+| [breadth-review-2026-11-18.md](breadth-review-2026-11-18.md) | The round by lens 16, breadth: the whole dimensions of "anything" in which the design is still narrow (being told, waiting, acting at a time, handing over files, asking the person, several systems, several agents), each line marked Rule, Choice, or Not yet |
+| [configurability-review-2026-11-18.md](configurability-review-2026-11-18.md) | The round by lens 17, the person fitting it: the true state of every setting, the dimensions along which a person cannot yet shape the product, and the fixed frame that no setting reaches, with the kind of each line |

@@ -1,5 +1,6 @@
 //! Decides when and where work may run: admission, the queue, job leases,
-//! waiting for record locks and other exclusive resources, and rate budgets.
+//! waiting for record locks and other exclusive resources, rate budgets, and
+//! when each check of a watch is due.
 //!
 //! The scheduler never carries out a step. It hands out a lease on a job; a
 //! runner claims it and calls the engine; a role joins the two. It names no
@@ -24,6 +25,7 @@ mod scheduler;
 mod tables;
 mod types;
 mod waits;
+mod watch;
 
 pub use scheduler::{
     ADMITTED_COUNT, DueWatch, LEASED_COUNT, LOST_COUNT, QUEUE_WAIT, REFUSED_COUNT, Scheduler,
@@ -35,6 +37,10 @@ pub use types::{
     RunnerTerms, SchedSettings, SessionLimits, SessionNeed, Slots, Submission, SweepReport,
 };
 pub use waits::LockTicket;
+pub use watch::{
+    CheckAdmission, CheckStarted, DueCheck, DuePlan, SHORTEST_INTERVAL_FLOOR, WatchLimits, due_at,
+    plan,
+};
 
 /// The failure codes this crate produces. Each belongs to exactly one class.
 pub mod codes {
@@ -42,5 +48,9 @@ pub mod codes {
         CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, ON_HOLD, QUEUE_FULL,
         RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
         RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SESSION_IN_USE,
+    };
+    pub use crate::watch::{
+        ALL as WATCH_CODES, WATCH_INTERVAL_TOO_SHORT, WATCH_OVER_BUDGET_SHARE, WATCH_TOO_LONG,
+        WATCH_TOO_MANY,
     };
 }

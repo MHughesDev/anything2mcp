@@ -1,6 +1,6 @@
 # 204. Supervising subsystems
 
-The runtime starts, talks to, and stops many things it did not write: browsers, plug-in processes, upstream MCP servers, command-line programs, scripting hosts, device links. One part of the kernel, the supervisor, does this the same way for all of them. Most of the rules here were learned from how REA controls analysis engines ([research note 16](../../research/16-rea-methods.md)), which is the part of that project most useful to us.
+The runtime starts, talks to, and stops many things it did not write: browsers, plug-in processes, upstream MCP servers, command-line programs, scripting hosts, device links. One part of the kernel, the supervisor, does this the same way for all of them. Most of the rules here were learned from how REA controls analysis engines ([research note 16](../../research/16-rea-methods.md)), which is the part of that project most useful to us. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## What the supervisor owns
 

@@ -558,6 +558,14 @@ async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
     let folder = Folder::new("draft-write");
     let root = folder.path().join("example");
     std::fs::create_dir_all(&root).unwrap();
+    // The target has the surface the drafted documents name, of the kind the
+    // pack registered `statement` files for, so that a draft is not refused
+    // for living on none (decision 0203).
+    std::fs::write(
+        root.join("target.yaml"),
+        "schema_version: 1\ntarget: example\nsurfaces:\n  orders:\n    kind: database\n    store: sqlite\n    file: example.db\n    stands: alone\n",
+    )
+    .unwrap();
     let report = Drafter::new(&set, &TargetRoot::new(&root))
         .draft(&findings[..1])
         .unwrap();
@@ -569,6 +577,11 @@ async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
         .map(|(path, _)| path.as_str())
         .collect();
     assert_eq!(refused, ["statements/tries_a_write.yaml"]);
+    assert!(
+        report.refused[0].1.contains("drafts nothing that writes"),
+        "refused for another reason: {}",
+        report.refused[0].1
+    );
     let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
     assert_eq!(written, ["statements/only_reads.yaml"]);
     assert!(!root.join("statements").join("tries_a_write.yaml").exists());

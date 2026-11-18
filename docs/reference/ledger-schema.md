@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, `0009-actions-installation-toolsets-and-scout-stages.sql`, `0011-actions-run-sources.sql`, `0012-ledger-rules-three-five-and-seven-in-triggers.sql`, and `0013-ledger-caller-idempotency.sql`. There is no `0008` or `0010`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`, numbered in order; a number that was never used is skipped. Where this page and a file differ, the file is right. Two tables here, `run_steps` and `outbox`, have no migration and are not built. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -32,6 +32,8 @@ Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on
 Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id, state)`; on `(principal_id, created_at)`.
 
 ## run_steps
+
+Not built: no migration creates this table.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -256,6 +258,8 @@ As built by migration `0006`, which `a2m-auth` owns: the table also has `workspa
 
 ## outbox
 
+Not built: no migration creates this table.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | id | Primary key |
@@ -302,6 +306,54 @@ As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and 
 | `gate_evidence` | text | The evidence of the publish gates the version passed, canonical JSON written once with the version: each gate that ran with its result, and the gates the documents name that did not run (spec section 403, [decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)). Null for a version stored before migration `0016` |
 
 As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sql`, and `0017-ledger-versions-gate-evidence-never-changes.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its plan, hash, version, target, workspace, or gate evidence, and every delete.
+
+## shadow_comparisons, shadow_promotions
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `seq` | int | Primary key of a comparison, in the order they were kept |
+| `workspace_id`, `target`, `environment` | id, text, text | Taken from the run, never from the caller |
+| `operation`, `binding_digest`, `mode`, `position` | text, text, text, int | The binding in shadow, named by the digest of what it does ([decision 0200](../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)) |
+| `against_digest`, `run_id` | text, id | The binding that did the real work, and the run it was compared beside |
+| `writes` | bool | Whether the operation writes; always false while the shadow of a write is not built |
+| `outcome` | enum | `match`, `mismatch`, `not_compared` |
+| `differing` | text | For a mismatch: the outputs that differed, by name, and how (`differs`, `missing`, `unreadable`), as JSON; never a value |
+| `why_class`, `why_code` | enum, text | For `not_compared`: what stopped it |
+| `at` | ts | When it was kept |
+| `input_digest` | hash | The workspace's keyed digest of the call's inputs, made in the ledger's transaction; the inputs are never stored, and the digest is never shown. Required of every comparison kept from migration `0022` on (trigger); null in one kept before, which counts as no distinct input |
+| `requests` | int | What the shadow read cost the system, in the rate budget's units, one per step granted. 0 in a comparison kept before migration `0022` |
+
+A promotion (`shadow_promotions`) is one row per workspace, target, operation, and binding digest: who promoted it and when; the fewest distinct inputs that matched in any environment its evidence came from, which is at least the threshold in force; the threshold; the last comparison counted; `against_digest`, the verified binding the counted matches were against; and `evidence`, canonical JSON with, for each environment its evidence came from, its distinct inputs and its matches. The last two are null for a promotion made before migration `0022`, whose `matches` are matches in a row. As built by migrations `0020-ledger-shadow-comparisons-and-promotions.sql` and `0022-ledger-shadow-evidence-names-what-it-covers.sql`, which `a2m-ledger` owns ([decisions 0207](../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md) and [0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)). Both are append-only by trigger; a comparison is taken only beside a run that is `running`, and leaves only with its run, when retention purges it. Keeping a comparison also appends a `need` event to its run that says a shadow read was made, how it compared, and what it cost in requests, with no value and no digest. Counts are queries over the rows. What makes a binding promotable is, in each environment its evidence must come from, the number of distinct input digests whose comparison matched the named verified binding after the last mismatch; a mismatch in any environment, against any verified binding, starts the count again, and `not_compared` neither counts nor starts it again.
+
+## watches, watch_checks, watch_changes, watch_baseline
+
+A watch: one published read with a fixed input, repeated on a schedule its person confirmed, and what changed between its checks. As built by migration `0021-ledger-watches-checks-and-changes.sql`, which `a2m-ledger` owns ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)). No value of what a check read is kept in any of the four tables: only keyed digests, counts, names of outputs, and times. The values stay in the result of each check's run.
+
+| Column of `watches` | Type | Notes |
+| --- | --- | --- |
+| `id` | id | `watch_` and 32 hexadecimal characters |
+| `workspace_id`, `target`, `environment`, `operation`, `target_version_hash` | id, text, text, text, hash | The published read and the version it was confirmed for. Never changed (trigger) |
+| `effect` | enum | Always `read` (check constraint) |
+| `input_hash`, `input_ref` | hash, blob ref | The fixed input, as a run's are. Never changed (trigger) |
+| `ignore_outputs` | json | Output names left out of the digests |
+| `interval_seconds`, `ends_at` | int, ts | The schedule and the latest end. Never changed (trigger) |
+| `asked_by`, `acts_for`, `client_label`, `asked_at` | id, id, text, ts | Who asked, whose watch it is, which client, when |
+| `confirmed_by`, `confirmed_at`, `phase_ms` | id, ts, int | Set once, while `asked`, by the person it acts for and no one else (check constraint and trigger). Due time `n` is `confirmed_at + phase_ms + n × interval` |
+| `state` | enum | `asked`, `confirmed`, `running`, `paused`, `ended`; `running` only from `confirmed`, one check at a time; `ended` never changes |
+| `reason` | enum | Why it paused or ended, a state of the watch and not a failure: `needs_login`, `needs_input`, `drifted`, `version_changed`, `on_hold`, `paused_by_person`, `ended_by_person`, `ended_by_caller`, `end_reached`, `version_withdrawn`, `declined`. Only a watch paused `drifted` or `version_changed` never goes on |
+| `reason_failure_class`, `reason_failure_code` | enum, text | The failure of the check that made it pause, when one did |
+| `next_due_index`, `not_before` | int, ts | The next due time not yet handled, which only grows; a refused admission's retry moment |
+| `running_check`, `checks` | int, int | The check under way; how many were begun |
+| `baseline_through`, `baseline_complete` | int, bool | The last check the baseline took; whether a complete check is in it |
+| `retention_state` | enum | `kept` or `purging`; a watch leaves only with the retention job, which is not built |
+
+`watch_checks` is one row per check, keyed by watch and number: the due time's index and moment, whether it was the one catch-up check after missed due times, the run of the read (a trigger refuses any run but the watch's own read: its operation, version, and input, for the person it acts for), when it began and ended, the outcome (`running`, `complete`, `cut_short`, `failed`, `faulted`), the class and code of a failure or fault, the count of records seen, and the counts of added, changed, removed, unseen, and unchanged records. One check per due time (unique index). Written when it begins and once when it ends, then never again.
+
+`watch_changes` is one row per change, in one sequence: `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, `ended`; the check that found it and the one that last saw the record before; the record's key as the workspace's keyed digest under the purpose `record_key` (as a record row names it), or `whole`; for `changed`, the names of the outputs that differ; for a gap, the class and code of the failure that made it (a failed check, a fault, or `watch_due_missed`); for a pause or an end, its `reason`; for due times missed, the first, the last, and how many. Never changed (trigger).
+
+`watch_baseline` is the working state a check is compared with, one row per record the watch has seen: the keyed digest of its compared values together and of each output, and the check that last saw it. A newer check replaces the digests of the records it saw; a record proven removed is deleted; the whole baseline is deleted when the watch ends, and a trigger refuses a row for a watch with no check under way.
+
+Kept, and for how long: the watch, its checks, and its changes are kept for the retention class the watch was asked with, the class its read's runs take, and leave together when the retention job marks the watch `purging` (no such job is built, for runs or watches). The baseline lasts only while the watch is open. Nothing a device reported and no personal data a system holds is in any of them: a digest under the workspace's key cannot be reversed, and cannot be checked against a guess without the key. The principals who asked and confirmed are kept, as on every run.
 
 ## audit
 

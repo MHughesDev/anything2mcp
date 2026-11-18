@@ -7,7 +7,11 @@
 //! standard input is empty or carries the vault's passphrase once, and it
 //! inherits no other handle of the client, because every handle this
 //! program opens is closed on exec or not inheritable. The client then
-//! waits for the channel to answer, up to a deadline, and connects.
+//! waits for the channel to answer, up to a deadline, and connects. An
+//! engine that stops before it serves, as one that cannot open its vault
+//! does, writes why on one line ([`stopped_line`]), and the client answers
+//! with that failure; nothing stays up to answer later commands
+//! (decision 0220).
 //!
 //! Two clients that start at once end with one engine: the start lock
 //! lets one start it while the other waits and then connects; and if two
@@ -46,6 +50,21 @@ pub const ENGINE_LOG_NAME: &str = "engine-output.log";
 /// How the line begins that a client appends to the engine's log when it
 /// has started an engine on demand; the process's number follows.
 pub const STARTED_LINE: &str = "anything2mcp: a client started the engine on demand as process";
+
+/// How the line begins that an engine started on demand writes to its
+/// output when it stops before it serves: its process's number and the
+/// failure, as JSON, follow on the same line. The client that started it
+/// reads the line back and answers with that failure, so that an engine
+/// that cannot open its vault ends, and says why, instead of lingering
+/// (decision 0220). [`stopped_line`] makes it.
+pub const STOPPED_LINE: &str = "anything2mcp: the engine stopped before it served:";
+
+/// The most of the end of the engine's output a client reads to find the
+/// line [`stopped_line`] made.
+const STOPPED_TAIL: u64 = 64 * 1024;
+
+/// The longest sentence or next step a client takes from a stopped line.
+const STOPPED_LONGEST: usize = 4096;
 
 /// The pause between two looks at the channel while an engine starts.
 /// The client waits on the channel answering; the operating system offers
@@ -158,8 +177,68 @@ fn too_long(log: &Path) -> Failure {
     )
 }
 
-/// The engine this client started ended before it answered.
-fn ended_early(log: &Path) -> Failure {
+/// The line an engine started on demand writes to its standard error,
+/// which is its output file, when it stops before it serves: the class,
+/// code, sentence, and next step of `failure`, and never what a system
+/// said, which a failure keeps apart. The engine's own words hold no
+/// secret, by the rule every failure keeps.
+#[must_use]
+pub fn stopped_line(failure: &Failure) -> String {
+    let bare = Failure::new(
+        failure.class(),
+        failure.code().clone(),
+        failure.message(),
+        failure.next_step(),
+    );
+    // A failure is plain fields, which always serialize.
+    let json = serde_json::to_string(&bare).unwrap_or_default();
+    format!("{STOPPED_LINE} {} {json}", std::process::id())
+}
+
+/// The failure that the engine of process `process` wrote, with
+/// [`stopped_line`], into the end of `log`. `None` when it wrote none, or
+/// one that does not read as a failure an engine stops with.
+fn stopped_in(log: &Path, process: u32) -> Option<Failure> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = File::open(log).ok()?;
+    let length = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(STOPPED_TAIL)))
+        .ok()?;
+    let mut tail = Vec::new();
+    file.take(STOPPED_TAIL).read_to_end(&mut tail).ok()?;
+    let tail = String::from_utf8_lossy(&tail);
+    let ours = format!("{STOPPED_LINE} {process} ");
+    let json = tail
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(ours.as_str()))?;
+    let found: Failure = serde_json::from_str(json).ok()?;
+    // An engine that has not served has sent nothing anywhere: a line that
+    // says otherwise, or is too long to be the engine's own, is not taken.
+    let plausible = found.class() != a2m_core::FailureClass::PossibleCommit
+        && found.message().len() <= STOPPED_LONGEST
+        && found.next_step().len() <= STOPPED_LONGEST;
+    plausible.then_some(found)
+}
+
+/// The engine this client started, process `process`, ended before it
+/// answered: with the failure it wrote as it stopped, when it wrote one.
+fn ended_early(log: &Path, process: Option<u32>) -> Failure {
+    if let Some(stopped) = process.and_then(|process| stopped_in(log, process)) {
+        return Failure::new(
+            stopped.class(),
+            stopped.code().clone(),
+            format!(
+                "The engine started on demand stopped before it answered: {}",
+                stopped.message()
+            ),
+            format!(
+                "{} The engine's log is `{}`.",
+                stopped.next_step(),
+                shown(log)
+            ),
+        );
+    }
     codes::busy(
         codes::ENGINE_UNREACHABLE,
         "The engine started on demand ended before it answered on the local channel.",
@@ -358,8 +437,10 @@ impl Connector {
             tokio::time::sleep(PAUSE).await;
         };
         let mut child: Option<Child> = None;
-        // Whether an engine this client started has ended already.
+        // Whether an engine this client started has ended already, and its
+        // process's number.
         let mut ours_ended = false;
+        let mut ended_process = None;
         loop {
             match look().await {
                 Err(_) => {
@@ -390,6 +471,7 @@ impl Connector {
             {
                 // It ended: it failed, or lost the engine lock to an engine
                 // that is starting or closing, which is then waited for.
+                ended_process = Some(started.id());
                 child = None;
                 ours_ended = true;
             }
@@ -398,7 +480,7 @@ impl Connector {
             // lock from under it.
             if child.is_none() && !engine_lock_held(paths).await? {
                 if ours_ended {
-                    return Err(ended_early(&start.log));
+                    return Err(ended_early(&start.log, ended_process));
                 }
                 match launch_off_thread(&start).await {
                     Ok(started) => child = Some(started),

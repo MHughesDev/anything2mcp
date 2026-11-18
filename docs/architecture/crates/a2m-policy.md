@@ -10,7 +10,7 @@ The one decider. It answers every question of the form "may this happen?" with a
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
 | Depends on | `a2m-core`; `a2m-ledger` for its tables and for the run an approval is about; `a2m-expr` for pre-approval conditions. No outside crate beyond `serde` and `serde_json`: the decision core is this crate's own evaluator ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md)) |
-| Built in | Phase 3, group B and slice 3.2: the built-in local policy set, guardrails, limits, kill switches, approvals. Slice 3.6: approvals from the approval surface. Phase 6: grants, roles, published policy sets, standing approvals, chat and console channels. Phase 7: delegations |
+| Roadmap packages | Phase 3, group B and slice 3.2: the built-in local policy set, guardrails, limits, kill switches, approvals. Slice 3.6: approvals from the approval surface. Phase 6: grants, roles, published policy sets, standing approvals, chat and console channels. Phase 7: delegations |
 | Carries out | Spec sections [212](../../spec/2-kernel/212-policy-and-approvals.md), [214](../../spec/2-kernel/214-access-control-toolsets-and-tenancy.md), [226](../../spec/2-kernel/226-configuration.md) (the protected policy settings), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (what an approval records), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (an agent cannot loosen its limits), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards raise the approval; consent); decisions 0082, 0083, 0034, and [0035](../../decisions/0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) |
 
 ## Owns

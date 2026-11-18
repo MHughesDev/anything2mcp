@@ -68,6 +68,18 @@ struct Held {
     poisoned: bool,
 }
 
+/// A binding in shadow by its place, with the candidate it runs as or why
+/// it may not run now.
+pub(crate) type ShadowCandidate = (usize, Result<Candidate, Failure>);
+
+/// What [`Run::set_aside`] took out of the run.
+pub(crate) struct Aside {
+    trace: Option<TraceBuilder>,
+    pass: u32,
+    next_pass: u32,
+    begins: Option<PassInfo>,
+}
+
 /// A binding that qualifies, in the plan's order.
 pub(crate) struct Candidate {
     pub binding: usize,
@@ -143,6 +155,25 @@ pub(crate) struct Run<'a> {
     /// binding is handed in place of its provider's driver. No session is
     /// asked for, and no provider's driver is used (decision 0177).
     pub replay: Option<Arc<dyn a2m_provider::Driver>>,
+    /// Whether a binding in shadow may run beside this job's reads: a live
+    /// `Execute` job of a tool that only reads (decision 0207).
+    pub shadow_allowed: bool,
+    /// The operations a binding in shadow already ran beside in this job:
+    /// at most once each.
+    pub shadowed: Vec<OperationName>,
+    /// The one budget every binding in shadow of this job shares, set when
+    /// the first of them starts: when their reads must end, and when the
+    /// keeping of their comparisons must (decision 0251).
+    pub shadow_budget: Option<(tokio::time::Instant, tokio::time::Instant)>,
+    /// The comparisons made in this job, kept only after the call's result
+    /// was sent (decision 0251).
+    pub shadow_compared: Vec<crate::control::ShadowCompared>,
+    /// True while a binding in shadow reads: its rate budget is asked for
+    /// as a shadow's, never as a caller's.
+    pub shadow_reading: bool,
+    /// The rate budget's units this job was granted, one per step, on
+    /// every surface: what a shadow read's cost is counted from.
+    pub granted: std::sync::atomic::AtomicU64,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -151,6 +182,17 @@ fn status_qualifies(status: BindingStatus, posture: Posture) -> bool {
         Posture::Live => status == BindingStatus::Verified,
         Posture::Sandbox { .. } | Posture::Discovery => status != BindingStatus::Retired,
     }
+}
+
+/// The failure of a binding that does not qualify for a reason that is not
+/// a session, an edge block, or drift.
+fn no_binding(why: String) -> Failure {
+    codes::fail(
+        FailureClass::Busy,
+        codes::NO_BINDING,
+        why,
+        "Check the binding's status and its provider with `anything2mcp engine status`.",
+    )
 }
 
 /// The order in which the reasons a binding did not qualify are reported:
@@ -216,6 +258,12 @@ impl<'a> Run<'a> {
             paths,
             time_limit: None,
             replay: None,
+            shadow_allowed: false,
+            shadowed: Vec::new(),
+            shadow_budget: None,
+            shadow_compared: Vec::new(),
+            shadow_reading: false,
+            granted: std::sync::atomic::AtomicU64::new(0),
             loaded,
         }
     }
@@ -306,7 +354,6 @@ impl<'a> Run<'a> {
         operation: &OperationPlan,
         scope: &Scope,
     ) -> Result<(Vec<Candidate>, Vec<PassedOver>), Failure> {
-        let conditions = &self.job.conditions;
         let mut qualified = Vec::new();
         let mut passed_over: Vec<PassedOver> = Vec::new();
         let mut best: Option<Failure> = None;
@@ -323,23 +370,28 @@ impl<'a> Run<'a> {
                 best = Some(failure);
             }
         };
+        // A test or a trial names the binding it is evidence for: that one
+        // runs, and no other (audit finding AC-6).
+        let named = self
+            .job
+            .binding
+            .as_ref()
+            .filter(|pin| pin.operation == operation.name);
+        if let Some(pin) = named
+            && !pin.holds_in(&self.loaded.plan, operation)
+        {
+            return Err(crate::binding::changed(pin));
+        }
         for (position, binding) in operation.bindings.iter().enumerate() {
             if self
                 .job
                 .pin
                 .as_ref()
                 .is_some_and(|pin| pin != &binding.mode)
+                || named.is_some_and(|pin| pin.position != position)
             {
                 continue;
             }
-            let no_binding = |why: String| {
-                codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_BINDING,
-                    why,
-                    "Check the binding's status and its provider with `anything2mcp engine status`.",
-                )
-            };
             // Against a replay nothing acts, so a binding not yet verified
             // may be tested there: an offline test is how a draft or a
             // shadow binding earns its promotion (decision 0180). A retired
@@ -357,90 +409,14 @@ impl<'a> Run<'a> {
                 pass_over(&binding.mode, no_binding(why), &mut passed_over);
                 continue;
             }
-            let handle = match &self.replay {
-                Some(replay) => self
-                    .engine
-                    .deps
-                    .registry
-                    .replay_driver(&binding.mode, Arc::clone(replay)),
-                None => self.engine.deps.registry.driver(&binding.mode),
-            };
-            let handle = match handle {
+            let handle = match self.admits(operation, binding, scope)? {
                 Ok(handle) => handle,
                 Err(failure) => {
-                    let why = format!(
-                        "No driver is ready for the mode `{}` ({}).",
-                        binding.mode,
-                        failure.code()
-                    );
-                    pass_over(&binding.mode, no_binding(why), &mut passed_over);
+                    pass_over(&binding.mode, failure, &mut passed_over);
                     continue;
                 }
             };
-            let surface_ref = self.surface_ref(binding.surface)?;
-            let surface_name = &surface_ref.surface.name;
-            if let DriverHealth::Degraded(code) | DriverHealth::Unavailable(code) =
-                handle.health(&surface_ref)
-            {
-                let why = format!(
-                    "The driver of the mode `{}` is not ready ({code}).",
-                    binding.mode
-                );
-                pass_over(&binding.mode, no_binding(why), &mut passed_over);
-                continue;
-            }
-            if conditions
-                .sessions
-                .iter()
-                .any(|(surface, state)| surface == surface_name && !session_usable(*state))
-            {
-                let failure = codes::fail(
-                    FailureClass::SessionExpired,
-                    codes::NEEDS_LOGIN,
-                    format!("The session of the surface `{surface_name}` has ended."),
-                    "Sign in again with `anything2mcp session login`, then resume the run.",
-                );
-                pass_over(&binding.mode, failure, &mut passed_over);
-                continue;
-            }
-            if conditions.edge_blocked.contains(surface_name) {
-                let failure = codes::fail(
-                    FailureClass::EdgeBlocked,
-                    codes::EDGE_BLOCKED,
-                    format!("The surface `{surface_name}` is blocked at the edge."),
-                    "Wait for the block to end; the engine does not go around it.",
-                );
-                pass_over(&binding.mode, failure, &mut passed_over);
-                continue;
-            }
-            if conditions
-                .drifted
-                .iter()
-                .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
-            {
-                let failure = codes::fail(
-                    FailureClass::Drift,
-                    codes::BINDING_DRIFTED,
-                    format!(
-                        "The binding of `{}` through the mode `{}` has drifted.",
-                        operation.name, binding.mode
-                    ),
-                    "Repair the binding, verify it, and publish the target again.",
-                );
-                pass_over(&binding.mode, failure, &mut passed_over);
-                continue;
-            }
-            if let Some(precondition) = binding.precondition
-                && !self.loaded.holds(precondition, scope)?
-            {
-                let why = format!(
-                    "The precondition of the binding through the mode `{}` does not hold.",
-                    binding.mode
-                );
-                pass_over(&binding.mode, no_binding(why), &mut passed_over);
-                continue;
-            }
-            let reason = if self.job.pin.is_some() {
+            let reason = if self.job.pin.is_some() || named.is_some() {
                 ChoiceReason::Pinned
             } else if !qualified.is_empty() {
                 ChoiceReason::FellBack
@@ -469,6 +445,125 @@ impl<'a> Run<'a> {
             }));
         }
         Ok((qualified, passed_over))
+    }
+
+    /// Whether a binding may act now, whatever its status: the registry
+    /// has a driver ready for its mode, its surface has neither drifted nor
+    /// been blocked at the edge, its session is usable, and its
+    /// precondition holds for the call's inputs. `Ok(Err(..))` says why it
+    /// may not; `Err` is a failure of the call itself.
+    fn admits(
+        &self,
+        operation: &OperationPlan,
+        binding: &BindingPlan,
+        scope: &Scope,
+    ) -> Result<Result<DriverHandle, Failure>, Failure> {
+        let conditions = &self.job.conditions;
+        let handle = match &self.replay {
+            Some(replay) => self
+                .engine
+                .deps
+                .registry
+                .replay_driver(&binding.mode, Arc::clone(replay)),
+            None => self.engine.deps.registry.driver(&binding.mode),
+        };
+        let handle = match handle {
+            Ok(handle) => handle,
+            Err(failure) => {
+                return Ok(Err(no_binding(format!(
+                    "No driver is ready for the mode `{}` ({}).",
+                    binding.mode,
+                    failure.code()
+                ))));
+            }
+        };
+        let surface_ref = self.surface_ref(binding.surface)?;
+        let surface_name = &surface_ref.surface.name;
+        if let DriverHealth::Degraded(code) | DriverHealth::Unavailable(code) =
+            handle.health(&surface_ref)
+        {
+            return Ok(Err(no_binding(format!(
+                "The driver of the mode `{}` is not ready ({code}).",
+                binding.mode
+            ))));
+        }
+        if conditions
+            .sessions
+            .iter()
+            .any(|(surface, state)| surface == surface_name && !session_usable(*state))
+        {
+            return Ok(Err(codes::fail(
+                FailureClass::SessionExpired,
+                codes::NEEDS_LOGIN,
+                format!("The session of the surface `{surface_name}` has ended."),
+                "Sign in again with `anything2mcp session login`, then resume the run.",
+            )));
+        }
+        if conditions.edge_blocked.contains(surface_name) {
+            return Ok(Err(codes::fail(
+                FailureClass::EdgeBlocked,
+                codes::EDGE_BLOCKED,
+                format!("The surface `{surface_name}` is blocked at the edge."),
+                "Wait for the block to end; the engine does not go around it.",
+            )));
+        }
+        if conditions
+            .drifted
+            .iter()
+            .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
+        {
+            return Ok(Err(codes::fail(
+                FailureClass::Drift,
+                codes::BINDING_DRIFTED,
+                format!(
+                    "The binding of `{}` through the mode `{}` has drifted.",
+                    operation.name, binding.mode
+                ),
+                "Repair the binding, verify it, and publish the target again.",
+            )));
+        }
+        if let Some(precondition) = binding.precondition
+            && !self.loaded.holds(precondition, scope)?
+        {
+            return Ok(Err(no_binding(format!(
+                "The precondition of the binding through the mode `{}` does not hold.",
+                binding.mode
+            ))));
+        }
+        Ok(Ok(handle))
+    }
+
+    /// The operation's bindings in `shadow`, in the plan's order, each with
+    /// the candidate it runs as or why it may not run now (decision 0207).
+    /// Only a live job that runs against the system has any: never a try,
+    /// a replay, or a job that pins a mode or names a binding.
+    pub fn shadow_candidates(
+        &self,
+        operation: &OperationPlan,
+        scope: &Scope,
+    ) -> Result<Vec<ShadowCandidate>, Failure> {
+        if self.replay.is_some()
+            || self.posture != Posture::Live
+            || self.job.pin.is_some()
+            || self.job.binding.is_some()
+        {
+            return Ok(Vec::new());
+        }
+        let mut found = Vec::new();
+        for (position, binding) in operation.bindings.iter().enumerate() {
+            if binding.status != BindingStatus::Shadow {
+                continue;
+            }
+            let candidate = self
+                .admits(operation, binding, scope)?
+                .map(|handle| Candidate {
+                    binding: position,
+                    reason: ChoiceReason::FirstInOrder,
+                    handle,
+                });
+            found.push((position, candidate));
+        }
+        Ok(found)
     }
 
     /// Tells the control plane which binding was chosen and why.
@@ -540,6 +635,22 @@ impl<'a> Run<'a> {
         writes: bool,
     ) -> Result<usize, Failure> {
         let posture = self.posture_for(writes);
+        self.hold_at(operation, mode, surface, candidate, again, posture)
+            .await
+    }
+
+    /// Prepares, as [`Run::hold_on`] does, in the posture given: for a
+    /// binding in shadow, a posture in which the driver's own read-only
+    /// guard is on and the handle refuses every step that commits.
+    pub async fn hold_at(
+        &mut self,
+        operation: &OperationName,
+        mode: &Mode,
+        surface: SurfaceIndex,
+        candidate: &Candidate,
+        again: bool,
+        posture: Posture,
+    ) -> Result<usize, Failure> {
         let destinations = self.destinations_of(operation);
         if let Some(position) = self.held.iter().position(|held| {
             held.mode == *mode
@@ -669,13 +780,41 @@ impl<'a> Run<'a> {
     }
 
     /// Asks for a rate budget for the steps of a pass, when the surface
-    /// declares a limit.
+    /// declares a limit. While a binding in shadow reads, the budget is
+    /// asked for as a shadow's: all at once or not at all, never waiting,
+    /// and never below the share left for callers' own reads (decision
+    /// 0251). The steps granted are counted in [`Run::granted`].
     pub async fn budget(&self, held: usize, steps: usize) -> Result<(), Failure> {
         let surface = &self.held[held].surface_ref.surface;
-        if surface.rate.is_none() || steps == 0 {
+        if steps == 0 {
+            return Ok(());
+        }
+        let count = |steps: usize| {
+            self.granted.fetch_add(
+                u64::try_from(steps).unwrap_or(u64::MAX),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        };
+        if surface.rate.is_none() {
+            count(steps);
             return Ok(());
         }
         let mut wanted = u32::try_from(steps).unwrap_or(u32::MAX);
+        if self.shadow_reading {
+            if !self.control.shadow_rate(&surface.name, wanted).await? {
+                return Err(codes::fail(
+                    FailureClass::Busy,
+                    codes::NO_RATE_BUDGET,
+                    format!(
+                        "A binding in shadow was not given its requests on the surface `{}` without taking what callers' own reads need.",
+                        surface.name
+                    ),
+                    "Nothing to do; the binding is compared on a later call.",
+                ));
+            }
+            count(steps);
+            return Ok(());
+        }
         while wanted > 0 {
             let granted = self.control.rate(&surface.name, wanted).await?;
             if granted == 0 {
@@ -691,7 +830,47 @@ impl<'a> Run<'a> {
             }
             wanted = wanted.saturating_sub(granted);
         }
+        count(steps);
         Ok(())
+    }
+
+    /// Takes the trace and the count of passes out of the run, so that what
+    /// a binding in shadow does leaves no step in the run's trace and moves
+    /// no pass of it: the trace's signature is the live call's alone.
+    pub fn set_aside(&mut self) -> Aside {
+        Aside {
+            trace: self.trace.take(),
+            pass: self.pass,
+            next_pass: self.next_pass,
+            begins: self.begins.take(),
+        }
+    }
+
+    /// Puts back what [`Run::set_aside`] took.
+    pub fn restore(&mut self, aside: Aside) {
+        self.trace = aside.trace;
+        self.pass = aside.pass;
+        self.next_pass = aside.next_pass;
+        self.begins = aside.begins;
+    }
+
+    /// Marks every held context of this posture as not to be used again:
+    /// after a binding in shadow was cancelled, whatever step it was in.
+    pub fn poison_posture(&mut self, posture: Posture) {
+        for held in &mut self.held {
+            if held.posture == posture {
+                held.poisoned = true;
+            }
+        }
+    }
+
+    /// Whether the job holds a context on `surface` prepared under a
+    /// session lease, not poisoned: the live call's session, which a
+    /// binding in shadow may read through without asking for one.
+    pub fn holds_session_on(&self, surface: SurfaceIndex) -> bool {
+        self.held
+            .iter()
+            .any(|held| held.surface == surface && held.lease.is_some() && !held.poisoned)
     }
 
     /// Marks a held context as not to be used again, after a failure.

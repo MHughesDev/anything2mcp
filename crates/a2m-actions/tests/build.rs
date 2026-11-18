@@ -131,7 +131,15 @@ struct More {
     flaky: std::sync::atomic::AtomicU32,
     /// The key each read by key was asked for.
     keys: Mutex<Vec<String>>,
+    /// The spare read of an order gives another note than the stand holds.
+    spare_differs: std::sync::atomic::AtomicBool,
+    /// How many times the spare read of an order was made.
+    spare: std::sync::atomic::AtomicU32,
 }
+
+/// The note the spare read gives when it differs: a value no report may
+/// show.
+const SPARE_NOTE: &str = "A note of the spare read alone";
 
 /// The stand's driver, with the posture each preparation was handed kept.
 struct Postured {
@@ -225,6 +233,20 @@ impl a2m_provider::Driver for Postured {
                         )));
                     }
                     seen(a2m_core::Values::new().with("note", "Kept, this time"))
+                })
+            }
+            // A second way to read an order: what the stand answers, with
+            // another note when the test says it differs.
+            Some("order_get_spare") => {
+                self.more.spare.fetch_add(1, Ordering::SeqCst);
+                let differs = self.more.spare_differs.load(Ordering::SeqCst);
+                let answered = self.inner.act(prepared, step, input);
+                Box::pin(async move {
+                    let mut outcome = answered.await?;
+                    if differs && let a2m_provider::StepOutcome::Done(observed) = &mut outcome {
+                        observed.values.insert("note", SPARE_NOTE);
+                    }
+                    Ok(outcome)
                 })
             }
             _ => self.inner.act(prepared, step, input),
@@ -510,7 +532,7 @@ impl a2m_files::DraftingRule for OperationFromCall {
                             "bindings",
                             DraftValue::List(vec![DraftValue::map(vec![
                                 ("mode", DraftValue::text("stand")),
-                                ("status", DraftValue::text("verified")),
+                                ("status", DraftValue::text("draft")),
                                 ("call", DraftValue::text(name)),
                             ])]),
                         ),
@@ -799,6 +821,8 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         .call(&agent, "draft.lint", json!({"target": "example"}))
         .await;
     assert!(linted.ok, "{:?}", linted.error);
+    // Every gate a publish runs passes, so the hint is the publish.
+    assert_eq!(linted.next.as_ref().unwrap().action, "version.publish");
     let result = linted.result.unwrap();
     assert_eq!(result["ok"], true);
     assert!(!result["tools"].as_array().unwrap().is_empty());
@@ -1079,6 +1103,15 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
         "{fields:?}"
     );
     assert!(!ask.details.is_empty(), "the review summary is shown");
+    // The target declares only `test`: the page says `production` is
+    // implied, not declared (decision 0219).
+    assert!(
+        ask.details
+            .iter()
+            .any(|line| line.starts_with("The environment `production` is not declared")),
+        "{:?}",
+        ask.details
+    );
     let nothing = world.call(&agent, "target.list", json!({})).await;
     assert_eq!(
         nothing.result.unwrap()["targets"]
@@ -1806,14 +1839,14 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         .call(&agent, "run.get", json!({"run_id": result["run_id"]}))
         .await;
     assert!(got.result.is_some(), "{got:?}");
-    // The trial is a run the engine carried out: here it stops where the
-    // stand's sign-in is not registered, as a call of a published tool
-    // would, and nothing reached the stand's driver.
+    // The trial is a run the engine carried out: here it stops at the
+    // target's sign-in, which only the drafts declare, so no stored
+    // credential is used without its person (decision 0248), and nothing
+    // reached the stand's driver.
     assert_eq!(result["mode"], "stand", "{result}");
-    assert_eq!(
-        result["failure"]["code"], "auth_provider_unknown",
-        "{result}"
-    );
+    assert_eq!(result["status"], "needs_login", "{result}");
+    assert_eq!(result["failure"]["class"], "session_expired", "{result}");
+    assert_eq!(result["failure"]["code"], "needs_login", "{result}");
     assert!(world.reached.lock().unwrap().is_empty());
     let nothing = world.call(&agent, "tool.search", json!({})).await;
     assert_eq!(
@@ -1943,6 +1976,14 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     unmarked["text"] = Json::Null;
     assert!(marked_only(&unmarked, false, needle), "{report}");
     assert!(!report["text"].as_str().unwrap().contains(needle));
+    // The report says how drafts nobody asked for are removed.
+    assert!(
+        report["text"]
+            .as_str()
+            .unwrap()
+            .contains("`draft.delete`, all in one call by `files`"),
+        "{report}"
+    );
     let listed = world
         .call(&agent, "unknown.list", json!({"target": "example"}))
         .await
@@ -2318,10 +2359,11 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
     let again = promote("example_order_get", "stand", Some(run)).await;
     assert_eq!(again.result.unwrap()["promoted"], false);
 
-    // A shadow binding is promoted on its comparison, which is not built;
-    // a drafted write is a person's act, shown on the person's page.
+    // A shadow binding is promoted by a person on its comparisons, never by
+    // an agent; a drafted write is a person's act, shown on the person's
+    // page.
     let shadow = promote("example_line_item_upsert", "stand", None).await;
-    assert_eq!(shadow.error.unwrap().code, "action_not_built");
+    assert_eq!(shadow.error.unwrap().code, "person_required");
     *world.surface.pages.lock().unwrap() = true;
     let upsert = target_dir.join("operations").join("line_item_upsert.yaml");
     let shadowed = std::fs::read_to_string(&upsert).unwrap();
@@ -2397,12 +2439,67 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
         .unwrap();
     assert_eq!(removed["removed"], true, "{removed}");
     assert!(!test_file.exists());
-    // The operation has no test now: the gate names both ways on.
-    let gates = world
-        .call(&agent, "test.run", json!({"target": "example"}))
+    // Several drafts in one call (decision 0219): every one checked before
+    // any is removed, and one that may not be removed keeps them all.
+    let spares = ["calls/spare_a.yaml", "calls/spare_b.yaml"];
+    for (at, spare) in spares.iter().enumerate() {
+        std::fs::write(
+            target_dir.join(spare),
+            format!("call: spare_{at}\npath: \"/spare/{at}\"\neffect: read\n"),
+        )
+        .unwrap();
+    }
+    let kept = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "files": [spares[0], spares[1], "target.yaml"]}),
+        )
+        .await;
+    assert_eq!(kept.error.unwrap().code, "path_not_allowed");
+    assert!(spares.iter().all(|spare| target_dir.join(spare).is_file()));
+    let twice = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "file": spares[0], "files": [spares[1]]}),
+        )
+        .await;
+    assert_eq!(twice.error.unwrap().code, "schema_invalid");
+    let both = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "files": spares}),
+        )
         .await
         .result
         .unwrap();
+    assert_eq!(both["files"].as_array().unwrap().len(), 2, "{both}");
+    assert!(spares.iter().all(|spare| !target_dir.join(spare).exists()));
+    // The operation has no test now: the gate names both ways on, and the
+    // action failed (decision 0219).
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await;
+    assert_eq!(tested.exit, ExitClass::Failed);
+    assert_eq!(tested.error.unwrap().code, "publish_gates_not_passed");
+    let gates = tested.result.unwrap();
+    assert_eq!(gates["passed"], false);
+    // The hints of `draft.lint` and `target.status` read the gates the
+    // publish reads: they name the step that can succeed, not the publish.
+    for action in ["draft.lint", "target.status"] {
+        let answered = world
+            .call(&agent, action, json!({"target": "example"}))
+            .await;
+        let next = answered.next.unwrap();
+        assert_eq!(next.action, "test.run", "{action}: {}", next.when);
+        assert!(
+            next.when.contains("operations/order_get.yaml"),
+            "{}",
+            next.when
+        );
+    }
     let missing = &gates["missing"][0];
     assert_eq!(missing["file"], "operations/order_get.yaml", "{gates}");
     assert_eq!(missing["next"][0]["action"], "test.run");
@@ -2507,11 +2604,10 @@ const RECORDED_READS: [(&str, &str); 3] = [
     ),
 ];
 
-/// `fixture.record` beyond one pack's read (decision 0199): a list read is
-/// cut to three items, each scrubbed, the same original put in place of by
-/// the same text in the input and every answer; a choice, alone or in a
-/// list, by another declared code; and each recorded test passes offline,
-/// read back from its files.
+/// `fixture.record` beyond one pack's read (decisions 0199 and 0200): a
+/// list read is cut to three items, each scrubbed by its place; a choice,
+/// alone or in a list, by its type's first declared code, which the result
+/// says; and each recorded test passes offline, read back from its files.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     let world = World::open().await;
@@ -2565,12 +2661,21 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
         .collect();
     assert_eq!(codes.len(), 3, "{answer}");
     assert!(codes[0] != codes[1] && codes[1] != codes[2] && codes[0] != codes[2]);
-    // The key in the input and the same original in the list are one text.
+    // A made-up value is chosen by its place, not by the original: the
+    // list's `A-7` is not the key's made-up text, which only the key's own
+    // fields share (audit finding FX-3).
     let test = std::fs::read_to_string(target_dir.join("tests/order_lines_get.yaml")).unwrap();
     assert!(
-        test.contains(&format!("\"order_id\":\"{}\"", codes[0])),
+        !test.contains(&format!("\"order_id\":\"{}\"", codes[0])),
         "{test}\n{answer}"
     );
+    assert!(
+        result["limits"]
+            .as_array()
+            .is_some_and(|limits| !limits.is_empty()),
+        "{result}"
+    );
+    assert_eq!(result["trial"]["retention"], "short", "{result}");
     for file in result["files"].as_array().unwrap() {
         let text = std::fs::read_to_string(target_dir.join(file.as_str().unwrap())).unwrap();
         for original in ["A-7", "L-81", "L-82", "L-83", "Lines of"] {
@@ -2578,10 +2683,20 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
         }
     }
 
-    // The read of choices: each code is another the type declares.
+    // The read of choices: every code is the type's first, whatever the
+    // system held, and the result says so (audit finding FX-2).
     let recorded = record("example_order_state_get").await;
     assert!(recorded.ok, "{:?}", recorded.error);
-    assert_eq!(recorded.result.unwrap()["test_state"], "passed");
+    let result = recorded.result.unwrap();
+    assert_eq!(result["test_state"], "passed");
+    assert!(
+        result["limits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|limit| limit.as_str().unwrap().contains("first declared code")),
+        "{result}"
+    );
     let answer: Json = serde_json::from_str(
         &std::fs::read_to_string(target_dir.join("fixtures/order_state_get/order_state.json"))
             .unwrap(),
@@ -2589,7 +2704,7 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     .unwrap();
     assert_eq!(
         answer,
-        json!({"status": "released", "history": ["released", "draft", "released"]}),
+        json!({"status": "draft", "history": ["draft", "draft", "draft"]}),
         "{answer}"
     );
 
@@ -2627,5 +2742,830 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
         "{:?}",
         world.reached.lock().unwrap()
     );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Two bindings of one read, both of the mode `stand`, in file order.
+const TWO_BINDINGS: &str = "operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: \"Order number shown in the application\"}
+outputs:
+  status: {type: order_status}
+  total: {type: amount}
+  note: {type: note}
+examples:
+  - {order_id: \"SO-1001\"}
+bindings:
+  - mode: stand
+    status: draft
+    call: order_get
+  - mode: stand
+    status: draft
+    call: order_lookup
+description: >
+  Reads the status, the total, and the note of one order.
+  Prefer example_order_sheet_enter to enter a whole sheet.
+";
+
+/// Audit finding AC-6: evidence is earned by one binding and names it. A
+/// test, a trial, and the scout run one binding, by its place and mode, and
+/// `binding.promote` takes only evidence of the binding it promotes, with
+/// the digest it has now; the publish gate asks a passing test of every
+/// binding that may act, and of a write one whose save went through it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new()
+            .with("status", "draft")
+            .with("total", "125.00")
+            .with("note", "Call before delivery"),
+        ..a2m_provider::Observed::default()
+    });
+    let write = |file: &'static str, content: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let written = world
+                .call(
+                    &agent,
+                    "draft.write",
+                    json!({"target": "example", "file": file, "content": content}),
+                )
+                .await;
+            assert_eq!(written.result.unwrap()["written"], true, "{file}");
+        }
+    };
+    write(
+        "calls/lookup.yaml",
+        "call: order_lookup\npath: \"/orders/{order_id}\"\neffect: read\n---\ncall: line_item_put_other\npath: \"/orders/{order_id}/items/{item_code}\"\neffect: write\n".to_owned(),
+    )
+    .await;
+    write("operations/order_get.yaml", TWO_BINDINGS.to_owned()).await;
+    let try_binding = |position: Option<u64>| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let mut input = json!({"target": "example", "tool": "example_order_get", "input": {"order_id": "SO-1001"}});
+            if let Some(position) = position {
+                input["mode"] = json!("stand");
+                input["position"] = json!(position);
+            }
+            let tried = world.call(&agent, "draft.try", input).await.result.unwrap();
+            assert_eq!(tried["status"], "completed", "{tried}");
+            tried["run_id"].as_str().unwrap().to_owned()
+        }
+    };
+    let promote = |run: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            world
+                .call(
+                    &agent,
+                    "binding.promote",
+                    json!({"target": "example", "tool": "example_order_get", "mode": "stand", "position": 2, "run_id": run}),
+                )
+                .await
+        }
+    };
+
+    // The test that names no binding ran the first, and a trial of the
+    // first: neither is evidence for the second.
+    let first_run = try_binding(None).await;
+    let refused = promote(first_run.clone()).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven", "{}", refused.message);
+    let test_file = target_dir.join("tests").join("order_get.yaml");
+    let test = std::fs::read_to_string(&test_file).unwrap();
+    write(
+        "tests/order_get.yaml",
+        test.replace(
+            "kind: offline\n",
+            "kind: offline\nbinding: {mode: stand, position: 1}\n",
+        ),
+    )
+    .await;
+    let refused = promote(first_run.clone()).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven");
+    assert!(
+        refused.message.contains("ran its binding 2"),
+        "{}",
+        refused.message
+    );
+    // A test of the second binding, against its own fixture.
+    let fixture = target_dir.join("fixtures").join("order_lookup");
+    std::fs::create_dir_all(&fixture).unwrap();
+    std::fs::write(fixture.join("fixture.yaml"), "scrubbed: true\n").unwrap();
+    std::fs::write(
+        fixture.join("order_lookup.json"),
+        r#"{"status":"draft","total":"125.00","note":"Call before delivery"}"#,
+    )
+    .unwrap();
+    write(
+        "tests/order_lookup.yaml",
+        "test: example_order_get\nkind: offline\nbinding: {mode: stand, position: 2}\nfixture: order_lookup\ninputs: {order_id: \"SO-1001\"}\nexpect: {status: draft, total: \"125.00\", note: \"Call before delivery\"}\n".to_owned(),
+    )
+    .await;
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let ran: Vec<(String, Json)> = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|test| test["tool"] == "example_order_get")
+        .map(|test| {
+            (
+                test["test"].as_str().unwrap().to_owned(),
+                test["binding"]["position"].clone(),
+            )
+        })
+        .collect();
+    assert!(
+        ran.contains(&("order_get".to_owned(), json!(1))),
+        "{tested}"
+    );
+    assert!(
+        ran.contains(&("order_lookup".to_owned(), json!(2))),
+        "{tested}"
+    );
+    // The trial of the first binding is still no trial of the second.
+    let refused = promote(first_run).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven");
+    assert!(refused.message.contains("trial"), "{}", refused.message);
+    // A trial of the second, by its place: promoted, and its evidence names
+    // it.
+    let second_run = try_binding(Some(2)).await;
+    let promoted = promote(second_run).await;
+    assert!(promoted.ok, "{:?}", promoted.error);
+    let promoted = promoted.result.unwrap();
+    assert_eq!(promoted["evidence"]["binding"]["position"], 2, "{promoted}");
+    assert_eq!(promoted["evidence"]["tried"]["binding"]["position"], 2);
+    let operation = std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap();
+    assert!(
+        operation.contains("    status: draft\n    call: order_get")
+            && operation.contains("    status: \"verified\"\n    call: order_lookup"),
+        "{operation}"
+    );
+    // The gate asks a test of the binding that may act now.
+    std::fs::remove_file(target_dir.join("tests").join("order_lookup.yaml")).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let lack = tested["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|lack| lack["tool"] == "example_order_get")
+        .unwrap_or_else(|| panic!("{tested}"));
+    assert_eq!(lack["state"], "binding_untested", "{tested}");
+    assert_eq!(lack["binding"]["position"], 2);
+
+    // A write whose verified binding comes second: its test, naming no
+    // binding, runs that one, and a fixture of the first binding's save
+    // does not pass it.
+    let upsert = target_dir.join("operations").join("line_item_upsert.yaml");
+    let one = std::fs::read_to_string(&upsert).unwrap();
+    let two = one.replace(
+        "bindings:\n  - mode: stand\n    verb: upsert\n    status: shadow\n    call: line_item_put\n",
+        "bindings:\n  - mode: stand\n    verb: upsert\n    status: draft\n    call: line_item_put\n    args: {length: input.length}\n    read_back: {call: line_item_get}\n  - mode: stand\n    verb: upsert\n    status: verified\n    call: line_item_put_other\n",
+    );
+    assert_ne!(one, two);
+    // A person writes it in an editor: `draft.write` would refuse a
+    // binding written as verified (audit finding PM-2).
+    std::fs::write(&upsert, two).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let upsert_test = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["test"] == "line_item_upsert")
+        .unwrap();
+    assert_eq!(upsert_test["binding"]["position"], 2, "{upsert_test}");
+    assert_ne!(upsert_test["state"], "passed", "{upsert_test}");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Audit finding PM-2: `draft.write` never makes a binding verified, and
+/// never keeps one verified while changing it; only `binding.promote` makes
+/// a binding verified, on its evidence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_binding_is_never_written_verified_by_hand() {
+    let world = World::open().await;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    let write = |file: &'static str, content: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            world
+                .call(
+                    &agent,
+                    "draft.write",
+                    json!({"target": "example", "file": file, "content": content}),
+                )
+                .await
+        }
+    };
+    let order = std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap();
+    // A verified binding kept as it is: written.
+    let described = order.replace("Reads the status", "Reads the state");
+    let written = write("operations/order_get.yaml", described.clone()).await;
+    assert_eq!(written.result.unwrap()["written"], true);
+    // Changed and left verified: refused, and the file is as it was.
+    let changed = described.replace("call: order_get", "call: line_item_get");
+    let refused = write("operations/order_get.yaml", changed.clone())
+        .await
+        .error
+        .unwrap();
+    assert_eq!(refused.code, "binding_not_promotable");
+    assert!(refused.fix.contains("status: draft"), "{}", refused.fix);
+    assert_eq!(
+        std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap(),
+        described
+    );
+    // Changed and written as a draft: written.
+    let drafted = changed.replace("status: verified", "status: draft");
+    assert_eq!(
+        write("operations/order_get.yaml", drafted)
+            .await
+            .result
+            .unwrap()["written"],
+        true
+    );
+    // A shadow binding written as verified: refused, pointing at the act.
+    let upsert =
+        std::fs::read_to_string(target_dir.join("operations/line_item_upsert.yaml")).unwrap();
+    let refused = write(
+        "operations/line_item_upsert.yaml",
+        upsert.replace("status: shadow", "status: verified"),
+    )
+    .await
+    .error
+    .unwrap();
+    assert_eq!(refused.code, "binding_not_promotable");
+    assert!(refused.fix.contains("binding.promote"), "{}", refused.fix);
+    // Audit finding DD-1: a folder of the target that is a link, even to a
+    // folder inside the project, is never written or removed through.
+    #[cfg(unix)]
+    {
+        let calls = target_dir.join("calls");
+        let real = world.project.path().join("elsewhere");
+        std::fs::rename(&calls, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &calls).unwrap();
+        let removed = world
+            .call(
+                &agent,
+                "draft.delete",
+                json!({"target": "example", "file": "calls/orders.yaml"}),
+            )
+            .await
+            .error
+            .unwrap();
+        assert_eq!(removed.code, "path_not_allowed", "{}", removed.message);
+        assert!(real.join("orders.yaml").is_file());
+        let written = write(
+            "calls/more.yaml",
+            "call: more\npath: \"/more\"\neffect: read\n".to_owned(),
+        )
+        .await
+        .error
+        .unwrap();
+        assert_eq!(written.code, "path_not_allowed");
+        assert!(!real.join("more.yaml").exists());
+    }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Shadow bindings in the product (decisions 0207, 0219, and 0251): a live
+/// read of a tool with a verified binding and one in shadow is compared on
+/// every call, `shadow.report` counts the distinct inputs that matched by
+/// the shadow binding's digest, one input called again is one input, a
+/// mismatch starts the count again and is named by output alone, and
+/// `binding.promote` of the shadow binding is a person's act on the
+/// threshold's distinct inputs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_promoted_by_a_person()
+ {
+    use std::sync::atomic::Ordering;
+    const ORDERS: [&str; 4] = ["SO-1002", "SO-1003", "SO-1004", "SO-1005"];
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new()
+            .with("status", "draft")
+            .with("total", "125.00")
+            .with("note", "Call before delivery"),
+        ..a2m_provider::Observed::default()
+    });
+    // The read of an order gets a second binding, in shadow, through a
+    // second call.
+    let calls = target_dir.join("calls").join("orders.yaml");
+    let mut text = std::fs::read_to_string(&calls).unwrap();
+    text.push_str("---\ncall: order_get_spare\npath: \"/spare/orders/{order_id}\"\neffect: read\n");
+    std::fs::write(&calls, text).unwrap();
+    let operation = target_dir.join("operations").join("order_get.yaml");
+    let verified = std::fs::read_to_string(&operation).unwrap();
+    let with_shadow = verified.replace(
+        "    call: order_get\n",
+        "    call: order_get\n  - mode: stand\n    status: shadow\n    call: order_get_spare\n",
+    );
+    assert_ne!(with_shadow, verified);
+    std::fs::write(&operation, &with_shadow).unwrap();
+
+    // The assumption the promotion rests on: the shadow binding's digest is
+    // the same in the drafts and in the plan published from them.
+    let set = testing::stand_set().unwrap();
+    let root = a2m_files::TargetRoot::new(&target_dir);
+    let sources = a2m_files::load(&root, &set).unwrap();
+    let digest_in = |mode: a2m_files::CompileMode, version: a2m_core::Version| {
+        let compiled = a2m_files::compile(&sources, &set, mode, version).unwrap();
+        let plan = compiled.plan;
+        let operation = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_get")
+            .unwrap()
+            .clone();
+        a2m_engine::BindingPin::of(&plan, &operation, 1)
+            .unwrap()
+            .digest
+    };
+    let drafted = digest_in(a2m_files::CompileMode::Draft, a2m_files::DRAFT_VERSION);
+
+    let published = world
+        .call(
+            &world.person,
+            "version.publish",
+            json!({"target": "example"}),
+        )
+        .await;
+    assert!(published.ok, "{:?}", published.error);
+    let published = published.result.unwrap();
+    assert_eq!(
+        digest_in(
+            a2m_files::CompileMode::Publish,
+            published["version"]
+                .as_str()
+                .unwrap()
+                .parse::<a2m_core::Version>()
+                .unwrap()
+        ),
+        drafted,
+        "a binding whose files did not change has one digest in the drafts and the plan"
+    );
+
+    let read = |order: &'static str| {
+        let world = &world;
+        async move {
+            // The surface allows ten requests a second, and a shadow read is
+            // a request: a second passes between calls.
+            world.clock.advance(std::time::Duration::from_secs(1));
+            let called = world
+                .call(
+                    &world.person,
+                    "tool.call",
+                    // Shadow evidence counts only from production, which
+                    // the compiler implies where a target does not declare
+                    // it (decision 0251).
+                    json!({
+                        "tool": "example_order_get",
+                        "environment": "production",
+                        "input": {"order_id": order},
+                    }),
+                )
+                .await;
+            let called = called.result.unwrap();
+            assert_eq!(called["status"], "completed", "{called}");
+            // The caller is given the verified binding's result, whatever
+            // the shadow read gave.
+            assert_eq!(called["result"]["note"], "Call before delivery", "{called}");
+        }
+    };
+    let report = || {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let reported = world
+                .call(
+                    &agent,
+                    "shadow.report",
+                    json!({"target": "example", "tool": "example_order_get"}),
+                )
+                .await;
+            assert!(reported.ok, "{:?}", reported.error);
+            reported.result.unwrap()
+        }
+    };
+    let promote = |caller: Caller| {
+        let world = &world;
+        async move {
+            world
+                .call(
+                    &caller,
+                    "binding.promote",
+                    json!({"target": "example", "tool": "example_order_get", "mode": "stand", "position": 2}),
+                )
+                .await
+        }
+    };
+
+    // Five reads of one order: five matches, and one distinct input, which
+    // makes nothing promotable (decision 0251).
+    for _ in 0..5 {
+        read("SO-1001").await;
+    }
+    assert_eq!(world.more.spare.load(Ordering::SeqCst), 5);
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!(standing["matches"], 5, "{reported}");
+    assert_eq!(standing["distinct_inputs"], 1, "{reported}");
+    assert_eq!(standing["not_promotable"], "too_few", "{reported}");
+    assert_eq!(
+        standing["evidence_from"],
+        json!(["production"]),
+        "{reported}"
+    );
+    assert_eq!(standing["against_verified_now"], true, "{reported}");
+    assert_eq!(standing["environments"][0]["requests"], 5, "{reported}");
+    assert!(!reported.to_string().contains("SO-1001"), "{reported}");
+
+    // Four more orders: five distinct inputs that matched.
+    for order in ORDERS {
+        read(order).await;
+    }
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!(
+        reported["bindings"].as_array().unwrap().len(),
+        1,
+        "{reported}"
+    );
+    assert_eq!(standing["binding"], drafted.to_string(), "{reported}");
+    assert_eq!(
+        (
+            &standing["matches"],
+            &standing["in_a_row"],
+            &standing["threshold"]
+        ),
+        (&json!(9), &json!(9), &json!(5)),
+        "{reported}"
+    );
+    assert_eq!(standing["distinct_inputs"], 5, "{reported}");
+    assert_eq!(standing["promotable"], true, "{reported}");
+
+    // One mismatch: the count starts again, and the report names the
+    // output and how it differed, never a value.
+    world.more.spare_differs.store(true, Ordering::SeqCst);
+    read("SO-1001").await;
+    world.more.spare_differs.store(false, Ordering::SeqCst);
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!(
+        (&standing["in_a_row"], &standing["mismatches"]),
+        (&json!(0), &json!(1))
+    );
+    assert_eq!(standing["promotable"], false);
+    assert_eq!(standing["not_promotable"], "mismatch_since");
+    assert_eq!(
+        standing["last_mismatch"]["differing"],
+        json!([{"name": "note", "how": "differs"}]),
+        "{reported}"
+    );
+    let shown = reported.to_string();
+    for value in [SPARE_NOTE, "Call before delivery", "125.00"] {
+        assert!(!shown.contains(value), "the report shows a value: {shown}");
+    }
+    let early = promote(world.person.clone()).await.error.unwrap();
+    assert_eq!(early.code, "shadow_not_promotable", "{}", early.message);
+    assert!(
+        std::fs::read_to_string(&operation)
+            .unwrap()
+            .contains("status: shadow")
+    );
+
+    // Five distinct inputs that match again: an agent is refused, a person
+    // promotes.
+    read("SO-1001").await;
+    for order in ORDERS {
+        read(order).await;
+    }
+    assert_eq!(report().await["bindings"][0]["promotable"], true);
+    let refused = promote(agent.clone()).await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
+    assert_eq!(std::fs::read_to_string(&operation).unwrap(), with_shadow);
+    let promoted = promote(world.person.clone()).await;
+    assert!(promoted.ok, "{:?}", promoted.error);
+    let promoted = promoted.result.unwrap();
+    assert_eq!(promoted["promoted"], true, "{promoted}");
+    assert_eq!(promoted["evidence"]["shadow"]["distinct_inputs"], 5);
+    assert_eq!(
+        promoted["evidence"]["shadow"]["environments"],
+        json!([{"environment": "production", "distinct_inputs": 5, "matches": 5}])
+    );
+    assert_eq!(
+        std::fs::read_to_string(&operation).unwrap(),
+        with_shadow.replace("    status: shadow\n", "    status: \"verified\"\n")
+    );
+    let reported = report().await;
+    assert_eq!(reported["bindings"][0]["not_promotable"], "promoted");
+    assert!(reported["bindings"][0]["promoted"]["by"].is_string());
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// `client.connect` (decision 0219): the `generic` profile prints the block
+/// and writes nothing; a profile is data the local user keeps; writing a
+/// client's file is a person's act, shown first, keeps every other entry,
+/// and refuses a file it cannot read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kept() {
+    let world = World::open().await;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // The generic block, which anyone may print.
+    let printed = world.call(&agent, "client.connect", json!({})).await;
+    assert!(printed.ok, "{:?}", printed.error);
+    let printed = printed.result.unwrap();
+    assert_eq!(printed["written"], false);
+    let args = printed["block"]["anything2mcp"]["args"].as_array().unwrap();
+    assert_eq!(args[0], "--project");
+    // The project folder in its resolved, plain form, as the dispatcher
+    // holds it (decision 0204): a temporary folder may be named by a link
+    // on macOS or in its short form on Windows.
+    let project = a2m_provider::resolved_path(world.project.path()).unwrap();
+    assert_eq!(args[1], project.display().to_string());
+    assert_eq!(args[2], "bridge");
+    assert!(printed["block"]["anything2mcp"]["command"].is_string());
+    // The engine's home is given by `A2M_HOME`, and the client is told it;
+    // no passphrase is in the block.
+    assert_eq!(
+        printed["block"]["anything2mcp"]["env"]["A2M_HOME"],
+        world
+            .kernel
+            .paths()
+            .data
+            .parent()
+            .unwrap()
+            .display()
+            .to_string()
+    );
+    assert!(!printed.to_string().contains("PASSPHRASE"));
+
+    // The imaginary `example` client keeps its servers under `servers`.
+    let clients = world.kernel.paths().config.join("clients");
+    std::fs::create_dir_all(&clients).unwrap();
+    let file = world.project.path().join("example-client.json");
+    let shown = file.display().to_string().replace('\\', "/");
+    std::fs::write(
+        clients.join("example.toml"),
+        format!("format = \"json\"\nkey = \"servers\"\n[path]\nlinux = \"{shown}\"\nmacos = \"{shown}\"\nwindows = \"{shown}\"\n"),
+    )
+    .unwrap();
+    let before =
+        "{\"theme\": \"dark\", \"servers\": {\"other\": {\"command\": \"other-program\"}}}";
+    std::fs::write(&file, before).unwrap();
+    let connect = |caller: &Caller, yes: bool| {
+        let world = &world;
+        let caller = caller.clone();
+        async move {
+            world
+                .call(
+                    &caller,
+                    "client.connect",
+                    json!({"client": "example", "yes": yes}),
+                )
+                .await
+        }
+    };
+    // An agent does not set a client's file.
+    let refused = connect(&agent, true).await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
+    // The person is shown the change, and nothing is written yet.
+    let asked = connect(&world.person, false).await;
+    let asked_result = asked.result.unwrap();
+    assert_eq!(asked_result["change"], "add", "{asked_result}");
+    assert_eq!(asked_result["written"], false);
+    assert_eq!(asked.next.unwrap().args["yes"], true);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    // Written: the entry is set, and every other entry is kept.
+    let written = connect(&world.person, true).await.result.unwrap();
+    assert_eq!(written["written"], true, "{written}");
+    let now: Json = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(now["theme"], "dark");
+    assert_eq!(now["servers"]["other"]["command"], "other-program");
+    assert_eq!(now["servers"]["anything2mcp"], written["entry"]);
+    assert_eq!(
+        connect(&world.person, true).await.result.unwrap()["change"],
+        "same"
+    );
+    // A file that does not read is refused, and left as it is.
+    std::fs::write(&file, "not json").unwrap();
+    let unread = connect(&world.person, true).await;
+    assert_eq!(unread.error.unwrap().code, "client_config_refused");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
+    // A profile is named by a plain word only.
+    let odd = world
+        .call(
+            &world.person,
+            "client.connect",
+            json!({"client": "../example"}),
+        )
+        .await;
+    assert_eq!(odd.error.unwrap().code, "schema_invalid");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// The target's files with a sign-in through the identity service at
+/// `identity`, declared as the surface `idp` and named as the token
+/// endpoint: what an agent may write with `draft.write`.
+fn drafted_sign_in(project: &Path, identity: &str) {
+    let target = project.join("targets").join("example");
+    let fixture = std::fs::read_to_string(target.join("target.yaml")).unwrap();
+    let declared = fixture.replacen(
+        "surfaces:\n",
+        &format!("surfaces:\n  idp:\n    kind: stand\n    address: \"{identity}\"\n"),
+        1,
+    );
+    if !fixture.contains("  idp:\n") {
+        std::fs::write(target.join("target.yaml"), declared).unwrap();
+    } else {
+        let start = fixture.find("  idp:\n").unwrap();
+        let end = start + fixture[start..].find("\"\n").unwrap() + 2;
+        let mut moved = fixture.clone();
+        moved.replace_range(
+            start..end,
+            &format!("  idp:\n    kind: stand\n    address: \"{identity}\"\n"),
+        );
+        std::fs::write(target.join("target.yaml"), moved).unwrap();
+    }
+    std::fs::write(
+        target.join("auth.yaml"),
+        format!(
+            "auth:\n  - surfaces: [desk]\n    mode: custom\n    provider: oauth_client_credentials\n    probe: example_order_get\n    probe_inputs: {{order_id: \"SO-1001\"}}\n    settings: {{token_endpoint: \"{identity}/traps/write/token\", client_id: \"client-1\"}}\n    credentials:\n      client_secret: \"vault://example/service/client_secret\"\n    attempt_limit: 1\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// Audit finding F1 and decision 0248. An agent that can write drafts names
+/// an identity service of its choosing in a drafted sign-in, with the
+/// client secret already stored. Before the fix, `session.login` sent the
+/// stored secret there with no publish and no person. Now nothing is sent:
+/// the answer is the person's page, which names every address the sign-in
+/// sends to and says the declaration is not published.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_drafted_sign_in_sends_no_stored_credential_until_its_person_sees_every_address() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let (identity, elsewhere) = (
+        example_app::harness::TestApp::start().await.unwrap(),
+        example_app::harness::TestApp::start().await.unwrap(),
+    );
+    let project = world.project.path();
+    let login = json!({"target": "example", "surface": "desk"});
+
+    // The person signs in once through the identity service the drafts
+    // name, and types the client secret on the page: it is stored.
+    drafted_sign_in(project, &identity.url(""));
+    let asked = world.call(&agent, "session.login", login.clone()).await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let page = ask.details.join("\n");
+    assert!(page.contains("nobody has published it"), "{page}");
+    assert!(
+        page.contains(&format!("{}/traps/write/token", identity.url("")))
+            && page.contains("not published"),
+        "{page}"
+    );
+    let given = a2m_auth::Returned::new().with(
+        "client_secret",
+        a2m_core::Secret::new("secret-for-tests-client-f1"),
+    );
+    let desk = world.surface.desk();
+    let _ = desk
+        .carry_out_with(ask.act, proof_for(&world, ask.act), given)
+        .await
+        .unwrap();
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+
+    // The agent moves the identity service elsewhere in the drafts, and
+    // asks again. The secret is stored, and the provider needs no person.
+    drafted_sign_in(project, &elsewhere.url(""));
+    let asked = world.call(&agent, "session.login", login.clone()).await;
+    // Nothing was sent anywhere: elsewhere heard nothing, and neither did
+    // the service of before.
+    assert!(
+        elsewhere.trap_writes().await.unwrap().is_empty(),
+        "the stored secret was sent where the drafts said: {:?}",
+        asked.result
+    );
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+    // The answer is the person's page, which names the new address and
+    // says it is not published.
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    assert_eq!(asked.result.as_ref().unwrap()["state"], "needs_person");
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let page = ask.details.join("\n");
+    assert!(
+        page.contains(&format!("{}/traps/write/token", elsewhere.url("")))
+            && page.contains("the setting `token_endpoint`")
+            && page.contains("as the drafts declare it, not published"),
+        "{page}"
+    );
+    assert!(
+        page.contains("vault://example/service/client_secret"),
+        "{page}"
+    );
+    assert!(!page.contains("secret-for-tests-client-f1"), "{page}");
+
+    // The drafts change again before the person presses: the press is
+    // refused, and nothing is sent.
+    drafted_sign_in(project, &identity.url(""));
+    let pressed = desk
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await
+        .unwrap();
+    assert!(!pressed.ok);
+    assert_eq!(pressed.error.as_ref().unwrap().code, "drafts_changed");
+    assert!(elsewhere.trap_writes().await.unwrap().is_empty());
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Decision 0248: the publish review names, for each sign-in, the provider,
+/// each credential by its reference and never a value, and every address a
+/// credential or a token goes to; a sign-in that would send to an address
+/// the target does not declare is refused before the person is asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_shows_where_each_sign_in_sends_and_refuses_an_undeclared_address() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let project = world.project.path();
+    drafted_sign_in(project, "https://id.example.test");
+    let auth = project.join("targets").join("example").join("auth.yaml");
+    let text = std::fs::read_to_string(&auth).unwrap();
+
+    // The token endpoint at an address no surface declares: refused by
+    // name, and no page is shown.
+    std::fs::write(
+        &auth,
+        text.replace(
+            "https://id.example.test/traps/write/token",
+            "https://elsewhere.example.test/token",
+        ),
+    )
+    .unwrap();
+    let refused = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(
+        refused.error.as_ref().map(|error| error.code.as_str()),
+        Some("destination_not_declared"),
+        "{refused:?}"
+    );
+    assert!(world.surface.acts.lock().unwrap().is_empty());
+
+    // Declared, the page names it.
+    std::fs::write(&auth, &text).unwrap();
+    let asked = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let line = ask
+        .details
+        .iter()
+        .find(|line| line.starts_with("Sign-in of desk in the environment test"))
+        .unwrap_or_else(|| panic!("{:?}", ask.details));
+    assert!(line.contains("oauth_client_credentials"), "{line}");
+    assert!(
+        line.contains("client_secret vault://example/service/client_secret"),
+        "{line}"
+    );
+    assert!(
+        line.contains("https://id.example.test/traps/write/token (the setting `token_endpoint`)"),
+        "{line}"
+    );
+    assert!(line.contains("(the surface `desk`)"), "{line}");
     world.kernel.close(CloseReason::Asked).await;
 }

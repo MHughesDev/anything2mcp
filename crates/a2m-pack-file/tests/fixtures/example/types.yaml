@@ -9,3 +9,10 @@ types:
     base: decimal
     places: 2
     rounding: half_even
+  body:
+    base: text
+    whitespace: exact
+    untrusted: true
+  entry_name:
+    base: text
+    whitespace: exact

@@ -1,0 +1,23 @@
+operation: example_plist_rate_set
+title: Set the rate in the property list
+effect: write
+# A settings value is one fixed place. The compiler asks one identity input
+# of a write all the same (decision 0246 names the gap), so the record is
+# named by an input the binding does not use.
+key: settings
+commit_points: 1
+inputs:
+  settings: {type: identifier, description: "The settings record written, such as orders"}
+  rate: {type: rate, description: "The rate"}
+outputs:
+  rate: {type: rate}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: plist_settings
+    record: orders
+    fields: {rate: input.rate}
+    read_back: {record: orders}
+description: >
+  Sets a value of a nested dictionary of the property list.

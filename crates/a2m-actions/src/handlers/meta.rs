@@ -180,8 +180,9 @@ malformed, 3 a person is needed, 4 the engine could not be reached.",
         "Settings come from eight layers, lowest first: built-in defaults, the profile, a preset, \
 the installation's file, the user's file, the project's `anything2mcp.toml`, `A2M_<GROUP>__<KEY>` \
 variables, and a command's flags. The upper four may tighten a protected setting and never \
-loosen it. An unknown key is an error. `config.show` prints every value and the layer that \
-set it.",
+loosen it; the installation's file may loosen one only when no account but an administrator \
+can change it. An unknown key is an error, and so is a key whose part is not built. Settings \
+are read when the engine starts. `config.show` prints every value and the layer that set it.",
     ),
 ];
 

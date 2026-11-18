@@ -81,6 +81,7 @@ impl Pack for CommandPack {
                 max_timeout_ms: setting("max_timeout_ms", 600_000),
                 max_output_bytes: setting("max_output_bytes", 16 * 1024 * 1024),
                 next_folder: AtomicU64::new(1),
+                trust: admin_groups(cx.settings())?,
             }),
         )?;
         to.compiler(
@@ -104,8 +105,72 @@ impl Pack for CommandPack {
     }
 }
 
+/// The groups a person named in the protected setting
+/// `packs.command.admin_groups`, each by its numeric id.
+///
+/// # Errors
+///
+/// `input`/`pack_settings_invalid` for an entry that is not a group's
+/// numeric id: a group is never looked up by its name.
+fn admin_groups(settings: &a2m_core::Values) -> Result<safety::Trust, Failure> {
+    let named = match settings.get("admin_groups") {
+        None => Vec::new(),
+        Some(Value::List(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_text()
+                    .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|text| text.parse::<u32>().ok())
+            })
+            .collect::<Option<Vec<u32>>>()
+            .ok_or_else(groups_invalid)?,
+        Some(_) => return Err(groups_invalid()),
+    };
+    Ok(safety::Trust::with_groups(named))
+}
+
+fn groups_invalid() -> Failure {
+    Failure::new(
+        a2m_core::FailureClass::Input,
+        a2m_provider::codes::PACK_SETTINGS_INVALID,
+        "`packs.command.admin_groups` holds an entry that is not a group's numeric id.",
+        "Name each group by its numeric id, such as \"80\"; a group's name is never looked up.",
+    )
+}
+
 /// Hands the command pack to a registry builder. This is the one call the
 /// product crate makes for the pack.
 pub fn register(builder: &mut RegistryBuilder) {
     builder.add_pack(&CommandPack);
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Value, Values};
+
+    use super::{admin_groups, safety::Trust};
+
+    #[test]
+    fn the_named_groups_are_numbers_and_nothing_else() {
+        let with = |items: Vec<&str>| {
+            Values::new().with(
+                "admin_groups",
+                Value::List(items.into_iter().map(Value::from).collect()),
+            )
+        };
+        assert_eq!(admin_groups(&Values::new()), Ok(Trust::default()));
+        assert_eq!(
+            admin_groups(&with(vec!["80", "1000"])),
+            Ok(Trust::with_groups(vec![80, 1000]))
+        );
+        // A name is never looked up, and a number is a whole group id.
+        for bad in ["staff", "-1", "", "4294967296", " 80"] {
+            let failure = admin_groups(&with(vec![bad])).unwrap_err();
+            assert_eq!(
+                failure.code(),
+                &a2m_provider::codes::PACK_SETTINGS_INVALID,
+                "{bad}"
+            );
+        }
+    }
 }

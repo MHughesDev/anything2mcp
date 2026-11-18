@@ -28,6 +28,12 @@
 //! name to its `path`, its `effect`, its `surface`, and, where the call has
 //! one, `accept`, the index of an expression. A step's arguments are the
 //! placeholders of the call's path, then the binding's other `args`.
+//!
+//! A call whose path has no placeholder is one fixed place, and a binding's
+//! call is the place it names, so an operation over such a call may declare
+//! `identity: {strategy: natural, place: fixed}` (decision 0252). The pack
+//! states nothing for the review summary: it is the case of a pack that
+//! says nothing of what its tools run.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -44,8 +50,8 @@ use crate::draft::{DraftContext, DraftDoc, DraftValue};
 use crate::load::TargetRoot;
 use crate::register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
-    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, ProgramField,
-    StepCommits, SurfaceKindSpec,
+    DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering, Possible,
+    ProgramField, StepCommits, SurfaceKindSpec,
 };
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
@@ -199,6 +205,15 @@ impl FileKind for CallKind {
     /// as if it did.
     fn writes(&self, doc: &Located<Doc>) -> bool {
         doc.text("effect") == Some("write")
+    }
+
+    /// A call whose path has no placeholder is one fixed place: nothing an
+    /// input gives can choose another (decision 0252).
+    fn fixed_places(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
+        match doc.text("path") {
+            Some(path) if placeholders(path).is_empty() => self.names(doc),
+            _ => Vec::new(),
+        }
     }
 
     fn compile(
@@ -413,6 +428,18 @@ impl Lowering for StandLowering {
         }
     }
 
+    /// The place a binding names is its call; whether that call is one
+    /// fixed place is the file kind's to say.
+    fn fixed_place(&self, binding: &ResolvedBinding<'_>) -> Option<FixedPlace> {
+        binding
+            .field("call")
+            .and_then(Located::as_text)
+            .map(|call| FixedPlace {
+                kind: call_kind(),
+                name: call.to_owned(),
+            })
+    }
+
     fn lower(
         &self,
         binding: &ResolvedBinding<'_>,
@@ -586,6 +613,30 @@ pub fn file_kind() -> Arc<dyn FileKind> {
             .optional("accept", JsonSchema::expression()),
         kinds: vec![surface_kind()],
     })
+}
+
+/// The same file kind, `call`, registered for surfaces of another kind, as
+/// a second pack would register a kind of one name for its own surfaces
+/// (decision 0203).
+#[must_use]
+pub fn file_kind_for(kind: SurfaceKind) -> Arc<dyn FileKind> {
+    Arc::new(CallKind {
+        schema: JsonSchema::object()
+            .required("call", JsonSchema::name())
+            .optional("surface", JsonSchema::surface())
+            .required("path", JsonSchema::text())
+            .required("effect", JsonSchema::words(&["read", "write"])),
+        kinds: vec![kind],
+    })
+}
+
+/// A surface kind of another name, as data, for a second pack.
+#[must_use]
+pub fn surface_kind_spec_for(kind: SurfaceKind) -> SurfaceKindSpec {
+    SurfaceKindSpec {
+        kind,
+        ..surface_kind_spec()
+    }
 }
 
 /// The pack's lowering of the mode `stand`, for the verbs of [`verbs`].

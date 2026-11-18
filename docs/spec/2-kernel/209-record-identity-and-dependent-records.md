@@ -1,6 +1,6 @@
 # 209. Record identity and dependent records
 
-The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 208 assumed the caller supplies a key. Many systems do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines.
+The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 208 assumed the caller supplies a key. Many systems do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines. Built today (package 3.8).
 
 ## The problem
 
@@ -18,7 +18,7 @@ Every write operation declares how its record is found again. The compiler refus
 
 | Strategy | How the record is found | Use when |
 | --- | --- | --- |
-| `natural` | By an input that is the system's own key | The caller knows the key: an existing record, or a key the caller chooses |
+| `natural` | By an input that is the system's own key; or, with `place: fixed`, by the one place every binding names in the target's files | The caller knows the key: an existing record, or a key the caller chooses; or the record is one fixed place, such as a value of a settings file |
 | `composite` | By several inputs that are unique together, within a parent | Lines, rows, members of something |
 | `stamped` | By a token Anything2MCP writes into a field of the record, such as a reference or external-id field | The system assigns the key and has a spare field that is searchable |
 | `find` | By a declared lookup on values the write itself sets, which must match exactly one record | The system assigns the key and has no spare field |
@@ -29,6 +29,8 @@ Every write operation declares how its record is found again. The compiler refus
 **Values known before the commit point.** Some systems hand out the identifier before the write commits: a data store returns the assigned key inside an open transaction, and some report a transaction's identifier before it ends. A step's outcome may carry such values, and the engine records them in the ledger before the step that commits is acted. A lost answer to the commit is then reconciled by the captured value ([section 307](../3-packs/307-the-data-pack.md)). The later steps of the record, its read-back, its lookup, and the read at reconcile, are handed what was recorded ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
 
 **A key is never guessed.** A step is handed the record's key in the system: its key inputs, or the key the system assigned. A record's place in the run is the engine's name for it and is never handed to a step; a step of a record that has no key in the system yet is handed none, and a driver that needs one stops by its own name ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)).
+
+**One fixed place.** A write that sets one value at a place the target's files fix, such as a value of a settings file, a record at a keyless path of a JSON file, or a named cell, has no input to name its record, and none may: an input that the binding never uses would be a false key in the tool's schema. Such an operation declares `identity: {strategy: natural, place: fixed}` and no identity input. It compiles only where each binding's lowering names the place it reads and writes, every binding names the same one, and the file kind whose document holds it declares it fixed for that document on the binding's surface: one record that always exists, or that a read says does not, and that no input chooses. A kind whose places an input chooses, such as an entry of a folder by its name, declares none. A duplicate is impossible by construction, and resume reads that one place by the binding's read-back, as for any `natural` record. The plan holds such an operation as `natural` with an empty key; the record's key in the ledger is the engine's name for it, the operation's name and its place in the run, which the target's files give and no input does. The place's own name is not yet in the plan, so two operations that write one place do not share a lock ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)).
 
 **Rules for `find`.**
 

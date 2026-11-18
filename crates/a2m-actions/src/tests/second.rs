@@ -506,19 +506,29 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
         assert!(!refused.to_json().to_string().contains("secret-for-tests"));
     }
 
-    // `add` registers the target, scouts it, and shows the report, then
-    // stops before the sign-in, which is not built, and says so.
+    // `add` registers the target, scouts it, shows the report, and asks
+    // for the sign-in (decision 0205): every step is built.
     let add = SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.word == "add")
         .unwrap();
     let run = add.on(registry);
     let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(steps, ["target.add", "scout.run", "scout.report"]);
-    assert_eq!(run.stops_before, Some("session.login"));
+    assert_eq!(
+        steps,
+        ["target.add", "scout.run", "scout.report", "session.login"]
+    );
+    assert_eq!((run.stops_before, run.note), (None, None));
+    // A shortcut whose first step is not built does nothing, and says so.
+    let learn = SHORTCUTS
+        .iter()
+        .find(|shortcut| shortcut.word == "learn")
+        .unwrap();
+    let run = learn.on(registry);
+    assert!(run.steps.is_empty());
+    assert_eq!(run.stops_before, Some("capture.start"));
     let note = run.note.unwrap();
-    assert!(note.contains("stopped before `session.login`"), "{note}");
-    assert!(note.contains("Done: `target.add`, `scout.run`"), "{note}");
+    assert!(note.contains("`learn` does nothing yet"), "{note}");
     // A shortcut whose steps are all built runs them all and says nothing.
     let lint = SHORTCUTS
         .iter()
@@ -771,8 +781,15 @@ async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
     ] {
         let response = lint(Some(ProjectFolder::new(&folder))).await;
         assert_eq!(error_of(&response), refused, "{folder:?}");
-        let message = response.error.unwrap().message;
+        let error = response.error.unwrap();
+        let message = error.message;
         assert!(message.contains(why), "{folder:?}: {message}");
+        // The engine's home and a project are kept apart, and the refusal
+        // says why and how (decision 0219).
+        if why == "engine's own" {
+            assert!(message.contains("kept apart"), "{message}");
+            assert!(error.fix.contains("A2M_HOME"), "{}", error.fix);
+        }
     }
     // The same for a source file: the store is not read through a project.
     let source = world
@@ -859,5 +876,133 @@ async fn the_kernel_says_how_much_work_it_has_in_hand() {
     let done = world.call("run.get", json!({"run_id": run})).await;
     assert_eq!(status(&done), "completed", "{done:?}");
     assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_in_is_asked_for_by_name_and_a_session_is_ended_only_by_whose_it_is() {
+    let world = World::ready().await;
+    // The published target signs in through a provider no pack of this
+    // engine registers: the sign-in stops by name before anyone is asked.
+    let login = world
+        .call("session.login", json!({"target": "example"}))
+        .await;
+    assert_eq!(
+        error_of(&login),
+        (FailureClass::Input, "auth_provider_unknown".to_owned())
+    );
+    // A surface the target does not declare is refused by name.
+    let refused = world
+        .call(
+            "session.login",
+            json!({"target": "example", "surface": "elsewhere"}),
+        )
+        .await;
+    assert_eq!(
+        error_of(&refused),
+        (FailureClass::Input, "not_found".to_owned())
+    );
+    // No credential is an input of the action: one given is refused as a
+    // field the schema does not know, and is in nothing the caller is told.
+    let given = world
+        .call(
+            "session.login",
+            json!({"target": "example", "password": "secret-for-tests-login"}),
+        )
+        .await;
+    assert!(!given.ok);
+    assert!(
+        !given
+            .to_json()
+            .to_string()
+            .contains("secret-for-tests-login")
+    );
+    // A session that is nobody's, or another person's, is not found.
+    let revoked = world
+        .call(
+            "session.revoke",
+            json!({"session_id": "s_01a1ec44a011702e856226a0336b125a"}),
+        )
+        .await;
+    assert_eq!(
+        error_of(&revoked),
+        (FailureClass::Input, "not_found".to_owned())
+    );
+    let listed = world.ok("session.list", json!({})).await;
+    assert_eq!(listed["complete"], true, "{listed}");
+    assert_eq!(listed["sessions"], json!([]), "{listed}");
+}
+
+/// Decision 0241, the smaller step of decision 0237's point 3: the engine
+/// applies one project file to every request, the one of the folder it
+/// started in. A request from a project whose file says otherwise is told
+/// so in its warnings, with the keys and both files; one whose file says
+/// the same is told nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_project_file_the_engine_does_not_apply_is_named_in_the_warnings() {
+    let strict = "[authoring.scout]\ntry_reads = false\n";
+    async fn lint(world: &World, folder: &std::path::Path) -> Response {
+        world
+            .kernel
+            .dispatch(
+                Request::new(
+                    "draft.lint",
+                    json!({"target": "example"}),
+                    world.caller.clone(),
+                )
+                .in_project_folder(Some(&ProjectFolder::new(folder))),
+            )
+            .await
+    }
+    let differ = |response: &Response| {
+        response
+            .warnings
+            .iter()
+            .find(|warning| warning.starts_with(a2m_actions::PROJECT_SETTINGS_DIFFER))
+            .cloned()
+    };
+
+    // Started outside any project: an empty project file says nothing
+    // other, and one that sets a key is named.
+    let world = World::ready().await;
+    let plain = world.project("plain");
+    let set = world.project("strict");
+    std::fs::write(set.join("anything2mcp.toml"), strict).unwrap();
+    let quiet = lint(&world, &plain).await;
+    assert!(quiet.ok, "{quiet:?}");
+    assert_eq!(differ(&quiet), None, "{quiet:?}");
+    let told = lint(&world, &set).await;
+    assert!(told.ok, "{told:?}");
+    let warning = differ(&told).expect("the warning");
+    assert!(
+        warning.contains("`authoring.scout.try_reads`")
+            && warning.contains("started outside any project")
+            && warning.contains("anything2mcp engine stop"),
+        "{warning}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+
+    // Started in a project whose file sets the key: a project whose file
+    // says the same is told nothing, and the empty one is named.
+    let start = std::env::temp_dir()
+        .join(format!("a2m-actions-start-{}", std::process::id()))
+        .join("anything2mcp.toml");
+    let settings = a2m_actions::Settings::load(&a2m_actions::Sources {
+        project: Some(a2m_actions::settings::SourceFile::new(&start, strict)),
+        ..a2m_actions::Sources::none()
+    })
+    .unwrap();
+    assert_eq!(settings.project_file(), Some(start.as_path()));
+    let world = World::ready_with(super::kernel::Options::with_settings(settings)).await;
+    let plain = world.project("plain");
+    let same = world.project("same");
+    std::fs::write(same.join("anything2mcp.toml"), strict).unwrap();
+    assert_eq!(differ(&lint(&world, &same).await), None);
+    let warning = differ(&lint(&world, &plain).await).expect("the warning");
+    assert!(
+        warning.contains("`authoring.scout.try_reads`")
+            && warning.contains(&start.display().to_string()),
+        "{warning}"
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

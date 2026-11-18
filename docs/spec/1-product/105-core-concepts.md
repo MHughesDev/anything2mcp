@@ -1,6 +1,6 @@
 # 105. Core concepts
 
-These are the nouns of the system. The developer, or an agent working for them, writes the target files; the kernel and the packs supply the rest. Each term has one meaning, given in the [glossary](../../reference/glossary.md); code, files, and messages use no synonyms.
+These are the nouns of the system. The developer, or an agent working for them, writes the target files; the kernel and the packs supply the rest. Each term has one meaning, given in the [glossary](../../reference/glossary.md); code, files, and messages use no synonyms. A concept is built where the section that designs it says ([section 704](../7-project/704-readiness.md)).
 
 ## What the developer writes
 

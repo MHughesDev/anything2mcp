@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::protocol::{self, Incoming, Reply};
-use crate::state::{Backing, Conn, Transport};
+use crate::state::{Backing, Conn, StartRecord, Transport};
 
 /// The environment variable that names the state folder.
 pub const STATE_ENV: &str = "EXAMPLE_MCP_STATE";
@@ -49,6 +49,29 @@ fn send_all(out: &Out, notifications: &[Value]) {
     for notification in notifications {
         write_line(out, &notification.to_string());
     }
+}
+
+/// Writes down one start of the program in the state folder, for the
+/// control interface to report.
+///
+/// # Errors
+///
+/// Returns an error if the state folder cannot be read or written.
+pub fn record_start(state_folder: &Path, start: StartRecord) -> io::Result<()> {
+    Backing::Folder(state_folder.to_owned()).with(|state| state.truth.starts.push(start))
+}
+
+/// Reads its input and never answers anything, until the input closes: a
+/// server that has stopped answering.
+///
+/// # Errors
+///
+/// Returns an error if the input cannot be read.
+pub fn run_silent() -> io::Result<()> {
+    for line in io::stdin().lock().lines() {
+        line?;
+    }
+    Ok(())
 }
 
 /// Serves one connection on this process's standard input and output until

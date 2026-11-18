@@ -50,7 +50,7 @@ use tokio::net::unix::pipe;
 use tokio::process::{Child, Command};
 
 use super::ending::{self, Answer, Leader, Verdict};
-use super::{ForeignPipe, StartError};
+use super::{ForeignPipe, PipeAt, StartError};
 
 /// The two ends of a foreign link that stay with the engine.
 pub(crate) type Pipes = (
@@ -308,12 +308,23 @@ impl Program {
 
 /// Starts `program` as the leader of a new process group, with the command
 /// `command` builds for the path it is given. With `foreign`, the child
-/// receives the two pipe ends on the descriptors it names.
+/// receives the two pipe ends on the descriptors it names, which for its
+/// standard streams are 0 and 1.
 pub(crate) fn spawn(
     program: &Program,
     command: impl FnOnce(&Path) -> Command,
-    foreign: Option<&ForeignPipe>,
+    foreign: Option<PipeAt<'_>>,
 ) -> Result<(Group, Option<Pipes>), StartError> {
+    let standard = ForeignPipe {
+        child_reads_fd: 0,
+        child_writes_fd: 1,
+        windows_argument: String::new(),
+    };
+    let foreign = match foreign {
+        None => None,
+        Some(PipeAt::Handles(pipe)) => Some(pipe),
+        Some(PipeAt::Standard) => Some(&standard),
+    };
     let _one_start = START
         .lock()
         .map_err(|_| other("the start lock is broken"))?;

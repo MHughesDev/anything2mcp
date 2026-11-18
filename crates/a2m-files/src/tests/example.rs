@@ -24,7 +24,7 @@ use a2m_core::{
 const VERSION: Version = Version::new(1, 0, 0);
 
 /// Every file of the example target, as bytes, with line feeds.
-fn example_files() -> Vec<(RelPath, Vec<u8>)> {
+pub(super) fn example_files() -> Vec<(RelPath, Vec<u8>)> {
     fn walk(folder: &Path, prefix: &str, out: &mut Vec<(RelPath, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
             .unwrap()
@@ -302,6 +302,15 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            // The upsert's call is filled by its inputs: not one place.
+            "kernel.place_not_fixed",
+            Case::Edit(
+                UPSERT,
+                "key: [order_id, item_code]",
+                "identity: {strategy: natural, place: fixed}",
+            ),
+        ),
+        (
             "kernel.write_without_read_back",
             Case::Edit(UPSERT, "    read_back: {call: line_item_get}\n", ""),
         ),
@@ -354,6 +363,12 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.probe_pending",
+            Case::Elsewhere(
+                "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
+            ),
+        ),
+        (
             "kernel.operation_without_test",
             Case::Remove("tests/order_get.yaml"),
         ),
@@ -363,6 +378,14 @@ fn cases() -> Vec<(&'static str, Case)> {
                 "fixtures/order_get/fixture.yaml",
                 "scrubbed: true",
                 "scrubbed: false",
+            ),
+        ),
+        (
+            "kernel.test_binding_unknown",
+            Case::Edit(
+                "tests/order_get.yaml",
+                "kind: offline",
+                "kind: offline\nbinding: {mode: stand, position: 2}",
             ),
         ),
         (
@@ -477,8 +500,8 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
     let desk = SurfaceIndex::new(0);
     let auth = plan.auth_of(desk).unwrap();
     assert_eq!(auth.surfaces, [desk]);
-    assert_eq!(auth.mode, SignInMode::ManagedSession);
-    assert_eq!(auth.provider.as_str(), "form_login");
+    assert_eq!(auth.mode, SignInMode::Custom);
+    assert_eq!(auth.provider.as_str(), "http_basic");
     assert_eq!((auth.idle_ms, auth.absolute_ms), (Some(1_800_000), None));
     assert_eq!((auth.attempt_limit, auth.movable), (1, true));
     assert_eq!(auth.settings.len(), 1);
@@ -487,7 +510,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
             auth.settings[0].name.as_str(),
             auth.settings[0].value.as_str()
         ),
-        ("sign_in_path", "/login")
+        ("user", "desk")
     );
     assert_eq!(auth.credentials[0].role, "password");
     assert_eq!(
@@ -716,7 +739,9 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
             assert!(
                 test.starts_with("the_loader")
                     || test.starts_with("what_a_faulty")
-                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation",
+                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation"
+                    || *test
+                        == "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
                 "{code}"
             );
             continue;

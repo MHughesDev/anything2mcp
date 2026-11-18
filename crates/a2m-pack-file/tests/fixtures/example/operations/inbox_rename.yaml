@@ -1,0 +1,20 @@
+operation: example_inbox_rename
+title: Rename a note of the inbox
+effect: write
+key: name
+commit_points: 1
+inputs:
+  name: {type: entry_name, description: "The note's name"}
+  new_name: {type: entry_name, description: "The note's new name"}
+outputs:
+  new_name: {type: entry_name}
+bindings:
+  - mode: file
+    verb: rename
+    status: shadow
+    folder: inbox
+    key: {name: input.name}
+    fields: {name: input.new_name}
+    read_back: {record: entry}
+description: >
+  Gives one note of the inbox another name in the same folder.

@@ -1,6 +1,6 @@
 # 302. The web pack: the browser engine
 
-The `ui` and `page_http` modes run on a browser engine written in Rust that speaks the Chrome DevTools Protocol directly to Chrome, Edge, or Chromium, with no Node process in between.
+The `ui` and `page_http` modes run on a browser engine written in Rust that speaks the Chrome DevTools Protocol directly to Chrome, Edge, or Chromium, with no Node process in between. Built today, for what the design of [`a2m-pack-web-browser`](../../architecture/crates/a2m-pack-web-browser.md) marks done.
 
 **Why not Playwright.** Playwright has no official Rust client; its other language clients pipe every call through a bundled Node driver. A direct Rust engine removes that process and its memory. Skyvern's Rust engine reports about 70% less memory and 2.55 times faster start than the equivalent Playwright process ([Skyvern, vendor-reported](https://www.skyvern.com/blog/rustwright-playwright-rewritten-in-rust-that-occupies-70-less-memory-and-is-2-55x-faster/)). The cost is that Playwright's waiting and actionability logic must be rebuilt. That is affordable here because the engine needs only the dozen built-in verbs over declared locators, not a general automation API.
 

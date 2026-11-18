@@ -1,6 +1,7 @@
 //! The pack's compiler side, on every system: the fixture compiles into
-//! the same plan each time; a desktop binding on an operation that writes
-//! is refused by name; a locator is a known role and a name, nothing else.
+//! the same plan each time; a write lowers into `set` steps, one committing
+//! `invoke`, and a read-back on a screen reached afresh; each refusal of a
+//! write is by name; a locator is a known role and a name, nothing else.
 
 #![allow(
     clippy::unwrap_used,
@@ -27,25 +28,123 @@ fn the_fixture_compiles_into_the_same_plan_each_time() {
 }
 
 #[test]
-fn a_desktop_binding_on_an_operation_that_writes_is_refused_by_name() {
-    let folder = Folder::new("writes");
+fn a_write_lowers_into_sets_one_committing_invoke_and_a_read_back_afresh() {
+    let folder = Folder::new("write");
     let registry = registry(folder.path(), None);
-    let root = folder.path().join("target");
-    fixture_copy(&root, "operations/order.yaml", |text| {
-        text.replacen("effect: read", "effect: write", 1)
+    let plan = compile_at(&registry, &fixture())
+        .unwrap_or_else(|p| panic!("{}", shown(&p)))
+        .plan;
+    for operation in ["example_order_update", "example_order_upsert"] {
+        let binding = common::binding_of(&plan, operation);
+        let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
+        let sets = if operation == "example_order_update" {
+            2
+        } else {
+            1
+        };
+        let mut want = vec!["goto", "wait"];
+        want.extend(std::iter::repeat_n("set", sets));
+        want.push("invoke");
+        assert_eq!(kinds, want, "{operation}");
+        // One commit point: the invoke of Save, and nothing else.
+        let committing: Vec<&str> = binding
+            .act
+            .iter()
+            .filter(|step| step.commits)
+            .map(|step| step.kind.as_str())
+            .collect();
+        assert_eq!(committing, ["invoke"]);
+        assert!(binding.confirm.is_empty());
+        // The read-back is a new visit to the screen that shows what is
+        // stored, never the one the values were typed into; and the wait
+        // of each visit carries the record's key.
+        let back: Vec<&str> = binding
+            .read_back
+            .iter()
+            .map(|step| step.kind.as_str())
+            .collect();
+        assert_eq!(back, ["goto", "wait", "read"]);
+        assert!(binding.read_back.iter().all(|step| !step.commits));
+        let screen = |steps: &[a2m_core::Step]| steps[0].refers_to.clone().unwrap().entry;
+        assert_eq!(screen(&binding.act), "order_edit");
+        assert_eq!(screen(&binding.read_back), "order");
+        for wait in [&binding.act[1], &binding.read_back[1]] {
+            let args: Vec<&str> = wait.args.iter().map(|arg| arg.name.as_str()).collect();
+            assert_eq!(args, ["key.order_number"]);
+        }
+    }
+    // A write holds the person's screen alone (spec section 305).
+    let defaults = registry.mode_defaults(&common::mode()).unwrap();
+    assert_eq!(defaults.exclusive, a2m_provider::Exclusive::Screen);
+}
+
+#[test]
+fn each_write_the_pack_cannot_verify_is_refused_by_name() {
+    let folder = Folder::new("refused");
+    let registry = registry(folder.path(), None);
+    let update = "operations/order_write.yaml";
+    for (case, (file, from, to, code)) in [
+        // A password is never set from an input.
+        (
+            update,
+            "      status: input.status\n",
+            "      status: input.status\n      access_code: input.customer\n",
+            "desktop.password_set",
+        ),
+        // A value written and never read back: only as `irreversible`.
+        (
+            update,
+            "  status: {type: untrusted_text}\n",
+            "",
+            "desktop.unreadable_write",
+        ),
+        // A write names the action that saves.
+        (update, "    action: save\n", "", "desktop.action_missing"),
+        (update, "action: save", "action: send", "desktop.unknown_action"),
+        // The window must show the record's key.
+        (
+            "screens/order_edit.yaml",
+            "  order_number: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: \"Order number\"}]}\n",
+            "",
+            "desktop.key_unshown",
+        ),
+        // A read verb on an operation that writes.
+        (
+            "operations/order.yaml",
+            "effect: read",
+            "effect: write",
+            "desktop.read_acts",
+        ),
+        // A verb the pack does not build is not one the mode serves.
+        (update, "verb: update", "verb: create", "create"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = folder.path().join(format!("case-{case}"));
+        let _ = std::fs::remove_dir_all(&root);
+        fixture_copy(&root, file, |text| {
+            assert!(text.contains(from), "{file} has no `{from}`");
+            text.replacen(from, to, 1)
+        });
+        let problems = compile_at(&registry, &root)
+            .err()
+            .unwrap_or_else(|| panic!("case {case} compiled"));
+        assert!(
+            shown(&problems).contains(code),
+            "case {case}, {code}: {}",
+            shown(&problems)
+        );
+    }
+    // Declared `irreversible`, a value that is not read back compiles.
+    let root = folder.path().join("irreversible");
+    fixture_copy(&root, update, |text| {
+        text.replacen("  status: {type: untrusted_text}\n", "", 1)
+            .replacen("effect: write", "effect: irreversible", 1)
     });
-    let problems = compile_at(&registry, &root).unwrap_err();
-    assert!(
-        shown(&problems).contains("desktop.writes_not_built"),
-        "{}",
-        shown(&problems)
-    );
-    // A write verb is not one the mode serves at all.
-    let root = folder.path().join("verb");
-    fixture_copy(&root, "operations/order.yaml", |text| {
-        text.replacen("verb: read", "verb: update", 1)
-    });
-    assert!(compile_at(&registry, &root).is_err());
+    if let Err(problems) = compile_at(&registry, &root) {
+        panic!("{}", shown(&problems));
+    }
 }
 
 #[test]

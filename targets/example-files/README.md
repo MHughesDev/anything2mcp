@@ -58,6 +58,12 @@ Every file is written from code, byte by byte, at start and at reset. `seed::fil
 | `EMPTY_CSV` | `exports/empty.csv` | Delimited, comma | No bytes |
 | `TERMS_TEXT` | `documents/terms.txt` | Text document | Trailing spaces, the last line not ended |
 | `ARCHIVED_STOCK_CSV` | `archive/2026/11/stock-2026-11.csv` | Delimited, comma | Three folders down |
+| `SETTINGS_INI` | `config/example.ini` | INI | A byte-order mark, CRLF, comments of both marks, a key before the first section, a value in quotes, an empty value, a section name with a space, a comment after a value, and the last line not ended |
+| `SETTINGS_PLIST` | `config/example.plist` | Property list, XML form | The declaration, the document type a property list carries (with an imaginary identifier), a comment, a reference, a nested dictionary, an array, tabs |
+| `INBOX_NOTE_ONE`, `INBOX_NOTE_TWO` | `inbox/note-1.txt`, `inbox/note-2.txt` | Text | The entries of the folder `inbox`, read and written as a collection; the second CRLF with its last line not ended |
+| `INBOX_BINARY` | `inbox/scan.bin` | Bytes | An entry that is not UTF-8 text |
+| `INBOX_DEEP` | `inbox/later/note-3.txt` | Text | An entry one folder down |
+| `ORDERS_LOG` | `logs/orders.log` | Growing text | Lines ended by LF and by CRLF, and a last line not finished, as a program that appends writes them |
 
 Beside the root, outside it, is a folder holding one file, `outside.csv`. Nothing under test may read or change it. `outside_folder()` gives its path and `outside_untouched()` says whether it is as it was.
 
@@ -119,6 +125,7 @@ Every fault is a value of `example_files::faults::Fault`, given to `set_fault`. 
 | `Layout` | A column, a key, or a sheet gets another name |
 | `Bytes { find, replace }` | The first occurrence of some bytes becomes others |
 | `Whole(bytes)` | The whole file becomes these bytes |
+| `Appended(bytes)` | These bytes are added at the end, as a program that keeps a log adds a line; saved in place, the file keeps its identity |
 
 | File | The place | `ThePlace` | `Elsewhere` | `Layout` |
 | --- | --- | --- | --- | --- |

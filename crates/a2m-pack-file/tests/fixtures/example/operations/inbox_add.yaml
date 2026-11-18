@@ -1,0 +1,20 @@
+operation: example_inbox_add
+title: Add a note to the inbox
+effect: write
+key: name
+commit_points: 1
+inputs:
+  name: {type: entry_name, description: "The new note's name"}
+  content: {type: body, description: "The note"}
+outputs:
+  content: {type: body}
+bindings:
+  - mode: file
+    verb: create
+    status: shadow
+    folder: inbox
+    key: {name: input.name}
+    fields: {content: input.content}
+    read_back: {record: entry}
+description: >
+  Adds a new note to the inbox, where no entry has its name.

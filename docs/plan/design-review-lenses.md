@@ -9,7 +9,7 @@ A design review round looks at the whole design through one question, finds what
 3. List findings. For each: what is wrong, where, and how serious.
 4. Fix what can be fixed in the documents. Put what needs evidence into the [hypothesis register](../hypotheses/README.md). Put what needs the owner into a decision record with status Proposed.
 5. Run `python3 tools/docs_audit.py`.
-6. Record the round in the journal and update the last-used date below.
+6. Record the round in the journal and update the last-used date below. A round that writes a report files it in [docs/reviews/](../reviews/README.md) and lists it in that folder's index.
 
 A round that finds nothing has probably not looked hard enough. A round that rewrites everything has gone too far: prefer the smallest change that fixes each finding.
 
@@ -31,6 +31,9 @@ A round that finds nothing has probably not looked hard enough. A round that rew
 | 12 | Simpler | For each major part: is there a design half as complex that gives most of the value? | Not yet |
 | 13 | The other operating systems | What quietly assumes one operating system? | Not yet |
 | 14 | A year later | What will be hardest to change once people depend on it? Are those things right? | Not yet |
+| 15 | Coverage | For every way software on a personal computer can be read or changed from outside itself, does the design have a place for it, and is that place the right one? Kept as the [coverage map](../reviews/coverage-map.md) | 2026-11-18 |
+| 16 | Breadth | Beyond the kinds of system: for every way an agent might want to work with a system (be told, wait, act at a time, hand over or take back a file, ask the person, act on two systems at once, act as someone, be one of several agents, come back a month later), is there a verb, a run shape, a result shape, and a door for it, and where there is none, is the line in the way a rule, a choice, or not yet? First run as the [breadth review](../reviews/breadth-review-2026-11-18.md) | 2026-11-18 |
+| 17 | The person fitting it | Along every dimension a person, a developer, or an organization would expect to shape the product (scope, approval, the engine's behaviour, each pack's reach, what an agent sees, extension, where things live, the configuration itself, presets), can they, by which means (a setting, a target's files, a policy set), at which scope, and who may write it? Does every declared setting do what it says, read by code and changed by a test? And is the fixed frame, what no setting reaches, written down with each line's kind? First run as the [configurability review](../reviews/configurability-review-2026-11-18.md) | 2026-11-18 |
 
 ## Adding a lens
 

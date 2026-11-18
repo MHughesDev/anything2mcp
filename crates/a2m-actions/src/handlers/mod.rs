@@ -3,6 +3,7 @@
 
 mod admin;
 pub(crate) mod build;
+mod client;
 mod drafts;
 mod machine;
 mod meta;
@@ -10,6 +11,7 @@ mod promote;
 mod provider;
 mod scout;
 mod scout_report;
+pub(crate) mod sessions;
 pub(crate) mod tools;
 
 pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
@@ -68,6 +70,8 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "draft.write" => drafts::draft_write,
         "draft.delete" => drafts::draft_delete,
         "binding.promote" => promote::binding_promote,
+        "shadow.report" => promote::shadow_report,
+        "client.connect" => client::client_connect,
         "test.run" => drafts::test_run,
         "fixture.record" => crate::fixture::fixture_record,
         "draft.lint" => build::draft_lint,
@@ -78,6 +82,10 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "secret.set" => admin::secret_set,
         "killswitch.set" => admin::killswitch_set,
         "session.status" => admin::session_status,
+        "session.login" => sessions::session_login,
+        "session.revoke" => sessions::session_revoke,
+        "session.list" => sessions::session_list,
+        "session.end" => sessions::session_end,
         _ => return None,
     })
 }

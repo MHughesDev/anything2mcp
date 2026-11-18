@@ -451,7 +451,7 @@ pub(super) fn request(key: &SessionKey, entry: &Arc<AuthEntry>, wait: Wait) -> L
 }
 
 pub(super) fn fake_entry() -> Arc<AuthEntry> {
-    Arc::new(AuthEntry::new(ProviderName::new("fake").unwrap()))
+    Arc::new(AuthEntry::new(ProviderName::new("fake").unwrap()).published())
 }
 
 pub(super) fn reference(name: &str) -> CredentialRef {

@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 use crate::auth::{AuthReport, AuthSettings, Credential};
 use crate::details::StoredDelivery;
 use crate::faults::Fault;
+use crate::forgery::NotesReport;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
 
 /// The one account's username. Made up.
@@ -108,6 +109,9 @@ struct Faults {
 #[derive(Debug)]
 pub struct TestApp {
     base: String,
+    /// The identity provider's address, when it was started with
+    /// [`TestApp::start_with_identity_provider`].
+    provider: Option<String>,
     /// The `https` address of the same application, when it was started
     /// with [`TestApp::start_tls`].
     #[cfg(feature = "tls")]
@@ -155,11 +159,62 @@ impl TestApp {
         });
         Ok(Self {
             base: format!("http://{address}"),
+            provider: None,
             #[cfg(feature = "tls")]
             secure: None,
             http: client_builder().build()?,
             server,
         })
+    }
+
+    /// Starts a new application and an imaginary identity provider beside it,
+    /// on a second free local port: the application at [`TestApp::url`], under
+    /// the name `127.0.0.1`, and the provider at [`TestApp::provider_url`],
+    /// under the name `localhost`. They share one state, so that a code the
+    /// provider issues is the one the application takes back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a port could not be bound.
+    pub async fn start_with_identity_provider() -> Result<Self, HarnessError> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(HarnessError::Start)?;
+        let provider = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(HarnessError::Start)?;
+        let address = listener.local_addr().map_err(HarnessError::Start)?;
+        let provider_port = provider.local_addr().map_err(HarnessError::Start)?.port();
+        let base = format!("http://{address}");
+        let provider_base = format!("http://localhost:{provider_port}");
+        let state = crate::AppState::default();
+        {
+            let mut inner = state.lock().await;
+            inner.auth.sso.application = Some(base.clone());
+            inner.auth.sso.provider = Some(provider_base.clone());
+        }
+        let shared = state.clone();
+        let server = tokio::spawn(async move {
+            let _ = tokio::join!(
+                crate::serve_over(listener, state),
+                crate::serve_provider(provider, shared)
+            );
+        });
+        Ok(Self {
+            base,
+            provider: Some(provider_base),
+            #[cfg(feature = "tls")]
+            secure: None,
+            http: client_builder().build()?,
+            server,
+        })
+    }
+
+    /// The address of a path at the identity provider, for an application
+    /// started with [`TestApp::start_with_identity_provider`].
+    #[must_use]
+    pub fn provider_url(&self, path: &str) -> Option<String> {
+        self.provider.as_ref().map(|base| format!("{base}{path}"))
     }
 
     /// Starts a new application that is served on two free local ports: over
@@ -187,6 +242,7 @@ impl TestApp {
         });
         Ok(Self {
             base: format!("http://{address}"),
+            provider: None,
             secure: Some(format!("https://{secure_address}")),
             http: client_builder().build()?,
             server: task,
@@ -452,6 +508,16 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<Seen>("/__control/seen").await?.seen)
+    }
+
+    /// What the anti-forgery case stored: each order's note, how many writes
+    /// changed it, and how many were refused for their token (case 5).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn stored_notes(&self) -> Result<NotesReport, HarnessError> {
+        self.ask::<NotesReport>("/__control/notes").await
     }
 
     /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step

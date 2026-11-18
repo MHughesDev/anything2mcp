@@ -253,6 +253,7 @@ mod tests {
     fn command(args: Vec<Arg>) -> Command {
         Command {
             program: 0,
+            script: None,
             effect: Effect::Read,
             params: BTreeMap::from([
                 (

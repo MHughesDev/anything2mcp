@@ -2,6 +2,9 @@
 //! number as the text it was written with, so that no value passes through
 //! a float, and a writer that escapes text one way.
 
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 /// The deepest nesting the reader accepts.
 const DEEPEST: usize = 64;
 
@@ -75,6 +78,13 @@ impl Json {
     /// Reads one JSON document. Trailing whitespace is allowed and nothing
     /// else.
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, JsonError> {
+        Self::parse_until(bytes, None)
+    }
+
+    /// Reads one JSON document, and stops once `stop` is set: what an
+    /// answer is read with, off the engine's async threads, under the
+    /// step's deadline. The work is linear in the bytes (decision 0249).
+    pub(crate) fn parse_until(bytes: &[u8], stop: Option<&AtomicBool>) -> Result<Self, JsonError> {
         let text = std::str::from_utf8(bytes).map_err(|error| JsonError {
             at: error.valid_up_to(),
             what: "the bytes are not UTF-8",
@@ -83,6 +93,8 @@ impl Json {
             text,
             bytes: text.as_bytes(),
             at: 0,
+            stop,
+            values: 0,
         };
         reader.space();
         let value = reader.value(0)?;
@@ -165,7 +177,13 @@ struct Reader<'a> {
     text: &'a str,
     bytes: &'a [u8],
     at: usize,
+    stop: Option<&'a AtomicBool>,
+    /// The values read so far: the flag is looked at every so many.
+    values: u32,
 }
+
+/// How many values are read between two looks at the stop flag.
+const LOOK_EVERY: u32 = 4_096;
 
 impl Reader<'_> {
     fn error(&self, what: &'static str) -> JsonError {
@@ -194,6 +212,12 @@ impl Reader<'_> {
     fn value(&mut self, depth: usize) -> Result<Json, JsonError> {
         if depth > DEEPEST {
             return Err(self.error("the document is nested too deeply"));
+        }
+        self.values = self.values.wrapping_add(1);
+        if self.values.is_multiple_of(LOOK_EVERY)
+            && self.stop.is_some_and(|stop| stop.load(Ordering::Relaxed))
+        {
+            return Err(self.error("the time to read it ran out"));
         }
         match self.peek() {
             Some(b'n') => self.word("null", Json::Null),
@@ -334,6 +358,9 @@ impl Reader<'_> {
     fn object(&mut self, depth: usize) -> Result<Json, JsonError> {
         self.at += 1;
         let mut entries: Vec<(String, Json)> = Vec::new();
+        // The names seen, so that a name written twice is found in time
+        // that does not grow with the square of the number of names.
+        let mut names: BTreeSet<String> = BTreeSet::new();
         self.space();
         if self.peek() == Some(b'}') {
             self.at += 1;
@@ -345,7 +372,7 @@ impl Reader<'_> {
                 return Err(self.error("a name was expected"));
             }
             let name = self.string()?;
-            if entries.iter().any(|(known, _)| *known == name) {
+            if !names.insert(name.clone()) {
                 return Err(self.error("an object holds one name twice"));
             }
             self.space();
@@ -411,6 +438,25 @@ mod tests {
         }
         let deep = "[".repeat(100);
         assert!(Json::parse(deep.as_bytes()).is_err());
+    }
+
+    /// An object of 200,000 names, under the ceiling of an answer, was once
+    /// a comparison of every name with every name before it (decision
+    /// 0249). Its work is now linear in its names, and a set flag stops it.
+    #[test]
+    fn many_names_are_read_in_time_that_grows_with_their_number() {
+        let names: Vec<String> = (0..200_000).map(|n| format!("\"a{n}\":0")).collect();
+        let body = format!("{{{}}}", names.join(","));
+        let began = std::time::Instant::now();
+        let json = Json::parse(body.as_bytes()).unwrap();
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        assert!(matches!(json, Json::Object(entries) if entries.len() == 200_000));
+        let twice = format!("{{{},\"a7\":1}}", names.join(","));
+        assert!(Json::parse(twice.as_bytes()).is_err());
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        let list = format!("[{}]", vec!["0"; 10_000].join(","));
+        assert!(Json::parse_until(list.as_bytes(), Some(&stop)).is_err());
+        assert!(Json::parse(list.as_bytes()).is_ok());
     }
 
     #[test]

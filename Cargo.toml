@@ -89,10 +89,18 @@ toml = { version = "1.2.1", default-features = false, features = ["std", "serde"
 command-fds = { version = "0.3.3", features = ["tokio"] }
 rustix = { version = "1.1.6", default-features = false, features = ["std", "process"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+# The macOS system calls of a2m-netstate, and nothing else (decision 0243):
+# the interface list and the routing socket's table dump. Already in the
+# tree of tokio, rustix, and getrandom.
+libc = "0.2.191"
 # The command pack's one outside crate (decision 0099): patterns for a
 # program's version line, its prompts, its output, and its text arguments.
 # Matching takes time linear in the text, which output from a program needs.
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
+# The HTTP pack's reader of answers in XML (decision 0217): a streaming
+# reader with no default features, which reads no document type and fetches
+# nothing. Its one dependency, memchr, is already in the tree.
+quick-xml = { version = "0.42.0", default-features = false }
 # The client end of the local channel (decision 0117): hyper's HTTP/1.1
 # connection over a socket or a named pipe, and the adapter between Tokio's
 # and hyper's stream traits. axum already brings both crates.
@@ -118,6 +126,13 @@ block2 = { version = "0.6.2", default-features = false, features = ["std"] }
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std"] }
 objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std"] }
+# The desktop pack's macOS back end and its stand (decision 0244): the
+# system's accessibility interface, the Core Foundation types it speaks, and
+# AppKit for the stand's window. Same project and release as the objc2
+# crates above; macOS only where they are used.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"] }
+objc2-application-services = { version = "0.3.2", default-features = false, features = ["std"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std"] }
 windows = { version = "0.62.2", default-features = false, features = ["std"] }
 windows-future = { version = "0.3.2", default-features = false, features = ["std"] }
 
@@ -140,3 +155,20 @@ expect_used = "deny"
 lto = "fat"
 codegen-units = 1
 opt-level = "s"
+
+# The vault derives its root key from a passphrase with a function that is
+# slow on purpose (decision 0074). Compiled without optimization it takes
+# about two seconds a start instead of about a sixth of one; the derived key
+# is the same. These two crates are optimized for speed in every profile
+# (decision 0253).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release.package.argon2]
+opt-level = 3
+
+[profile.release.package.blake2]
+opt-level = 3

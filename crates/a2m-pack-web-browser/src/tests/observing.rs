@@ -445,3 +445,62 @@ async fn a_read_from_inside_the_page_longer_than_the_limit_is_refused_whole() {
     drop(tab);
     stand.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_observing_tab_has_no_write_and_its_browser_fails_one_made_beneath_it() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("page-write-observed");
+    let tab = must(
+        stand
+            .browsers
+            .observer()
+            .observing_tab(
+                &profile("clerk"),
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    let page = Address::new(&app.url("/orders/A-100/note")).unwrap();
+    must(tab.goto(&page, soon()).await);
+    // `ObserveTab` has no `write_from_page` (a doc test of `ActTab` shows
+    // it does not compile). Made all the same beneath the tab, the write
+    // is failed by the browser before it leaves.
+    let path = crate::PagePath::fill("/api/orders/A-100/note", &BTreeMap::new()).unwrap();
+    let write = crate::PageWrite::new(
+        crate::WriteMethod::Put,
+        path,
+        crate::BodyEncoding::Json,
+        [(
+            "note".to_owned(),
+            crate::FieldValue::Text("From a tab that may only read".to_owned()),
+        )]
+        .into_iter()
+        .collect(),
+        Some(crate::AntiForgery {
+            from: crate::TokenFrom::Meta("csrf-token".to_owned()),
+            to: crate::TokenTo::Header("X-CSRF-Token".to_owned()),
+        }),
+    )
+    .unwrap();
+    let failed = tab.page.write_from_page(&write, soon()).await;
+    assert!(
+        matches!(failed, Err(BrowserError::RequestFailed(_))),
+        "{failed:?}"
+    );
+    assert!(
+        !app.seen()
+            .await
+            .unwrap()
+            .iter()
+            .any(|line| line.starts_with("PUT")),
+    );
+    must(tab.goto(&page, soon()).await);
+    assert!(tab.blocked().iter().any(|one| one.method == "PUT"));
+    let stored = app.stored_notes().await.unwrap();
+    assert_eq!(stored.notes["A-100"], "Leave at the side door.");
+    assert!(stored.writes.is_empty());
+    drop(tab);
+    stand.end().await;
+}

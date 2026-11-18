@@ -16,7 +16,7 @@
 
 ## Checklist
 
-- [ ] `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` pass
+- [ ] The checks in [CONTRIBUTING.md](../CONTRIBUTING.md) under "What every change must pass" pass
 - [ ] `python3 tools/docs_audit.py` reports no findings
 - [ ] The documents are still true, and any choice between alternatives has a decision record
 - [ ] `CHANGELOG.md` has a line for anything a user would notice

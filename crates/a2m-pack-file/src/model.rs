@@ -14,8 +14,9 @@ pub const PACK: &str = "file";
 pub const MODE: &str = "file";
 /// The version of the section payload's shape. Version 2 says whether a
 /// document states `may_be_open`, and whether a field's text may begin as a
-/// formula does (decision 0149).
-pub const SECTION_FORMAT: u16 = 2;
+/// formula does (decision 0149). Version 3 adds settings files, their
+/// dialect, and the sections of their fingerprint (decision 0246).
+pub const SECTION_FORMAT: u16 = 3;
 /// The root a file surface is in when it names none.
 pub const DEFAULT_ROOT: &str = "files";
 
@@ -23,6 +24,12 @@ pub const DEFAULT_ROOT: &str = "files";
 pub const SURFACE_KIND: SurfaceKind = SurfaceKind::fixed("file");
 /// The file kind the pack owns: the files under `documents/`.
 pub const DOCUMENT_KIND: FileKindName = FileKindName::fixed("document");
+/// The file kind of a folder read and written as a collection of entries:
+/// the files under `folders/` (decision 0246).
+pub const FOLDER_KIND: FileKindName = FileKindName::fixed("folder");
+/// The file kind of a growing file read from where the last read stopped:
+/// the files under `logs/` (decision 0246).
+pub const LOG_KIND: FileKindName = FileKindName::fixed("log");
 
 /// Reads the file from disk, as a new read.
 pub const OPEN: StepKind = StepKind::fixed("open");
@@ -45,6 +52,8 @@ pub const VERB_UPDATE: Verb = Verb::fixed("update");
 pub const VERB_CREATE: Verb = Verb::fixed("create");
 /// Removes one record.
 pub const VERB_DELETE: Verb = Verb::fixed("delete");
+/// Gives an entry of a folder another name in the same folder.
+pub const VERB_RENAME: Verb = Verb::fixed("rename");
 
 /// The format of a file, as its document declares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +65,10 @@ pub enum Format {
     Json,
     /// The ECMA-376 spreadsheet format.
     Workbook,
+    /// A settings file of sections and keys (decision 0246).
+    Ini,
+    /// A property list in its XML form (decision 0246).
+    PropertyList,
 }
 
 impl Format {
@@ -64,6 +77,8 @@ impl Format {
         "delimited",
         "json",
         "workbook",
+        "ini",
+        "property_list",
         "yaml",
         "toml",
         "xml",
@@ -77,6 +92,8 @@ impl Format {
             "delimited" => Some(Self::Delimited),
             "json" => Some(Self::Json),
             "workbook" => Some(Self::Workbook),
+            "ini" => Some(Self::Ini),
+            "property_list" => Some(Self::PropertyList),
             _ => None,
         }
     }
@@ -88,13 +105,33 @@ impl Format {
             Self::Delimited => "delimited",
             Self::Json => "json",
             Self::Workbook => "workbook",
+            Self::Ini => "ini",
+            Self::PropertyList => "property_list",
         }
     }
 
-    /// Whether the pack has a patch editor for the format.
+    /// Whether the pack has a patch editor for the format: one that sets a
+    /// value in place.
     #[must_use]
     pub const fn writable(self) -> bool {
+        matches!(
+            self,
+            Self::Delimited | Self::Json | Self::Ini | Self::PropertyList
+        )
+    }
+
+    /// Whether the editor also adds and removes records. A settings file's
+    /// editor sets one value and adds or removes nothing (decision 0246).
+    #[must_use]
+    pub const fn adds_records(self) -> bool {
         matches!(self, Self::Delimited | Self::Json)
+    }
+
+    /// Whether the format is a settings file: named places of one value
+    /// each, by a path of keys.
+    #[must_use]
+    pub const fn is_settings(self) -> bool {
+        matches!(self, Self::Ini | Self::PropertyList)
     }
 
     /// The name of the reader in `a2m-sources` that parses it.
@@ -104,6 +141,10 @@ impl Format {
             Self::Delimited => "csv",
             Self::Json => "json",
             Self::Workbook => "xlsx",
+            // Read by the pack's own readers in `settings`, never through
+            // `a2m-sources`.
+            Self::Ini => "ini",
+            Self::PropertyList => "property_list",
         }
     }
 }
@@ -120,8 +161,12 @@ pub struct Layout {
     pub names: Option<Vec<String>>,
     /// The header row of delimited text, in order.
     pub headers: Option<Vec<String>>,
-    /// The keys of a JSON document's root record, in order.
+    /// The keys of a JSON document's root record, or of a property list's
+    /// root dictionary, in order.
     pub keys: Option<Vec<String>>,
+    /// The section headers of an INI file, in order, each as often as it
+    /// is written.
+    pub sections: Option<Vec<String>>,
 }
 
 /// Where a kind of record lives in its file.
@@ -148,7 +193,10 @@ pub enum PlaceSpec {
         name: String,
     },
     /// A key path in a JSON document: to a record, or, with a key, to a
-    /// list whose elements are the records.
+    /// list whose elements are the records. In a settings file, the keys
+    /// to one record: for an INI file, no key (the keys before the first
+    /// section) or one section; for a property list, the keys of nested
+    /// dictionaries.
     Path {
         /// The keys, outermost first. Each is one key, never split.
         keys: Vec<String>,
@@ -211,6 +259,13 @@ pub struct DocumentSpec {
     /// The line ending a new row gets when the file shows none: `lf` or
     /// `crlf`.
     pub line_ending: Option<String>,
+    /// The character between a key and its value in an INI file: `=` or
+    /// `:`. Nothing means `=`.
+    pub separator: Option<String>,
+    /// What quotes around an INI value are: `literal`, part of the value;
+    /// `strip`, around it. Nothing means not said, and a quoted value is
+    /// then not read (decision 0246).
+    pub quotes: Option<String>,
     /// What identifies its layout.
     pub layout: Layout,
     /// Whether an application may hold the file open. Nothing when the
@@ -289,7 +344,113 @@ pub enum StepSpec {
     Confirm,
     /// Replaces the file.
     Save,
+    /// Looks at a folder's entries, for a list or a look by name.
+    FolderOpen {
+        /// Whether the binding goes on to write.
+        for_write: bool,
+    },
+    /// Finds one entry by its name, the argument `key.name`.
+    FolderLocate {
+        /// What must be there.
+        expect: Expect,
+    },
+    /// Gives the entries, up to a limit.
+    FolderList {
+        /// The most entries returned.
+        limit: u32,
+        /// Whether each file's digest is given, under the folder's bound.
+        digest: bool,
+    },
+    /// Gives the entry found.
+    FolderRead {
+        /// Whether its digest is given.
+        digest: bool,
+        /// Whether its content is given, as text.
+        content: bool,
+        /// Each value of the entry also given under the name of the input
+        /// it was set from: `(value, input)`, for the read-back of a
+        /// rename, whose new name is an input of another name.
+        also: Vec<(String, String)>,
+    },
+    /// Builds the change to one entry.
+    FolderSet {
+        /// What changes.
+        change: FolderChange,
+    },
+    /// Carries the change out: the commit point.
+    FolderSave,
+    /// Sees that the change landed as built.
+    FolderConfirm,
+    /// Reads the complete lines of a growing file after a position.
+    LogRead,
 }
+
+/// What a `set` step of a folder changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderChange {
+    /// A new file, where no entry has the name.
+    Create,
+    /// The content of the file found.
+    Replace,
+    /// The file found, under a new name in the same folder.
+    Rename,
+    /// The entry found, removed.
+    Delete,
+}
+
+impl FolderChange {
+    /// The verb that makes this change.
+    #[must_use]
+    pub const fn verb(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Replace => "update",
+            Self::Rename => "rename",
+            Self::Delete => "delete",
+        }
+    }
+}
+
+/// One folder of a surface, read and written as a collection of entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FolderSpec {
+    /// The surface whose folder it is.
+    pub surface: String,
+    /// How many folders down a list reaches: 0 is the folder's own entries.
+    pub depth: u8,
+    /// The most entries one list gives.
+    pub max_entries: u32,
+    /// The largest file whose digest is given.
+    pub digest_max_bytes: u64,
+    /// The largest file whose content is read or written as text.
+    pub content_max_bytes: u64,
+    /// The verbs that may write: `create`, `update`, `rename`, `delete`.
+    pub writes: Vec<String>,
+    /// Whether an application may hold an entry open. Nothing when not said.
+    pub may_be_open: Option<bool>,
+}
+
+/// What a file kind's section of folders holds: the folders, by name.
+pub type FolderSection = BTreeMap<String, FolderSpec>;
+
+/// One growing file of a surface, read from where the last read stopped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogSpec {
+    /// The surface it is on.
+    pub surface: String,
+    /// Its name in the surface's folder.
+    pub file: String,
+    /// The most lines one read gives.
+    pub max_lines: u32,
+    /// The most bytes one read takes from the file.
+    pub max_bytes: u32,
+}
+
+/// What a file kind's section of growing files holds: the files, by name.
+pub type LogSection = BTreeMap<String, LogSpec>;
 
 /// The name of the argument that carries a key field's value.
 #[must_use]
@@ -316,3 +477,19 @@ pub const INTENDED_DIGEST: &str = "intended_digest";
 pub const ROWS: &str = "rows";
 /// The name under which a list says that more rows exist than its limit.
 pub const TRUNCATED: &str = "truncated";
+
+/// The argument of a folder's steps that carries the entry's name.
+pub const ENTRY_NAME: &str = "name";
+/// The argument of a folder's `set` that carries a file's new content.
+pub const ENTRY_CONTENT: &str = "content";
+/// The argument of a log's read that carries where the last read stopped.
+pub const LOG_FROM: &str = "from";
+/// The names under which a log's read gives its lines, the position to hand
+/// back next time, what it found, and whether complete lines remain.
+pub const LOG_LINES: &str = "lines";
+/// See [`LOG_LINES`].
+pub const LOG_POSITION: &str = "position";
+/// See [`LOG_LINES`].
+pub const LOG_OUTCOME: &str = "outcome";
+/// See [`LOG_LINES`].
+pub const LOG_MORE: &str = "more";

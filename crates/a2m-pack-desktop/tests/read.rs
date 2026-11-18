@@ -1,5 +1,5 @@
-//! The desktop driver against the stand, on a session bus of the test's
-//! own, through the registry's driver handle. Every test asks the stand
+//! The desktop driver against the stand, on a session of the test's own
+//! (Linux, Windows, and macOS), through the registry's driver handle. Every test asks the stand
 //! what it holds and what it was asked: the reads return its values; the
 //! late value is waited for by its event; the two same-named controls and
 //! the password field stop by name; nothing pressed Save; and an
@@ -51,16 +51,14 @@ async fn a_read_returns_what_the_window_holds_and_presses_nothing() {
     };
     let order = Order::example();
     let values = scene
-        .read("example_order_get", Duration::from_secs(10))
-        .await
-        .unwrap();
+        .read_or_explain("example_order_get", Duration::from_secs(10))
+        .await;
     assert_eq!(text(&values, "order_number"), order.number);
     assert_eq!(text(&values, "customer"), order.customer);
     assert_eq!(text(&values, "status"), order.status);
     let lines = scene
-        .read("example_order_line_list", Duration::from_secs(10))
-        .await
-        .unwrap();
+        .read_or_explain("example_order_line_list", Duration::from_secs(10))
+        .await;
     let codes: Vec<String> = order.lines.iter().map(|line| line.code.clone()).collect();
     let quantities: Vec<String> = order
         .lines
@@ -82,9 +80,11 @@ async fn a_value_that_appears_late_is_waited_for_by_its_event() {
     let Some(scene) = Scene::start("late").await else {
         return;
     };
-    // With nothing to end the wait, it stops at its deadline, by name.
+    // With nothing to end the wait, it stops at its deadline, by name. The
+    // deadline leaves a walk of the window time to finish on a slow
+    // machine, so that it is the wait that stops.
     let early = scene
-        .read("example_order_tracking_get", Duration::from_millis(600))
+        .read("example_order_tracking_get", Duration::from_millis(1500))
         .await
         .unwrap_err();
     assert_eq!(
@@ -96,9 +96,8 @@ async fn a_value_that_appears_late_is_waited_for_by_its_event() {
     // application's event ends the wait, and the read returns the value.
     scene.desk().show_late(Duration::from_millis(300));
     let values = scene
-        .read("example_order_tracking_get", Duration::from_secs(10))
-        .await
-        .unwrap();
+        .read_or_explain("example_order_tracking_get", Duration::from_secs(10))
+        .await;
     assert_eq!(text(&values, "tracking"), LATE);
     assert_eq!(scene.desk().truth().tracking, LATE);
     assert_eq!(scene.desk().truth().writes, 0);
@@ -151,9 +150,11 @@ fn not_running(scene: &Scene) -> String {
 
 #[tokio::test]
 async fn an_application_that_is_not_running_is_a_named_stop() {
-    // The program runs (it is this test's) and publishes nothing, and the
-    // session's accessibility switch is off, as the test's own session
-    // has it: the stop names the setting, and the pack changes none.
+    // On Linux the program runs (it is this test's) and publishes nothing,
+    // and the session's accessibility switch is off, as the test's own
+    // session has it: the stop names the setting, and the pack changes
+    // none. Windows and macOS have no such switch: the stand's program,
+    // which nothing runs yet, is not running.
     let Some(scene) = Scene::without_application("silent").await else {
         return;
     };
@@ -161,10 +162,12 @@ async fn an_application_that_is_not_running_is_a_named_stop() {
         .read("example_order_get", Duration::from_secs(10))
         .await
         .unwrap_err();
-    assert_eq!(
-        stopped(&failure),
-        (FailureClass::Busy, "accessibility_off".to_owned())
-    );
+    let silent = if cfg!(any(windows, target_os = "macos")) {
+        "application_not_running"
+    } else {
+        "accessibility_off"
+    };
+    assert_eq!(stopped(&failure), (FailureClass::Busy, silent.to_owned()));
     // A program nobody runs: not running, and nothing is started.
     let mut scene = scene;
     scene.surface.surface.address = not_running(&scene);
@@ -177,7 +180,10 @@ async fn an_application_that_is_not_running_is_a_named_stop() {
         (FailureClass::Busy, "application_not_running".to_owned())
     );
     // The same, with the stand running and the surface naming a program
-    // that is not the one that runs it: no other application is read.
+    // that is not the one that runs it: no other application is read. On
+    // Windows and macOS a test process has one desktop at a time, which
+    // the scene above holds until it is gone.
+    drop(scene);
     let Some(mut scene) = Scene::start("other-program").await else {
         return;
     };

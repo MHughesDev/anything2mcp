@@ -1,20 +1,24 @@
 # Glossary
 
-One meaning per word. Code, files, messages, and documents use these terms and no synonyms.
+One meaning per word. Code, files, messages, and documents use these terms and no synonyms. A word here names a thing whether or not that thing is built yet.
 
 | Term | Meaning |
 | --- | --- |
 | Absence steps | The step kinds a mode lists as authoritative lookups. Only a lookup made of them may prove that a write of a record with no key did not land, and only when it answers "absent" twice, a settle time apart ([decision 0185](../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)) |
 | Acknowledged | The weakest proof a write can end on: the system answered the committing step and nothing could be read back. The record is `acted`, never verified, and only an operation declared `irreversible` may offer it ([decision 0172](../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)) |
 | Action | An authoring or administration function defined once in the action registry and exposed as a command, an MCP tool, a REST route, and an SDK method |
+| Address scope | What kind of place an address is, read from its literal alone and without asking the machine or a resolver: `this_machine`, `unspecified`, `link_local`, `private_use`, `carrier_grade_nat`, `unique_local`, `multicast`, `documentation`, `reserved`, `public`, `name`, or `unreadable`. It is not the place of [decision 0223](../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which also needs the machine's own network state ([decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)) |
 | Application's verdict | The system's own answer to a write that was sent: it saved, or it refused or found the record changed. Only a verdict settles a sent write; an answer that is not one, such as a redirect, a reply too large to read, or a refusal made before the system looked, leaves the write in doubt until it is verified |
 | Approval | A person's decision to allow one exact diff, stored as a single-use record |
 | Archetype | One of the seven ways a system is reached: interface, request, command, bridge, artifact, stream, device. Fixes how a step is acted, confirmed, and read back |
 | Artifact | A large piece of evidence: a snapshot, a network exchange, a screenshot. Also the name of the archetype that reads and writes files; context makes clear which |
+| Baseline | For a watch, the keyed digest of each record's values and of each output, as of the last check that saw the record. A check is compared with it, not with the check before ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Binding | How one mode carries out one operation. An operation can have several |
 | Bridge | Code that runs inside a host application or process, through an interface the host offers, and speaks to the runtime from there |
 | Candidate | A published version being compared in shadow before it becomes current |
 | Blob | Any stored evidence or value, named by a keyed digest of its content and sealed |
+| Change (of a watch) | One difference a check reports, kept in the ledger as the kind, the keyed digest of the record's key, and the names of the outputs that differ, never a value. The kinds are `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, and `ended` ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
+| Check (of a watch) | One call of a watch's read: an ordinary run of that read, compared with the baseline when it completes ([decision 0234](../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md)) |
 | Client | Anything that talks to the engine: a command, an MCP client, an SDK, the tray application |
 | Commit point | One change the system makes durable: a save, a committed transaction, a replaced file, a published message. One ledger row |
 | Control | Everything the engine asks of the control plane while it runs a job: the plan, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
@@ -25,6 +29,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Decision point | A question a person may have to answer during a run, declared by the operation with a name and its wording. A run asks only what its operation declares, and waits at `needs_input` |
 | Diff | Current values against proposed values, record by record, shown before a write |
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |
+| Distinct input (of a shadow binding) | One input of a call, told apart from another by the workspace's keyed digest of the call's inputs. Two calls with equal inputs are one distinct input. A shadow binding is promotable when, in every environment its evidence must come from, the distinct inputs that matched the verified binding since the last mismatch number at least the threshold ([decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)) |
 | Diff hash | A hash of a diff in canonical form; what an approval is bound to |
 | Digest key | An installation's key for keyed digests. The vault makes it at first use and keeps it wrapped by the root key; each workspace's key for digests is derived from it and never stored |
 | Draft | Target files not yet published; runnable only in the sandbox |
@@ -44,6 +49,8 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
 | First binding | The first binding of an operation, drafted as `draft`; `binding.promote` makes it able to act once the operation's offline tests pass and a scout proved it, and for a write a person does it ([decision 0189](../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)) |
 | Fixture | Scrubbed recorded evidence used for offline tests |
+| Fixture record | The action `fixture.record`: it runs a read once in the sandbox and writes an offline test and its fixture, with every observed value replaced by a made-up one of the same kind; with no rule for a value it stops and writes nothing ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)) |
+| Gap | A change of a watch that says a check did not complete, or that due times passed while the engine was not running. A missed due time is never made up by a later check ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Gate evidence | What each publish gate returned when a version was published, stored with the version, with the gates that did not run named as such ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Generation | Which version of a key: 1 for the first, one more after each rotation |
 | Grant | A rule giving a principal access to a scope up to an effect class |
@@ -130,4 +137,6 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Trace signature | A hash of the parts of a step trace that should not vary between identical runs |
 | Vault | Encrypted storage for sessions, credentials, and evidence |
 | Version | An immutable, tested, published snapshot of a target |
+| Watch | One published read, called with one fixed input at a fixed interval until an end the person confirmed; it reports each difference between checks and never acts on one ([decision 0234](../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md)) |
+| Window | The finding kind of the desktop pack: the shape of one window of a running application (roles, structure, and the names of controls, tables, and headings, never a cell or a value), from which a screen and reads are drafted ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) |
 | Workspace | An isolation boundary inside one installation |

@@ -1,6 +1,6 @@
 # 213. Effects, hazards, and consent
 
-A universal runtime starts programs, opens files, reaches networks, and talks to devices. This section says how each of those is declared, who checks it, and when a person must agree. It extends [section 212](212-policy-and-approvals.md) and [section 502](../5-security/502-defending-against-a-manipulated-agent.md); nothing there is loosened. Decision: [record 0052](../../decisions/0052-effects-are-enforced-and-hazards-raise-the-approval.md).
+A universal runtime starts programs, opens files, reaches networks, and talks to devices. This section says how each of those is declared, who checks it, and when a person must agree. It extends [section 212](212-policy-and-approvals.md) and [section 502](../5-security/502-defending-against-a-manipulated-agent.md); nothing there is loosened. Decision: [record 0052](../../decisions/0052-effects-are-enforced-and-hazards-raise-the-approval.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 REA declares ten effects for each of its tools and derives every hint from them, which is worth copying. It also says plainly that its declarations are hints and that the host must enforce ([research note 16](../../research/16-rea-methods.md)). Here the runtime is the host, so here they are enforced.
 

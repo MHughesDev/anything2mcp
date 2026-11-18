@@ -14,7 +14,8 @@ use std::time::Duration;
 use a2m_auth::SessionLease;
 use a2m_core::{
     Archetype, Digest, Environment, Epoch, Failure, FailureClass, FailureCode, Mode, Plan,
-    RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Value, Values, Version,
+    RecordKey, Redact, RunId, ScopedHost, Step, StepKind, SurfacePlan, TargetName, Value, Values,
+    Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_telemetry::Acting;
@@ -87,29 +88,48 @@ pub enum Posture {
 /// The addresses a run may reach: the target's declared surfaces, and what
 /// its operation's permission manifest adds. A driver sends nothing to an
 /// address that is not here.
+///
+/// Each address carries its scope, read from the address itself when the
+/// set is made ([`ScopedHost::of_destination`], decision 0240). Nothing else
+/// sets it: there is no other constructor and no setter, so no input can
+/// say where a destination is. The scope decides nothing yet; the
+/// allow-list compares addresses as written, as before.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Destinations {
-    allowed: BTreeSet<String>,
+    allowed: BTreeMap<String, ScopedHost>,
 }
 
 impl Destinations {
-    /// The addresses given.
+    /// The addresses given, each with its scope read from it.
     #[must_use]
     pub fn new(addresses: impl IntoIterator<Item = String>) -> Self {
         Self {
-            allowed: addresses.into_iter().collect(),
+            allowed: addresses
+                .into_iter()
+                .map(|address| {
+                    let scope = ScopedHost::of_destination(&address);
+                    (address, scope)
+                })
+                .collect(),
         }
     }
 
     /// Whether `address` is one of them, compared as written.
     #[must_use]
     pub fn contains(&self, address: &str) -> bool {
-        self.allowed.contains(address)
+        self.allowed.contains_key(address)
     }
 
     /// Every address, in order.
     pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.allowed.iter().map(String::as_str)
+        self.allowed.keys().map(String::as_str)
+    }
+
+    /// The scope of `address`, read from it when the set was made; nothing
+    /// when it is not one of them.
+    #[must_use]
+    pub fn scope_of(&self, address: &str) -> Option<&ScopedHost> {
+        self.allowed.get(address)
     }
 }
 

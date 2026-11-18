@@ -804,6 +804,8 @@ pub struct SchedSettings {
     pub reconcile_wait: Duration,
     /// The longest a reconcile queued again for the same run waits.
     pub reconcile_wait_ceiling: Duration,
+    /// The limits on watches (decision 0247).
+    pub watch: crate::watch::WatchLimits,
 }
 
 impl Default for SchedSettings {
@@ -823,6 +825,7 @@ impl Default for SchedSettings {
             },
             reconcile_wait: Duration::from_secs(5),
             reconcile_wait_ceiling: Duration::from_secs(15 * 60),
+            watch: crate::watch::WatchLimits::default(),
         }
     }
 }

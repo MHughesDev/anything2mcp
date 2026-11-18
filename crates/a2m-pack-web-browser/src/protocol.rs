@@ -358,28 +358,113 @@ pub(crate) struct Version {
 pub(crate) struct CloseBrowser {}
 command!(CloseBrowser, "Browser.close" => Nothing);
 
-/// What the browser does with every download: `deny` writes no file.
+/// What the browser does with every download: `deny` writes no file. With
+/// no context named, for the browser's default context.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SetDownloadBehavior<'a> {
     pub behavior: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
 command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
 
 /// The permissions the browser grants: those listed, for every origin,
 /// and no other. An empty list refuses every permission a page asks for.
+/// With no context named, for the browser's default context.
 #[derive(Debug, Serialize)]
-pub(crate) struct GrantPermissions {
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GrantPermissions<'a> {
     pub permissions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
-command!(GrantPermissions, "Browser.grantPermissions" => Nothing);
+command!(GrantPermissions<'_>, "Browser.grantPermissions" => Nothing);
 
 // ---- Target ----
 
+/// A browser context of its own, which keeps its cookies and storage in
+/// memory and writes none of them to the data directory.
 #[derive(Debug, Serialize)]
+pub(crate) struct CreateBrowserContext {}
+command!(CreateBrowserContext, "Target.createBrowserContext" => CreatedBrowserContext);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreatedBrowserContext {
+    pub browser_context_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CreateTarget<'a> {
     pub url: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
 command!(CreateTarget<'_>, "Target.createTarget" => CreatedTarget);
+
+// ---- Storage ----
+
+/// One cookie as the browser holds it. Only the parts the engine keeps are
+/// read; the value is a credential and is handled as one by the caller.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// Seconds since the epoch; negative for a cookie that ends with the
+    /// browser. Carried, never compared.
+    #[serde(default)]
+    pub expires: Option<serde_json::Number>,
+    #[serde(default)]
+    pub http_only: bool,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub session: bool,
+    #[serde(default)]
+    pub same_site: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetCookies<'a> {
+    pub browser_context_id: &'a str,
+}
+command!(GetCookies<'_>, "Storage.getCookies" => GotCookies);
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GotCookies {
+    #[serde(default)]
+    pub cookies: Vec<StoredCookie>,
+}
+
+/// One cookie to place, in the form the browser takes it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CookieToSet<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+    pub domain: &'a str,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<&'a serde_json::Number>,
+    pub http_only: bool,
+    pub secure: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_site: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetCookies<'a> {
+    pub cookies: Vec<CookieToSet<'a>>,
+    pub browser_context_id: &'a str,
+}
+command!(SetCookies<'_>, "Storage.setCookies" => Nothing);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -407,6 +492,47 @@ pub(crate) struct CloseTarget<'a> {
     pub target_id: &'a str,
 }
 command!(CloseTarget<'_>, "Target.closeTarget" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetTargetInfo<'a> {
+    pub target_id: &'a str,
+}
+command!(GetTargetInfo<'_>, "Target.getTargetInfo" => TargetAddress);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TargetAddress {
+    pub target_info: TargetUrl,
+}
+
+/// Where a target is, as the browser says; its title is not read.
+#[derive(Debug, Deserialize)]
+pub(crate) struct TargetUrl {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetTargets {}
+command!(GetTargets, "Target.getTargets" => TargetInfos);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TargetInfos {
+    pub target_infos: Vec<ListedTarget>,
+}
+
+/// One target as the browser lists it. Only what tells the engine's own
+/// pages from the browser's first window is read.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ListedTarget {
+    pub target_id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub browser_context_id: Option<String>,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -447,6 +573,44 @@ pub(crate) struct Navigate<'a> {
     pub url: &'a str,
 }
 command!(Navigate<'_>, "Page.navigate" => Navigated);
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetFrameTree {}
+command!(GetFrameTree, "Page.getFrameTree" => FrameTreeReply);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameTreeReply {
+    pub frame_tree: FrameTree,
+}
+
+/// One frame and the frames inside it. Only where each frame is, and on
+/// which origin, is read.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameTree {
+    pub frame: FrameDescription,
+    #[serde(default)]
+    pub child_frames: Vec<FrameTree>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameDescription {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub security_origin: String,
+}
+
+/// Puts a document the engine wrote into a frame, with no request.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetDocumentContent<'a> {
+    pub frame_id: &'a str,
+    pub html: &'a str,
+}
+command!(SetDocumentContent<'_>, "Page.setDocumentContent" => Nothing);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -493,19 +657,15 @@ command!(HandleDialog<'_>, "Page.handleJavaScriptDialog" => Nothing);
 pub(crate) struct RuntimeEnable {}
 command!(RuntimeEnable, "Runtime.enable" => Nothing);
 
-/// One argument of a call: a plain value, or an object the page holds.
+/// One argument of a call: a plain value. An element is passed as `this`,
+/// through `object_id`, not as an argument.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum CallArgument<'a> {
+pub(crate) enum CallArgument {
     Value(Value),
-    #[allow(
-        dead_code,
-        reason = "an element is passed as `this`; kept for a second element"
-    )]
-    ObjectId(&'a str),
 }
 
-impl CallArgument<'static> {
+impl CallArgument {
     /// Any plain data, by value. `None` when it cannot be written as JSON.
     pub(crate) fn of<T: Serialize>(data: &T) -> Option<Self> {
         serde_json::to_value(data).ok().map(Self::Value)
@@ -528,7 +688,7 @@ pub(crate) struct CallFunctionOn<'a> {
     pub object_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_context_id: Option<i64>,
-    pub arguments: Vec<CallArgument<'a>>,
+    pub arguments: Vec<CallArgument>,
     pub return_by_value: bool,
     pub await_promise: bool,
 }
@@ -800,6 +960,10 @@ pub(crate) struct NetworkEnable {
     pub max_resource_buffer_size: u64,
     /// The most bytes of answers it keeps for the tab in all.
     pub max_total_buffer_size: u64,
+    /// The longest body of a request an event may carry; the browser's own
+    /// bound when left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_post_data_size: Option<u64>,
 }
 command!(NetworkEnable, "Network.enable" => Nothing);
 
@@ -817,6 +981,19 @@ impl NetworkEnable {
         Self {
             max_resource_buffer_size: one,
             max_total_buffer_size: one.saturating_mul(4),
+            max_post_data_size: None,
+        }
+    }
+
+    /// The same, and no body of a request the page's script makes in any
+    /// event: the browser leaves out every body longer than the bound, and
+    /// reads 0 as no bound, so the bound is one byte. The body of a form a
+    /// document posts is put in the event whatever the bound (both
+    /// measured, decision 0254).
+    pub(crate) fn without_bodies(self) -> Self {
+        Self {
+            max_post_data_size: Some(1),
+            ..self
         }
     }
 }

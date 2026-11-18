@@ -1,10 +1,10 @@
 # 2026-11-17: the overnight build
 
-This entry is written while the build is under way, and is brought up to date as each wave lands. Its last section says what was true when the session ended.
+This entry was written while the build was under way and is brought up to date as each wave lands. Its two closing sections say what was true when pull request 13 merged, on 2026-11-18. The work that followed is in [the wider reach](2026-11-18-the-wider-reach.md).
 
 ## State at the end
 
-*To be completed when the session ends. Until then, the sections below are current.*
+Pull request 13 merged into `main` on 2026-11-18 (merge commit 631d3ea) at head 1310c1f, with every check green on Windows, macOS, and Linux and the two publish jobs skipped as intended. The kernel, nine packs, the local engine, the two front doors, the clients, and the flow that builds a tool are on `main`, and the first-hour flow and the engine loop run against the test stands. Nothing has been tried against a real system, and nothing is published. On Linux the validated commit before the last fixes passed 1,742 tests with none failing (the lead's count at the time; this entry's author did not rerun it).
 
 ## Done
 
@@ -49,6 +49,16 @@ Pull request 11 carries everything above. It merged green on Windows, macOS, and
 
 Pull request 12 carries waves 5 and 6. It merged green on the three operating systems after six runs.
 
+**Wave 7: the safety audits, the doors joined, the first clients, and pull request 13.** Pull request 13 carries everything between pull request 12 and its merge: decisions 0131 to 0175 and 0176 to 0204, in large part. The parts that matter most:
+
+- **Read-only audits by readers who had not built the crate.** Each kernel crate and pack was read against the documents and the ten rules. The audits found about six critical and twenty-five serious gaps in crates whose own tests all passed, and the fixes are the "after their safety audit" records, 0138 to 0153. A fourth round, on the kernel, found three serious faults; they were fixed in 0201 (in this pull request) and in 0200 (after it).
+- **The doors joined** (0131): `serve`, the thin client, and the stdio bridge, with two unrelated MCP client libraries calling through the bridge. A decline ends a run, a resume is never lost, a lost answer is a write in doubt at the doors and in the clients (0132, 0159).
+- **The presence prompt on each system** (0133, 0142, 0146), the wheel and the npm packages (0135, 0186), the clients generated from the served document (0156), a client that starts the engine on demand (0165), and HTTPS in the product (0157, 0166).
+- **The stream pack speaks a real broker's wire protocol through a client of our own**, and the data pack reaches a server database (0167, 0168). Both ran in CI against a real server for the first time on this pull request; neither had been run against one before.
+- **The tool-building flow:** the scout, a report that is hashed data, a ledger that ends a record on an acknowledgement (0170 to 0172), what each pack drafts (0179), offline tests that replay fixtures and gate the publish (0177, 0180), and a first hour that runs with no hand step (0189, 0199).
+- **The desktop pack, reading Linux applications through a look-only back end** (0198), and the first release scoped to one machine (0169).
+- **Fixes found by CI's first runs.** Two rounds on Windows and macOS: a path's plain form (a real Windows bug: trust roots never matched), a named-pipe client that waits as long as its caller will, a named stop for a socket path too long for macOS, an access-list test that compared text where it should compare identities, and the npm package check (0204). Then one race in a test, in two places: a late request for the page's icon made the stand's request count differ by one between two looks, and the presence test asked the authorization service before it had dropped a stopped agent. Both were fixed in tests, with no check loosened.
+
 ## Learned
 
 - **The designs were ready to be built in parallel, with one exception so far.** Sixteen crates were built by sixteen agents, and the interfaces between layers held. The exception was the plan: the compiler validated a dozen things from target files that the plan had no place for, above all the whole of the sign-in file. One follow-up pass fixed it before any crate above was written against the gap.
@@ -60,11 +70,13 @@ Pull request 12 carries waves 5 and 6. It merged green on the three operating sy
 - **The second pull request found five more things on the other two operating systems.** On Windows the engine's ends of a child's two named pipes were made and never connected, so no browser could answer; four browsers started cold at once took longer than the launch deadline, which read as "not a browser" when it was a slow start ([decision 0134](../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md)); and two enum variants made only on Unix failed the lint. On macOS a refusal sent before the request's body was read reset the connection under the caller, who then saw no answer at all; the REST door now reads and discards the body first.
 - **Joining the crates found what no crate's own tests could.** The product crate's agent found that a decline did not end a run, that a resume could answer `needs_approval` for an approved run, and that reading a run asked the person again. Each crate's tests passed. The defects were between them.
 - **A disk that fills destroys files quietly.** A dozen agents building into one target folder filled the disk; files being written at that moment were left empty, and two agents had to rewrite theirs. Builds now carry no debug information and no incremental state, which made the folder nine times smaller.
+- **A reader who did not build the code finds what its tests do not.** The audits of waves 5 to 7 are the evidence: the faults were between a crate's promises and its callers, in failure classes that decide lock release, and in paths a test never walked. Audit after each crate, with a fresh reader, is now a standing step.
+- **Real servers found nothing in the clients, and Windows found real faults in the plumbing.** The two network clients met a real server on their first CI run and passed. The first Windows and macOS runs of the supervisor, the pipes, and the path code each failed for a real reason, in a different place each time.
 - **A shared tree needs shared numbers.** Decision records and store migrations are numbered, and agents working at once need their numbers handed out before they start.
 
 ## Changed in the design
 
-- Decisions 0067 to 0093, 0121, and 0122. Decision 0033 is superseded by 0082.
+- Decisions 0067 to 0204, in large part. Decision 0033 is superseded by 0082.
 - Three licences joined the closed list, each on purpose and each for a named crate: `Zlib` (foldhash, in `rusqlite`'s tree), `ISC` and `CDLA-Permissive-2.0` (ring and the bundled root certificates, in the TLS stack that `a2m-auth` uses behind a feature that is off by default).
 - Five crates were added for the command, data, file, stream, and device packs, with their rows in the layering table.
 - Toolsets are not target files; they live in the store. An environment is part of the target file.
@@ -73,7 +85,7 @@ Pull request 12 carries waves 5 and 6. It merged green on the three operating sy
 ## Noticed, not acted on
 
 - **The session's usage limit was reached once,** with the engine, the action registry, and eight packs half-built. All twelve agents stopped at once. Their files were on disk and each was resumed from where it stopped when the owner reset the limit.
-- **TLS is off.** With the TLS feature on, every HTTP client in a build must have a cryptography provider installed in its process, or it stops when it is made. Until one change installs it everywhere, an `https` identity service is refused by name, and only loopback endpoints are used.
+- **TLS needs one provider per process.** A build with the TLS feature needs a cryptography provider installed in every process that makes an HTTP client, or the client stops when it is made. Decisions 0157 and 0166 settled this for the product: one maker of clients, and trust roots read at engine start.
 - **Named time zones are not built;** a target's zone is `UTC` or a fixed offset.
 - **The ledger grants a record lock to whoever asks first,** so a run woken by the scheduler can lose the lock to a run that never waited.
 - `a2m-telemetry` and `a2m-policy` each define a vocabulary that `a2m-core` now also has, and three crates still carry their own shape checks for names that the core's macro can make.
@@ -88,4 +100,6 @@ Nothing new. The three items from before still stand: the pending publisher on P
 
 ## Next
 
-*To be completed when the session ends.*
+1. Validate the whole tree that came after the merge and take it through CI on three systems: the work of [the wider reach](2026-11-18-the-wider-reach.md) has not been through CI.
+2. Fix what the audits of that work find, then the order the reviews ranked, as that entry lists.
+3. Still open from this entry: named time zones are not built; the ledger grants a record lock to whoever asks first.

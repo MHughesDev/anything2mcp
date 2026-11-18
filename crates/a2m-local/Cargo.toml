@@ -51,7 +51,6 @@ a2m-provider = { path = "../a2m-provider" }
 a2m-sources = { path = "../a2m-sources" }
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true
-serde.workspace = true
 
 [lints]
 workspace = true
