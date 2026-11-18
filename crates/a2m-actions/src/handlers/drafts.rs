@@ -576,6 +576,9 @@ handler!(
         let compiled = match compiled {
             Ok(compiled) => compiled,
             Err(problems) => {
+                // The gates did not pass: the action failed, exit code 1,
+                // with the refusal a publish would give (decision 0219).
+                let refusal = crate::offline::publish_refusal(&target, problems.clone());
                 return Ok(Output::ok(json!({
                     "target": target.as_str(),
                     "passed": false,
@@ -589,6 +592,7 @@ handler!(
                     "missing": crate::offline::without_test(&target, &problems),
                     "not_run": crate::offline::gates_not_built(),
                 }))
+                .failed(refusal)
                 .then(Next::new(
                     "draft.lint",
                     json!({"target": target.as_str()}),
@@ -617,6 +621,14 @@ handler!(
             "not_run": crate::offline::gates_not_built(),
         }))
         .warn("The schema and lint gate and the offline tests run; the other gates are not built, so the result is never complete.");
+        // Gates that did not pass are a failed action, exit code 1, with
+        // the refusal a publish would give; never "a person is needed"
+        // (decision 0219).
+        let output = if all_passed {
+            output
+        } else {
+            output.failed(gates.refusal(&target))
+        };
         Ok(output.then(if all_passed {
             Next::new(
                 "publish.request",

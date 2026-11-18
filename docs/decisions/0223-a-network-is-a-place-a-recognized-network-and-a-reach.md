@@ -20,7 +20,7 @@ One small kernel idea, three nouns.
 
 "A website" is one instance: its address derives a place, and the origin guard, the allow-list, loopback-as-literal, and the proxy become place-and-reach checks that already exist under other names. The payoff is that four hand-written refusals become one derived property checked in one place.
 
-The place/reach types live in `a2m-core`; the derivation and the reach test in `a2m-provider` beside the path check; the reach ledger and the rung-0 inspection actions in `a2m-actions`; the network discoverers and surface kind in a new pack `a2m-pack-net`. Place must be checked wherever a destination is, which is kernel; knowledge of the network stack is a pack, by rule 8.
+The place/reach types live in `a2m-core`; the derivation and the reach test in `a2m-provider` beside the path check; the reach ledger and the rung-0 inspection actions in `a2m-actions`; the network discoverers and surface kind in a new pack a2m-pack-net. Place must be checked wherever a destination is, which is kernel; knowledge of the network stack is a pack, by rule 8.
 
 ## Consequences, if accepted
 

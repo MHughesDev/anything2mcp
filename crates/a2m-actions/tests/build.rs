@@ -821,6 +821,8 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         .call(&agent, "draft.lint", json!({"target": "example"}))
         .await;
     assert!(linted.ok, "{:?}", linted.error);
+    // Every gate a publish runs passes, so the hint is the publish.
+    assert_eq!(linted.next.as_ref().unwrap().action, "version.publish");
     let result = linted.result.unwrap();
     assert_eq!(result["ok"], true);
     assert!(!result["tools"].as_array().unwrap().is_empty());
@@ -2420,12 +2422,25 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
         .unwrap();
     assert_eq!(removed["removed"], true, "{removed}");
     assert!(!test_file.exists());
-    // The operation has no test now: the gate names both ways on.
-    let gates = world
+    // The operation has no test now: the gate names both ways on, and the
+    // action failed (decision 0219).
+    let tested = world
         .call(&agent, "test.run", json!({"target": "example"}))
-        .await
-        .result
-        .unwrap();
+        .await;
+    assert_eq!(tested.exit, ExitClass::Failed);
+    assert_eq!(tested.error.unwrap().code, "publish_gates_not_passed");
+    let gates = tested.result.unwrap();
+    assert_eq!(gates["passed"], false);
+    // The hints of `draft.lint` and `target.status` read the gates the
+    // publish reads: they name the step that can succeed, not the publish.
+    for action in ["draft.lint", "target.status"] {
+        let answered = world
+            .call(&agent, action, json!({"target": "example"}))
+            .await;
+        let next = answered.next.unwrap();
+        assert_eq!(next.action, "test.run", "{action}: {}", next.when);
+        assert!(next.when.contains("operations/order_get.yaml"), "{}", next.when);
+    }
     let missing = &gates["missing"][0];
     assert_eq!(missing["file"], "operations/order_get.yaml", "{gates}");
     assert_eq!(missing["next"][0]["action"], "test.run");

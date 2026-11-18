@@ -17,7 +17,7 @@ This is the first design wave for [decision 0222](../decisions/0222-the-product-
 4. "A website" becomes one instance: its address resolves to a place; the origin guard, the destination allow-list, loopback-as-literal, and the proxy rule are all place-and-reach checks that already exist under other names.
 5. A **ladder of looking** from rung 0 (what the machine already knows, nothing sent) to rung 3 (ask one named host one thing); rung 4 (sweeps) is held out of the first design for the owner.
 6. Rung 0 ships first as built-in `a2m_` read tools over the engine's own machine, useful before anything is sent.
-7. A new pack, `a2m-pack-net`, owns a `network` surface kind, the announcement discoverers (rungs 1-2), and the one-host probe (rung 3), behind the provider contract.
+7. A new pack, a2m-pack-net, owns a `network` surface kind, the announcement discoverers (rungs 1-2), and the one-host probe (rung 3), behind the provider contract.
 8. The scout gains a stage before "identify a declared surface": from a network, to the things on it, to what each is, to a drafted `target.add` a person would run.
 9. A network finding is a claim (`inferred`) when something announced itself, because an announcement is forgeable; a device list is personal data and its keeping is the owner's call.
 10. Every pack that reaches over a network declares a place for each surface; the four existing special cases fall out of the general idea instead of being hand-written three times.
@@ -46,9 +46,9 @@ Three nouns, the smallest set that carries the owner's "generalize it".
 
 Place is checked *everywhere a destination is checked* — the one line this idea adds to the kernel. `Destinations` grows from a set of address strings to a set of (address, place) with a reach test; the engine's `destinations_of` derives the place of each surface address as it builds the set.
 
-**Network** — a recognized thing with an identity, so the product can tell "the home network" from "this café's network". A network's identity is a **fingerprint** of facts the machine already holds at rung 0: the default gateway's hardware address, the DHCP server identifier, the DNS search domain, the subnet, and, on wireless, the SSID and BSSID `[A: note 28]`. The fingerprint is a digest of the stable subset, so the same network is recognized across reconnections and a changed lease is tolerated. **Recognition is spoofable** — a hardware address and an SSID can be forged by anyone who controls a link — and that is acceptable *only because recognition never authorizes sending*. It does one thing: recall what the person already said about a network they named with their own hands. A forged fingerprint can at most impersonate a network the person already trusted; it cannot widen reach, because widening reach is a person's protected act (section 2). An attacker who can forge the home network's gateway is already on the link and has easier attacks than this.
+**Network** — a recognized thing with an identity, so the product can tell "the home network" from "this café's network". A network's identity is a **fingerprint** of facts the machine already holds at rung 0: the default gateway's hardware address, the DHCP server identifier, the DNS search domain, the subnet, and, on wireless, the SSID and BSSID `[A: note 28]`. The fingerprint is a digest of the stable subset, so the same network is recognized across reconnections and a changed lease is tolerated. **Recognition is spoofable** — a hardware address and an SSID can be forged by anyone who controls a link — and that is acceptable *only because recognition never authorizes sending*. It does one thing: recall what the person already said about a network they named with their own hands. A forged fingerprint can at most impersonate a network the person already trusted; it cannot widen reach, because widening reach is a person's protected act (part 2). An attacker who can forge the home network's gateway is already on the link and has easier attacks than this.
 
-**Reach** — the set of places and networks the person has said the product may look at, and, separately, may send to. Two sets, because looking and sending are different risks. Reach is the consent of [decision 0222](../decisions/0222-the-product-is-aware-of-the-network-its-machine-is-on.md), made concrete and bound to a network. It is a protected setting (section 2). On a network the person has not named, reach is empty beyond rung 0 and beyond the addresses the person named in a target: the lead's starting position, which decision 0225 asks the owner to confirm.
+**Reach** — the set of places and networks the person has said the product may look at, and, separately, may send to. Two sets, because looking and sending are different risks. Reach is the consent of [decision 0222](../decisions/0222-the-product-is-aware-of-the-network-its-machine-is-on.md), made concrete and bound to a network. It is a protected setting (part 2). On a network the person has not named, reach is empty beyond rung 0 and beyond the addresses the person named in a target: the lead's starting position, which decision 0225 asks the owner to confirm.
 
 ### How a website becomes one instance
 
@@ -113,7 +113,7 @@ Today the scout (`handlers/scout.rs`) starts from a declared surface's address. 
 | Field | Value |
 | --- | --- |
 | subject | `network` (the fingerprint, as its identity) or `address` (origin/path) carrying its derived place |
-| kind | A registered finding kind the `a2m-pack-net` pack owns, such as `announced_service`, `neighbour`, `listener` |
+| kind | A registered finding kind the a2m-pack-net pack owns, such as `announced_service`, `neighbour`, `listener` |
 | level | `inferred` for an announcement; `discovered` for the machine's own neighbour cache and for a probe that answered |
 | source | `live_system` (announced, or the machine's own tables); never higher |
 | limitations | `single_variant` (one announcement seen), `sampled`, `time_limit` as the rungs hit them |
@@ -124,7 +124,7 @@ Today the scout (`handlers/scout.rs`) starts from a declared surface's address. 
 
 ## 5. The built-in inspection tools for agents
 
-All reads. Named `a2m_<noun>_<verb>` in the registry's `noun.verb` form. Rung 0 tools are kernel actions (they inspect the engine's own host, like `doctor.run`); rungs 1-3 are provider actions the `a2m-pack-net` pack registers under its namespace. Whether a provider action may appear in a listed toolset is an interface question (section 7).
+All reads. Named `a2m_<noun>_<verb>` in the registry's `noun.verb` form. Rung 0 tools are kernel actions (they inspect the engine's own host, like `doctor.run`); rungs 1-3 are provider actions the a2m-pack-net pack registers under its namespace. Whether a provider action may appear in a listed toolset is an interface question (part 6).
 
 | Tool | Rung | Inputs | Outputs | Effect | Bounds / the address question |
 | --- | --- | --- | --- | --- | --- |
@@ -160,7 +160,7 @@ All reads. Named `a2m_<noun>_<verb>` in the registry's `noun.verb` form. Rung 0 
 | `Destinations` grows to carry place; reach test | `a2m-provider`, used by `a2m-engine` `destinations_of` | The destination check is already here |
 | The reach ledger as a protected setting; `net.*` rung-0 actions | `a2m-actions` (layer 7), `handlers/machine.rs` | Rung 0 inspects the engine's own host, like `doctor.run`; settings live here |
 | Policy input: "only on a recognized network" | `a2m-policy` (layer 4) | A rule can condition on the current network's reach |
-| `network` surface kind; rung 1-3 discoverers and tools; the network test stand | `a2m-pack-net` (layer 10) | A pack that knows one kind of system, behind the provider contract |
+| `network` surface kind; rung 1-3 discoverers and tools; the network test stand | a2m-pack-net (layer 10) | A pack that knows one kind of system, behind the provider contract |
 
 **Public contracts that change, each needing a decision record when built:**
 
@@ -169,7 +169,7 @@ All reads. Named `a2m_<noun>_<verb>` in the registry's `noun.verb` form. Rung 0 
 - The provider manifest's `Effects` → "reach which network destinations" gains the rung a provider may reach and the places it may reach. Public contract.
 - A new `SurfaceDescription` fact for place, handed to `suits()`.
 
-Layering holds: `a2m-pack-net` sees layers 1-5 and its own base; it never calls the engine or the registry. Only the product crate names it.
+Layering holds: a2m-pack-net sees layers 1-5 and its own base; it never calls the engine or the registry. Only the product crate names it.
 
 ## 7. What changes for what already exists
 
@@ -193,11 +193,11 @@ This is dual-use. An inventory tool and a reconnaissance tool are built the same
 | Misuse | By whom | The design's answer |
 | --- | --- | --- |
 | Scanning a network the person is not entitled to look at | The user | Reach is the person's presence-checked statement that a network is theirs to look at; rule 5 and the authorization record (402) put entitlement on the person; `net.explain` tells the agent why it may not, instead of the agent probing to find out |
-| Forging the request destination through a tool argument | A steered agent | The address argument is a reference to reach or a finding, never free text (section 5, attack 1) |
-| A forged announcement drawing the scout to an address | Something on the network | Announcements are `inferred` claims; nothing above rung 0 runs on an unnamed network; a drafted `target.add` reaching a new place needs the person's confirmation (section 5, attack 2) |
+| Forging the request destination through a tool argument | A steered agent | The address argument is a reference to reach or a finding, never free text (part 5, attack 1) |
+| A forged announcement drawing the scout to an address | Something on the network | Announcements are `inferred` claims; nothing above rung 0 runs on an unnamed network; a drafted `target.add` reaching a new place needs the person's confirmation (part 5, attack 2) |
 | A device description carrying instructions aimed at the agent | Something on the network | Section 502: text from a discovered thing is `untrusted_text`, marked, bounded, stripped of markup, never an instruction; the describer marks the system's words |
 | A name that resolves somewhere else later | The network, or DNS | Place is told from a literal address, never a name, on the run path; a name is resolved once at `target.add` by the person and the address is written in (device-name rule); rung 3 resolves one name once, as a probe, reported as a claim |
-| Reach-widening by an agent with a shell | A steered agent | Reach is a protected setting; only the presence-checked channel changes it (section 5, attack 3) |
+| Reach-widening by an agent with a shell | A steered agent | Reach is a protected setting; only the presence-checked channel changes it (part 5, attack 3) |
 | A kept device list leaking who was on a café network | The user, or a breach of the machine | Findings about an unnamed network are not persisted past the run (recommended; decision 0226); the redactor runs on captures as today |
 
 **Refused outright.** A blind sweep of an address or port range (rung 4, unless the owner narrows it in 0224); trying any credential the person did not store; evading any protection, bot defence, or access control; spoofing a client id or hiding what the tool is; reaching any destination whose place is outside reach; acting on, writing to, or signing into anything that discovery found.
@@ -211,7 +211,7 @@ Five (plus two) ideas this product's rules make possible that existing network t
 3. **A self-describing device becomes a verified tool in one flow.** A device or service that describes itself (H-41) is found by the scout across the network, handed to its pack, drafted as a read, tried five times in the sandbox, and offered as `executed` — from "a thing announced itself" to "a read that works" with no person writing a locator. *Takes:* the survey stage plus H-41's drafting rule. *Risk:* a forged self-description; the draft is a claim until tried, and trying is a read in the sandbox.
 4. **One subject, two paths.** A printer reached by its address and by its announced name is recognized as one subject, so the map does not double-count and a tool bound to it works whichever path resolves. *Takes:* subject identity that unifies an address and an announced name once the person confirms they are the same thing (never inferred silently — rule 7). *Risk:* two different things merged; the person confirms the merge, it is never guessed.
 5. **A tool that explains unreachability instead of probing.** `net.explain` answers "why can't I reach X" with the place, the network, the rung, and the rule — turning the product's "unknown is a named stop" doctrine into a feature. An agent that would otherwise probe to learn why a connection fails asks a tool that already knows and sends nothing. *Takes:* the reach and place state exposed read-only. *Risk:* it reveals the shape of reach to a steered agent; but reach is the person's own statement, not a secret, and no credential or address outside reach is revealed.
-6. **Policy bound to the network where a write was approved.** A write to a device, or any operation, may be allowed only on the recognized network where the person approved it: the approval record gains the current network's fingerprint, and a resume on a different network stops. *Takes:* the network in the policy input (section 6) and in the approval binding ([decision 0012](../decisions/0012-approvals-happen-out-of-reach-of-the-agent-and-bind-to-the-diff.md)). *Risk:* a legitimate move between networks blocks a resume; answered by a clear named stop and a re-approval.
+6. **Policy bound to the network where a write was approved.** A write to a device, or any operation, may be allowed only on the recognized network where the person approved it: the approval record gains the current network's fingerprint, and a resume on a different network stops. *Takes:* the network in the policy input (part 6) and in the approval binding ([decision 0012](../decisions/0012-approvals-happen-out-of-reach-of-the-agent-and-bind-to-the-diff.md)). *Risk:* a legitimate move between networks blocks a resume; answered by a clear named stop and a re-approval.
 7. **A reach ledger as a visible, person-owned map of trust.** The person's named networks and what each may be looked at or sent to, shown by `doctor.run` and a page, so the person can see at a glance what the product will do where. *Takes:* the reach ledger as a protected setting with a view. *Risk:* none beyond keeping it true.
 
 ## 10. Test stands
@@ -239,7 +239,7 @@ Small slices, each with its proof, the first sending nothing and useful alone.
 | N1 | Rung-0 built-in read tools: `net.interfaces`, `net.routes`, `net.resolvers`, `net.neighbours`, `net.listeners`, `net.current`. No `Place`, no reach yet; just honest reads of the machine's own stack | Each tool returns the machine's state on three systems; a rule test that no tool opens a socket to another host | M | No. Rung 0 sends nothing and breaks no rule |
 | N2 | The `Place` enum and derivation; `Destinations` carries place; re-express the four existing checks (origin guard, loopback-literal, plain-link credential, proxy-as-place) over it | H-46: the four checks over the type, fewer lines, same tests pass; place derived for every test-stand address | M | No; a design decision (0223) |
 | N3 | The reach ledger as a protected setting, and `net.current` showing reach status; the person names a network through the presence prompt | A reach named on net A is not in force on net B (two-networks stand); a file/flag that loosens reach is refused | M | **Yes** — 0225 (sending on an unnamed network) sets the default |
-| N4 | `a2m-pack-net`: the `network` surface kind and the rung 1-2 announcement discoverers against `example-net`, behind the sandbox port | Rungs 1-2 find the announcer as an `inferred` finding; a forged announcer is a claim; discovery sends no write | L | No; the pack's mode/surface kind get a decision record |
+| N4 | a2m-pack-net: the `network` surface kind and the rung 1-2 announcement discoverers against `example-net`, behind the sandbox port | Rungs 1-2 find the announcer as an `inferred` finding; a forged announcer is a claim; discovery sends no write | L | No; the pack's mode/surface kind get a decision record |
 | N5 | The scout survey stage: from a named network to candidates to drafted `target.add`, with the person's confirmation to reach a new place | A `target.add` is drafted for a found thing and needs confirmation; attack 2 | M | No |
 | N6 | Rung-3 `net.host`/`net.reachable` with the reference-not-text address rule; `net.explain` | Attack 1; `net.explain` sends nothing; a block is `edge_blocked` | M | **Yes** — depends on 0225 |
 | — | Rung 4, if ever | — | — | **Yes** — 0224 |

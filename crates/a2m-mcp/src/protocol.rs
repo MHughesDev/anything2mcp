@@ -50,9 +50,26 @@ fn capabilities() -> Json {
 }
 
 fn instructions(core: &Core) -> String {
+    instructions_for(core.toolset.as_str(), &action_run_fields(core.kernel.actions()))
+}
+
+/// The input fields of `action.run`, as the registry defines them: the
+/// instructions name these and no others, so they cannot say one thing
+/// and the schema another (decision 0219).
+fn action_run_fields(registry: &a2m_actions::ActionRegistry) -> Vec<String> {
+    registry
+        .find("action.run")
+        .map(|def| def.input.fields.iter().map(|field| field.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// The instructions of a toolset, naming the fields of `a2m_action_run`
+/// as `fields` gives them.
+fn instructions_for(toolset: &str, fields: &[String]) -> String {
+    let named: Vec<String> = fields.iter().map(|field| format!("`{field}`")).collect();
     format!(
-        "The `{}` toolset of Anything2MCP. Every tool is deterministic: the same input does the same thing. A failed call answers with one JSON object as text: class, code, message, fix, and retry_safe; do what `fix` says. A write waits for a person's approval and says so in its result. A result's `next` names the call to make next: its `tool` with its `args`, or, when no tool of that name is listed here, `a2m_action_run` with its `action` and `args`. A tool that is not listed is found with `a2m_tool_search` and called with `a2m_tool_call`.",
-        core.toolset
+        "The `{toolset}` toolset of Anything2MCP. Every tool is deterministic: the same input does the same thing. A failed call answers with one JSON object as text: class, code, message, fix, and retry_safe; do what `fix` says. A write waits for a person's approval and says so in its result. A result's `next` names the call to make next: call its `tool` with its `args`, exactly as given. An action whose own tool is not listed here is called through `a2m_action_run`, whose arguments are {}: the action's name, and the action's own input. A tool that is not listed is found with `a2m_tool_search` and called with `a2m_tool_call`.",
+        named.join(" and ")
     )
 }
 
@@ -446,5 +463,40 @@ async fn followed(core: &Core, following: &mut Option<Following>, asker: &Asker)
     match following {
         Some(following) => core.follow(following, asker).await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+
+    /// The instructions and the schema of `a2m_action_run` say one thing:
+    /// every name the sentence about it gives in backticks, other than a
+    /// tool's, is a field of `action.run`, and every field is named.
+    #[test]
+    fn the_instructions_name_the_fields_the_action_run_schema_takes() {
+        let registry = a2m_actions::ActionRegistry::kernel_only();
+        let fields = action_run_fields(&registry);
+        assert!(fields.contains(&"action".to_owned()), "{fields:?}");
+        assert!(fields.contains(&"input".to_owned()), "{fields:?}");
+        let text = instructions_for("use", &fields);
+        let sentence = text
+            .split(". ")
+            .find(|sentence| sentence.contains("through `a2m_action_run`"))
+            .unwrap();
+        let named: Vec<&str> = sentence
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|name| !name.starts_with("a2m_"))
+            .collect();
+        let mut sorted_named = named.clone();
+        sorted_named.sort_unstable();
+        let mut sorted_fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+        sorted_fields.sort_unstable();
+        assert_eq!(sorted_named, sorted_fields, "{sentence}");
+        // The schema refuses what the sentence once named, `args`.
+        let def = registry.find("action.run").unwrap();
+        assert!(def.input.fields.iter().all(|field| field.name != "args"));
     }
 }
