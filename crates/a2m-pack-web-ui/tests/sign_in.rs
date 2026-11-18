@@ -18,7 +18,7 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use a2m_auth::{
@@ -91,9 +91,14 @@ impl AskPerson for Person {
 
 /// The target's probe: its declared read, through the `ui` driver, under a
 /// lease of purpose `Probe`.
+///
+/// The keeper holds the probe, so the probe holds the scene weakly: a
+/// strong reference would be a cycle, the scene would never be dropped, and
+/// its stand's folder, with the browser's profiles in it, would be left
+/// under the temporary folder after every test.
 #[derive(Default)]
 struct Probe {
-    world: OnceLock<(Arc<Scene>, Keeper, Arc<AuthEntry>)>,
+    world: OnceLock<(Weak<Scene>, Keeper, Arc<AuthEntry>)>,
 }
 
 impl RunProbe for Probe {
@@ -102,12 +107,15 @@ impl RunProbe for Probe {
             let Some((scene, keeper, entry)) = self.world.get() else {
                 return ProbeOutcome::Unknown;
             };
+            let Some(scene) = scene.upgrade() else {
+                return ProbeOutcome::Unknown;
+            };
             let mut asked = request(entry, Wait::NoWait);
             asked.purpose = Purpose::Probe;
             let Ok(lease) = keeper.lease(asked).await else {
                 return ProbeOutcome::Unknown;
             };
-            match read(scene, &lease).await {
+            match read(&scene, &lease).await {
                 Ok(_) => ProbeOutcome::SignedIn,
                 Err(failure) if failure.failure.class() == FailureClass::SessionExpired => {
                     ProbeOutcome::SignedOut
@@ -316,7 +324,7 @@ impl World {
         assert!(
             probe
                 .world
-                .set((Arc::clone(&scene), keeper.clone(), Arc::clone(&entry)))
+                .set((Arc::downgrade(&scene), keeper.clone(), Arc::clone(&entry)))
                 .is_ok()
         );
         Self {

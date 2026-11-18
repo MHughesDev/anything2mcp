@@ -179,3 +179,15 @@ A designer who read the code for the command-line package found two statements i
 **Verdict: taken up.** Three additions. The credential store names what it holds for a person (the reference, the target it belongs to, when it was stored, never a value) and removes one. Two actions serve that: a list any caller acting for the person may read, and a removal that is the person's own act and is written to the audit log. And one read answers "what do you hold for me" on one screen: secrets by name, sessions, runs, traces, captures, and findings by count and size, and the home's place on disk.
 
 **Next.** A package in the session keeper's store and the action registry, placed in the registry lane after the wiring that is already planned. The scope page says so until it is built.
+
+## Round 24 (2026-11-18, 05:07 UTC)
+
+**Idea.** When the scout looks at a compiled program, reading the printable text in the program's own bytes would tell it of flags and commands that the program's help leaves out.
+
+**Test.** Took the long flags that a program's help states and the things shaped like a long flag in the printable text of its bytes, and compared the two sets: first for the command-line test stand, with the help of each of its nine commands, then for eight ordinary programs installed on this machine, counted together and not named. A count of strings only: no flag found in bytes was tried, and nothing was run but each program's help.
+
+**Result.** The bytes are not a better source than the help, and not a safe one. For the test stand the two sets are the same thirteen flags. For five of the eight installed programs the bytes add nothing or one string. For one, the bytes miss 114 of the 170 flags the help states, because the program keeps its option names in another form. For one, the bytes hold 244 flag-shaped strings beyond the twelve its help prints, and the reason is plain: that program has a short help and a fuller one, and only the short one was asked for. In every case a string from the bytes comes with no description, no argument, and no sign of which command it belongs to, among some twenty-six thousand other strings in a program of this size.
+
+**Verdict: ruled out.** A flag found in a program's bytes would be a guess about a thing the program itself can be asked. The one case where the bytes held more is answered with certainty by declaring the program's fuller help form, which the target already can. Nothing in the rules forbids reading a program's bytes at build time, so this is a finding about usefulness and not a limit: if a kind of program appears whose help says little and whose bytes say much, the question is open again.
+
+**Next.** One sentence added to the command pack's section, where a target declares its help forms: declare the fullest form the program has.

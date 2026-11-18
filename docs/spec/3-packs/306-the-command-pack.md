@@ -118,7 +118,7 @@ commands:
 | `surface`, at the top of the file | A surface of kind `program`. Without it, the target's first one |
 | `digests` (required) | Known builds, by platform. A file with no listed digest does not run ("Failures") |
 | `version` | A command that reports the version, its expected pattern, and the versions the file was written for |
-| `help` | The argument lists discovery may run, with `{command}` standing for the words of a listed command's name, one element each. None are assumed |
+| `help` | The argument lists discovery may run, with `{command}` standing for the words of a listed command's name, one element each. None are assumed. Some programs have a short help and a fuller one; discovery finds only what the declared forms print, so declare the fullest form the program has |
 | `env` | `set`: variables and values; `pass`: names copied from the engine's environment. Nothing else reaches the program. `{session.state_dir}` is a folder the engine owns for the session ("Secrets") |
 | `workdir` | `fresh`, or a named folder inside the allowed roots of section 502 |
 | `stdin` | `none` (closed at once), a param, a secret, or a blob. Never a terminal |
