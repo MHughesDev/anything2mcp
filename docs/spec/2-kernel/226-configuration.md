@@ -156,7 +156,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
-| `policy.approve_writes` | `person_each_run`; on a server also `caller_confirms`, `named_approver`. On one machine only `person_each_run` is in force: the others stop the kernel by name | `person_each_run` | U | yes |
+| `policy.approve_writes` | `person_each_run`; on a server also `caller_confirms`, `named_approver`. On one machine only the first is in force: the other two stop the kernel by name | `person_each_run` | U | yes |
 | `policy.two_person_irreversible` | Boolean | Off | U | yes: on is safer, so a lower layer may turn it on and never off |
 | `policy.max_records_per_run` | Count | 50 | U | yes |
 | `policy.approval_window_minutes` | Minutes, at most 1,440 | 15 | U | yes |

@@ -54,7 +54,7 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `surfaces` (required) | The surfaces this entry covers |
 | `mode` (required) | `use_existing`, `managed_session`, or `custom` |
 | `provider` (required) | An auth provider from the technical reference |
-| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile |
+| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile, except in a draft: there a probe that names nothing, where no operation file has that name, compiles as not yet drafted, with the warning `kernel.probe_pending`, and the sign-in is marked as not confirmed ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 | `probe_inputs` | For a probe that is an operation: the inputs it is called with. Every required input with no default is given here, so the probe can be run as written |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
@@ -231,7 +231,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | --- | --- |
 | `operation` (required) | The tool name: `{target}_{module}_{object}_{verb}`. The module part is left out when the target declares no `modules`. The verb in the name is a plain word for callers; it need not be one of the built-in verbs a binding uses |
 | `effect` (required) | `read`, `write`, or `irreversible` |
-| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write` |
+| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write`. With `natural` and no `inputs`, `place: fixed` says the record is the one place every binding names in the target's files, which its file kind declares fixed; no input is its key ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1 for a write, and at least 1; a read states none; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |

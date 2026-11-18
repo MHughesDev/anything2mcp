@@ -139,7 +139,10 @@ impl Signed {
             .unwrap();
         let entry = AuthEntry::new(a2m_auth::ProviderName::new("http_basic").unwrap())
             .setting("user", user)
-            .credential("password", reference);
+            .credential("password", reference)
+            // A stored credential is used only under a published version's
+            // declaration (decision 0248); the test stands for one.
+            .published();
         Self {
             keeper,
             key,

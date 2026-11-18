@@ -118,6 +118,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - A roadmap of every work package to version 1.0.
 - A web application that signs in through its own sign-in page can now be used: `form_login` fills the page with the username and password you stored, asks you for a one-time code when the page asks, tries a refused password only once, and signs in again by itself when the session expires. The browser keeps the session's cookies in memory only; they are sealed for you in the vault. Signing in yourself in a visible window, and single sign-on through an identity provider's pages, are not built (decision 0245).
 - The MCP pack starts a local MCP server program on Windows as well as on macOS and Linux (written for Windows, and not yet run there).
+- The compiler accepts a write of one fixed place, such as a settings value, with no key input. A draft may declare a sign-in before the read that checks it exists. The review summary of a publish carries what each tool starts, sets, and reaches, and where each sign-in sends a credential; the packs do not fill it yet, and the publish page does not show it yet (decision 0252).
 
 ### Changed
 
@@ -193,6 +194,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - The MCP pack refuses to start a local server that another user could change, or that is a shell, an interpreter, a batch file, or a script: before, it checked only the program's digest (decision 0250).
 - A command or a local MCP server is no longer given a variable that makes it load other code, such as `LD_PRELOAD` or `NODE_OPTIONS`.
 - A script a target keeps runs only through an interpreter in its one known form, and only from a run folder no other user can change.
+- A sign-in sends a credential only to an address the target declares. A sign-in that only drafts declare always goes to the person's page, which shows every address first, and a stored credential is used only under a published version. Each credential belongs to the target it was stored for; one stored before this change must be stored again. A refused password a person asked to try is not tried again by a later run (decision 0248).
 
 ## [0.0.1]
 
