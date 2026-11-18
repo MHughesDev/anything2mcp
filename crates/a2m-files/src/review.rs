@@ -376,19 +376,20 @@ impl ReviewSummary {
             },
             Some(addresses) => {
                 let leaves = addresses.iter().any(|sent| leaves(&sent.address));
-                let mut grouped: BTreeMap<(u8, AddressScope), BTreeSet<SentAddress>> =
+                let mut grouped: BTreeMap<u8, (AddressScope, BTreeSet<SentAddress>)> =
                     BTreeMap::new();
                 for sent in addresses {
                     let scope = ScopedHost::of_destination(&sent.address).scope();
                     grouped
-                        .entry((scope_rank(scope), scope))
-                        .or_default()
+                        .entry(scope_rank(scope))
+                        .or_insert_with(|| (scope, BTreeSet::new()))
+                        .1
                         .insert(sent);
                 }
                 SentTo::Addresses {
                     groups: grouped
-                        .into_iter()
-                        .map(|((_, scope), addresses)| SentGroup {
+                        .into_values()
+                        .map(|(scope, addresses)| SentGroup {
                             scope,
                             addresses: addresses.into_iter().collect(),
                         })
@@ -427,17 +428,18 @@ fn leaves(address: &str) -> bool {
 }
 
 fn groups(addresses: &BTreeSet<String>) -> Vec<ReachGroup> {
-    let mut grouped: BTreeMap<(u8, AddressScope), Vec<String>> = BTreeMap::new();
+    let mut grouped: BTreeMap<u8, (AddressScope, Vec<String>)> = BTreeMap::new();
     for address in addresses {
         let scope = ScopedHost::of_destination(address).scope();
         grouped
-            .entry((scope_rank(scope), scope))
-            .or_default()
+            .entry(scope_rank(scope))
+            .or_insert_with(|| (scope, Vec::new()))
+            .1
             .push(address.clone());
     }
     grouped
-        .into_iter()
-        .map(|((_, scope), addresses)| ReachGroup { scope, addresses })
+        .into_values()
+        .map(|(scope, addresses)| ReachGroup { scope, addresses })
         .collect()
 }
 

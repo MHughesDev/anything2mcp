@@ -1016,14 +1016,8 @@ impl Session {
         if !self.expiry.is_empty() && !self.holds_now(&screen.ready.primitive(), deadline).await? {
             for (sign, ready) in &self.expiry {
                 if sign != name && self.holds_now(&ready.primitive(), deadline).await? {
-                    return Err(StepFailure::not_sent(fail(
-                        FailureClass::SessionExpired,
-                        a2m_auth::codes::NEEDS_LOGIN,
-                        format!(
-                            "The page shows the screen `{}` in place of {what}: the target declares it as a sign that the session has ended.",
-                            shown(sign)
-                        ),
-                        "The session is signed in again by the session keeper; resume the run, or sign in with `anything2mcp session login`.",
+                    return Err(StepFailure::not_sent(crate::sign_in::session_ended(
+                        format!("The page shows the screen `{}` in place of {what}", shown(sign)),
                     )));
                 }
             }
@@ -1752,8 +1746,11 @@ impl UiDriver {
                 }
             }
         }
-        let expiry = crate::sign_in::expiry_screens(cx.plan, surface.name.as_str(), &sections)
-            .map_err(codes::not_usable)?;
+        // The `ui` driver reads pages: a sign of expiry that is a status of
+        // a page request's answer is `page_http`'s.
+        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &sections)
+            .map_err(codes::not_usable)?
+            .screens;
         Ok(Session {
             expiry,
             looking,

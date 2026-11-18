@@ -187,6 +187,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - `policy.two_person_irreversible` is protected: once on, no user file, variable, or flag turns it off.
 - The engine makes its data, configuration, and cache folders its user's alone; `doctor` names one that others can enter.
 - An answer to a page write that quotes the page's anti-forgery token is withheld whole, and the write is treated as in doubt. A page's refusal of the values of a write is no longer settled as not written. The tab that writes passes the page's service worker by (decision 0245).
+- The HTTP pack reads a hostile XML or JSON answer within bounded work and never on the engine's async threads. Outside a live run it sends no request that may write, unless it is a declared test record's commit or a read the endpoint asserts, against a test environment. An endpoint marked `read` with a method that is not safe now needs `read_asserted: true`. A bytes answer that holds a registered secret gives neither its length nor its digest (decision 0249).
 
 ## [0.0.1]
 

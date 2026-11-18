@@ -247,31 +247,44 @@ impl Audit<'_, '_> {
 ```
 
 ```rust
-// A binding in shadow (decision 0207): `tx.shadow()`. Migration 0020; append-only by trigger.
+// A binding in shadow (decisions 0207, 0251): `tx.shadow()`. Migrations 0020, 0022; append-only by trigger.
 impl Shadows<'_, '_> {
     /// One comparison beside a live read, under the run's current lease; workspace, target,
-    /// and environment are the run's. Refuses a writing operation (`shadow_write_not_built`), an
-    /// offline test's store, a run not `running` or not a read (`shadow_not_counted`), a stale fence.
+    /// and environment are the run's; the input is reduced to the workspace's keyed digest in the
+    /// transaction, and a `need` event on the run says a shadow read was made and what it cost.
+    /// Refuses a writing operation (`shadow_write_not_built`), an offline test's store, a run not
+    /// `running` or not a read (`shadow_not_counted`), a stale fence.
     pub fn record(&mut self, comparison: &ShadowComparison) -> Result<u64, Failure>;
-    pub fn standing(&mut self, ws, target, operation, binding: &Digest) -> Result<Option<ShadowStanding>, Failure>;
+    /// `against`: the verified binding the counts toward promotion are against; `None` is the
+    /// one the newest comparison was against.
+    pub fn standing(&mut self, ws, target, operation, binding: &Digest, against: Option<&Digest>) -> Result<Option<ShadowStanding>, Failure>;
+    /// Yes when every environment of the subject holds the threshold of distinct inputs that
+    /// matched its verified binding since the last mismatch anywhere. `schema_invalid` for none.
     pub fn promotable(&mut self, subject: &ShadowSubject, threshold: ShadowThreshold) -> Result<Promotable, Failure>;
     /// Asks `promotable` again in the same transaction; `policy`/`shadow_not_promotable` with the reason.
     pub fn promote(&mut self, promotion: &ShadowPromotion) -> Result<PromotionRow, Failure>;
-    /// By operation, then digest: the data of `shadow.report`.
-    pub fn report(&mut self, ws, target, operation: Option<&OperationName>) -> Result<Vec<ShadowStanding>, Failure>;
+    /// By operation, then digest: the data of `shadow.report`. `against` by operation, as `standing`.
+    pub fn report(&mut self, ws, target, operation: Option<&OperationName>, against: &BTreeMap<OperationName, Digest>) -> Result<Vec<ShadowStanding>, Failure>;
 }
 pub struct ShadowComparison { pub fence: Fence, pub operation, pub binding: Digest, pub mode: Mode, pub position: u32,
-                              pub against: Digest, pub writes: bool, pub outcome: ShadowOutcome }
+                              pub against: Digest, pub writes: bool, pub outcome: ShadowOutcome,
+                              pub input: Values /* digested, never stored */, pub requests: u32 }
 pub enum ShadowOutcome { Matched, Mismatched(Vec<DifferingOutput>), NotCompared { class, code } }
 pub struct DifferingOutput { pub name: String, pub how: Difference }   // Differs, Missing, Unreadable; never a value
-pub struct ShadowThreshold { pub read: u32, pub write: u32 }          // default 5 and 20 (section 226)
-pub struct ShadowSubject { pub workspace, pub target, pub operation, pub binding: Digest, pub writes: bool }
+pub struct ShadowThreshold { pub read: u32, pub write: u32 }          // distinct inputs; default 5 and 20 (section 226)
+pub struct ShadowSubject { pub workspace, pub target, pub operation, pub binding: Digest, pub writes: bool,
+                           pub against: Digest, pub environments: Vec<Environment> }
+pub struct EnvironmentEvidence { pub environment, pub distinct_inputs: u32, pub matches: u32 }
+pub struct EnvironmentStanding { pub environment, pub reads: u32, pub requests: u64, pub matches_since: u32,
+                                 pub against_counted: u32, pub distinct_inputs: u32, pub through_seq: Option<u64> }
 pub struct ShadowStanding { pub operation, pub binding, pub mode, pub matches, pub mismatches, pub not_compared,
-                            pub in_a_row, pub in_a_row_through: Option<u64>, pub last_mismatch: Option<LastMismatch>,
+                            pub in_a_row, pub in_a_row_through: Option<u64>, pub against: Digest, pub requests: u64,
+                            pub environments: Vec<EnvironmentStanding>, pub last_mismatch: Option<LastMismatch>,
                             pub first_at, pub last_at, pub promoted: Option<PromotionRow> }
-pub enum Promotable { Yes { in_a_row, threshold, through_seq }, No(NotPromotable) }
-pub enum NotPromotable { WritesNotBuilt, NothingCompared, TooFew { in_a_row, threshold },
-                         MismatchSince { in_a_row, threshold, differing }, Promoted(PromotionRow) }
+pub enum Promotable { Yes { evidence: Vec<EnvironmentEvidence>, threshold, through_seq }, No(NotPromotable) }
+pub enum NotPromotable { WritesNotBuilt, NothingCompared, TooFew { evidence, threshold },
+                         MismatchSince { evidence, threshold, differing }, Promoted(PromotionRow) }
+pub struct PromotionRow { /* as before, and */ pub against: Option<Digest>, pub evidence: Vec<EnvironmentEvidence> }
 pub struct ShadowPromotion { pub subject: ShadowSubject, pub mode: Mode, pub promoted_by: PrincipalId, pub threshold: ShadowThreshold }
 ```
 
@@ -327,7 +340,7 @@ Contracts that the signatures do not show:
 - **Wrapped keys are rows, nothing more.** `vault_keys` holds what the vault hands over, already wrapped. The ledger never unwraps, chooses, or rotates a key; the vault does, through `KeyRecords`.
 - **Blobs are sealed before they are written,** with the workspace, the owner, the kind `blob`, and the blob's name as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention. A row that takes a blob reference refuses one that names no blob.
 - **An `Opened::Existing` is not an error.** A second identical call gets the first run's identifier.
-- **Shadow evidence is counted where it is kept** ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). A comparison is one row, never changed, by the shadow binding's digest: a binding whose steps change starts from nothing. What it has earned is a query: matches in a row since its last mismatch; a comparison not compared neither counts nor resets. The ledger never promotes by itself: `promote` records a person's promotion on the run of matches counted in its own transaction, once per digest. It does not change the binding's status, which is in the target's files; nor can it tell a person from an agent, which its caller checks.
+- **Shadow evidence is counted where it is kept, and says what it covers** ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md), [decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)). A comparison is one row, never changed, by the shadow binding's digest: a binding whose steps change starts from nothing. It names the call's input by the workspace's keyed digest (under `caller_key` with a label of its own, behind one function, until `a2m-core` has a purpose for it), never shown; the environment, from the run; the verified binding it was compared against; and its cost in requests. What makes a binding promotable is a query: in every environment the subject names, the distinct inputs that matched the subject's verified binding since the last mismatch, which in any environment and against any binding starts the count again; a comparison not compared neither counts nor resets. The ledger never promotes by itself: `promote` records a person's promotion on the run of matches counted in its own transaction, once per digest. It does not change the binding's status, which is in the target's files; nor can it tell a person from an agent, which its caller checks.
 - **A watch keeps digests, never values** ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)). `end_check` is handed a check's normalized records and reduces them in the transaction to keyed digests (keys under `record_key`, values under `value_purpose()` with a domain prefix); only the digests, counts, output names, and times are written. How a check ends is read from its run's row, never from the caller. The baseline holds, for each record seen, its digests when last seen: `added` is a record never seen, `unseen` is told once when a record leaves the view, and `removed` needs the newer check and the baseline both complete. A watch is made only of a read, a check only of its own read for its own person, one check at a time, never before its person confirmed it; what it reads never changes; an ended watch never changes; changes are append-only; each is a trigger as well as a check in the call. The ledger opens no run for a watch: the scheduler's admission does.
 - **A finding cannot be stored above `discovered`.** The type refuses to make one or to read one back, and the table refuses the row.
 
@@ -371,7 +384,7 @@ The codes are constants in the crate's `codes` module.
 | `input` | `not_found` | No run, record, blob, version, or question with that identifier |
 | `input` | `schema_invalid`, `plan_hash_mismatch` | Something the store cannot keep; a plan whose hash is not the digest of its bytes |
 | `policy` | `shadow_not_counted` | A shadow comparison in an offline test's store, or beside a run that is not a read under way |
-| `policy` | `shadow_not_promotable` | A promotion the evidence does not allow: nothing compared for the binding as it is now, too few matches in a row, a mismatch since, or promoted already |
+| `policy` | `shadow_not_promotable` | A promotion the evidence does not allow: nothing compared for the binding as it is now, too few distinct inputs matched in an environment its evidence must come from, a mismatch since, or promoted already |
 | `busy` | `shadow_write_not_built` | A shadow comparison of an operation that writes: the shadow of a write is not built |
 | `policy` | `watch_not_a_read`, `watch_not_confirmed`, `watch_not_yours`, `watch_ended`, `watch_run_not_its_own`, `watch_needs_confirmation` | A watch of a write; a check before the person confirmed it; a confirmation by another; an ended watch; a run that is not the watch's own read; a resume after a drift or a new version |
 | `busy` | `watch_check_running`, `watch_paused`, `watch_check_unfinished`, `watch_due_missed`, `watch_check_not_completed` | A second check at once; a paused watch; a check whose run has not ended; the code of a gap of missed due times; a check's run that ended without completing and gave no failure |
@@ -394,7 +407,7 @@ The codes are constants in the crate's `codes` module.
 | A finding is never stored above `discovered` | The type's refusal, the table's refusal of the row, and a planted body refused when read |
 | The audit chain detects a removed, changed, or reordered entry | Planted tampering in a test |
 | A migration applied twice changes nothing, and a store from a newer engine is refused | A test that opens twice, then plants a later migration and a changed checksum |
-| A binding is promotable only after the threshold's exact matches in a row; a mismatch starts the count again, a changed digest has earned nothing, and a comparison is taken only beside a live read under way | `tests/shadow.rs`, through the calls and through a second connection |
+| A binding is promotable only after the threshold's distinct inputs matched, in each environment its evidence must come from, against the verified binding that will act; one input called again is one input; a mismatch anywhere starts the count again; a changed digest has earned nothing; a comparison is taken only beside a live read under way and names its input; the report and the run's events hold no input and no digest | `tests/shadow.rs`, through the calls and through a second connection |
 | A watch is made only of a read, checks nothing before its person confirms it, runs one check at a time and only its own read, never changes what it reads, keeps no value, and ends from any state leaving its history | `tests/watch.rs`, through the calls and through a second connection |
 | Comparing a check with itself reports nothing; the order of records does not matter; a repeated key is a named fault | `watch_compare.rs` unit tests over generated checks |
 | Both databases give the same answers | The rule tests run on SQLite and Postgres in CI from Phase 6 |
@@ -413,6 +426,7 @@ The codes are constants in the crate's `codes` module.
 8b. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `Ledger::recorded_before_commit`, the values recorded before the save of every record of an operation in a workspace whose write may have landed (`RecordRow::may_have_landed`), of its current attempt alone, after its current intent (`intent_seq`), so that a value an attempt settled as not landed recorded is held by nothing ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md), `tests/acknowledged.rs`); migration 0017, a trigger that keeps a version's `gate_evidence` as written (LE-1); migration 0018, `actions_scouts.project`.
 8c. Done ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)): `Tx::shadow`, migration 0020, the tables `shadow_comparisons` and `shadow_promotions`; comparisons, standings, the promotable question, a person's promotion, and the report. Tests: `tests/shadow.rs`.
 8d. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): `Tx::watches`, migration 0021, the tables `watches`, `watch_checks`, `watch_changes`, `watch_baseline`; the comparison in `watch_compare.rs`. Not built: a watch's condition; the purpose `watch_value` (owed by `a2m-core`; `value_purpose()` is the one line to change); retention of watches, as of runs.
+8e. Done ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)): migration 0022; a comparison's keyed input digest and its cost in requests, a run event per comparison; distinct inputs per environment, against the named verified binding; the promotion row's verified binding and evidence. Not built: a digest purpose of its own (owed by `a2m-core`; `INPUT_PURPOSE` in `src/shadow.rs` is the one line to change). Tests: `tests/shadow.rs`.
 9. Not built: Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 
 ## Open points

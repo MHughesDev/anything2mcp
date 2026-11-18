@@ -51,6 +51,11 @@ pub enum FaultKind {
         /// The `Location` header to answer with, sent as it is written here.
         location: String,
     },
+    /// End every signed-in session, as the application does when sessions
+    /// expire, and then handle the request as usual: the session's own guard
+    /// refuses it. A session that held when a page loaded can so end before
+    /// the page's next request.
+    ExpireSessions,
 }
 
 impl FaultKind {
@@ -175,6 +180,10 @@ pub(crate) async fn apply(State(state): State<AppState>, request: Request, next:
                 )
                     .into_response(),
             }
+        }
+        Some(FaultKind::ExpireSessions) => {
+            state.lock().await.auth.expire_sessions();
+            next.run(request).await
         }
         None => next.run(request).await,
     }

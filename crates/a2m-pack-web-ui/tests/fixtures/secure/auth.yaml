@@ -7,6 +7,7 @@ auth:
     probe: example_account_get
     expiry_signals:
       - {screen: sign_in}
+      - {status: 401}
     settings:
       screen: sign_in
       user_field: username

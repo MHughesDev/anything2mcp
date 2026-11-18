@@ -861,47 +861,91 @@ impl AuthProvider for FormLogin {
     }
 }
 
-/// The screens a target's auth entries declare as a sign that the session
-/// has ended, for one surface: each signal of the form `{screen: <name>}`.
-/// A signal of any other form is refused: unknown means stop.
-pub(crate) fn expiry_screens(
+/// How a target's auth entries say, for one web surface, that the session
+/// has ended. Each sign is declared; nothing else is read as one.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ExpirySigns {
+    /// `{screen: <name>}`: a page that shows that screen's `ready`, by the
+    /// screen's name. Both drivers heed it: the `ui` driver at a `wait`,
+    /// and `page_http` at a `goto` that lands on another address than the
+    /// page asked for.
+    pub(crate) screens: Vec<(String, Cond)>,
+    /// `{status: <code>}`: a page request answered with that status, a
+    /// client error from 400 to 499. Only `page_http` heeds it; the `ui`
+    /// driver reads pages, not answers.
+    pub(crate) statuses: BTreeSet<u16>,
+}
+
+/// The signs of expiry a target's auth entries declare for one surface.
+/// A signal of any other form is refused: unknown means stop. A redirect
+/// is not a form: the address a redirect answering a read from inside the
+/// page points to is not visible to the page, so it could only be guessed.
+pub(crate) fn expiry_signs(
     plan: &a2m_core::Plan,
     surface: &str,
     screens: &BTreeMap<usize, ScreenSection>,
-) -> Result<Vec<(String, Cond)>, String> {
+) -> Result<ExpirySigns, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Signal {
+        #[serde(default)]
+        screen: Option<String>,
+        #[serde(default)]
+        status: Option<u16>,
+    }
     let Some(index) = plan
         .surfaces
         .iter()
         .position(|known| known.name.as_str() == surface)
     else {
-        return Ok(Vec::new());
+        return Ok(ExpirySigns::default());
     };
-    let mut found = Vec::new();
+    let mut found = ExpirySigns::default();
+    let form = || {
+        "a sign of expiry of a web surface is written `{screen: <name>}` or `{status: <code>}`, and one is not"
+            .to_owned()
+    };
     for auth in &plan.auth {
         if !auth.surfaces.iter().any(|covered| covered.get() == index) {
             continue;
         }
         for signal in &auth.expiry_signals {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct ScreenSignal {
-                screen: String,
+            let signal: Signal = signal.decode().map_err(|_| form())?;
+            match (signal.screen, signal.status) {
+                (Some(name), None) => {
+                    let screen = screens
+                        .values()
+                        .find_map(|section| section.get(&name))
+                        .ok_or_else(|| {
+                            format!(
+                                "the sign of expiry names the screen `{}`, which the target does not have",
+                                codes::shown(&name)
+                            )
+                        })?;
+                    found.screens.push((name, screen.ready.clone()));
+                }
+                (None, Some(status)) if (400..=499).contains(&status) => {
+                    found.statuses.insert(status);
+                }
+                (None, Some(status)) => {
+                    return Err(format!(
+                        "the sign of expiry names the status {status}, and a sign of expiry is a client error, from 400 to 499"
+                    ));
+                }
+                _ => return Err(form()),
             }
-            let signal: ScreenSignal = signal.decode().map_err(|_| {
-                "a sign of expiry of a web surface is written `{screen: <name>}`, and one is not"
-                    .to_owned()
-            })?;
-            let screen = screens
-                .values()
-                .find_map(|section| section.get(&signal.screen))
-                .ok_or_else(|| {
-                    format!(
-                        "the sign of expiry names the screen `{}`, which the target does not have",
-                        codes::shown(&signal.screen)
-                    )
-                })?;
-            found.push((signal.screen, screen.ready.clone()));
         }
     }
     Ok(found)
+}
+
+/// The stop of a run whose session has ended, as a declared sign shows.
+/// The driver stops; the engine tells the keeper, which alone renews.
+pub(crate) fn session_ended(shown: String) -> Failure {
+    Failure::new(
+        FailureClass::SessionExpired,
+        a2m_auth::codes::NEEDS_LOGIN,
+        format!("{shown}: the target declares it as a sign that the session has ended."),
+        "The session is signed in again by the session keeper; resume the run, or sign in with `anything2mcp session login`.",
+    )
 }

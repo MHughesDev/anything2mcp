@@ -1485,6 +1485,33 @@ impl<'a> Compiler<'a> {
                     entry: name.to_owned(),
                 }))
             }
+            [] if self.mode == CompileMode::Draft
+                && !self
+                    .sources
+                    .docs_of(k::OPERATION)
+                    .any(|doc| doc.text("operation") == Some(name)) =>
+            {
+                // A system that answers no read before a sign-in leaves
+                // nothing to draft a probe from until the first session: a
+                // draft may name its probe first (decision 0252). A publish
+                // never may, and the plan's own check refuses one.
+                self.problems.push(
+                    Diagnostic::error(
+                        kernel(codes::PROBE_PENDING),
+                        Stage::Resolve,
+                        &named.at,
+                        format!(
+                            "The probe `{}` is not drafted yet: this draft's sign-in is not confirmed until the read exists and passes, and the target cannot be published until then.",
+                            shown(name)
+                        ),
+                        "Sign in, let the scout draft a read, and name it here, or write the read by hand; `probe_inputs` are checked once it exists.",
+                    )
+                    .as_warning(),
+                );
+                Some(ProbePlan::Pending {
+                    name: name.to_owned(),
+                })
+            }
             [] => {
                 let known: Vec<&str> = self
                     .operations
@@ -2418,17 +2445,17 @@ impl<'a> Compiler<'a> {
                 Some(surface) => bindings.push({
                     review.bindings.push((mode.clone(), surface, statement));
                     BindingPlan {
-                    mode,
-                    verb,
-                    status,
-                    surface,
-                    act: lowered.act,
-                    confirm: lowered.confirm,
-                    read_back: lowered.read_back,
-                    lookup: lowered.lookup,
-                    settle_ms: lowered.settle_ms,
-                    evidence,
-                    precondition,
+                        mode,
+                        verb,
+                        status,
+                        surface,
+                        act: lowered.act,
+                        confirm: lowered.confirm,
+                        read_back: lowered.read_back,
+                        lookup: lowered.lookup,
+                        settle_ms: lowered.settle_ms,
+                        evidence,
+                        precondition,
                     }
                 }),
                 None => fine = false,
@@ -2512,16 +2539,13 @@ impl<'a> Compiler<'a> {
             ));
         };
         let kind = &named.kind;
-        let owned = self
-            .set
-            .file_kind(kind, surface.kind)
-            .filter(|registered| {
-                registered.pack == pack
-                    || lowering
-                        .reads()
-                        .iter()
-                        .any(|(read, of)| read == kind && of == surface.kind)
-            });
+        let owned = self.set.file_kind(kind, surface.kind).filter(|registered| {
+            registered.pack == pack
+                || lowering
+                    .reads()
+                    .iter()
+                    .any(|(read, of)| read == kind && of == surface.kind)
+        });
         let Some(registered) = owned else {
             return Err((
                 format!(

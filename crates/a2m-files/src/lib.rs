@@ -71,4 +71,5 @@ pub use yaml::{normalize_text, parse as parse_yaml};
 mod tests {
     mod drafter;
     mod example;
+    mod review;
 }

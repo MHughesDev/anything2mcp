@@ -10,7 +10,7 @@ The pack is one crate, `a2m-pack-mcp`. It has no base crate and depends on no ot
 
 | Reaches | How |
 | --- | --- |
-| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. Not built on Windows |
+| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. On every system it speaks over its standard streams, and before every start it is held to the provider's check of who may change it, as a command program is: its file and every folder on the way closed to other users, and no shell, interpreter, batch file, or script ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). A server that an interpreter runs from a script is not started yet |
 | A remote MCP server | Over HTTP, at the address its `mcp` surface declares, with the protocol's own authorization. As built: HTTP with a bearer token, and HTTPS in a build with the feature `tls` ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)); the protocol's authorization flow is not built |
 | A server used only to help discovery | A mapping with `purpose: discovery`, whose tools can never be bound to an operation |
 
@@ -145,7 +145,7 @@ As built, the drafter writes the mapping entry for either kind of tool, and the 
 | `mcp.program_unpinned` | Error | A local server program with no digest |
 | `mcp.write_no_readback` | Error, unless the tool is mapped `irreversible` | A write tool with no mapped read tool |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
-| `mcp.environment_refused` | Error | A local server program is handed a variable of the engine's (a name that starts with `A2M_`) or one named for a credential. The driver refuses them again at run time |
+| `mcp.environment_refused` | Error | A local server program is handed a variable of the engine's (a name that starts with `A2M_`), one that makes a program load code other than its own ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)), or one named for a credential. The driver refuses them again at run time, and the supervisor refuses the first two |
 | `mcp.free_text` | Warning at the mapping, error at a binding | A mapped tool whose entry says `free_text: true`: a reviewer found that the server runs the text it is given. The tool is never called, and a binding that uses it does not compile. The compiler sees a tool's digest and not its schema, so the driver is what refuses a one-string tool that no reviewer has cleared |
 | `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted |
 | `mcp.unencrypted_credentials` | Warning | A surface declares `unencrypted_credentials: accepted`: its credentials cross an unencrypted link to another machine |

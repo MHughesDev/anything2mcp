@@ -24,7 +24,7 @@ use a2m_core::{
 const VERSION: Version = Version::new(1, 0, 0);
 
 /// Every file of the example target, as bytes, with line feeds.
-fn example_files() -> Vec<(RelPath, Vec<u8>)> {
+pub(super) fn example_files() -> Vec<(RelPath, Vec<u8>)> {
     fn walk(folder: &Path, prefix: &str, out: &mut Vec<(RelPath, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
             .unwrap()
@@ -302,6 +302,15 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            // The upsert's call is filled by its inputs: not one place.
+            "kernel.place_not_fixed",
+            Case::Edit(
+                UPSERT,
+                "key: [order_id, item_code]",
+                "identity: {strategy: natural, place: fixed}",
+            ),
+        ),
+        (
             "kernel.write_without_read_back",
             Case::Edit(UPSERT, "    read_back: {call: line_item_get}\n", ""),
         ),
@@ -351,6 +360,12 @@ fn cases() -> Vec<(&'static str, Case)> {
                 "auth.yaml",
                 "probe: example_order_get",
                 "probe: example_line_item_upsert",
+            ),
+        ),
+        (
+            "kernel.probe_pending",
+            Case::Elsewhere(
+                "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
             ),
         ),
         (
@@ -724,7 +739,9 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
             assert!(
                 test.starts_with("the_loader")
                     || test.starts_with("what_a_faulty")
-                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation",
+                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation"
+                    || *test
+                        == "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
                 "{code}"
             );
             continue;

@@ -33,6 +33,7 @@
 //! `ui` mode, and it holds here the same.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
@@ -44,9 +45,9 @@ use a2m_files::{
     ResolvedBinding, Stage, StepCommits,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, AntiForgery, BodyEncoding, Browsers, Dispatch, FieldValue, Look, ObserveTab,
-    Origins, PageAnswer, PageEnvironment, PagePath, PageWrite, ProfileKey, SafeRequests, TokenFrom,
-    TokenTo, Visibility, WriteMethod,
+    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
+    FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
+    Primitive, ProfileKey, SafeRequests, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
 use a2m_provider::{
     BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -61,9 +62,10 @@ use crate::driver::{
     TabSetup, acting, browser_failure, fail, refusal, segment, tab_setup, until, within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
-use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, TabKind};
+use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
 use crate::requests::{Kind, PageRequest, REQUEST_KIND, RequestSection, WriteForm, pattern};
-use crate::screens::{PACK, WEB_SURFACE, problem};
+use crate::screens::{PACK, SCREEN_KIND, WEB_SURFACE, problem};
+use crate::sign_in::{ExpirySigns, session_ended};
 
 /// The name of the mode.
 pub const PAGE_HTTP_MODE: &str = "page_http";
@@ -87,6 +89,11 @@ const READ_VERBS: &[&str] = &["read"];
 const WRITE_VERBS: &[&str] = &["update"];
 
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
+
+/// The longest a `goto` that landed on another address waits for a page
+/// the target declares as a sign of expiry to show. The page has loaded by
+/// then; this bounds a wait on a named condition, it is not a sleep.
+const EXPIRY_LOOK: Duration = Duration::from_secs(5);
 
 /// The payload of a `request` step.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -771,6 +778,8 @@ struct Session {
     to_act: Option<ToAct>,
     origin: String,
     sections: BTreeMap<usize, RequestSection>,
+    /// The signs the target declares that the session has ended.
+    expiry: ExpirySigns,
     /// What the run may do. A write is sent in a live run, and against a
     /// declared test record for the step marked as the commit point.
     posture: Posture,
@@ -894,6 +903,12 @@ impl Session {
         // sent from it.
         let landed = rest.split(['?', '#']).next().unwrap_or_default();
         if landed != path {
+            if let Some(sign) = self.expiry_shown(deadline).await? {
+                return Err(StepFailure::not_sent(session_ended(format!(
+                    "The page of the request `{name}` was answered with the screen `{}`",
+                    shown(&sign)
+                ))));
+            }
             return Err(StepFailure::not_sent(fail(
                 FailureClass::UnknownVariant,
                 codes::UNEXPECTED_PAGE,
@@ -923,6 +938,45 @@ impl Session {
             )],
             ..Observed::default()
         }))
+    }
+
+    /// The screen the target declares as a sign of expiry that the page
+    /// in the tab the last `goto` chose shows, if one does: waited for as
+    /// a named condition, up to [`EXPIRY_LOOK`].
+    async fn expiry_shown(&self, deadline: Deadline) -> Result<Option<String>, StepFailure> {
+        if self.expiry.screens.is_empty() {
+            return Ok(None);
+        }
+        let any = Primitive::Any(
+            self.expiry
+                .screens
+                .iter()
+                .map(|(_, ready)| ready.primitive())
+                .collect(),
+        );
+        let bounded = Deadline::after(EXPIRY_LOOK.min(deadline.remaining()));
+        match self.look(&any, bounded).await {
+            Ok(()) => {}
+            Err(BrowserError::Timeout { .. }) => return Ok(None),
+            Err(error) => return Err(browser_failure(&error, "the page's state")),
+        }
+        for (sign, ready) in &self.expiry.screens {
+            let once = Deadline::after(Duration::from_millis(250).min(bounded.remaining()));
+            match self.look(&ready.primitive(), once).await {
+                Ok(()) => return Ok(Some(sign.clone())),
+                Err(BrowserError::Timeout { .. }) => {}
+                Err(error) => return Err(browser_failure(&error, "the page's state")),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Waits for a condition in the tab the last `goto` chose.
+    async fn look(&self, condition: &Primitive, deadline: Deadline) -> Result<(), BrowserError> {
+        match (self.on, &self.acting) {
+            (TabKind::Act, Some(tab)) => tab.wait(condition, deadline).await,
+            _ => self.looking.wait(condition, deadline).await,
+        }
     }
 
     /// The path of a request, from the step's arguments.
@@ -980,6 +1034,15 @@ impl Session {
             Detail::new("status", answer.status.to_string()),
             Detail::new("media_type", shown(&answer.media_type)),
         ];
+        // A status the target declares as a sign that the session has
+        // ended. The prepare refused an entry that reads the same status
+        // as a record or as its absence.
+        if self.expiry.statuses.contains(&answer.status) {
+            return Err(StepFailure::answered(session_ended(format!(
+                "The request `{name}` was answered with the status {}",
+                answer.status
+            ))));
+        }
         if step.lookup && entry.absent.contains(&answer.status) {
             means.push(Detail::new("found", "absent"));
             return Ok(StepOutcome::Absent(Observed {
@@ -1385,6 +1448,47 @@ impl PageHttpDriver {
                     .map_err(|_| codes::not_usable("its page requests do not decode"))?,
             );
         }
+        // The target's signs that the session has ended: its screens, of
+        // this pack, and the statuses of an answer.
+        let mut screens = BTreeMap::new();
+        for (position, section) in cx.plan.packs.iter().enumerate() {
+            let own = section.pack == PACK
+                && section.kind == SCREEN_KIND
+                && section.surface_kind == surface.kind;
+            if !own {
+                continue;
+            }
+            if section.format != PAYLOAD_FORMAT {
+                return Err(codes::not_usable(format!(
+                    "its screens are in format {}, and this pack reads format {PAYLOAD_FORMAT}",
+                    section.format
+                )));
+            }
+            screens.insert(
+                position,
+                section
+                    .payload
+                    .decode::<ScreenSection>()
+                    .map_err(|_| codes::not_usable("its screens do not decode"))?,
+            );
+        }
+        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &screens)
+            .map_err(codes::not_usable)?;
+        // A status that is both a sign of expiry and a record, or its
+        // absence, could not be told apart: unknown means stop.
+        for (name, entry) in sections.values().flatten() {
+            let read_as = entry
+                .absent
+                .iter()
+                .chain(&entry.ok)
+                .chain(entry.ok.is_empty().then_some(&200));
+            if let Some(status) = read_as.into_iter().find(|status| expiry.statuses.contains(status)) {
+                return Err(codes::not_usable(format!(
+                    "the page request `{}` reads the status {status}, which the target also declares as a sign that the session has ended",
+                    shown(name)
+                )));
+            }
+        }
         // Every session looks through an observing tab, in which the
         // browser fails every request of the page that could change the
         // system, and none is marked safe. Every read runs there.
@@ -1410,6 +1514,7 @@ impl PageHttpDriver {
             }),
             origin,
             sections,
+            expiry,
             posture: cx.posture,
         })
     }
