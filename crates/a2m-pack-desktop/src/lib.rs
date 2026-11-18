@@ -55,7 +55,7 @@ use a2m_provider::{
     CompilerRegistrations, DiscovererName, Pack, PackContext, Registrar, RegistryBuilder,
 };
 
-pub use lower::{GOTO, READ, SNAPSHOT, WAIT};
+pub use lower::{GOTO, INVOKE, READ, SET, SNAPSHOT, WAIT};
 pub use screens::{CONTROLS, DESKTOP_SURFACE, PACK, SCREEN_KIND};
 
 /// The name of the mode this pack drives.

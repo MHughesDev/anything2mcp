@@ -473,6 +473,12 @@ impl Kernel {
                         .and_then(|seconds| u64::try_from(seconds).ok())
                         .unwrap_or(60),
                 ),
+                shadow_limit: Duration::from_millis(
+                    self.settings()
+                        .int("engine.shadow.time_limit_ms")
+                        .and_then(|millis| u64::try_from(millis).ok())
+                        .unwrap_or(2_000),
+                ),
                 ..EngineSettings::default()
             },
         });

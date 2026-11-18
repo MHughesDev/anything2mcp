@@ -179,6 +179,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `engine.retries.transient` | 0 to 5 | 2 | U | no |
 | `engine.time_limit_ceiling_seconds` | Seconds; the longest step time limit a target may declare here | A draft: 600 | I | no |
 | `engine.shadow.matches_to_promote.read`, `engine.shadow.matches_to_promote.write` | Counts | 5, 20 | I | yes |
+| `engine.shadow.time_limit_ms` | Milliseconds, 100 to 60000; how long a binding in shadow may read beside a live read before it is left uncompared | 2000 | U | no |
 | `engine.promoted_writes` | `after_promotion`, `never`: whether writes may use a binding promoted from shadow | `after_promotion` | U | no |
 | `ledger.intent_window.<mode>` | 1 up to the manifest's value | The mode's `intent_window` in its manifest | U | no |
 | `modes.disabled` | Modes that may not be used here | None | U | no |

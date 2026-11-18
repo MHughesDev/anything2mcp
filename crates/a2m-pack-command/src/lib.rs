@@ -143,3 +143,34 @@ fn groups_invalid() -> Failure {
 pub fn register(builder: &mut RegistryBuilder) {
     builder.add_pack(&CommandPack);
 }
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Value, Values};
+
+    use super::{admin_groups, safety::Trust};
+
+    #[test]
+    fn the_named_groups_are_numbers_and_nothing_else() {
+        let with = |items: Vec<&str>| {
+            Values::new().with(
+                "admin_groups",
+                Value::List(items.into_iter().map(Value::from).collect()),
+            )
+        };
+        assert_eq!(admin_groups(&Values::new()), Ok(Trust::default()));
+        assert_eq!(
+            admin_groups(&with(vec!["80", "1000"])),
+            Ok(Trust::with_groups(vec![80, 1000]))
+        );
+        // A name is never looked up, and a number is a whole group id.
+        for bad in ["staff", "-1", "", "4294967296", " 80"] {
+            let failure = admin_groups(&with(vec![bad])).unwrap_err();
+            assert_eq!(
+                failure.code(),
+                &a2m_provider::codes::PACK_SETTINGS_INVALID,
+                "{bad}"
+            );
+        }
+    }
+}

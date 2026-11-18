@@ -26,11 +26,12 @@ use a2m_core::{
 };
 use a2m_engine::{
     BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
-    SessionWant, encode_values,
+    SessionWant, ShadowCompared, encode_values,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld,
     NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
+    ShadowComparison,
 };
 use a2m_policy::{Context, LimitCheck, ModuleName, Outcome, Question, Resource, ToolRef};
 use a2m_sched::{BudgetKey, LeaseRef, RateLimit, ResourceKey};
@@ -901,6 +902,35 @@ impl Control for InProcessControl {
                     kind: blob.kind,
                     class: blob.class,
                     plain: blob.bytes,
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    /// The ledger keeps how a binding in shadow compared (decision 0207).
+    /// The engine asks only for a live read that is not a try, a test, or a
+    /// pinned call; the ledger refuses anything else on its own.
+    fn keeps_shadow(&self) -> bool {
+        true
+    }
+
+    fn shadow<'a>(&'a self, compared: ShadowCompared) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let comparison = ShadowComparison {
+                fence: self.fence,
+                operation: compared.operation,
+                binding: compared.shadow.digest,
+                mode: compared.shadow.mode,
+                position: u32::try_from(compared.shadow.position).unwrap_or(u32::MAX),
+                against: compared.verified.digest,
+                writes: compared.writes,
+                outcome: compared.outcome,
+            };
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.shadow().record(&comparison).map(|_| ())
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))

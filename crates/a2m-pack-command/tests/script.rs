@@ -272,10 +272,11 @@ async fn the_shell_and_python_receive_each_value_as_literal_text() {
     }
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn a_script_changed_after_its_declaration_is_refused_before_anything_starts() {
-    let pair = shell_pair();
+    let Some(pair) = native_pair() else {
+        return;
+    };
     let scene = Scene::new(&pair);
     std::fs::write(&scene.script, format!("{}echo changed\n", pair.text)).unwrap();
     let failure = scene.run(&pair).await.unwrap_err();
@@ -331,8 +332,7 @@ async fn an_interpreter_another_user_can_replace_is_refused() {
 }
 
 #[cfg(windows)]
-#[tokio::test]
-async fn powershell_receives_each_value_as_literal_text() {
+fn powershell_pair() -> Option<Pair> {
     let root =
         std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     let interpreter = root
@@ -345,17 +345,34 @@ async fn powershell_receives_each_value_as_literal_text() {
             "skipped: no Windows PowerShell at {}",
             interpreter.display()
         );
-        return;
+        return None;
     }
-    let pair = Pair {
+    Some(Pair {
         interpreter,
         fixed: &["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"],
         name: "echo.ps1",
         text: "$bytes = New-Object System.Collections.Generic.List[byte]\r\nforeach ($a in $args) { $bytes.AddRange([System.Text.Encoding]::UTF8.GetBytes([string]$a)); $bytes.Add(0) }\r\n[System.IO.File]::WriteAllBytes($env:EXAMPLE_OUT, $bytes.ToArray())\r\n".to_owned(),
         // PowerShell takes `--` as its own end of parameters.
         dashes: false,
-    };
-    each_value_arrives_as_it_was(&pair).await;
+    })
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_receives_each_value_as_literal_text() {
+    if let Some(pair) = powershell_pair() {
+        each_value_arrives_as_it_was(&pair).await;
+    }
+}
+
+/// The pair every system has: the shell on Unix, PowerShell on Windows.
+fn native_pair() -> Option<Pair> {
+    #[cfg(unix)]
+    return Some(shell_pair());
+    #[cfg(windows)]
+    return powershell_pair();
+    #[cfg(not(any(unix, windows)))]
+    return None;
 }
 
 #[cfg(target_os = "macos")]
@@ -376,4 +393,51 @@ async fn osascript_receives_each_value_as_literal_text() {
         dashes: false,
     };
     each_value_arrives_as_it_was(&pair).await;
+}
+
+#[cfg(unix)]
+#[test]
+fn the_pair_is_held_to_its_rules_where_the_files_are_compiled() {
+    let pair = shell_pair();
+    let folder = Folder::new("pair-rules");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let out = folder.path().join("received.bin");
+    let digest = Digest::of(pair.text.as_bytes());
+    let base = files(&pair, "scripts/echo.sh", &digest, &out);
+    let refused = |from: &str, to: &str, code: &str| {
+        let changed: Vec<(String, String)> = base
+            .iter()
+            .map(|(path, text)| {
+                if path == "commands/echo.yaml" {
+                    assert!(text.contains(from), "`{from}` is not in the file");
+                    (path.clone(), text.replacen(from, to, 1))
+                } else {
+                    (path.clone(), text.clone())
+                }
+            })
+            .collect();
+        let problems = common::compile(&changed, registry.compiler_set())
+            .err()
+            .unwrap_or_else(|| panic!("`{to}` compiled"));
+        assert!(
+            problems.iter().any(|problem| problem.code.as_str() == code),
+            "{to}: {problems:#?}"
+        );
+    };
+    assert!(common::compile(&base, registry.compiler_set()).is_ok());
+    // The interpreter is never handed a flag that runs what follows it.
+    refused(
+        "interpreter: {args: []}",
+        "interpreter: {args: ['-c']}",
+        "command.code_flag",
+    );
+    // A command on an interpreter names its script; one elsewhere names none.
+    let line = format!("    script: {{path: 'scripts/echo.sh', digest: \"sha256:{digest}\"}}\n");
+    refused(&line, "", "command.script_malformed");
+    refused("  interpreter: {args: []}\n", "", "command.shell_program");
+    refused(
+        "digest: \"sha256:",
+        "digest: \"sha1:",
+        "command.digest_invalid",
+    );
 }

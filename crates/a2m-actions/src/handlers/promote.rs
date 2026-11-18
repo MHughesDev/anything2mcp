@@ -148,16 +148,7 @@ fn locate(
     let pin = a2m_engine::BindingPin::of(plan, operation, position).ok_or_else(no_tool)?;
     let status = operation.bindings[position].status;
     match status {
-        BindingStatus::Draft | BindingStatus::Verified => {}
-        BindingStatus::Shadow => {
-            return Err(codes::input(
-                codes::ACTION_NOT_BUILT,
-                format!(
-                    "The binding of `{mode}` of `{tool}` is `shadow`: it is promoted on its exact matches against the verified binding, and that comparison is not built."
-                ),
-                "Keep it in shadow; `shadow.report` and its promotion come with the shadow comparison.",
-            ));
-        }
+        BindingStatus::Draft | BindingStatus::Verified | BindingStatus::Shadow => {}
         BindingStatus::Retired => {
             return Err(not_promotable(
                 format!(

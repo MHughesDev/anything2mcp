@@ -612,6 +612,17 @@ pub const SCHEMA: &[SettingDef] = &[
         Safer::Higher,
     ),
     def(
+        "engine.shadow.time_limit_ms",
+        Kind::Int {
+            min: 100,
+            max: 60_000,
+        },
+        N(2_000),
+        U,
+        NextStart,
+        "How long a binding in shadow may read beside a live read before it is left uncompared.",
+    ),
+    def(
         "engine.promoted_writes",
         Kind::Word(&["after_promotion", "never"]),
         T("after_promotion"),
