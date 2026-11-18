@@ -119,3 +119,13 @@ Every record above that is not the owner's. The widest-reaching: a sign-in goes 
 1. **Read this entry, then pull request 16's CI result.** Mend what fails on Windows and macOS with commits built on 0a09a5b from the named files alone, and merge when every check passes. Expect the first runs there of the watch tests (and their timing on slower runners), the publish page, and the command pack's readers; watch whether the lost answer on macOS comes again, and read its phrase if it does.
 2. **Then the registry lane, one package at a time in `a2m-actions`:** W2b, the cancels of decision 0285; then W2c; the command-line package, its answers carrying their next step and a retry hint, and an MCP failure carrying the same data as every face, with the decision of 0281.
 3. **Alongside, in crates nobody holds:** FC2, the seven crates outside the failure-code form, one at a time; P2 and P3, the remaining packs' statements and the browser's request gap; the scout's readers X1 and X4b, and the spike X7; package N2b; D7 and D8 of decision 0271.
+
+## Pull request 16 in CI
+
+Four runs. What each showed:
+
+- A product fault on macOS: the walk went inside the title bar's own buttons, whose contents change between walks ([decision 0286](../decisions/0286-the-macos-walk-lists-a-title-bars-buttons-and-walks-nothing-under-them.md)).
+- A product fault on Linux: a connection the engine closed untaken was reported as `channel_unavailable`; it is `connection_lost`. Reproduced in 61 of 300 runs before, 0 of 300 after.
+- A wrong test: it asked for nothing in hand between the engine's write that ends a run and the runner's record of the job's end (decision 0132). It now waits for the runner's notice.
+- The hosted macOS runners: one full Rust job ran its tests twice as slowly as usual and met its limit of 30 minutes, with three browser tests past their deadlines on it; and in three runs a macOS job was cancelled 15 minutes after it was queued, with no log. Not established: why. Six macOS jobs start at once, so the macOS desktop job now waits for the wheel-and-npm jobs. No limit was raised. The browser tests' deadlines on a slow machine are work still owed.
+- This session may not rerun a job; a cancelled job runs again only with a new commit.

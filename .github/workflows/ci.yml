@@ -409,6 +409,14 @@ jobs:
     # image changes.
     runs-on: macos-15
     timeout-minutes: 40
+    # Six macOS jobs start with a pull request (three here besides this one,
+    # two wheels in the release check). In three runs of one pull request a
+    # macOS job was cancelled fifteen minutes after it was queued, with no
+    # log, which reads as never having been given a runner. This one waits
+    # for the wheel-and-npm jobs, so five ask at once; it runs whatever they
+    # found.
+    needs: bindings
+    if: ${{ !cancelled() }}
     env:
       # A test program that may not use the accessibility interface fails each
       # test, naming itself, instead of skipping it.
