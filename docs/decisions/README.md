@@ -224,5 +224,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0218 | [The desktop pack writes on Linux through a second closed list, and reads back what is stored](0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md) | Accepted (design decision) |
 | 0231 | [The owner's direction is written in exact words of the agent's own](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md) | Accepted (owner decision) |
 | 0220 | [A first run on Linux needs no administrator's file](0220-a-first-run-on-linux-needs-no-administrators-file.md) | Accepted (design decision) |
-| 0223 | [A network is a place, a recognized network, and a reach](0223-a-network-is-a-place-a-recognized-network-and-a-reach.md) | Accepted (design decision) |
-| 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Accepted (design decision) |
+| 0223 | [A network is a place, a recognized network, and a reach](0223-a-network-is-a-place-a-recognized-network-and-a-reach.md) | Proposed (design decision) |
+| 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Proposed (owner decision) |

@@ -154,7 +154,7 @@ pub(crate) async fn compile_in(
 /// names the step that can succeed. Nothing is stored: an offline test runs
 /// in a store of its own.
 pub(crate) async fn publish_next(kernel: &Kernel, call: &Call, target: &TargetName, ready: Next) -> Next {
-    let tests = |when: String| Next::new("test.run", json!({"target": target.as_str()}), when);
+    let tests = |when: String| Next::new("test.run", json!({"target": target.as_str()}), &when);
     let Ok(project_folder) = call.project_folder().map(std::path::Path::to_path_buf) else {
         return ready;
     };
