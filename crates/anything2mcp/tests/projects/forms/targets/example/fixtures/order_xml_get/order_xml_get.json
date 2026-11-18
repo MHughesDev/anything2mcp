@@ -1,1 +1,1 @@
-{"order_id": "A-900", "status": "draft", "customer": "Synthetic Customer", "items": [{"record": {"item_code": "L-901", "quantity": 2, "length_in": "12"}}]}
+{"order_id": "A-900", "status": "draft", "customer": "Synthetic Customer", "item_codes": ["L-901"], "quantities": [2]}

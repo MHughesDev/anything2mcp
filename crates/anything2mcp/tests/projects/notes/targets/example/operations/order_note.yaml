@@ -1,0 +1,21 @@
+# The text of the constant `NOTE_UPDATE` of the web pack's test of writes
+# from inside a page (decision 0206), with its binding verified, so that a
+# publish lets it act.
+operation: example_order_note_update
+title: Change an order's note
+effect: write
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  note: {type: text, description: "The note"}
+outputs:
+  note: {type: text}
+bindings:
+  - mode: page_http
+    verb: update
+    status: verified
+    endpoint: example_order_note_put
+    body: {note: input.note}
+    read_back: {endpoint: example_order_note_get}
+description: >
+  Changes the note of one order from inside the page of that note.

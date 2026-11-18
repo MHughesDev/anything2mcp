@@ -521,11 +521,19 @@ handler!(
                 json!({"target": target.as_str()}),
                 "after correcting the files the problems name",
             ),
-            (true, None) => Next::new(
-                "publish.request",
-                json!({"target": target.as_str()}),
-                "when the drafts are ready for a person's review",
-            ),
+            (true, None) => {
+                super::build::publish_next(
+                    kernel,
+                    &call,
+                    &target,
+                    Next::new(
+                        "publish.request",
+                        json!({"target": target.as_str()}),
+                        "when the drafts are ready for a person's review",
+                    ),
+                )
+                .await
+            }
             (true, Some(_)) => Next::new(
                 "tool.search",
                 json!({"target": target.as_str()}),

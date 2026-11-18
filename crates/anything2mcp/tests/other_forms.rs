@@ -25,6 +25,8 @@ async fn an_xml_and_a_text_answer_are_read_through_the_product() {
     let world = machine.open().await;
     let linted = world.ok(&["draft", "lint", "example"]).await;
     assert_eq!(linted["ok"], true, "{linted}");
+    let tested = world.agent(&["test", "example"]).await;
+    assert_eq!(tested.result()["passed"], true, "{}", tested.json);
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);
 
