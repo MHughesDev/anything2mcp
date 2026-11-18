@@ -449,10 +449,10 @@ fn digest_of(program: &Path) -> Option<String> {
 /// The digest of the program a process runs: of the file at `want`, the
 /// path the system gave for the process's image, taken only when the
 /// system still gives that path once the file is read. The system's path
-/// follows the image's file, and the system refuses to write a file that
-/// is mapped as a running image, so a file moved away and another put in
-/// its place while it was read is not taken for the running one
-/// (decision 0244).
+/// follows the image's file, so a file moved away and another put in its
+/// place while it was read is not taken for the running one. A change of
+/// the file's content in place is not caught here; that the system refuses
+/// it for a running image is from memory, not verified (decision 0244).
 fn running_digest(process: u32, want: &Path) -> Option<String> {
     let digest = digest_of(want)?;
     image_of(process)

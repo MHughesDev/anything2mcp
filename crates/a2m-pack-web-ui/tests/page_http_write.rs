@@ -855,7 +855,10 @@ async fn an_answer_that_quotes_the_token_in_any_spelling_is_withheld_whole() {
         (FailureClass::PossibleCommit, "no_confirmation")
     );
     assert!(ran.failure.said().is_none(), "{:?}", ran.failure.said());
-    scene.handle_of(&page_http_mode()).release(prepared, true).await;
+    scene
+        .handle_of(&page_http_mode())
+        .release(prepared, true)
+        .await;
     said.extend(bytes_below(&scene.stand.folder.path().join("logs")));
     let upper = TOKEN_PREFIX.to_uppercase();
     assert!(!holds(&said, TOKEN_PREFIX));

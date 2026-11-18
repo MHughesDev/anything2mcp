@@ -47,10 +47,27 @@ use crate::runner::CallerFacts;
 const LOCK_WAIT: Duration = Duration::from_secs(60);
 
 /// The keeper's entry for a surface's sign-in, field by field from the
-/// plan (decision 0121). `session.login` builds the same entry from the
-/// same plan, so a sign-in a person makes is the session a run leases.
-pub(crate) fn entry_of(auth: &a2m_core::AuthPlan) -> AuthEntry {
+/// plan (decision 0121), with what the plan says of its surfaces in
+/// `environment`: the surfaces the entry covers and every address the
+/// target declares, where the sign-in may send (decisions 0245 and 0248).
+/// `published` says the plan is a published version's: only the caller
+/// that knows where the plan came from says so, and a drafts' entry is
+/// never used to sign in or renew without the person. `session.login`
+/// builds the same entry from the same plan, so a sign-in a person makes is
+/// the session a run leases.
+pub(crate) fn entry_of(
+    plan: &Plan,
+    auth: &a2m_core::AuthPlan,
+    environment: &a2m_core::Environment,
+    published: bool,
+) -> AuthEntry {
     let mut entry = AuthEntry::new(auth.provider.clone());
+    let surfaces = a2m_auth::EntrySurfaces::of(plan, auth, environment);
+    entry.surfaces = if published {
+        surfaces.published()
+    } else {
+        surfaces
+    };
     for setting in &auth.settings {
         entry = entry.setting(&setting.name, &setting.value);
     }
@@ -247,7 +264,20 @@ impl Control for InProcessControl {
                         "Declare the surface in the target's auth file, then publish again.",
                     )
                 })?;
-            let entry = entry_of(auth);
+            // A plan a trial or a discovery runs from the drafts is kept in
+            // memory as a draft; every other plan a run holds is a
+            // published version's (decision 0248).
+            let drafted = self
+                .kernel
+                .inner
+                .drafts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .any(|((target, hash), _)| {
+                    *target == self.run.target && *hash == self.run.target_version
+                });
+            let entry = entry_of(&self.plan, auth, &self.run.environment, !drafted);
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {

@@ -324,7 +324,9 @@ async fn write(
         // A token that came in the body is quoted in the message too, in
         // capitals, as an application that echoes what it refused in a
         // spelling of its own does (decision 0245, audit finding S4).
-        let mut message = "A note is 1 to 200 characters of text on one line, and the body holds nothing else.".to_owned();
+        let mut message =
+            "A note is 1 to 200 characters of text on one line, and the body holds nothing else."
+                .to_owned();
         if from_body {
             message.push_str(&format!(" The page's token was {}.", token.to_uppercase()));
         }

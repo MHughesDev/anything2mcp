@@ -440,6 +440,25 @@ mod tests {
         assert!(Json::parse(deep.as_bytes()).is_err());
     }
 
+    /// An object of 200,000 names, under the ceiling of an answer, was once
+    /// a comparison of every name with every name before it (decision
+    /// 0249). Its work is now linear in its names, and a set flag stops it.
+    #[test]
+    fn many_names_are_read_in_time_that_grows_with_their_number() {
+        let names: Vec<String> = (0..200_000).map(|n| format!("\"a{n}\":0")).collect();
+        let body = format!("{{{}}}", names.join(","));
+        let began = std::time::Instant::now();
+        let json = Json::parse(body.as_bytes()).unwrap();
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        assert!(matches!(json, Json::Object(entries) if entries.len() == 200_000));
+        let twice = format!("{{{},\"a7\":1}}", names.join(","));
+        assert!(Json::parse(twice.as_bytes()).is_err());
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        let list = format!("[{}]", vec!["0"; 10_000].join(","));
+        assert!(Json::parse_until(list.as_bytes(), Some(&stop)).is_err());
+        assert!(Json::parse(list.as_bytes()).is_ok());
+    }
+
     #[test]
     fn text_is_written_so_that_it_reads_back() {
         let text = "quote \" slash \\ line \n tab \t bell \u{7} é \u{1f600}";

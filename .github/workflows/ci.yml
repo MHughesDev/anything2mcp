@@ -375,3 +375,85 @@ jobs:
           exit 0
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
+
+  desktop-macos:
+    name: The desktop pack on macOS, against its stand
+    # Written for the macos-15 image (Apple silicon). The permission database's
+    # `access` table there has the named columns the grant writes; other
+    # columns (pid, boot_uuid, ...) take their defaults. Check it again if the
+    # image changes.
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      # A test program that may not use the accessibility interface fails each
+      # test, naming itself, instead of skipping it.
+      A2M_REQUIRE_DESKTOP: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # So that a failure for want of a window server session, or of the
+      # permission, is recognisable.
+      - name: Say what this runner is
+        run: |
+          sw_vers
+          uname -a
+          id
+          echo "session manager: $(launchctl managername)"
+          echo "console user: $(stat -f %Su /dev/console)"
+          pgrep -lx WindowServer || echo "no WindowServer process"
+          pgrep -lx Dock || echo "no Dock process"
+          csrutil status || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" ".schema access" || echo "the permission database could not be read"
+          exit 0
+      # The test programs' paths carry a hash cargo chooses: build them first,
+      # so the grant names the very files the tests run.
+      - name: Build the tests without running them
+        run: |
+          cargo test --locked --no-run --message-format=json -p example-desk -p a2m-pack-desktop \
+            | jq -r 'select(.profile.test == true and .executable != null) | .executable' > "$RUNNER_TEMP/clients.txt"
+          cat "$RUNNER_TEMP/clients.txt"
+      # The CI runner only (decision 0242, point 14): the Accessibility
+      # permission is granted by writing this throwaway machine's own permission
+      # database as an administrator. No product code ever does this, and no
+      # instruction to a person ever says to: on a person's machine the person
+      # grants it in the system's settings.
+      - name: Grant the Accessibility permission to the test programs on this runner
+        run: |
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          clients="$RUNNER_TEMP/clients.txt"
+          # The programs above this shell too, in case the system judges the
+          # permission by the program that started the tests.
+          pid=$$
+          while [ "$pid" -gt 1 ]; do
+            program=$(ps -o comm= -p "$pid" | sed 's/^ *//')
+            case "$program" in /*) echo "$program" >> "$clients" ;; esac
+            pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+          done
+          sort -u "$clients" -o "$clients"
+          now=$(date +%s)
+          while IFS= read -r client; do
+            client=$(realpath "$client")
+            quoted=$(printf '%s' "$client" | sed "s/'/''/g")
+            done_it=no
+            for attempt in 1 2 3 4 5; do
+              if sudo sqlite3 -cmd ".timeout 10000" "$db" "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) VALUES('kTCCServiceAccessibility','$quoted',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$now);"; then
+                echo "granted: $client"; done_it=yes; break
+              fi
+              echo "attempt $attempt to grant $client failed"
+              sleep $((attempt * 2))
+            done
+            [ "$done_it" = yes ] || { echo "::error::the grant for $client did not take"; exit 1; }
+          done < "$clients"
+          echo "what the permission database now holds for Accessibility:"
+          sudo sqlite3 "$db" "SELECT client, client_type, auth_value FROM access WHERE service='kTCCServiceAccessibility';"
+          sudo launchctl kickstart -k system/com.apple.tccd || sudo killall tccd || true
+      # What the system now says for one test program: this test fails, naming
+      # the program, when the system still says the program is not trusted.
+      - name: Ask the system whether a test program may use the interface
+        run: cargo test --locked -p example-desk --test stand -- a_machine_without_the_programs_skips_unless_required --nocapture
+      - name: Test the desktop pack against its stand
+        run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop

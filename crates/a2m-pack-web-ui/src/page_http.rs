@@ -1248,7 +1248,8 @@ fn verdict(name: &str, entry: &PageRequest, write: &WriteForm, answer: &PageAnsw
     // word of it is read, and nothing says what became of the write.
     if answer.withheld {
         return Verdict::Unknown(
-            "its answer quoted the page's anti-forgery token, so the page withheld it whole".to_owned(),
+            "its answer quoted the page's anti-forgery token, so the page withheld it whole"
+                .to_owned(),
         );
     }
     let json = answer.media_type == "application/json" || answer.media_type.ends_with("+json");

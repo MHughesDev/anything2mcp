@@ -300,10 +300,7 @@ impl KeeperWorker {
         // to another target, or that would send to an address the target
         // does not declare; and nothing signs in or renews on a drafts'
         // word alone, without the person (decision 0248).
-        let reaches = matches!(
-            job.work,
-            Work::SignIn | Work::Renew(_) | Work::SignOut
-        );
+        let reaches = matches!(job.work, Work::SignIn | Work::Renew(_) | Work::SignOut);
         if reaches {
             if let Err(failure) =
                 crate::provider::checked(provider.as_ref(), &job.entry, &job.session.key.target)

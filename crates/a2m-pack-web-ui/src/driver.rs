@@ -26,10 +26,10 @@ use a2m_core::{
     Value,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
-    ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
-    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, looks_like_an_action,
-    path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input,
+    Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue,
+    ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
+    looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -40,8 +40,8 @@ use a2m_telemetry::{Acting, Detail};
 use crate::codes::{self, shown};
 use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
 use crate::model::{
-    Cond, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
-    ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
+    Cond, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows,
+    Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
 
@@ -1617,7 +1617,9 @@ pub(crate) fn tab_setup(
             lease.apply(&mut sink).map_err(unsent)?;
             if let Some(placed) = &sink.state {
                 let parsed = crate::sign_in::state_from(placed).ok_or_else(|| {
-                    codes::not_usable("the session's browser state is not in the form this pack places")
+                    codes::not_usable(
+                        "the session's browser state is not in the form this pack places",
+                    )
                 })?;
                 state = Some((format!("{}:{}", lease.session(), lease.epoch()), parsed));
             }

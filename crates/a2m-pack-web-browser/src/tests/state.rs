@@ -96,7 +96,10 @@ async fn a_session_is_taken_out_placed_in_a_fresh_browser_and_never_written_to_d
 
     // The browser kept it in memory: no file of its data directory holds it.
     let written = files_holding(&stand.folder.0, &value);
-    assert!(written.is_empty(), "the session cookie is on disk: {written:?}");
+    assert!(
+        written.is_empty(),
+        "the session cookie is on disk: {written:?}"
+    );
 
     // Placed into a fresh browser, it signs that browser in, once.
     let fresh = stand.open(&profile("second")).await;
@@ -111,6 +114,9 @@ async fn a_session_is_taken_out_placed_in_a_fresh_browser_and_never_written_to_d
     assert_eq!(app.auth_report().await.unwrap().sign_ins, 1);
     drop(tab);
     let written = files_holding(&stand.folder.0, &value);
-    assert!(written.is_empty(), "the session cookie is on disk: {written:?}");
+    assert!(
+        written.is_empty(),
+        "the session cookie is on disk: {written:?}"
+    );
     stand.end().await;
 }

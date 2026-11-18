@@ -9,6 +9,12 @@
 //! process. The probe is the target's declared read, run through the `ui`
 //! driver under a lease of its own, as the engine runs it.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -16,10 +22,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use a2m_auth::{
-    AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork,
-    Keeper, KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet,
-    Purpose, Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore,
-    StoredCredentials, Wait,
+    AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork, Keeper,
+    KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose,
+    Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
+    Wait,
 };
 use a2m_core::{
     DecisionId, Environment, Failure, FailureClass, Identity, Plan, PrincipalId, Redact, RunId,
@@ -130,7 +136,12 @@ async fn read(scene: &Scene, lease: &SessionLease) -> Result<Values, StepFailure
         .try_prepare_leased(&ui_mode(), None, Posture::Live, Some(lease))
         .await?;
     let ran = scene
-        .read(&handle, &mut prepared, "example_account_get", &Values::new())
+        .read(
+            &handle,
+            &mut prepared,
+            "example_account_get",
+            &Values::new(),
+        )
         .await;
     let _ = handle.release(prepared, false).await;
     ran.map(|ran| ran.values)
@@ -378,7 +389,11 @@ async fn a_wrong_password_is_refused_after_one_attempt_and_never_tried_again() {
     assert_eq!(refused.code().as_str(), "credential_refused");
     let report = world.app.auth_report().await.unwrap();
     assert_eq!(
-        (report.sign_in_attempts, report.failed_sign_ins, report.sign_ins),
+        (
+            report.sign_in_attempts,
+            report.failed_sign_ins,
+            report.sign_ins
+        ),
         (1, 1, 0)
     );
 
@@ -444,7 +459,11 @@ async fn a_second_factor_asked_with_nobody_there_is_a_named_stop() {
     assert_eq!(stopped.code().as_str(), "needs_mfa");
     let report = world.app.auth_report().await.unwrap();
     assert_eq!(
-        (report.sign_in_attempts, report.sign_ins, report.failed_codes),
+        (
+            report.sign_in_attempts,
+            report.sign_ins,
+            report.failed_codes
+        ),
         (1, 0, 0)
     );
     world.end().await;

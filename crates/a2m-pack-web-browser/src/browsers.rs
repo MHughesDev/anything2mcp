@@ -1045,7 +1045,9 @@ fn domain_covers(domain: &str, host: &str) -> bool {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn lost(error: &ClientError, redact: &dyn Redact) -> BrowserError {

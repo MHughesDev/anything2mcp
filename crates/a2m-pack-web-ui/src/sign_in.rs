@@ -32,7 +32,9 @@ use a2m_auth::{
     PersonAsk, PersonReason, ProfileRef, ProviderName, ProviderNeeds, RawSign, SignInContext,
     SignedIn,
 };
-use a2m_core::{AccountName, Digest, Failure, FailureClass, Identity, Secret, SessionId, Timestamp};
+use a2m_core::{
+    AccountName, Digest, Failure, FailureClass, Identity, Secret, SessionId, Timestamp,
+};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Input, Look, Origins,
     PageEnvironment, Primitive, ProfileKey, StateCookie, Visibility,
@@ -195,19 +197,21 @@ fn field_of(screen: &Screen, name: &str) -> Result<Field, Failure> {
 }
 
 fn action_of(screen: &Screen, name: &str) -> Result<Action, Failure> {
-    screen
-        .actions
-        .get(name)
-        .cloned()
-        .ok_or_else(|| invalid(&format!("its screen has no action `{}`", codes::shown(name))))
+    screen.actions.get(name).cloned().ok_or_else(|| {
+        invalid(&format!(
+            "its screen has no action `{}`",
+            codes::shown(name)
+        ))
+    })
 }
 
 fn variant_of(screen: &Screen, name: &str) -> Result<Variant, Failure> {
-    screen
-        .variants
-        .get(name)
-        .cloned()
-        .ok_or_else(|| invalid(&format!("its screen has no variant `{}`", codes::shown(name))))
+    screen.variants.get(name).cloned().ok_or_else(|| {
+        invalid(&format!(
+            "its screen has no variant `{}`",
+            codes::shown(name)
+        ))
+    })
 }
 
 impl Pages {
@@ -236,7 +240,9 @@ impl Pages {
             })
             .ok_or_else(|| invalid("the target has no screens"))?;
         if section.format != PAYLOAD_FORMAT {
-            return Err(invalid("its screens were compiled by another version of the web pack"));
+            return Err(invalid(
+                "its screens were compiled by another version of the web pack",
+            ));
         }
         let screens: ScreenSection = section
             .payload
@@ -489,7 +495,9 @@ impl FormLogin {
         // A sign that already shows could not be told from the answer.
         for sign in [Sign::Refused, Sign::Code, Sign::SignedIn] {
             if signs.holds(&tab, sign, deadline).await? {
-                return Err(no_sign("before the credential was entered; one of its signs already showed"));
+                return Err(no_sign(
+                    "before the credential was entered; one of its signs already showed",
+                ));
             }
         }
 
@@ -498,7 +506,9 @@ impl FormLogin {
         press(&tab, &pages.submit, deadline).await?;
 
         let deadline = Deadline::after(wait);
-        let mut sign = signs.next(&tab, deadline, "after the credential was sent").await?;
+        let mut sign = signs
+            .next(&tab, deadline, "after the credential was sent")
+            .await?;
         if sign == Sign::Code {
             let Some(code_pages) = &pages.code else {
                 return Err(no_sign("after the credential was sent"));
@@ -526,7 +536,9 @@ impl FormLogin {
             drop(code);
             press(&tab, &code_pages.submit, deadline).await?;
             let deadline = Deadline::after(wait);
-            sign = signs.next(&tab, deadline, "after the code was sent").await?;
+            sign = signs
+                .next(&tab, deadline, "after the code was sent")
+                .await?;
         }
         match sign {
             Sign::SignedIn => {}
@@ -650,7 +662,11 @@ async fn wait_for(
     }
 }
 
-async fn holds_now(tab: &ActTab, condition: &Primitive, deadline: Deadline) -> Result<bool, Failure> {
+async fn holds_now(
+    tab: &ActTab,
+    condition: &Primitive,
+    deadline: Deadline,
+) -> Result<bool, Failure> {
     let once = Deadline::after(LOOK_ONCE.min(deadline.remaining()));
     match tab.wait(condition, once).await {
         Ok(()) => Ok(true),
@@ -732,7 +748,9 @@ impl AuthProvider for FormLogin {
         entry.only(SETTINGS, &[USER, PASSWORD])?;
         for role in [USER, PASSWORD] {
             if !entry.credentials.contains_key(role) {
-                return Err(invalid(&format!("no credential is named for the role `{role}`")));
+                return Err(invalid(&format!(
+                    "no credential is named for the role `{role}`"
+                )));
             }
         }
         // A refused credential is a stop, never a second try: a lockout is
@@ -829,7 +847,9 @@ impl AuthProvider for FormLogin {
             .ok_or_else(incomplete)?;
         let mut placed = Vec::new();
         for (position, rule) in rules.into_iter().enumerate() {
-            let value = material.secret(&secret_part(position)).ok_or_else(incomplete)?;
+            let value = material
+                .secret(&secret_part(position))
+                .ok_or_else(incomplete)?;
             placed.push(PlacedCookie {
                 rule,
                 value: value.expose().to_owned(),

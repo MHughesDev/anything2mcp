@@ -83,9 +83,7 @@ pub(crate) fn origin_of(address: &str) -> Option<String> {
         return None;
     }
     let origin = parsed.origin();
-    origin
-        .is_tuple()
-        .then(|| origin.ascii_serialization())
+    origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
 /// The surfaces an auth entry covers, as the plan holds them for one

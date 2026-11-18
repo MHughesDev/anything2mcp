@@ -908,8 +908,9 @@ mod tests {
         assert!(used < 1_000_000, "{used}");
         assert!(took < Duration::from_secs(5), "{took:?}");
 
-        // 64 elements nested, the most the form allows, each declaring the
-        // address again: read, with nothing copied; one more is refused.
+        // Elements nested, each declaring the address again, as deep as the
+        // bound on namespaces in scope lets them: read, with nothing copied.
+        // Deeper, the document is refused by that bound or by its depth.
         let nested = |depth: usize| {
             format!(
                 "{}{}",
@@ -917,10 +918,13 @@ mod tests {
                 "</a>".repeat(depth)
             )
         };
-        let (read, used, _) = counted(nested(64).as_bytes(), &order_id(&declared), 10_000);
+        let (read, used, _) = counted(nested(63).as_bytes(), &order_id(&declared), 10_000);
         assert!(read.is_ok(), "{read:?}");
         assert!(used < 2_000, "{used}");
         let (read, _, _) = counted(nested(65).as_bytes(), &order_id(&declared), 10_000);
+        assert!(matches!(read, Err(Unread::TooLarge(_))), "{read:?}");
+        let plain = format!("{}{}", "<a>".repeat(65), "</a>".repeat(65));
+        let (read, _, _) = counted(plain.as_bytes(), &order_id(&declared), 10_000);
         assert!(too_large(&read, "nested deeper"), "{read:?}");
     }
 
