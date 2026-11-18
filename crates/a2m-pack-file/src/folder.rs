@@ -323,16 +323,21 @@ enum Held {
     No,
 }
 
-fn held(folder: &Folder, name: &str, ceiling: usize) -> Result<Held, StepFailure> {
-    let (found, _) = names(&folder.listed_path()?, ceiling)?;
+/// How `name` stands among the names a folder lists.
+fn standing(found: &[String], name: &str) -> Held {
     if found.iter().any(|held| held == name) {
-        return Ok(Held::Exactly);
+        return Held::Exactly;
     }
     let folded = name.to_lowercase();
     if found.iter().any(|held| held.to_lowercase() == folded) {
-        return Ok(Held::OtherCase);
+        return Held::OtherCase;
     }
-    Ok(Held::No)
+    Held::No
+}
+
+fn held(folder: &Folder, name: &str, ceiling: usize) -> Result<Held, StepFailure> {
+    let (found, _) = names(&folder.listed_path()?, ceiling)?;
+    Ok(standing(&found, name))
 }
 
 fn other_case() -> StepFailure {
@@ -340,6 +345,18 @@ fn other_case() -> StepFailure {
         codes::NAME_CASE_CONFLICT,
         "The folder holds an entry whose name differs from this one only in case. On a system that folds case they are one entry; on others they are two, so the pack does not take one for the other.",
         "Give the name exactly as the folder holds it, or choose a name that differs in more than case.",
+    )
+}
+
+/// The folder lists no name the pack takes for this one, and its file
+/// system finds an entry by this name all the same: it folds names by its
+/// own rules, which the pack does not repeat, such as one table of case or
+/// one form of letters written in two ways (decision 0272).
+fn other_form() -> StepFailure {
+    stop(
+        codes::NAME_CASE_CONFLICT,
+        "The folder's file system finds an entry by this name, and the folder lists it under another spelling: one that differs in case or in how its letters are composed. The pack does not take one for the other. Nothing was written.",
+        "Give the name exactly as the folder lists it, or choose a name that differs in more than its spelling.",
     )
 }
 
@@ -361,6 +378,9 @@ pub(crate) fn find(
     match held(&inner, last, ceiling)? {
         Held::Exactly => Ok(Some(look(&inner.beside(last)?, name.to_owned())?)),
         Held::OtherCase => Err(other_case()),
+        // Listed under no spelling the pack knows, and found by the file
+        // system's own folding all the same.
+        Held::No if fs::symlink_metadata(inner.beside(last)?).is_ok() => Err(other_form()),
         Held::No => Ok(None),
     }
 }
@@ -503,16 +523,37 @@ fn held_names(held: &HeldFolder, ceiling: usize) -> Result<Vec<String>, StepFail
 }
 
 /// How a name stands in a held folder.
-fn held_now(held: &HeldFolder, name: &str, ceiling: usize) -> Result<Held, StepFailure> {
-    let found = held_names(held, ceiling)?;
-    if found.iter().any(|held| held == name) {
-        return Ok(Held::Exactly);
+/// That no entry of the held folder has `name`, in any spelling the pack or
+/// the file system takes for it, for a name about to be given.
+fn name_free(held: &HeldFolder, name: &str, ceiling: usize) -> Result<(), StepFailure> {
+    match standing(&held_names(held, ceiling)?, name) {
+        Held::Exactly => Err(changed()),
+        Held::OtherCase => Err(other_case()),
+        Held::No => match held.kind(name) {
+            Ok(a2m_provider::EntryKind::Absent) => Ok(()),
+            Ok(_) => Err(other_form()),
+            Err(_) => Err(StepFailure::not_sent(unavailable(
+                "has an entry that cannot be looked at",
+            ))),
+        },
     }
-    let folded = name.to_lowercase();
-    if found.iter().any(|held| held.to_lowercase() == folded) {
-        return Ok(Held::OtherCase);
+}
+
+/// The commit point of a create and a rename: `to` given to what stands at
+/// `from`, which the system does only where nothing has the name. Where it
+/// says something has it and the folder lists none the pack takes for it,
+/// the file system folded the name.
+fn link_new(held: &HeldFolder, from: &str, to: &str, ceiling: usize) -> Result<(), StepFailure> {
+    match held.link(from, to) {
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            match held_names(held, ceiling).map(|found| standing(&found, to)) {
+                Ok(Held::No) => Err(other_form()),
+                Ok(Held::OtherCase) => Err(other_case()),
+                Ok(Held::Exactly) | Err(_) => Err(changed()),
+            }
+        }
+        other => linked(other),
     }
-    Ok(Held::No)
 }
 
 /// The folder was moved away, or another put at its path, after it was
@@ -588,11 +629,7 @@ fn create_with(
     let held = folder.held()?;
     // The roots' check sees the name: a device, a form no path may take.
     folder.file(name)?;
-    match held_now(&held, name, ceiling)? {
-        Held::Exactly => return Err(changed()),
-        Held::OtherCase => return Err(other_case()),
-        Held::No => {}
-    }
+    name_free(&held, name, ceiling)?;
     let temporary = random_name()?;
     let mut file = held.create_new(&temporary).map_err(|error| {
         linked(Err(error)).err().unwrap_or_else(|| {
@@ -617,6 +654,9 @@ fn create_with(
         .and_then(|()| file.sync_all())
         .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()));
     if written.is_err() {
+        // Closed first: on Windows it is shared with nobody while open, so
+        // the removal by `made` could not open it.
+        drop(file);
         return Err(StepFailure::not_sent(unavailable(
             "could not be written beside the folder's entries",
         )));
@@ -638,7 +678,7 @@ fn create_with(
     before_act();
     // The commit point: a second name for the file, which the system gives
     // only where nothing has the name, in the folder that was held.
-    linked(held.link(&temporary, name))?;
+    link_new(&held, &temporary, name, ceiling)?;
     if held.identity(name).ok() != Some(identity) {
         return Err(StepFailure::unknown(unavailable(
             "was given its name, and the name does not hold the file that was written",
@@ -707,16 +747,12 @@ fn rename_with(
         return Err(changed());
     }
     folder.file(to)?;
-    match held_now(&held, to, ceiling)? {
-        Held::Exactly => return Err(changed()),
-        Held::OtherCase => return Err(other_case()),
-        Held::No => {}
-    }
+    name_free(&held, to, ceiling)?;
     if !held.still_at_its_path() {
         return Err(moved_before());
     }
     before_act();
-    linked(held.link(from, to))?;
+    link_new(&held, from, to, ceiling)?;
     if held.identity(to).ok() != Some(read) {
         return Err(StepFailure::unknown(unavailable(
             "was given its new name, and the name does not hold the file that was read",
@@ -1041,6 +1077,44 @@ mod tests {
             &codes::CHANGED_SINCE_PREVIEW
         );
         assert_eq!(fs::read(inbox.join("a.txt")).unwrap(), b"another\n");
+        assert_eq!(fs::read_dir(&inbox).unwrap().count(), 1);
+    }
+
+    /// A name the file system takes for an entry it lists under another
+    /// form of the same letters is a named stop, for a read and for a
+    /// write, and not "missing" or "changed". Only macOS folds the two
+    /// forms of an accented letter into one name; Linux keeps them apart.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_name_the_file_system_folds_into_a_listed_entry_is_a_named_stop() {
+        let swap = Swap::new("form");
+        let inbox = swap.root.join("inbox");
+        fs::write(inbox.join("caf\u{e9}.txt"), b"one\n").unwrap();
+        let listed = fs::read_dir(&inbox)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .file_name()
+            .into_string()
+            .unwrap();
+        // The other form of the name the folder lists.
+        let asked = if listed.contains('\u{e9}') {
+            "cafe\u{301}.txt"
+        } else {
+            "caf\u{e9}.txt"
+        };
+        let folder = swap.folder();
+        let conflict = |done: Result<(), StepFailure>| done.unwrap_err().failure.code().clone();
+        assert_eq!(
+            conflict(find(&folder, asked, 0, 100).map(|_| ())),
+            codes::NAME_CASE_CONFLICT
+        );
+        assert_eq!(
+            conflict(create(&folder, asked, b"two\n", 100)),
+            codes::NAME_CASE_CONFLICT
+        );
+        assert_eq!(fs::read(inbox.join(&listed)).unwrap(), b"one\n");
         assert_eq!(fs::read_dir(&inbox).unwrap().count(), 1);
     }
 

@@ -1,4 +1,5 @@
-//! The machine itself: the engine's status, its settings, and the doctor.
+//! The machine itself: the engine's status, its settings, the doctor, and
+//! what the machine already knows of its own networks.
 
 use a2m_core::DoctorState;
 use a2m_ledger::ChainCheck;
@@ -350,5 +351,82 @@ handler!(
         Ok(Output::ok(
             json!({"state": health.state.as_str(), "checks": checks}),
         ))
+    }
+);
+
+/// Reads one of the machine's network facts on a thread that may wait (each
+/// reader blocks on system calls and file reads), and shows it as the
+/// reader serializes it: a hardware address as its length, a proxy value
+/// with its credentials removed (decision 0243). Nothing is sent to any
+/// other machine.
+async fn net_read<T: serde::Serialize + Send + 'static>(
+    read: fn() -> Result<T, a2m_netstate::NetError>,
+) -> Result<Json, a2m_core::Failure> {
+    let reading = tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|_| {
+            crate::codes::busy(
+                crate::codes::ENGINE_DEGRADED,
+                "The reading of the machine's network was interrupted.",
+                "Try again.",
+            )
+        })?
+        .map_err(a2m_core::Failure::from)?;
+    serde_json::to_value(&reading).map_err(|_| {
+        crate::codes::input(
+            crate::codes::SCHEMA_INVALID,
+            "The reading of the machine's network could not be written as JSON.",
+            "Report this; it is a fault in the engine.",
+        )
+    })
+}
+
+handler!(
+    /// `net.interfaces`: the interfaces and their addresses.
+    net_interfaces,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::interfaces).await?)) }
+);
+
+handler!(
+    /// `net.routes`: the routes and each family's default routes.
+    net_routes,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::routes).await?)) }
+);
+
+handler!(
+    /// `net.resolvers`: the name servers and search domains.
+    net_resolvers,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::resolvers).await?)) }
+);
+
+handler!(
+    /// `net.neighbours`: the neighbour table the system already holds.
+    net_neighbours,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::neighbours).await?)) }
+);
+
+handler!(
+    /// `net.listeners`: the listening sockets and their owners.
+    net_listeners,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::listeners).await?)) }
+);
+
+handler!(
+    /// `net.proxy`: the proxy setting this engine reads, without
+    /// credentials. Read to be shown, never applied.
+    net_proxy,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::proxy).await?)) }
+);
+
+handler!(
+    /// `net.standing`: where the machine stands. The one network action an
+    /// agent sees listed; it names the fuller reading of the interfaces.
+    net_standing,
+    |_kernel, _call| {
+        Ok(Output::ok(net_read(a2m_netstate::standing).await?).then(Next::new(
+            "action.run",
+            json!({"action": "net.interfaces"}),
+            "for every interface in full",
+        )))
     }
 );

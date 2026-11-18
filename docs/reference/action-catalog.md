@@ -111,6 +111,8 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `config.show` | Effective settings and where each came from | Local user | No | 1 |
 | `config.set` | Change a setting; protected settings need the user-presence prompt | Local user | No | 3 |
 | `doctor.run` | Check browser, key store, network, sessions, clock; print fixes | Local user | No | 2 |
+| `net.interfaces`, `net.routes`, `net.resolvers`, `net.neighbours`, `net.listeners`, `net.proxy` | What this machine already knows of its own networks, read from the operating system; sends nothing. `net.proxy` reads this engine's own environment on Linux and the user's system setting on Windows, and removes any credentials | Local user | No | 2 |
+| `net.standing` | Where this machine stands: the kind of place each address is, and which interface carries each family's preferred default route; sends nothing | Local user | use | 2 |
 | `browser.install` | Fetch a pinned browser | Local user | No | 1 |
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8 |
 | `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |

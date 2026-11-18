@@ -192,6 +192,16 @@ impl Options {
             ..Self::default()
         }
     }
+
+    /// The defaults, with a store on disk that cannot open: the kernel is
+    /// stopped.
+    pub(super) fn with_blocked_store() -> Self {
+        Self {
+            place: StorePlace::Disk,
+            block_store: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Options {

@@ -136,6 +136,14 @@ fn net_prefix() -> JsonSchema {
     JsonSchema::int_between(0, 128)
 }
 
+/// One address of an interface, and its prefix length where the system
+/// states one.
+fn net_address() -> JsonSchema {
+    JsonSchema::object()
+        .required("address", text())
+        .optional("prefix_length", net_prefix())
+}
+
 fn net_route() -> JsonSchema {
     JsonSchema::object()
         .required("family", net_family())
@@ -779,6 +787,101 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("state", text())
                     .required("detail", text())
                     .required("fix", text()))))
+            .example("{}")
+            .done(),
+        // What this machine already knows of its own networks (decisions
+        // 0222, 0243, 0260). Each is a read for the local user: on one
+        // machine an agent acting for that person may call it. The default
+        // health need `Reads` keeps a recorded decision on every call.
+        act("net.interfaces", "This machine's network interfaces and their addresses, read from the operating system. Hardware addresses are shown as their length only. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("interfaces", list_of(JsonSchema::object()
+                    .required("index", JsonSchema::int())
+                    .required("name", text())
+                    .optional("kind", net_kind())
+                    .optional("system_kind", text())
+                    .optional("state", net_link())
+                    .optional("mtu", JsonSchema::int())
+                    .optional("hardware_address", net_hardware())
+                    .required("addresses", list_of(net_address()))
+                    .optional("absent", net_absent())))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.routes", "This machine's routes, and each family's default routes, lowest metric first. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("routes", list_of(net_route()))
+                .required("default_routes", list_of(net_route()))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.resolvers", "The name servers and search domains this machine uses, as the system states them. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("settings", list_of(JsonSchema::object()
+                    .required("from", text())
+                    .required("name_servers", list_of(text()))
+                    .required("search_domains", list_of(text()))))
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.neighbours", "The neighbour table this machine already holds, never refreshed by asking. Hardware addresses are shown as their length only. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("neighbours", list_of(JsonSchema::object()
+                    .required("address", text())
+                    .optional("interface_index", JsonSchema::int())
+                    .optional("interface", text())
+                    .optional("hardware_address", net_hardware())
+                    .optional("state", JsonSchema::words(&[
+                        "incomplete", "reachable", "stale", "delay", "probe", "failed", "no_arp", "permanent", "unreachable",
+                    ]))))
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.listeners", "The sockets listening on this machine, each with the kind of place its address is, and the program that holds it where this user may see it. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("listeners", list_of(JsonSchema::object()
+                    .required("transport", JsonSchema::words(&["tcp", "udp"]))
+                    .required("address", text())
+                    .required("port", JsonSchema::int_between(0, 65_535))
+                    .required("scope", net_scope())
+                    .optional("owner", JsonSchema::object()
+                        .required("process_id", JsonSchema::int())
+                        .optional("program", text()))
+                    .optional("owner_absent", net_absent_reason())))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.proxy", "The proxy setting this engine reads, with any credentials removed: on Linux this engine's own environment, not the caller's; on Windows the user's system setting. Read to be shown, never applied. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("settings", list_of(JsonSchema::object()
+                    .required("from", text())
+                    .required("applies_to", text())
+                    .required("value", text())
+                    .required("credentials_removed", JsonSchema::bool())))
+                .optional("detects_automatically", JsonSchema::bool())
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.standing", "Where this machine stands on its networks: for each interface, the kind of place each of its addresses is, and which interface carries each family's preferred default route. Sends nothing.", Who::LocalUser, Use, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("interfaces", list_of(JsonSchema::object()
+                    .required("name", text())
+                    .optional("kind", net_kind())
+                    .optional("state", net_link())
+                    .required("default_route_for", list_of(net_family()))
+                    .required("addresses", list_of(net_address()
+                        .required("scope", net_scope())))))
+                .required("default_routes", list_of(net_route()))
+                .optional("cut", net_cuts()))
             .example("{}")
             .done(),
         act("browser.install", "Fetch a pinned browser for the pack that drives one.", Who::LocalUser, No, "1", Change)
