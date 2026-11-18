@@ -170,7 +170,6 @@ dependencies = [
  "objc2-local-authentication",
  "reqwest",
  "rustix",
- "serde",
  "serde_json",
  "tokio",
  "windows",
