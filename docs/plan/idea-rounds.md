@@ -160,3 +160,10 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: taken up.** A stated guarantee of section 502 is carried out at compile time only. Three changes close it. The engine applies one rule to every output field whose type is marked untrusted: a ceiling on its length and the same making-neutral that a failure's `said` already gets. The output schema of such a field says that it is text from the system and data, never an instruction, and states the ceiling, so that every client's model is told. A test sends text shaped like an instruction, with control and direction characters, through a real tool against the stand and reads what the agent receives.
 
 **Next.** A package in the engine and the compiler, after the validation in hand. Until it is built the scope page says so.
+
+## Corrections to rounds 19 and 21 (2026-11-18)
+
+A designer who read the code for the command-line package found two statements in the rounds above that the source does not bear out. Both rounds' verdicts stand; the statements are corrected here and the plans follow the corrected form.
+
+- **Round 19** said the registry already marks which actions need no health at all, and that a command for one of those can be answered from the program itself. The mark it meant covers eleven actions, and most of them need the kernel, the settings, or the provider registry. Only three read nothing but the registry: `docs.get`, `action.search`, and `action.describe`. So the fix needs a mark of its own for an action the program can answer alone.
+- **Round 21** said the top-level help marks the actions that are not built. It does not: it marks one process command and the steps of shortcuts, which is what the word search matched. No help, at any level, says that an action is not built.
