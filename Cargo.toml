@@ -155,3 +155,20 @@ expect_used = "deny"
 lto = "fat"
 codegen-units = 1
 opt-level = "s"
+
+# The vault derives its root key from a passphrase with a function that is
+# slow on purpose (decision 0074). Compiled without optimization it takes
+# about two seconds a start instead of about a sixth of one; the derived key
+# is the same. These two crates are optimized for speed in every profile
+# (decision 0253).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release.package.argon2]
+opt-level = 3
+
+[profile.release.package.blake2]
+opt-level = 3

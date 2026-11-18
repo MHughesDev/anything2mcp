@@ -14,13 +14,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, RawSign, SessionLease};
+use a2m_core::EnvironmentKind;
 use a2m_core::{
     Failure, FailureClass, FailureCode, Redact, Secret, Step, SurfaceIndex, Value, Values,
 };
-use a2m_core::EnvironmentKind;
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
+    StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail, record_headers};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};

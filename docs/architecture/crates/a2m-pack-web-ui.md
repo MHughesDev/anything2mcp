@@ -22,7 +22,7 @@ Built so far: the `ui` driver for reads and verified writes, with every read in 
 - The widget drivers: how each control is set, escalated, and read back.
 - Applying platform profiles: locator priority, rejected identifier patterns, input commit, frame mode, and the support tier's limit on writes. The profiles themselves are data in `a2m-pack-web-browser`, because the probe needs their detection rules too.
 - Rules that recognize, in a page or a response, an edge block, a sign-in page, or an expiry signal. It reports them; it acts on none.
-- The auth providers that need a browser: `sso_oidc` and `sso_saml` in an engine-owned profile, and `form_login`.
+- The auth providers that need a browser: `form_login` (built), and `sso_oidc` and `sso_saml` in an engine-owned profile (not built).
 - The `screens/` schema for web surfaces, the binding fields of its modes, its lowerings, lint rules, and drafting rules.
 
 It must never: decide whether something may happen; sign in or renew outside the keeper's call; write to the ledger; retry inside `act`; branch on a platform name in code where a profile's data can say it; treat an unrecognized page, dialog, or control as anything but a stop.
@@ -46,7 +46,7 @@ As built. The manifest is `src/anything2mcp-provider.toml`; what is not built is
 | Settings | `packs.web.max_read_chars` and `packs.web.max_snapshot_elements` |
 | Effects | Writes the root `profiles`; network to surfaces; sessions for `web` surfaces; a requirement that lists every path of the browser engine's `KNOWN_PLACES` |
 | Drafting rules | From a `screen` finding to `screen` files and `operation` files, and from an `exchange` finding to `page_request` files and `operation` files, below |
-| Discoverers, auth providers | None yet |
+| Auth providers | `form_login` ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)), below. Discoverers: none |
 
 ### Lint rules
 
@@ -151,6 +151,10 @@ What the kernel gives this crate:
 | `page_http`, `update` ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) | An acting tab in the same profile, opened at the write's `goto` in a posture that may act; the read-back in the observing tab | `goto` the entry's `page` in the acting tab, which must answer from that path (a sign-in page stops it unsent); `request`, marked `commits`, through the engine's `write_from_page`: PUT, the checked path, the body from the binding's `body`, the token read from the page where the entry says and sent where it says | Inside `request`: an `ok` status in the declared shape is written; a declared `refused` answer is `rejected`; anything else, a declared token refusal included, is `possible_commit`, because the browser may have sent the write twice | `goto` and `request` of the read entry `read_back` names, both lookups, in the observing tab |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
+### `form_login`
+
+As built ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)). An `auth.yaml` entry with `provider: form_login` names, under `settings`, the sign-in `screen`, its `user_field` and `pass_field` (control `text`), its `submit` action (whose `confirm` is the sign of success), its `refused` variant, and optionally its `blocked` variant, a `code_screen` with `code_field`, `code_submit`, and `code_refused`, and `wait_ms`; under `credentials`, `user` and `password`, each under `vault://<target>/`; `attempt_limit: 1`. The provider reads the compiled screens from the entry's `surfaces`, which the engine fills from the plan; an entry not from a published version is refused before any browser opens. It signs in in an acting tab of the session's own browser, held to the surface's origin, waits for a declared sign after each press, asks the person for a code through `PersonAsk::EnterCode`, and keeps the cookies of the origin as the session's material. It never sends again a credential the application refused. `inject` places the state under the name only this pack's drivers take; `sign_out` closes the session's browser.
+
 ### The entry bar
 
 | # | Item | This crate's answer |
@@ -209,7 +213,9 @@ As built. Every failure says whether input reached the page.
 | `drift` | `anti_forgery_not_found` | A `page_http` write's page holds no anti-forgery token where its entry says | Not sent |
 | `unknown_variant` | `anti_forgery_unreadable` | The page holds two different tokens where the entry says, or one not of a form a token is sent in | Not sent |
 | `unknown_variant` | `browser_not_owned` | The base's: what started is not a browser the engine can own | Not sent |
-| `rejected` | `app_validation_error` | The page shows a variant with handling `stop`: at `wait`, after a click that did not show it before, or before a click, which is then not made | Answered; not sent before a click |
+| `rejected` | `app_validation_error` | The page shows a variant with handling `stop`: at `wait`, after a click that did not show it before, or before a click, which is then not made. Not a `page_http` write's declared refusal, which is in doubt | Answered; not sent before a click |
+| `session_expired` | `needs_login` | A `ui` wait finds a screen the target declares as a sign of expiry in place of its own | Not sent |
+| `edge_blocked` | `sign_in_blocked` | `form_login`: the sign-in page shows the block the entry names | Answered |
 | `possible_commit` | `no_confirmation` | After a `page_http` write may have left: an answer the entry does not declare, a declared token refusal, an `ok` status in another shape, a redirect, an answer too large, a lost page. After the click of a committing action: the confirmation did not show in time, the browser was lost, the page tried to leave, opened a window, or began a download, the page showed an `absent` variant, or both a variant and the confirmation. The handle makes every other doubtful failure of that step the same | Unknown |
 | `policy` | `page_write_refused` | The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it: a read is never made where the page may write ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) | Not sent, or answered |
 | `policy` | `surface_not_declared` | The surface's address is not one the run may reach, the page ended on another origin, or the page tried to move to one, which the browser stopped | Not sent, or answered |
@@ -221,7 +227,7 @@ As built. Every failure says whether input reached the page.
 | `input` | `address_value_refused` | A value that cannot stand in one segment of a screen's address, or that holds a word of an action | Not sent |
 | `transient` | `timeout`, `connection_lost` | The contract's: the browser did not answer, or was lost, on a step that commits nothing | As the base reports |
 
-Not built: `edge_blocked` and its codes, `session_expired` through the lease, `stale`, `version_conflict`.
+Built since ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): `session_expired`, `needs_login`, when a `ui` wait finds a screen the target declares as a sign of expiry; `edge_blocked`, `sign_in_blocked`, from `form_login`; a values refusal of a `page_http` write, and an answer that quoted the page's token, are `possible_commit`, `no_confirmation` (audit findings S3 and S4). Not built: the edge's own codes, `stale`, `version_conflict`.
 
 ## Invariants
 
@@ -257,7 +263,7 @@ Not built: `edge_blocked` and its codes, `session_expired` through the lease, `s
 2. Done: the manifest, `pack` and `add_to`, the `web` surface kind, the `screens/` schema and its compilation, the `ui` lowerings for `read` and `list`, three lint rules, and the control names.
 3. Done in part: reads of text, value, checked state, and table rows; variants `absent` and `stop`. Not built: frames, `open` and `search`, a row by its key, attribute reads, the conditions `value`, `url`, `response`, and `profile_ready`.
 4. Done: `set` for text, select, and check box; `invoke` with the commit point, the confirmation inside it, and `possible_commit`; snapshots at the two checkpoints of a write; read-back from the page afresh.
-5. Not built, package 2.3 and 2.6: the auth providers. The base has no visible window and no export of a session's state yet, and the test application has no sign-in page, so neither the sign-in window nor `form_login` can be proven. Signs of expiry are not detected. A lease is used for the name of its profile; a provider that hands over a credential to place is refused.
+5. Done in part ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): `form_login`, its declared signs, the person's one-time code, one attempt, a published version's addresses only; the session's cookies placed from the lease into the session's browser by `ui` and `page_http`; the declared sign of expiry, `{screen: <name>}`, stopping a `ui` wait with `session_expired`. Proven by `tests/sign_in.rs` against the test application's `/secure` pages and the keeper. Not built: the sign-in window (way (b)), `sso_oidc`, `sso_saml`, the application's sign-out, the sign of expiry in `page_http`. A provider that places anything but the web pack's browser state is still refused.
 6. Done: the write half of `PageHttpDriver` for `update` by PUT (package 4.2, [decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)), under the HTTP pack's rules ([decision 0154](../../decisions/0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md)): its `request` is `AsDeclared` and `goto` `Never`, and its driver refuses a writing entry from a step not marked `commits` in every posture. Not built: POST, PATCH, DELETE, the other write verbs, `path_params` and `query`, a version precondition. Also not built: `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, setting a finding against existing screen models, and drafting fields that are set and `site_tools` reads.
 7. Done: the drafting rules from a snapshot's tables, and the observing tab for a run that may only look ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)); every read in an observing tab, in every posture, and a write's own steps alone in an acting tab ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)).
 8. Done: reads by key over a matched screen, a placeholder's value refused unless it is one plain segment, and the `get` read of labelled values ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)).

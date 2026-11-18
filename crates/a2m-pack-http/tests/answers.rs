@@ -15,9 +15,7 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use a2m_core::{
-    Decimal, Environment, FailureClass, NoSecrets, REDACTED, Redact, Value, Values,
-};
+use a2m_core::{Decimal, Environment, FailureClass, NoSecrets, REDACTED, Redact, Value, Values};
 use a2m_provider::{Posture, Sent, StepFailure};
 use common::{Scene, key, record, running, store, token};
 use example_app::answers::ECHOED_SECRET;
@@ -77,10 +75,17 @@ async fn an_answer_whose_namespace_address_is_past_its_bound_is_refused_in_time(
     )
     .await
     .unwrap_err();
-    assert!(began.elapsed() < Duration::from_secs(20), "{:?}", began.elapsed());
+    assert!(
+        began.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        began.elapsed()
+    );
     assert_eq!(
         class_and_code(&failure),
-        (FailureClass::UnknownVariant, "response_too_large".to_owned())
+        (
+            FailureClass::UnknownVariant,
+            "response_too_large".to_owned()
+        )
     );
     assert!(failure.failure.message().contains("namespace's address"));
 }
@@ -200,14 +205,18 @@ async fn a_write_to_a_declared_test_record_is_sent_and_no_other_outside_a_live_r
         let fence = running(&store, std::slice::from_ref(&record_key)).await;
         let intent = token(&store, fence, 0, &record_key).await;
         let write = Some((&intent, record(&fence, 0), &record_key));
-        let (handle, mut prepared) = scene
-            .try_prepare(None, Some(fence), posture)
-            .await
-            .unwrap();
+        let (handle, mut prepared) = scene.try_prepare(None, Some(fence), posture).await.unwrap();
         // The record is looked up first: the write sends the version the
         // pass read, or none for a record found absent.
         let looked = scene
-            .run(&handle, &mut prepared, &binding.read_back, &inputs, write, LONG)
+            .run(
+                &handle,
+                &mut prepared,
+                &binding.read_back,
+                &inputs,
+                write,
+                LONG,
+            )
             .await
             .unwrap();
         assert!(looked.absent, "{posture:?}");
@@ -273,10 +282,14 @@ async fn a_value_is_bounded_data_and_a_control_character_in_any_form_stops() {
                 .iter()
                 .find(|operation| operation.name.as_str() == *name)
                 .unwrap();
-            operation.outputs.iter().filter(|output| output.name == "customer").map(|output| {
-                let field_type = output.field_type.unwrap();
-                scene.plan.field_types[field_type.get()].untrusted
-            })
+            operation
+                .outputs
+                .iter()
+                .filter(|output| output.name == "customer")
+                .map(|output| {
+                    let field_type = output.field_type.unwrap();
+                    scene.plan.field_types[field_type.get()].untrusted
+                })
         })
         .collect();
     assert_eq!(marked, [true, true]);
@@ -291,8 +304,14 @@ async fn a_value_is_bounded_data_and_a_control_character_in_any_form_stops() {
             "{operation}"
         );
         let message = failure.failure.message();
-        assert!(message.contains("control character"), "{operation}: {message}");
-        assert!(!message.contains('\u{1b}') && !message.contains("Customer"), "{message}");
+        assert!(
+            message.contains("control character"),
+            "{operation}: {message}"
+        );
+        assert!(
+            !message.contains('\u{1b}') && !message.contains("Customer"),
+            "{message}"
+        );
     }
 }
 
@@ -313,7 +332,10 @@ async fn a_body_that_holds_a_registered_secret_is_not_confirmable_through_its_di
     .unwrap_err();
     assert_eq!(
         class_and_code(&failure),
-        (FailureClass::UnknownVariant, "answer_holds_secret".to_owned())
+        (
+            FailureClass::UnknownVariant,
+            "answer_holds_secret".to_owned()
+        )
     );
     assert!(!failure.failure.message().contains(ECHOED_SECRET));
 

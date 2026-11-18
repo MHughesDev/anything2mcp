@@ -246,3 +246,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0241 | [Protected settings loosen only from an administrator's file, and every key says whether it is built](0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) | Accepted (design decision) |
 | 0244 | [The desktop pack reads macOS applications, and every act proves the record again](0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md) | Accepted (design decision) |
 | 0246 | [The file pack reads folders, settings files, and growing files, and writes the first two](0246-the-file-pack-reads-folders-settings-files-and-growing-files.md) | Accepted (design decision) |
+| 0245 | [A web application is signed in to through its own sign-in page, with a credential stored for the person](0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md) | Accepted (design decision) |
+| 0253 | [The key derivation is compiled for speed in every build](0253-the-key-derivation-is-compiled-for-speed-in-every-build.md) | Accepted (design decision) |

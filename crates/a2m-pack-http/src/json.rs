@@ -214,7 +214,7 @@ impl Reader<'_> {
             return Err(self.error("the document is nested too deeply"));
         }
         self.values = self.values.wrapping_add(1);
-        if self.values % LOOK_EVERY == 0
+        if self.values.is_multiple_of(LOOK_EVERY)
             && self.stop.is_some_and(|stop| stop.load(Ordering::Relaxed))
         {
             return Err(self.error("the time to read it ran out"));

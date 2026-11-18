@@ -415,7 +415,9 @@ pub(crate) fn read_counted(
             }
             Event::CData(part) => {
                 if stack.is_empty() {
-                    return Err(shape("the body holds a CDATA section outside its root element"));
+                    return Err(shape(
+                        "the body holds a CDATA section outside its root element",
+                    ));
                 }
                 if let Some(gathering) = &mut state.gathering
                     && gathering.depth == stack.len()
@@ -474,9 +476,7 @@ pub(crate) fn read_counted(
                 "an element uses a prefix the document does not declare",
             ));
         }
-        let position = state
-            .names
-            .position(&namespace, local.into_inner(), work)?;
+        let position = state.names.position(&namespace, local.into_inner(), work)?;
         stack.push(position);
         elements += 1;
         if stack.len() > usize::try_from(form.max_depth).unwrap_or(usize::MAX) {
@@ -904,7 +904,10 @@ mod tests {
         assert_eq!(written.len(), crate::forms::MAX_NAMESPACE_BYTES);
         let body = format!("<a xmlns=\"{written}\">{}</a>", "<b/>".repeat(99_998));
         let (read, used, took) = counted(body.as_bytes(), &order_id(&declared), 2_000_000);
-        assert_eq!(read, Ok(Json::Object(vec![("order_id".to_owned(), Json::Null)])));
+        assert_eq!(
+            read,
+            Ok(Json::Object(vec![("order_id".to_owned(), Json::Null)]))
+        );
         assert!(used < 1_000_000, "{used}");
         assert!(took < Duration::from_secs(5), "{took:?}");
 
@@ -934,7 +937,9 @@ mod tests {
         let long_element = format!("<{}/>", "n".repeat(257));
         let long_attribute = format!("<a {}=\"\"/>", "n".repeat(257));
         let long_value = format!("<a v=\"{}\"/>", "v".repeat(65_537));
-        let many: String = (0..65).map(|n| format!(" xmlns:p{n}=\"urn:{n}\"")).collect();
+        let many: String = (0..65)
+            .map(|n| format!(" xmlns:p{n}=\"urn:{n}\""))
+            .collect();
         let many = format!("<a{many}/>");
         for (body, what) in [
             (long_element, "element's name"),
@@ -948,7 +953,9 @@ mod tests {
             assert!(took < Duration::from_secs(5), "{what}: {took:?}");
         }
         // At the bounds, each is read.
-        let at_bounds: String = (0..64).map(|n| format!(" xmlns:p{n}=\"urn:{n}\"")).collect();
+        let at_bounds: String = (0..64)
+            .map(|n| format!(" xmlns:p{n}=\"urn:{n}\""))
+            .collect();
         let at_bounds = format!(
             "<{}{at_bounds} v=\"{}\"/>",
             "n".repeat(256),
@@ -1013,7 +1020,9 @@ mod tests {
         );
         let once = format!("<o:order xmlns:o=\"{NS}\" xmlns:x=\"{NS}\" x:id=\"A\" other=\"B\"/>");
         assert_eq!(
-            read(once.as_bytes(), &order_id(NS)).unwrap().get("order_id"),
+            read(once.as_bytes(), &order_id(NS))
+                .unwrap()
+                .get("order_id"),
             Some(&Json::Text("A".to_owned()))
         );
     }
@@ -1049,7 +1058,10 @@ mod tests {
             format!("&#x41;<order xmlns=\"{NS}\"/>"),
             format!("<order xmlns=\"{NS}\"/>&amp;"),
         ] {
-            assert!(matches!(read(body.as_bytes(), &form), Err(Unread::Shape(_))), "{body}");
+            assert!(
+                matches!(read(body.as_bytes(), &form), Err(Unread::Shape(_))),
+                "{body}"
+            );
         }
         assert!(read(format!(" \n<order xmlns=\"{NS}\"/>\n").as_bytes(), &form).is_ok());
     }

@@ -293,8 +293,11 @@ fn the_lint_rules_find_what_they_name() {
     let folder = Folder::new("asserted");
     let registry = registry(&folder, Arc::new(NoSecrets));
     let compiled = compile_changed(&registry, "example", orders, |text| {
-        text.replacen("method: GET", "method: POST", 1)
-            .replacen("effect: read\n", "effect: read\nread_asserted: true\n", 1)
+        text.replacen("method: GET", "method: POST", 1).replacen(
+            "effect: read\n",
+            "effect: read\nread_asserted: true\n",
+            1,
+        )
     })
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     assert!(compiled.warnings.find("http.effect_method").is_none());

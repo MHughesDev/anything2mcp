@@ -25,6 +25,8 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 | On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make. A project folder is one that holds a project file and is no program's own folder: not the engine's, not the home folder or a hidden folder of it, not a folder the operating system gives programs for their data. A source file is read only from the project's `sources` folder |
 | Everywhere | Size limits; the content must be the type it claims, so a renamed file is refused; a file is read once and stored as a blob, so what was previewed is what is uploaded |
 
+One input may name an entry inside a folder the target declares, as a row's key names a row ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)). Each part of the name is one name of at most 255 bytes, with no separator, no `..`, and no drive. A read may name an entry as many folders down as the declared depth allows, with `/` between the parts, and reaches none of them through a link; a write names an entry directly in the folder. An input never names a path outside the folder.
+
 ## Downloads are data
 
 - A downloaded file goes to a scoped store and comes back as a resource link, never inline.

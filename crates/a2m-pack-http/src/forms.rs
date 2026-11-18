@@ -190,9 +190,14 @@ impl Charset {
 /// Whether a body starts with a byte-order mark of UTF-8, UTF-16, or
 /// UTF-32.
 fn byte_order_mark(body: &[u8]) -> bool {
-    [&b"\xEF\xBB\xBF"[..], b"\xFE\xFF", b"\xFF\xFE", b"\x00\x00\xFE\xFF"]
-        .iter()
-        .any(|mark| body.starts_with(mark))
+    [
+        &b"\xEF\xBB\xBF"[..],
+        b"\xFE\xFF",
+        b"\xFF\xFE",
+        b"\x00\x00\xFE\xFF",
+    ]
+    .iter()
+    .any(|mark| body.starts_with(mark))
 }
 
 /// Whether text holds a control character this pack never returns: any
@@ -1019,7 +1024,7 @@ mod tests {
     use crate::json::Json;
     use crate::shape::Kind;
 
-    const GOING: AtomicBool = AtomicBool::new(false);
+    static GOING: AtomicBool = AtomicBool::new(false);
 
     #[test]
     fn a_text_is_typed_exactly_or_not_at_all() {
@@ -1102,7 +1107,12 @@ mod tests {
         );
         // A header that names US-ASCII holds the body to ASCII.
         assert!(matches!(
-            text.read("caf\u{e9}".as_bytes(), Some(Charset::UsAscii), &NoSecrets, &GOING),
+            text.read(
+                "caf\u{e9}".as_bytes(),
+                Some(Charset::UsAscii),
+                &NoSecrets,
+                &GOING
+            ),
             Err(Unread::Shape(_))
         ));
         // A byte-order mark before a body declared in another set.
@@ -1199,7 +1209,17 @@ mod tests {
         for kept in ["a\tb", "a\nb\r\n", "plain", "\u{e9}\u{202e}"] {
             assert!(!refused_control(kept), "{kept:?}");
         }
-        for refused in ["\u{0}", "\u{7}", "\u{8}", "\u{b}", "\u{c}", "\u{1b}[31m", "\u{7f}", "\u{85}", "\u{9b}"] {
+        for refused in [
+            "\u{0}",
+            "\u{7}",
+            "\u{8}",
+            "\u{b}",
+            "\u{c}",
+            "\u{1b}[31m",
+            "\u{7f}",
+            "\u{85}",
+            "\u{9b}",
+        ] {
             assert!(refused_control(refused), "{refused:?}");
         }
     }

@@ -100,12 +100,16 @@ fn names_a_credential(name: &str) -> bool {
 }
 
 /// Why a variable may not be handed to a local server program, when it may
-/// not: it is one of the engine's own, or it is named for a credential. A
+/// not: it is one of the engine's own, it makes a program load code other
+/// than its own (the provider's closed list, decision 0250), or it is named
+/// for a credential. A
 /// credential for a local server goes through the session keeper, never
 /// through the environment.
 pub(crate) fn refused_variable(name: &str) -> Option<&'static str> {
     if a2m_provider::is_engine_variable(name) {
         Some("belongs to the engine, whose own variables are never handed to a program")
+    } else if a2m_provider::redirects_loading(name) {
+        Some("makes a program load code other than its own, which no target chooses through a program's environment")
     } else if names_a_credential(name) {
         Some("is named for a credential, which never goes through a program's environment")
     } else {

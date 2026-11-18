@@ -384,7 +384,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `policy` | `policy_evaluation_failed` | `a2m-policy` | An error while deciding, or no valid policy set is loaded. |
 | `policy` | `presence_failed` | `a2m-local` | The person dismissed or failed the presence prompt, or this machine has none. |
 | `policy` | `presence_required` | `a2m-policy` | A change to a protected setting that only a person, present, may make. |
-| `policy` | `program_path_unsafe` | `a2m-pack-command` | The path is not absolute, is a script, is a shell, or the file or a folder above it can be written by another user. |
+| `policy` | `program_path_unsafe` | `a2m-pack-command`, `a2m-pack-mcp` | The path is not absolute, is a script, is a shell, or the file or a folder above it can be written by another user. |
 | `policy` | `read_only_posture` | `a2m-provider`, `a2m-pack-data` | A step that commits was asked for where nothing may be written. |
 | `policy` | `read_statement_wrote` | `a2m-pack-data` | A statement declared a read tried to change data. |
 | `policy` | `record_limit_exceeded` | `a2m-engine` | The run would touch more records than its limit allows. |

@@ -303,16 +303,34 @@ impl McpDriver {
     }
 
     /// Starts the surface's local server program through the supervisor and
-    /// connects over its standard streams.
-    #[cfg(unix)]
+    /// connects over its standard streams, on every system.
+    ///
+    /// Before anything starts, the program is held to the provider's check
+    /// of who may change it, as the command pack's programs are (decision
+    /// 0250): its file and every folder on the way to it must be closed to
+    /// other users, and it may not be a shell, an interpreter, a batch file,
+    /// or a script. No group counts as the administrators' beyond the
+    /// system's own: the pack has no setting that names one.
     async fn open_local(
         &self,
         cx: &PrepareContext<'_>,
         fields: &SurfaceFields,
         program: &str,
     ) -> Result<Connection, StepFailure> {
-        use a2m_provider::{EnvAllowlist, ForeignPipe, LaunchSpec, ProgramRef, SubsystemKind};
+        use a2m_provider::{
+            EnvAllowlist, LaunchSpec, ProgramRef, ProgramRefused, ProgramRole, ProgramTrust,
+            SubsystemKind, check_program,
+        };
 
+        let checked = std::path::PathBuf::from(program);
+        let verdict = tokio::task::spawn_blocking(move || {
+            check_program(&checked, &ProgramTrust::default(), ProgramRole::Program)
+        })
+        .await
+        .unwrap_or(Err(ProgramRefused::Missing));
+        if let Err(why) = verdict {
+            return Err(unsent(codes::program_refused(&why, program)));
+        }
         let spec = LaunchSpec {
             program: ProgramRef {
                 path: program.into(),
@@ -320,7 +338,7 @@ impl McpDriver {
             },
             args: fields.args.iter().map(Into::into).collect(),
             env: EnvAllowlist {
-                pass: fields.pass_environment.clone(),
+                pass: passed(&fields.pass_environment),
                 set: fields
                     .environment
                     .iter()
@@ -332,16 +350,11 @@ impl McpDriver {
             place: None,
         };
         // The program's own protocol runs over its standard input and
-        // output, so the two ends of the pipe are placed on descriptors 0
-        // and 1.
-        let pipe = ForeignPipe {
-            child_reads_fd: 0,
-            child_writes_fd: 1,
-            windows_argument: String::new(),
-        };
+        // output: on Linux and macOS the two ends of the pipe are placed on
+        // descriptors 0 and 1, on Windows they are its standard handles.
         let link = cx
             .supervisor
-            .start_foreign(spec, pipe)
+            .start_on_standard_streams(spec)
             .await
             .map_err(unsent)?;
         let program_digest = link.program_digest;
@@ -362,20 +375,6 @@ impl McpDriver {
             client,
             program_digest: Some(program_digest),
         })
-    }
-
-    /// On a system where the supervisor's foreign link cannot be placed on
-    /// a program's standard streams, a local server program is not started.
-    #[cfg(not(unix))]
-    async fn open_local(
-        &self,
-        _cx: &PrepareContext<'_>,
-        _fields: &SurfaceFields,
-        _program: &str,
-    ) -> Result<Connection, StepFailure> {
-        Err(unsent(codes::not_built(
-            "start a local server program on this operating system: the supervisor's foreign link cannot be placed on a program's standard streams here",
-        )))
     }
 
     async fn open(
@@ -515,6 +514,28 @@ impl State {
         });
         Values::new().with("listing", canonical(&listing))
     }
+}
+
+/// The names a local server program is given from the engine's own
+/// environment: those its surface lists, and on Windows the system's root
+/// folder, without which a program there cannot load the system's own
+/// libraries. The supervisor gives a child nothing else of the engine's
+/// environment, and never one of the engine's own variables or one that
+/// makes a program load other code.
+fn passed(listed: &[String]) -> Vec<String> {
+    let pass = listed.to_vec();
+    #[cfg(windows)]
+    let pass = {
+        let mut pass = pass;
+        if !pass
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("SystemRoot"))
+        {
+            pass.push("SystemRoot".to_owned());
+        }
+        pass
+    };
+    pass
 }
 
 /// The earlier of the step's own timeout and the run's deadline.

@@ -37,6 +37,8 @@ Signing in through a page is the web pack's: its auth providers drive a browser 
 - The session keeper watches for the target's signed-in probe to succeed, then closes the window or leaves it for the first run.
 - The window shows which system and which Anything2MCP identity it is for. The engine never asks for the password of such a sign-in in its own interface.
 
+The window is not built yet. What is built is `form_login`: the person stores the username and password on the engine's own page, the provider fills the application's sign-in page in the engine's browser, and a one-time code the page asks for is asked of the person on the same page, each time ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)).
+
 A sign-in through a provider that holds or exchanges a credential is a person's act an agent asks for with `session.login`, shown on a page of its own as a publish is: the page names the target, the environment, the provider, and the vault reference of each credential, with an empty field for each one not stored; the press raises the presence prompt and carries what was typed to the engine alone, which seals it for the person. Where the provider then asks for a one-time code, the press's answer is a page that takes it, for that one sign-in ([decision 0205](../../decisions/0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md)).
 
 ## On a server

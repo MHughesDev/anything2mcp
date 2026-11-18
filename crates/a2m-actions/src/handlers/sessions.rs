@@ -128,10 +128,7 @@ async fn declared(
     if let Some((_, plan)) = &published {
         let mut pinned = input.clone();
         pinned.insert("surface".to_owned(), json!(found.surface.as_str()));
-        pinned.insert(
-            "environment".to_owned(),
-            json!(found.environment.as_str()),
-        );
+        pinned.insert("environment".to_owned(), json!(found.environment.as_str()));
         if let Ok(Some(same)) = declared_in(&target, plan, &pinned, true)
             && same.digest() == found.digest()
         {
@@ -441,9 +438,7 @@ handler!(
         // for every address the declaration sends to, is said to, and
         // nobody is asked.
         let to_person = match declared.basis {
-            Basis::Published => {
-                call.caller.is_agent && (needs.person || !missing.is_empty())
-            }
+            Basis::Published => call.caller.is_agent && (needs.person || !missing.is_empty()),
             Basis::Drafts => true,
         };
         // A press on the person's page carries the declaration its page

@@ -785,9 +785,23 @@ impl Kernel {
                 .map(|credential| format!("{} {}", credential.role, credential.reference))
                 .collect();
             for environment in &plan.environments {
-                let entry =
-                    crate::control::entry_of(plan, auth, &environment.name, true);
-                let addresses = keeper.sign_in_addresses(target, &entry)?;
+                let entry = crate::control::entry_of(plan, auth, &environment.name, true);
+                let addresses = match keeper.sign_in_addresses(target, &entry) {
+                    Ok(addresses) => addresses,
+                    // A provider this engine does not hold cannot say where
+                    // it sends; every sign-in through it stops by name
+                    // before anything is sent, here as at run time.
+                    Err(failure) if failure.code() == &a2m_auth::codes::AUTH_PROVIDER_UNKNOWN => {
+                        lines.push(format!(
+                            "Sign-in of {} in the environment {}: through the provider {}, which this engine does not hold, so where it would send is not known here; it signs in nowhere until a pack that provides it is enabled.",
+                            covered.join(", "),
+                            environment.name,
+                            auth.provider,
+                        ));
+                        continue;
+                    }
+                    Err(failure) => return Err(failure),
+                };
                 let sent: Vec<String> = addresses
                     .iter()
                     .map(|sent| format!("{} ({})", sent.address, sent.what))

@@ -39,6 +39,9 @@ pub const ARGUMENTS_INVALID: FailureCode = FailureCode::fixed("arguments_invalid
 pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
 /// A part of the pack's design that this build does not carry out.
 pub const NOT_BUILT: FailureCode = FailureCode::fixed("not_built");
+/// A local server program another user could change, or that is a shell,
+/// an interpreter, or a script, is not started (decision 0250).
+pub const PROGRAM_PATH_UNSAFE: FailureCode = FailureCode::fixed("program_path_unsafe");
 
 /// Every code of this crate with its one class, as the manifest declares
 /// them. A test holds the two lists together.
@@ -53,6 +56,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "not_granted"),
     (FailureClass::Policy, "link_not_encrypted"),
+    (FailureClass::Policy, "program_path_unsafe"),
     (FailureClass::Input, "arguments_invalid"),
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "not_built"),
@@ -220,6 +224,62 @@ pub(crate) fn variable_refused(name: &str, why: &str) -> Failure {
         ),
         "Remove the variable from the surface and compile the target again. A credential for a local server program goes through the session keeper, never through its environment.",
     )
+}
+
+/// Why the provider's check of who may change a program refused the local
+/// server program at `path`. A program that is not there is the contract's
+/// `input`/`program_not_found`, as the supervisor says it; every other
+/// refusal is `policy`/`program_path_unsafe`.
+pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) -> Failure {
+    use a2m_provider::ProgramRefused;
+    let at = shown(path);
+    let unsafe_path = |what: String, next: &str| {
+        Failure::new(FailureClass::Policy, PROGRAM_PATH_UNSAFE, what, next.to_owned())
+    };
+    let place = |path: &std::path::Path| shown(&path.display().to_string());
+    match why {
+        ProgramRefused::Missing => Failure::new(
+            FailureClass::Input,
+            a2m_provider::codes::PROGRAM_NOT_FOUND,
+            format!("The local server program `{at}` is not there, is not a file, or cannot be run."),
+            "Install the program at the path its surface declares, or correct the path in `target.yaml`.",
+        ),
+        ProgramRefused::NotAbsolute => unsafe_path(
+            format!("The local server program `{at}` is not named by an absolute path."),
+            "Name the program by its absolute path in `target.yaml`; it is never searched for.",
+        ),
+        ProgramRefused::Script => unsafe_path(
+            format!(
+                "The local server program `{at}` is a shell, an interpreter, a batch file, or a script that one of them would run."
+            ),
+            "Name a program that is itself the server. A server that an interpreter runs from a script is not started yet: the pack pins the program's digest, and nothing would pin the script's.",
+        ),
+        ProgramRefused::Writable(what) => unsafe_path(
+            format!(
+                "The local server program `{at}` could be replaced by another user: `{}` is theirs to write.",
+                place(what)
+            ),
+            "Give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.",
+        ),
+        ProgramRefused::Unreadable(what) => unsafe_path(
+            format!(
+                "The local server program `{at}` is not started: who may change `{}` could not be read.",
+                place(what)
+            ),
+            "Give the file and every folder above it an access list the engine's user can read, naming only that user and the system's own identities.",
+        ),
+        ProgramRefused::Link(what) => unsafe_path(
+            format!(
+                "The local server program `{at}` is not started: `{}` is a link, which is not followed on this system.",
+                place(what)
+            ),
+            "Name the program by the path it has with no link on the way.",
+        ),
+        ProgramRefused::Elsewhere => unsafe_path(
+            format!("The local server program `{at}` is on another machine's share or a device."),
+            "Install the program on a local drive and name it by that path.",
+        ),
+    }
 }
 
 /// A failure before anything was sent.

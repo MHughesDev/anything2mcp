@@ -59,7 +59,12 @@ pub struct AuthEntry {
     pub idle: Option<Duration>, pub absolute: Option<Duration>,
     pub attempt_limit: u32,                           // default 1
     pub movable: bool,                                // default true
+    pub surfaces: EntrySurfaces,                      // decision 0245: empty by default
 }
+/// The entry's surfaces as the plan holds them in the environment, the plan's pack sections of their
+/// kinds, and whether the plan is a published version's (only the caller that loaded one says so).
+pub struct EntrySurfaces { pub surfaces: Vec<SurfacePlan>, pub sections: Vec<PackSection>, pub from_published: bool }
+impl EntrySurfaces { pub fn of(plan: &Plan, auth: &AuthPlan, environment: &Environment) -> Self; pub fn published(self) -> Self; }
 
 pub struct Keeper { /* Clone; an Arc inside */ }
 impl Keeper {
