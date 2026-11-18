@@ -176,15 +176,10 @@ async fn a_settings_value_is_read_by_its_path_and_a_form_with_two_meanings_stops
 async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     let scene = Scene::new();
     let store = store().await;
-    let settings = ("settings", text("orders"));
 
     // An INI file: a byte-order mark, CRLF, comments, a blank line, and a
     // last line not ended, all kept; only the two values differ.
-    let values = inputs(&[
-        settings.clone(),
-        ("prefix", text("B-")),
-        ("next_number", Value::Int(104)),
-    ]);
+    let values = inputs(&[("prefix", text("B-")), ("next_number", Value::Int(104))]);
     let back = write(&scene, &store, 1, "example_ini_orders_set", &values, || {})
         .await
         .unwrap();
@@ -203,7 +198,7 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     );
 
     // Quotes the document says are around the value stay where they were.
-    let values = inputs(&[settings.clone(), ("note", text("kept again"))]);
+    let values = inputs(&[("note", text("kept again"))]);
     write(
         &scene,
         &store,
@@ -231,7 +226,6 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     // `true` that becomes `false`; tabs, the comment, and the document type
     // stay as they were.
     let values = inputs(&[
-        settings.clone(),
         ("title", text("Rails < bolts")),
         ("next_number", Value::Int(104)),
         ("open", Value::Bool(false)),
@@ -241,10 +235,7 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
         .unwrap();
     assert_eq!(back.get("title"), Some(&text("Rails < bolts")));
     assert_eq!(back.get("open"), Some(&Value::Bool(false)));
-    let rate = inputs(&[
-        settings.clone(),
-        ("rate", Value::Decimal(Decimal::parse("3.75").unwrap())),
-    ]);
+    let rate = inputs(&[("rate", Value::Decimal(Decimal::parse("3.75").unwrap()))]);
     write(&scene, &store, 4, "example_plist_rate_set", &rate, || {})
         .await
         .unwrap();
@@ -269,11 +260,7 @@ async fn a_settings_value_the_file_cannot_hold_as_written_is_refused_and_nothing
     let scene = Scene::new();
     let store = store().await;
     for (caller, prefix) in [(1, "B- ; a comment"), (2, "\"B-"), (3, "#B")] {
-        let values = inputs(&[
-            ("settings", text("orders")),
-            ("prefix", text(prefix)),
-            ("next_number", Value::Int(103)),
-        ]);
+        let values = inputs(&[("prefix", text(prefix)), ("next_number", Value::Int(103))]);
         let failure = write(
             &scene,
             &store,

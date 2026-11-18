@@ -265,3 +265,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0271 | [The check of programs the product starts, after a second reader](0271-the-check-of-programs-the-product-starts-after-a-second-reader.md) | Accepted (design decision) |
 | 0266 | [The engine's log says each start and each stop and what asked for it, and `engine logs` reads it where the engine runs](0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md) | Accepted (design decision) |
 | 0273 | [The settings keeper, and the registry's owed lines, after a second reader](0273-the-settings-keeper-and-the-registrys-owed-lines-after-a-second-reader.md) | Accepted (design decision) |
+| 0263 | [A person hands the scout files of the project's sources folder, by names the discoverers declare](0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) | Accepted (design decision) |

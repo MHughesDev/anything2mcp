@@ -766,3 +766,109 @@ fn a_folder_a_settings_file_or_a_growing_file_the_pack_cannot_carry_out_does_not
         assert!(!found.fix.is_empty(), "{code} gives no fix");
     }
 }
+
+#[test]
+fn a_settings_write_declares_its_record_one_fixed_place() {
+    let registry = registry(Roots::none());
+    let compiled = compile(&fixtures(), registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    for (tool, place) in [
+        ("example_plist_set", "plist_settings.general"),
+        ("example_plist_rate_set", "plist_settings.orders"),
+        ("example_ini_note_stripped_set", "ini_quoted.orders"),
+        ("example_ini_orders_set", "ini_settings.orders"),
+    ] {
+        let operation = compiled
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == tool)
+            .unwrap();
+        assert_eq!(
+            operation.identity.strategy,
+            a2m_core::IdentityStrategy::Natural
+        );
+        assert!(
+            operation.identity.key.is_empty(),
+            "{tool}: no input is its key"
+        );
+        assert!(
+            operation
+                .inputs
+                .iter()
+                .all(|input| input.name != "settings")
+        );
+        let item = compiled
+            .review
+            .items
+            .iter()
+            .find(|item| item.tool.as_str() == tool)
+            .unwrap();
+        assert_eq!(
+            item.place.as_ref().map(|place| place.name.as_str()),
+            Some(place),
+            "{tool}"
+        );
+    }
+    // Rows with a key are many records: a read of them is not one place.
+    let changed = Changed::new(&[(
+        "operations/stock_list.yaml",
+        "effect: read\n",
+        "effect: read\nidentity: {strategy: natural, place: fixed}\n",
+    )]);
+    let problems = compile(&changed.0, registry.compiler_set()).expect_err("rows as one place");
+    assert!(
+        problems
+            .iter()
+            .any(|found| found.code.as_str() == "kernel.place_not_fixed"),
+        "{problems}"
+    );
+}
+
+#[test]
+fn the_review_states_what_the_file_pack_runs_and_where_it_sends() {
+    let registry = registry(Roots::none());
+    let compiled = compile(&fixtures(), registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    for item in &compiled.review.items {
+        for binding in &item.bindings {
+            assert_eq!(
+                binding.states,
+                a2m_files::BindingStates::Stated {
+                    runs: Vec::new(),
+                    environment: Vec::new(),
+                },
+                "{}",
+                item.tool
+            );
+        }
+        if item.destinations.is_empty() {
+            assert!(
+                matches!(
+                    &item.reach,
+                    a2m_files::Reach::Stated { groups, leaves_this_machine: false }
+                        if groups.is_empty()
+                ),
+                "{}: {:?}",
+                item.tool,
+                item.reach
+            );
+        }
+    }
+    // A folder that names another machine is reached over the network,
+    // which the pack does not state.
+    let changed = Changed::new(&[("target.yaml", "folder: prices", "folder: //host/prices")]);
+    let compiled = compile(&changed.0, registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let item = compiled
+        .review
+        .items
+        .iter()
+        .find(|item| item.tool.as_str() == "example_price_set")
+        .unwrap();
+    assert!(
+        matches!(item.reach, a2m_files::Reach::Partly { .. }),
+        "{:?}",
+        item.reach
+    );
+}

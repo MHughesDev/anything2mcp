@@ -90,6 +90,7 @@ sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 50000000, depth = 8 }
 surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its archetype
+files = []                               # the names under which it reads files a person hands a discovery, from the project's `sources` folder; left out, none (decision 0263)
 
 [[file_kinds]]
 name = "sheets"
@@ -182,6 +183,7 @@ Checks made when a manifest is read, and when the registry is built, each a name
 | A point names only a declared mode or discoverer; a surface kind that holds a session, and an auth provider, are covered by `effects.sessions`; a discoverer returns only finding kinds the manifest owns or reads. Every object registered matches what is declared | `policy`, `effect_not_declared` |
 | A plug-in's signature verifies, or unsigned plug-ins are switched on by a person. Not built: a plug-in is listed as present and not enabled | `policy`, `signature_invalid` |
 | A discoverer's `max_level` is `inferred` or `discovered` | `input`, `manifest_invalid` |
+| A discoverer's `files` are names of lowercase letters, digits, and underscores, starting with a letter, at most 32 bytes, each listed once | `input`, `manifest_invalid` |
 | A program in `run` or `effects.processes` is a relative path inside the provider or a fixed absolute path, and a requirement is looked for only at fixed absolute paths. A pack has no folder of its own, so its `effects.processes` are absolute paths only | `input`, `path_not_allowed` |
 | A pack's settings group fits the `[[settings]]` its manifest declares | `input`, `pack_settings_invalid`; the pack is `misconfigured` and registers nothing |
 | Two providers carry one name | `input`, `provider_duplicate` |
@@ -270,6 +272,7 @@ impl Registry {
     pub fn source_reader(&self, name: &ReaderName) -> Result<Arc<dyn SourceReader>, Failure>;   // those packs registered; the built-in ones are `a2m-sources`'s
     pub fn source_readers(&self) -> Vec<Arc<dyn SourceReader>>;
     pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle>;
+    pub fn files_taken(&self, surface: &SurfaceDescription) -> BTreeSet<String>;   // the `files` those discoverers declare: the names a discovery of the surface may be handed
     pub fn auth_providers(&self) -> Vec<Arc<dyn AuthProvider>>;          // handed to the keeper by `a2m-actions`
     pub fn compiler_set(&self) -> &CompilerSet;                         // handed to the compiler by `a2m-actions`
     pub fn action(&self, name: &ActionName) -> Option<(Arc<dyn ProviderAction>, EffectClass)>;   // for the dispatcher in `a2m-actions`
@@ -749,6 +752,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 10. Done ([decision 0176](../../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)): a save's temporary file is made private (mode 0600 on Unix), `Temporary::keep_owner_and_mode`, `Temporary::identity`, `FileIdentity::of_open`, and a temporary file removed only while its name still holds it; `RefusedProvider` and `Registry::refused`, so a provider whose manifest was refused is named with its problem. On Windows the temporary file takes the access list its folder passes down, and `keep_owner_and_mode` keeps the read-only flag alone and answers `false`.
 11. Done ([decision 0177](../../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)): `Replay`, `RecordedAnswer`, `Recorded`, `answers_to`, and `Registry::replay_driver`, the replay every pack gets from the contract; the contract's code `unknown_variant`/`fixture_no_answer`. Then ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `RecordedAnswer::repeats`, an answer that answers every step of its name, and `Replay::sent`, what the engine sent to each committing step.
 9. Done (decision 0162): what earlier steps recorded (`Prepared::recorded`, `DriverHandle::act_recorded`); how a step was done (`Capture::acting`, `Observed::acting`); what the system said (`StepFailure::with_said`, kept by the handle through its redaction and through a write in doubt); the project folder (`CheckedPaths::with_project`, `project`, `project_folder`, `input`/`project_folder_missing`); the save in steps, a file's identity, and `may_write`; `StepInput::new`. Tests: `tests/handle.rs`, `tests/paths.rs`.
+15. Done ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)): `DiscovererDecl::files`, the names under which a discoverer reads files a person hands a discovery, read from the manifest's `files` (none when left out) and checked as names; `Registry::files_taken`. A contract change: a manifest that lists `files` is refused by a build before it. `tests/registry.rs`: `a_manifest_without_files_declares_none_and_one_with_files_is_read`.
 12. Done ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)): each destination carries its scope, read by `ScopedHost::of_destination` from its own address when `Destinations::new` builds the set, and returned by `scope_of`. Nothing else sets it, and the allow-list still compares addresses as written. `tests/destinations.rs`; the engine's `a_destinations_scope_comes_from_its_address_and_never_from_an_input`. Not built: any check that decides by a scope.
 
 ## Open points

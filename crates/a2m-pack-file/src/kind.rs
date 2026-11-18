@@ -582,3 +582,34 @@ impl FileKind for DocumentKind {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record with no key is one place only where its place is one: a
+    /// path to one record of a JSON document or a settings file, or a named
+    /// cell. Rows, a table, or a sheet with no key are many records.
+    #[test]
+    fn a_record_with_no_key_is_a_fixed_place_only_where_its_place_is_one() {
+        let text = "surface: desk\nfile: one.json\nformat: json\nrecords:\n  \
+            general: {path: [general], fields: {a: {path: [a], type: text}}}\n  \
+            root: {path: [], fields: {a: {path: [a], type: text}}}\n  \
+            total: {cell: {name: total}, fields: {a: {type: text}}}\n  \
+            items: {path: [items], key: [id], fields: {id: {path: [id], type: text}}}\n  \
+            rows: {rows: all, fields: {a: {header: a, type: text}}}\n  \
+            sheet: {sheet: Sheet1, fields: {a: {header: a, type: text}}}\n  \
+            table: {table: {sheet: Sheet1, name: T}, fields: {a: {header: a, type: text}}}\n";
+        let file = a2m_files::RelPath::new("documents/settings.yaml").unwrap();
+        let docs = a2m_files::parse_yaml(&file, text).unwrap();
+        let names: Vec<String> = DocumentKind::new()
+            .fixed_places(&docs[0])
+            .into_iter()
+            .map(|place| place.value.name)
+            .collect();
+        assert_eq!(
+            names,
+            ["settings.general", "settings.root", "settings.total"]
+        );
+    }
+}
