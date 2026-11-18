@@ -514,6 +514,8 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `input` | `vault_passphrase_mismatch` | `a2m-vault` | The passphrase given is not the one the keys were wrapped under. |
 | `input` | `vault_passphrase_missing` | `a2m-vault` | The passphrase route is chosen and no passphrase was given. |
 | `input` | `vault_passphrase_too_short` | `a2m-vault` | The passphrase given is too short to derive a root key from. |
+| `input` | `watch_interval_too_short` | `a2m-sched` | A watch's interval is below the floor. |
+| `input` | `watch_too_long` | `a2m-sched` | A watch's end is further away than the longest a watch may last. |
 | `session_expired` | `credential_refused` | `a2m-auth` | A stored credential was refused by the side that checks it. |
 | `session_expired` | `device_required` | `a2m-auth` | The session's credentials are held on a runner that is not this one. |
 | `session_expired` | `headroom_short` | `a2m-auth` | The session will end before the time a pipeline asked to have left. |
@@ -695,7 +697,9 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `busy` | `watch_check_running` | `a2m-ledger` | A check of the watch is under way already. |
 | `busy` | `watch_check_unfinished` | `a2m-ledger` | A check's run has not reached an end the watch can take. |
 | `busy` | `watch_due_missed` | `a2m-ledger` | Due times passed with no check: the engine was not running, the watch was paused or held, or a check could not be admitted in time. The code of a `gap`, |
+| `busy` | `watch_over_budget_share` | `a2m-sched` | The watches on one surface would take more of its budget than their share. |
 | `busy` | `watch_paused` | `a2m-ledger` | The watch is paused. |
+| `busy` | `watch_too_many` | `a2m-sched` | The person has as many watches as they may have. |
 | `busy` | `writes_not_built` | `a2m-pack-desktop` | This pack writes only on Linux in this version. Nothing was sent. |
 <!-- failure-codes:end -->
 

@@ -18,5 +18,5 @@ actions:
     confirm: {visible: {role: heading, name: "Orders"}}
 variants:
   refused:
-    when: {text: "The code is not right.", contains: false}
+    when: {visible: {text: "The code is not right.", contains: false}}
     handling: stop

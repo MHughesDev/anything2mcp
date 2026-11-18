@@ -19,8 +19,7 @@ use a2m_core::{
 };
 use a2m_ledger::{
     ChangeKind, CheckOutcome, Due, Durability, Missed, NewRun, NewWatch, Observed, ObservedRecord,
-    Opened, RetentionClass, Store, ToolKind, WatchId, WatchKey, WatchRow, WatchState, codes,
-    reasons,
+    Opened, RetentionClass, Store, ToolKind, WatchId, WatchRow, WatchState, codes, reasons,
 };
 use common::*;
 
@@ -184,14 +183,20 @@ async fn a_watch_is_made_only_of_a_read() {
     let folder = Folder::new("watch-read");
     let store = on_disk(&folder).await;
     for effect in [EffectClass::Write, EffectClass::Irreversible] {
-        refused(ask(&store, new_watch(effect)).await, &codes::WATCH_NOT_A_READ);
+        refused(
+            ask(&store, new_watch(effect)).await,
+            &codes::WATCH_NOT_A_READ,
+        );
     }
     let watch = ask(&store, new_watch(EffectClass::Read)).await.unwrap();
     assert_eq!(watch.state, WatchState::Asked);
     // Whoever sends the statement, the table holds reads only.
     raw_refused(
         &folder,
-        &format!("UPDATE watches SET effect = 'write' WHERE id = '{}'", watch.id),
+        &format!(
+            "UPDATE watches SET effect = 'write' WHERE id = '{}'",
+            watch.id
+        ),
     );
 }
 
@@ -232,7 +237,8 @@ async fn a_watch_does_nothing_until_its_own_person_confirms_it() {
     );
     let row = store
         .write(Durability::Synced, move |tx| {
-            tx.watches().confirm(id, principal(1), Duration::from_secs(3))
+            tx.watches()
+                .confirm(id, principal(1), Duration::from_secs(3))
         })
         .await
         .unwrap();
@@ -301,7 +307,9 @@ async fn what_a_watch_reads_never_changes_and_no_check_runs_another_read() {
     // database too.
     let stray: String = folder
         .raw()
-        .query_row("SELECT run_id FROM watch_checks LIMIT 1", [], |row| row.get(0))
+        .query_row("SELECT run_id FROM watch_checks LIMIT 1", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     raw_refused(
         &folder,
@@ -335,13 +343,19 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
         &store,
         watch,
         1,
-        vec![order("A-1", "shipped-to-the-coast", 2), order("A-3", "open", 2)],
+        vec![
+            order("A-1", "shipped-to-the-coast", 2),
+            order("A-3", "open", 2),
+        ],
         true,
     )
     .await;
     assert_eq!(second.state, WatchState::Confirmed);
     let counts = second.check.counts.unwrap();
-    assert_eq!((counts.added, counts.changed, counts.removed, counts.unseen), (1, 1, 1, 0));
+    assert_eq!(
+        (counts.added, counts.changed, counts.removed, counts.unseen),
+        (1, 1, 1, 0)
+    );
     let told = changes(&store, watch).await;
     let kinds: Vec<ChangeKind> = told.iter().map(|change| change.kind).collect();
     assert_eq!(
@@ -395,7 +409,11 @@ async fn quiet_checks_record_no_change_and_a_list_cut_short_never_reports_a_remo
         let quiet = check(&store, watch, index, all(), true).await;
         assert!(quiet.comparison.unwrap().is_quiet());
     }
-    assert_eq!(changes(&store, watch).await.len(), 1, "only the confirmation");
+    assert_eq!(
+        changes(&store, watch).await.len(),
+        1,
+        "only the confirmation"
+    );
     // Cut short: the record not returned is unseen, never removed, and is
     // told once.
     let short = check(&store, watch, 11, vec![order("A-1", "open", 1)], false).await;
@@ -503,13 +521,18 @@ async fn a_failed_check_is_a_gap_and_a_sign_in_pauses_the_watch() {
         .unwrap();
     assert_eq!(row.state, WatchState::Confirmed);
 
-    // A changed version needs the person again: no resume.
-    store
+    // A new published version needs the person again: no resume.
+    let running = store
         .write(Durability::Synced, move |tx| {
-            tx.watches().pause(watch, None, reasons::VERSION_CHANGED)
+            tx.watches()
+                .version_changed(&workspace(), &target(), &Digest::of(b"plan 2"))
         })
         .await
         .unwrap();
+    assert!(running.is_empty());
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    assert_eq!(row.state, WatchState::Paused);
+    assert_eq!(row.reason.unwrap().1, reasons::VERSION_CHANGED);
     refused(
         store
             .write(Durability::Synced, move |tx| tx.watches().resume(watch))
@@ -539,7 +562,11 @@ async fn missed_due_times_are_one_gap_and_never_go_back() {
     assert_eq!(gap.missed, Some(missed));
     assert_eq!(gap.why.unwrap().1, codes::WATCH_DUE_MISSED);
     // A due time handled is never checked.
-    assert!(begin(&store, watch, 2, the_read(1, b"status=open")).await.is_err());
+    assert!(
+        begin(&store, watch, 2, the_read(1, b"status=open"))
+            .await
+            .is_err()
+    );
     raw_refused(
         &folder,
         &format!("UPDATE watches SET next_due_index = 0 WHERE id = '{watch}'"),
@@ -603,7 +630,9 @@ async fn ending_is_always_possible_and_leaves_the_history() {
         format!("DELETE FROM watch_checks WHERE watch_id = '{running}'"),
         format!("DELETE FROM watch_changes WHERE watch_id = '{running}'"),
         format!("UPDATE watch_changes SET kind = 'added' WHERE watch_id = '{running}'"),
-        format!("UPDATE watches SET state = 'confirmed', reason_code = NULL WHERE id = '{running}'"),
+        format!(
+            "UPDATE watches SET state = 'confirmed', reason_code = NULL WHERE id = '{running}'"
+        ),
         format!("UPDATE watch_checks SET outcome = 'complete' WHERE watch_id = '{running}'"),
     ] {
         raw_refused(&folder, &sql);

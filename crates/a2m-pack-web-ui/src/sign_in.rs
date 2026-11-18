@@ -59,7 +59,7 @@ const PASSWORD: &str = "password";
 /// screen model; no locator is written here.
 const SCREEN: &str = "screen";
 const USER_FIELD: &str = "user_field";
-const PASSWORD_FIELD: &str = "password_field";
+const PASSWORD_FIELD: &str = "pass_field";
 const SUBMIT: &str = "submit";
 const REFUSED: &str = "refused";
 const BLOCKED: &str = "blocked";

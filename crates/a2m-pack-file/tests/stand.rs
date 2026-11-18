@@ -1562,17 +1562,29 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
 
     // The drafter writes a document for each layout, with the file's own
     // fingerprint. A cell of delimited text or a workbook is the text it
-    // holds; a JSON value's type and every key are left as questions. With
-    // no `target.yaml` in the folder, no read is drafted: a read is named
-    // after its target.
+    // holds; a JSON value's type and every key are left as questions. The
+    // drafter places a document only on a surface the folder's
+    // `target.yaml` declares (decision 0203), so it holds the surface the
+    // files were observed on; the reads drafted beside are not looked at
+    // here.
     let folder = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("target.yaml"),
+        "schema_version: 1\ntarget: example\nsurfaces:\n  price_files:\n    kind: file\n    folder: prices\n",
+    )
+    .unwrap();
     let root = a2m_files::TargetRoot::new(&folder);
     let drafted = a2m_files::Drafter::new(scene.registry.compiler_set(), &root)
         .draft(&kept.0)
         .unwrap();
-    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    let written: Vec<&str> = drafted
+        .written
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("documents/"))
+        .collect();
     assert_eq!(
         written,
         [

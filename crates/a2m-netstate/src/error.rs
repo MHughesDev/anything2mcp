@@ -66,13 +66,14 @@ pub enum NetError {
 }
 
 impl NetError {
-    /// The system refused this fact to this user.
+    /// `edge_blocked`: the system refused this fact to this user.
     pub const REFUSED: FailureCode = FailureCode::fixed("net_fact_refused");
-    /// No reader is built for this system.
+    /// `unknown_variant`: no reader is built for this system.
     pub const NOT_BUILT: FailureCode = FailureCode::fixed("net_reader_not_built");
-    /// The system's answer has a shape this reader does not know.
+    /// `unknown_variant`: the system's answer has a shape this reader does
+    /// not know.
     pub const UNREADABLE: FailureCode = FailureCode::fixed("net_answer_unreadable");
-    /// The system's call failed.
+    /// `transient`: the system's call failed.
     pub const FAILED: FailureCode = FailureCode::fixed("net_read_failed");
 
     /// The fact the error is about.

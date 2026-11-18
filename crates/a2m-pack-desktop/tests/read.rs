@@ -1,5 +1,5 @@
 //! The desktop driver against the stand, on a session of the test's own
-//! (Linux and Windows), through the registry's driver handle. Every test asks the stand
+//! (Linux, Windows, and macOS), through the registry's driver handle. Every test asks the stand
 //! what it holds and what it was asked: the reads return its values; the
 //! late value is waited for by its event; the two same-named controls and
 //! the password field stop by name; nothing pressed Save; and an
@@ -153,8 +153,8 @@ async fn an_application_that_is_not_running_is_a_named_stop() {
     // On Linux the program runs (it is this test's) and publishes nothing,
     // and the session's accessibility switch is off, as the test's own
     // session has it: the stop names the setting, and the pack changes
-    // none. Windows has no such switch: the stand's program, which nothing
-    // runs yet, is not running.
+    // none. Windows and macOS have no such switch: the stand's program,
+    // which nothing runs yet, is not running.
     let Some(scene) = Scene::without_application("silent").await else {
         return;
     };
@@ -162,7 +162,7 @@ async fn an_application_that_is_not_running_is_a_named_stop() {
         .read("example_order_get", Duration::from_secs(10))
         .await
         .unwrap_err();
-    let silent = if cfg!(windows) {
+    let silent = if cfg!(any(windows, target_os = "macos")) {
         "application_not_running"
     } else {
         "accessibility_off"

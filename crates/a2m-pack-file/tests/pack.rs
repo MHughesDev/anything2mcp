@@ -36,9 +36,10 @@ fn a_registry_with_only_the_file_pack_builds_and_its_digest_is_stable() {
             .iter()
             .map(|verb| verb.as_str())
             .collect::<Vec<_>>(),
-        ["create", "delete", "list", "read", "update"]
+        ["create", "delete", "list", "read", "rename", "update"]
     );
-    assert_eq!(set.file_kinds().count(), 1);
+    // Documents, folders, and growing files (decision 0246).
+    assert_eq!(set.file_kinds().count(), 3);
     // A document from a layout, and the reads over it.
     assert_eq!(set.drafting_rules().count(), 2);
 }
@@ -54,10 +55,10 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
             .unwrap_or_else(|| panic!("`{code}` is not in the manifest"));
         assert_eq!(declared.class, *class, "{code}");
     }
-    // The manifest declares two more, which the expression library makes.
+    // The manifest declares one more, which the expression library makes.
     assert_eq!(
         manifest.failure_codes.len(),
-        a2m_pack_file::codes::ALL.len() + 2
+        a2m_pack_file::codes::ALL.len() + 1
     );
 }
 
@@ -396,10 +397,16 @@ fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
     let root = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
+    // The drafter places a document only on a surface the target declares
+    // of a kind the pack registered the file kind for (decision 0203).
+    std::fs::write(
+        root.join("target.yaml"),
+        "schema_version: 1\ntarget: example\nsurfaces:\n  files:\n    kind: file\n    folder: .\n",
+    )
+    .unwrap();
     let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
         .draft(std::slice::from_ref(&finding))
         .unwrap();
-    eprintln!("REFUSED {:?}", report.refused);
     let refused: Vec<&str> = report
         .refused
         .iter()

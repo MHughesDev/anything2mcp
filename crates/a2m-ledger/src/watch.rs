@@ -1493,6 +1493,44 @@ impl Watches<'_, '_> {
         self.load(id)
     }
 
+    /// A target's published version is now `current`: every confirmed
+    /// watch of it tied to another version pauses with `version_changed`,
+    /// and goes on only as a new watch its person confirms. Answers the
+    /// watches of another version whose check is under way, which pause
+    /// when the caller asks again after their checks end.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn version_changed(
+        &mut self,
+        workspace: &WorkspaceId,
+        target: &TargetName,
+        current: &Digest,
+    ) -> Result<Vec<WatchId>, Failure> {
+        let rows = self.tx.rows(
+            "SELECT id, state FROM watches
+             WHERE workspace_id = ?1 AND target = ?2 AND target_version_hash <> ?3
+               AND state IN ('confirmed', 'running')
+             ORDER BY id",
+            &[
+                workspace.to_string().into(),
+                target.as_str().into(),
+                current.to_string().into(),
+            ],
+        )?;
+        let mut running = Vec::new();
+        for row in rows {
+            let id: WatchId = parse(row.text(0)?)?;
+            if row.text(1)? == WatchState::Running.as_str() {
+                running.push(id);
+            } else {
+                self.pause(id, None, reasons::VERSION_CHANGED)?;
+            }
+        }
+        Ok(running)
+    }
+
     /// One watch.
     ///
     /// # Errors

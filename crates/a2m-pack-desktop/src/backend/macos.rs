@@ -177,7 +177,7 @@ const TEXT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox"];
 
 /// Where an element stands in a walk, which refines its role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Place {
+pub(crate) enum Place {
     /// Anywhere but the places below.
     Plain,
     /// Directly under a table's row.
@@ -428,6 +428,15 @@ struct Ax {
 
 type Job = Box<dyn FnOnce(&mut Ax) + Send>;
 
+/// What one element said of itself in a walk.
+struct Answered {
+    node: Node,
+    /// What labels it, when its name is its label's.
+    label: Option<CFRetained<AXUIElement>>,
+    role: String,
+    subrole: String,
+}
+
 /// One step of a walk: an element and where it stands, or a table's
 /// heading row, made of the table's own list of its headings.
 enum Item {
@@ -617,11 +626,7 @@ impl Ax {
 
     /// Everything one element says of itself but its value, what labels
     /// it when anything does, and its role and subrole.
-    fn node(
-        element: &AXUIElement,
-        depth: u32,
-        place: Place,
-    ) -> Result<(Node, Option<CFRetained<AXUIElement>>, String, String), AxError> {
+    fn node(element: &AXUIElement, depth: u32, place: Place) -> Result<Answered, AxError> {
         let role = text_of(element, "AXRole")?.unwrap_or_default();
         let subrole = text_of(element, "AXSubrole")?.unwrap_or_default();
         let secret = subrole == SECURE;
@@ -661,7 +666,12 @@ impl Ax {
                 path: String::new(),
             },
         };
-        Ok((node, label, role, subrole))
+        Ok(Answered {
+            node,
+            label,
+            role,
+            subrole,
+        })
     }
 
     /// The text of the first static text or text field directly in a cell,
@@ -737,7 +747,12 @@ impl Ax {
             }
             let (node, element, children) = match item {
                 Item::Element(element, place) => {
-                    let (node, label, role, subrole) = Self::node(&element, depth, place)?;
+                    let Answered {
+                        node,
+                        label,
+                        role,
+                        subrole,
+                    } = Self::node(&element, depth, place)?;
                     #[cfg(test)]
                     self.seen.push(format!("{role}/{subrole}"));
                     #[cfg(not(test))]

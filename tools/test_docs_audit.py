@@ -267,7 +267,7 @@ class AuditCatches(unittest.TestCase):
         lines = [l for l in text.splitlines(keepends=True) if "| `not_granted` |" not in l]
         self.assertNotEqual(len(lines), len(text.splitlines()))
         page.write_text("".join(lines), encoding="utf-8")
-        self.assert_finding("codes", "`not_granted` is declared in a2m-policy and has no row")
+        self.assert_finding("codes", "`not_granted` is declared in", "and has no row in the reference")
 
     def test_a_row_with_no_code_behind_it_is_refused(self):
         page = self.root / "docs" / "reference" / "technical-reference.md"

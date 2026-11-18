@@ -32,6 +32,11 @@
 //! is proven by the pack's own list of the calls it may make; the stand's
 //! count is the second witness.
 
+// AppKit is reached only through calls its bindings mark unsafe and through
+// the classes `define_class!` makes, which are unsafe by construction; each
+// block in this module says why it is sound.
+#![allow(unsafe_code)]
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -214,10 +219,14 @@ define_class!(
             column: Option<&NSTableColumn>,
             row: NSInteger,
         ) -> Option<Retained<NSView>> {
-            let at = column?.identifier().to_string().parse::<usize>().ok()?;
-            let line = self.ivars().get(usize::try_from(row).ok()?)?;
-            let cell = NSTextField::labelWithString(&NSString::from_str(line.get(at)?), self.mtm());
-            Some(Retained::into_super(Retained::into_super(cell)))
+            let text = column
+                .and_then(|column| column.identifier().to_string().parse::<usize>().ok())
+                .zip(usize::try_from(row).ok())
+                .and_then(|(at, row)| self.ivars().get(row).and_then(|line| line.get(at)));
+            text.map(|text| {
+                let cell = NSTextField::labelWithString(&NSString::from_str(text), self.mtm());
+                Retained::into_super(Retained::into_super(cell))
+            })
         }
     }
 );
@@ -263,7 +272,6 @@ fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
 
 /// Makes the window and its controls, and shows it without making the
 /// stand the active application.
-#[allow(unsafe_code)] // calls into AppKit, explained below
 fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
     // SAFETY: a window's own initializer, with plain values; the window is
     // kept by the stand until the process ends, and not released when it
@@ -388,7 +396,6 @@ unsafe extern "C" {
 
 /// On the main thread: the tracking field shows the late value, and the
 /// application says so, as AppKit's own editing would.
-#[allow(unsafe_code)] // one call into AppKit, explained below
 extern "C" fn show_late(_context: *mut c_void) {
     if MainThreadMarker::new().is_none() {
         return;
@@ -409,7 +416,6 @@ extern "C" fn show_late(_context: *mut c_void) {
 
 /// Has the main thread show the late value once `after` milliseconds have
 /// passed, from the control interface's thread.
-#[allow(unsafe_code)] // two calls into the system, explained below
 fn late(after: u64) {
     let nanoseconds = i64::try_from(after.saturating_mul(1_000_000)).unwrap_or(i64::MAX);
     // SAFETY: plain values; 0 is "now". The main queue is the system's own

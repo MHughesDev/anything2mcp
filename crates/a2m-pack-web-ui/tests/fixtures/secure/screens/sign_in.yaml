@@ -25,8 +25,8 @@ actions:
     confirm: {visible: {role: heading, name: "Orders"}}
 variants:
   refused:
-    when: {text: "The username or password is not right.", contains: false}
+    when: {visible: {text: "The username or password is not right.", contains: false}}
     handling: stop
   locked:
-    when: {text: "locked after too many failed sign-ins", contains: true}
+    when: {visible: {text: "locked after too many failed sign-ins", contains: true}}
     handling: stop

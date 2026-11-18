@@ -228,10 +228,12 @@ pub(crate) struct Stand {
     input: Mutex<ChildStdin>,
     answers: Mutex<Receiver<String>>,
     errors: Arc<Mutex<String>>,
-    /// Save and the password edit, as window handles in number form, on
-    /// Windows; 0 on macOS, whose controls have no handle another process
-    /// may use.
+    /// Save and the password edit, as window handles in number form. On
+    /// macOS the stand says 0 for both, and they are not kept: its controls
+    /// have no handle another process may use.
+    #[cfg(windows)]
     pub(crate) save: isize,
+    #[cfg(windows)]
     pub(crate) password: isize,
     _held: Arc<Held>,
 }
@@ -322,7 +324,7 @@ impl Stand {
             Err(_) => Vec::new(),
         };
         let handle = |at: usize| fields.get(at).and_then(|text| text.parse::<isize>().ok());
-        let (Some("ready"), Some(save), Some(password)) =
+        let (Some("ready"), Some(_save), Some(_password)) =
             (fields.first().map(String::as_str), handle(2), handle(3))
         else {
             let _ = child.kill();
@@ -348,8 +350,10 @@ impl Stand {
             input: Mutex::new(input),
             answers: Mutex::new(answers),
             errors,
-            save,
-            password,
+            #[cfg(windows)]
+            save: _save,
+            #[cfg(windows)]
+            password: _password,
             _held: held,
         })
     }
@@ -385,6 +389,12 @@ impl Stand {
                 }
             }
         }
+    }
+
+    /// The stand's process.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn process(&self) -> u32 {
+        self.child.id()
     }
 
     pub(crate) fn truth(&self) -> Result<Truth, StandError> {

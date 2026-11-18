@@ -403,6 +403,13 @@ impl Desk {
         }
     }
 
+    /// The process the stand runs in, for the stand's own test.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn process(&self) -> u32 {
+        self.inner.process()
+    }
+
     /// The control interface: switches a fault on.
     ///
     /// # Errors

@@ -27,8 +27,8 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gd
 # (decision 0244). Tokio for the one blocking start, off the test's thread.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSApplication", "NSButton", "NSControl", "NSGraphics", "NSResponder", "NSRunningApplication", "NSScrollView", "NSSecureTextField", "NSTableColumn", "NSTableView", "NSTextField", "NSUserInterfaceItemIdentification", "NSView", "NSWindow"] }
-objc2-application-services = { workspace = true, features = ["AXUIElement"] }
+objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSApplication", "NSButton", "NSControl", "NSGraphics", "NSResponder", "NSRunningApplication", "NSScrollView", "NSSecureTextField", "NSTableColumn", "NSTableView", "NSTextField", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-application-services = { workspace = true, features = ["AXUIElement", "HIServices"] }
 objc2-foundation = { workspace = true, features = ["NSGeometry", "NSObject", "NSString"] }
 tokio.workspace = true
 
@@ -38,7 +38,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # The stand's own test reads its window as a client of the accessibility
 # interface.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2-application-services = { workspace = true, features = ["AXError", "AXUIElement", "libc"] }
+objc2-application-services = { workspace = true, features = ["AXError", "AXUIElement", "HIServices", "libc"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFString"] }
 
 # The stand's own test sends its controls messages as another process.

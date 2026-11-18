@@ -387,6 +387,140 @@ mod on_windows {
     }
 }
 
+/// The stand's own tests on macOS: its window is up in a process of its
+/// own, and its witness counts what AppKit's accessibility asks of its
+/// controls, against a client of the accessibility interface in this
+/// process.
+#[cfg(target_os = "macos")]
+mod on_macos {
+    #![allow(unsafe_code, reason = "a client of the accessibility interface; each call is explained")]
+
+    use std::ptr::NonNull;
+    use std::time::{Duration, Instant};
+
+    use example_desk::{Desk, LATE, Order, Session};
+    use objc2_application_services::{AXError, AXUIElement};
+    use objc2_core_foundation::{CFArray, CFRetained, CFString, CFType};
+
+    fn copy(element: &AXUIElement, attribute: &str) -> Option<CFRetained<CFType>> {
+        let name = CFString::from_str(attribute);
+        let mut value: *const CFType = std::ptr::null();
+        // SAFETY: a valid element and name; `value` is ours, and gets one
+        // object the caller owns, or nothing.
+        let said = unsafe { element.copy_attribute_value(&name, NonNull::from(&mut value)) };
+        if said != AXError::Success {
+            return None;
+        }
+        // SAFETY: the copy rule: the object is ours to release.
+        NonNull::new(value.cast_mut()).map(|value| unsafe { CFRetained::from_raw(value) })
+    }
+
+    fn text(element: &AXUIElement, attribute: &str) -> String {
+        copy(element, attribute)
+            .and_then(|value| value.downcast::<CFString>().ok())
+            .map(|text| text.to_string())
+            .unwrap_or_default()
+    }
+
+    fn elements(element: &AXUIElement, attribute: &str) -> Vec<CFRetained<AXUIElement>> {
+        let Some(array) = copy(element, attribute).and_then(|value| value.downcast::<CFArray>().ok())
+        else {
+            return Vec::new();
+        };
+        // SAFETY: an array of the interface holds Core Foundation objects;
+        // each is checked to be an element.
+        let array = unsafe { CFRetained::cast_unchecked::<CFArray<CFType>>(array) };
+        (0..array.len())
+            .filter_map(|at| array.get(at))
+            .filter_map(|member| member.downcast::<AXUIElement>().ok())
+            .collect()
+    }
+
+    /// Every element under `root`, as (role, subrole, title, element).
+    fn walk(root: &AXUIElement) -> Vec<(String, String, String, CFRetained<AXUIElement>)> {
+        let mut out = Vec::new();
+        let mut stack = elements(root, "AXChildren");
+        while let Some(element) = stack.pop() {
+            if out.len() > 2_000 {
+                break;
+            }
+            stack.extend(elements(&element, "AXChildren"));
+            out.push((
+                text(&element, "AXRole"),
+                text(&element, "AXSubrole"),
+                text(&element, "AXTitle"),
+                element,
+            ));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn the_window_is_up_and_its_control_interface_counts_what_it_is_asked() {
+        let Some(session) = Session::start().unwrap() else {
+            eprintln!("skipped: this process may not use the accessibility interface");
+            return;
+        };
+        let desk = Desk::start(&session, Order::example()).await.unwrap();
+        let truth = desk.truth();
+        assert_eq!(truth.writes, 0);
+        assert!(!truth.acted(), "{:?}", truth.asked);
+        assert_eq!(truth.tracking, "");
+
+        let process = i32::try_from(desk.process()).unwrap();
+        // SAFETY: an element for the stand's process; nothing is asked yet.
+        let application = unsafe { AXUIElement::new_application(process) };
+        let start = Instant::now();
+        let window = loop {
+            if let Some(window) = elements(&application, "AXWindows").into_iter().next() {
+                break window;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "the stand's window was not listed within twenty seconds"
+            );
+            tokio::task::yield_now().await;
+        };
+        assert_eq!(text(&window, "AXTitle"), example_desk::WINDOW);
+        let found = walk(&window);
+        let seen: Vec<String> = found
+            .iter()
+            .map(|(role, subrole, title, _)| format!("{role}/{subrole} {title:?}"))
+            .collect();
+
+        // A client that asks the secure field for its value is counted.
+        let secret = found
+            .iter()
+            .find(|(_, subrole, _, _)| subrole == "AXSecureTextField")
+            .unwrap_or_else(|| panic!("no secure text field in {seen:#?}"));
+        let _ = copy(&secret.3, "AXValue");
+        let truth = desk.truth();
+        assert_eq!(truth.secret_reads, 1, "{:?}\n{seen:#?}", truth.asked);
+
+        // A press of Save is counted as an act, and its action as a write.
+        let save = found
+            .iter()
+            .find(|(role, _, title, _)| role == "AXButton" && title == "Save")
+            .unwrap_or_else(|| panic!("no Save button in {seen:#?}"));
+        let press = CFString::from_str("AXPress");
+        // SAFETY: a valid element and action name; the stand's own test
+        // presses its own Save.
+        let said = unsafe { save.3.perform_action(&press) };
+        assert_eq!(said, AXError::Success);
+        let truth = desk.truth();
+        assert!(truth.acted(), "{:?}", truth.asked);
+        assert_eq!(truth.writes, 1, "{:?}", truth.asked);
+
+        // The late value appears when the control interface says so.
+        desk.show_late(Duration::from_millis(10));
+        let start = Instant::now();
+        while desk.truth().tracking.is_empty() && start.elapsed() < Duration::from_secs(5) {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(desk.truth().tracking, LATE);
+    }
+}
+
 #[test]
 fn a_machine_without_the_programs_skips_unless_required() {
     // Either the programs are here, or the start says why it gives none.

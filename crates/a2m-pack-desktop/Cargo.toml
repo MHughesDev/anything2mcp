@@ -38,7 +38,7 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", 
 # application's exit (decision 0244).
 [target.'cfg(target_os = "macos")'.dependencies]
 libc.workspace = true
-objc2-application-services = { workspace = true, features = ["AXError", "AXUIElement", "libc"] }
+objc2-application-services = { workspace = true, features = ["AXError", "AXUIElement", "HIServices", "libc"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFNumber", "CFRunLoop", "CFString"] }
 sha2.workspace = true
 

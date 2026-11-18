@@ -3,13 +3,15 @@
 //! driver prepared through the registry's handle; and discovery through
 //! the read-only port. The same tests run against the stand on every
 //! system that has one: on Linux a tree on a session bus of the test's
-//! own, on Windows a window of plain controls in a process of its own,
-//! which is this test binary started again (hence [`example_desk::stand_child`]).
+//! own, on Windows a window of plain controls and on macOS a window of
+//! AppKit's controls, each in a process of its own, which is this test
+//! binary started again (hence [`example_desk::stand_child`]).
 //!
 //! A test that needs the stand says it was skipped on a machine that
 //! cannot give one (no session bus and accessibility bus on Linux, no
-//! interactive desktop on Windows), unless `A2M_REQUIRE_DESKTOP=1` says the
-//! machine must: then it fails.
+//! interactive desktop on Windows, no permission to use the accessibility
+//! interface on macOS), unless `A2M_REQUIRE_DESKTOP=1` says the machine
+//! must: then it fails, and says why.
 
 #![allow(
     dead_code,
@@ -165,7 +167,7 @@ impl Scene {
     async fn with(name: &str, application: bool) -> Option<Self> {
         let Some(session) = Session::start().unwrap() else {
             eprintln!(
-                "skipped: this machine cannot give the desktop stand a session (on Linux a session bus and an accessibility bus, on Windows an interactive desktop)"
+                "skipped: this machine cannot give the desktop stand a session (on Linux a session bus and an accessibility bus, on Windows an interactive desktop, on macOS this program's permission to use the accessibility interface)"
             );
             return None;
         };

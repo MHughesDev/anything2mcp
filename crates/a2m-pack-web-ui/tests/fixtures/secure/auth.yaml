@@ -10,7 +10,7 @@ auth:
     settings:
       screen: sign_in
       user_field: username
-      password_field: password
+      pass_field: password
       submit: sign_in
       refused: refused
       blocked: locked
