@@ -1,3 +1,5 @@
+# Technical reference
+
 This file holds the engineering detail behind the [system design](../spec/README.md): interfaces, data model, protocols, and catalogs. A part that a package has built was settled by that package's decision record, and where this page and the code differ, the code is right. The rest is a starting design, refined by the package that builds it.
 
 ## Crate layering

@@ -23,13 +23,22 @@
 //! through the proxies the system ships for its standard controls
 //! (decision 0209). Every subclassed control counts the messages a client
 //! sends it, which is what the stand can witness there; a test binary that
-//! starts it declares [`stand_child!`]. On macOS [`Session::start`] finds
-//! nothing to start, as on a Linux machine without the programs.
+//! starts it declares [`stand_child!`].
+//!
+//! On macOS the same window is made of AppKit's own controls, in a process
+//! of its own that the same harness starts and stops, and the system's
+//! accessibility interface reads it (decision 0244). Its fields, its
+//! password field, and Save are subclasses that count what AppKit's
+//! accessibility asks of them, which is what the stand can witness there.
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod session;
+#[cfg(any(windows, target_os = "macos"))]
+mod child;
 #[cfg(windows)]
 mod win;
+#[cfg(target_os = "macos")]
+mod mac;
 
 #[cfg(target_os = "linux")]
 mod app;
@@ -37,16 +46,21 @@ mod app;
 use std::collections::BTreeMap;
 use std::fmt;
 
-#[cfg(not(windows))]
+#[cfg(any(windows, target_os = "macos"))]
+pub use child::{CHILD_TEST, Session};
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use session::Session;
-#[cfg(windows)]
-pub use win::{CHILD_TEST, Session};
 
-/// Declares, in a test binary, the test that serves the stand on Windows:
-/// there the stand's process is this test binary, copied and started again
-/// with this one test alone. In every other run, and on every other
-/// system, the test returns at once. Every test binary that starts a
-/// [`Desk`] declares it once.
+/// Declares, in a test binary, what serves the stand: on Windows and macOS
+/// the stand's process is this test binary, copied and started again with
+/// a variable that makes it serve the stand. On Windows the test this
+/// declares serves it. On macOS, whose windows must be made on a process's
+/// main thread, which no test runs on, a start function this declares
+/// serves it on the main thread before the test harness begins; the system
+/// calls such a function as it loads the program, and it returns at once
+/// in every process that is not the stand's. In every other run, and on
+/// Linux, both return at once. Every test binary that starts a [`Desk`]
+/// declares it once.
 #[macro_export]
 macro_rules! stand_child {
     () => {
@@ -56,15 +70,31 @@ macro_rules! stand_child {
         fn example_desk_stand_child() {
             $crate::serve_if_child();
         }
+
+        /// On macOS, serves the desktop stand on the main thread when this
+        /// process is the stand's own, before the test harness begins.
+        // The system calls each function in this section of a program as it
+        // loads the program, on the main thread, before `main`; a function
+        // of the plain C kind that takes nothing is what it calls.
+        #[cfg(target_os = "macos")]
+        #[allow(unsafe_code)]
+        #[used]
+        #[unsafe(link_section = "__DATA,__mod_init_func")]
+        static EXAMPLE_DESK_STAND_START: extern "C" fn() = {
+            extern "C" fn start() {
+                $crate::serve_if_child();
+            }
+            start
+        };
     };
 }
 
 /// Serves the stand and ends the process, when this process was started
-/// to be the stand on Windows; otherwise returns at once. Called by the
-/// test [`stand_child!`] declares.
+/// to be the stand on Windows or macOS; otherwise returns at once. Called
+/// by what [`stand_child!`] declares.
 pub fn serve_if_child() {
-    #[cfg(windows)]
-    win::serve_if_child();
+    #[cfg(any(windows, target_os = "macos"))]
+    child::serve_if_child();
 }
 
 /// The name the application has on the accessibility bus.
@@ -188,7 +218,8 @@ pub enum Fault {
 impl Truth {
     /// How many times the value of a control was asked for as text: on
     /// Linux through AT-SPI's text interface, on Windows by a message that
-    /// gets an edit's text. A name is not a value.
+    /// gets an edit's text, on macOS by AppKit's accessibility asking a
+    /// field for its value. A name is not a value.
     #[must_use]
     pub fn values_read(&self) -> u64 {
         self.asked
@@ -196,7 +227,9 @@ impl Truth {
             .filter(|(member, _)| {
                 member.as_str() == "Text.GetText"
                     || (member.starts_with("edit:")
-                        && (member.ends_with(".WM_GETTEXT") || member.ends_with(".EM_GETLINE")))
+                        && (member.ends_with(".WM_GETTEXT")
+                            || member.ends_with(".EM_GETLINE")
+                            || member.ends_with(".AXValue")))
             })
             .map(|(_, times)| *times)
             .sum()
@@ -213,10 +246,11 @@ impl Truth {
     }
 }
 
-/// The members of the AT-SPI interfaces, and the window messages, that
-/// change an application. The Linux stand answers some of the members, so
-/// that a test can see whether one was asked; the Windows stand counts the
-/// messages its controls are sent.
+/// The members of the AT-SPI interfaces, the window messages, and the
+/// accessibility requests of AppKit that change an application. The Linux
+/// stand answers some of the members, so that a test can see whether one
+/// was asked; the Windows stand counts the messages its controls are sent;
+/// the macOS stand counts the requests its controls are asked.
 pub const ACTING_MEMBERS: &[&str] = &[
     "DoAction",
     "SetTextContents",
@@ -256,6 +290,9 @@ pub const ACTING_MEMBERS: &[&str] = &[
     "LVM_SETITEMTEXTW",
     "LVM_ENSUREVISIBLE",
     "LVM_SCROLL",
+    "AXPress",
+    "AXSetValue",
+    "AXSetFocused",
 ];
 
 /// Why the stand could not do what a test asked.
@@ -281,8 +318,8 @@ pub fn required() -> bool {
 pub struct Desk {
     #[cfg(target_os = "linux")]
     inner: app::App,
-    #[cfg(windows)]
-    inner: win::Stand,
+    #[cfg(any(windows, target_os = "macos"))]
+    inner: child::Stand,
 }
 
 /// Two of the Windows stand's controls, by their window handles in number
@@ -309,8 +346,8 @@ impl Desk {
     /// # Errors
     ///
     /// When the accessibility bus cannot be reached or the registry does
-    /// not embed the application; on Windows, when the stand's process does
-    /// not show its window; on any other system, always.
+    /// not embed the application; on Windows and macOS, when the stand's
+    /// process does not show its window; on any other system, always.
     pub async fn start(session: &Session, order: Order) -> Result<Self, StandError> {
         #[cfg(target_os = "linux")]
         {
@@ -318,13 +355,13 @@ impl Desk {
                 inner: app::App::start(session.address(), order).await?,
             })
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             Ok(Self {
-                inner: win::Stand::start(session, order).await?,
+                inner: child::Stand::start(session, order).await?,
             })
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         {
             let _ = (session, order);
             Err(StandError(
@@ -337,20 +374,20 @@ impl Desk {
     ///
     /// # Panics
     ///
-    /// On Windows, when the stand's process does not answer: a test can
-    /// prove nothing past a stand that cannot say what it holds, and the
-    /// message says what it did say.
+    /// On Windows and macOS, when the stand's process does not answer: a
+    /// test can prove nothing past a stand that cannot say what it holds,
+    /// and the message says what it did say.
     #[must_use]
     pub fn truth(&self) -> Truth {
         #[cfg(target_os = "linux")]
         {
             self.inner.truth()
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             self.inner.truth().unwrap_or_else(|error| panic!("{error}"))
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         {
             Truth::default()
         }
@@ -435,15 +472,16 @@ impl Desk {
     ///
     /// # Panics
     ///
-    /// On Windows, when the stand's process does not take the command.
+    /// On Windows and macOS, when the stand's process does not take the
+    /// command.
     pub fn show_late(&self, after: std::time::Duration) {
         #[cfg(target_os = "linux")]
         self.inner.show_late(after);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         self.inner
             .show_late(after)
             .unwrap_or_else(|error| panic!("{error}"));
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         let _ = after;
     }
 }
