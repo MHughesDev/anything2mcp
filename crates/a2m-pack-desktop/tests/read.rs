@@ -180,7 +180,10 @@ async fn an_application_that_is_not_running_is_a_named_stop() {
         (FailureClass::Busy, "application_not_running".to_owned())
     );
     // The same, with the stand running and the surface naming a program
-    // that is not the one that runs it: no other application is read.
+    // that is not the one that runs it: no other application is read. On
+    // Windows and macOS a test process has one desktop at a time, which
+    // the scene above holds until it is gone.
+    drop(scene);
     let Some(mut scene) = Scene::start("other-program").await else {
         return;
     };

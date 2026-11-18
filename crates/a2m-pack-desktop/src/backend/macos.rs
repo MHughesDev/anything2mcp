@@ -798,8 +798,13 @@ impl Ax {
                         role,
                         subrole,
                     } = Self::node(&element, depth, place)?;
+                    // The test says, for each element, whether it named
+                    // an element as what labels it.
                     #[cfg(test)]
-                    self.seen.push(format!("{role}/{subrole}"));
+                    self.seen.push(format!(
+                        "{role}/{subrole}{}",
+                        if label.is_some() { " titled" } else { "" }
+                    ));
                     #[cfg(not(test))]
                     let _ = subrole;
                     labelling.extend(label);
@@ -1448,7 +1453,19 @@ mod tests {
             spans.push((start, end, call));
             from = end;
         }
-        assert!(spans.len() >= 10, "{} asks found", spans.len());
+        // The scan found every ask the code makes, and the asks make every
+        // call of the list and no other.
+        assert_eq!(
+            spans.len(),
+            code.matches(opening).count(),
+            "an ask was passed over"
+        );
+        let mut asked: Vec<&str> = spans.iter().map(|(_, _, call)| *call).collect();
+        asked.sort_unstable();
+        asked.dedup();
+        let mut listed = READ_CALLS.to_vec();
+        listed.sort_unstable();
+        assert_eq!(asked, listed, "the calls asked are not the list of reads");
         for (start, end, call) in &spans {
             assert!(
                 READ_CALLS.contains(call),

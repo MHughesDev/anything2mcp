@@ -20,7 +20,11 @@
 //!
 //! The control interface is a line protocol on the process's standard
 //! input and output, every answer marked with [`PREFIX`]; the test
-//! harness's own lines on the same output are passed over.
+//! harness's own lines on the same output are passed over. An answer is
+//! found where its mark is, not only at the start of a line: the harness
+//! of the started copy, which runs one test at a time, writes that test's
+//! name with no end of line before the test runs, so the stand's first
+//! answer, on Windows, follows it on the same line.
 
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -103,6 +107,12 @@ pub(crate) fn decode_order(text: &str) -> Option<Order> {
         status,
         lines,
     })
+}
+
+/// The stand's answer in one line of its output, after its mark wherever
+/// the mark is, or `None` for a line of the test harness's own.
+fn answer_in(line: &str) -> Option<&str> {
+    line.split_once(PREFIX).map(|(_, answer)| answer)
 }
 
 /// The one seat of this test process.
@@ -290,7 +300,7 @@ impl Stand {
         std::thread::spawn(move || {
             for line in BufReader::new(output).lines() {
                 let Ok(line) = line else { break };
-                if let Some(answer) = line.strip_prefix(PREFIX)
+                if let Some(answer) = answer_in(&line)
                     && send.send(answer.to_owned()).is_err()
                 {
                     break;
@@ -436,5 +446,21 @@ impl Drop for Stand {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_answer_is_found_after_the_harness_writes_the_name_of_its_test() {
+        // What the started copy's test harness writes before the stand's
+        // first answer, when it runs one test at a time, then that answer.
+        let line = format!("test tests::{CHILD_TEST} ... {PREFIX}ready\t7\t0\t0");
+        assert_eq!(answer_in(&line), Some("ready\t7\t0\t0"));
+        assert_eq!(answer_in(&format!("{PREFIX}late")), Some("late"));
+        assert_eq!(answer_in("running 1 test"), None);
+        assert_eq!(answer_in(&format!("test tests::{CHILD_TEST} ... ok")), None);
     }
 }

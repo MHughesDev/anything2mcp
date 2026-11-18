@@ -83,43 +83,68 @@ fn count(member: &str) {
     *lock(&ASKED).entry(member.to_owned()).or_insert(0) += 1;
 }
 
+/// What a value field keeps: the name its requests are counted under, and
+/// the label that labels it, when one does.
+struct Field {
+    counted: &'static str,
+    title: Option<Retained<NSTextField>>,
+}
+
 define_class!(
     // SAFETY: a text field may be subclassed; the class has no `Drop`, and
     // each method hands the request on to the superclass's own with the
-    // arguments it was given, after counting it.
+    // arguments it was given, after counting it, except the title element,
+    // which the field answers itself with the label it keeps.
     #[unsafe(super(NSTextField, NSControl, NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "ExampleDeskValueField"]
-    #[ivars = &'static str]
+    #[ivars = Field]
     struct ValueField;
 
     impl ValueField {
         #[unsafe(method_id(accessibilityValue))]
         fn accessibility_value(&self) -> Option<Retained<AnyObject>> {
-            count(&format!("edit:{}.AXValue", self.ivars()));
+            count(&format!("edit:{}.AXValue", self.ivars().counted));
             // SAFETY: the superclass's own answer to the same request.
             unsafe { msg_send![super(self), accessibilityValue] }
         }
 
         #[unsafe(method(setAccessibilityValue:))]
         fn set_accessibility_value(&self, value: Option<&AnyObject>) {
-            count(&format!("edit:{}.AXSetValue", self.ivars()));
+            count(&format!("edit:{}.AXSetValue", self.ivars().counted));
             // SAFETY: as above, with the value the request carried.
             unsafe { msg_send![super(self), setAccessibilityValue: value] }
         }
 
         #[unsafe(method(setAccessibilityFocused:))]
         fn set_accessibility_focused(&self, focused: bool) {
-            count(&format!("edit:{}.AXSetFocused", self.ivars()));
+            count(&format!("edit:{}.AXSetFocused", self.ivars().counted));
             // SAFETY: as above.
             unsafe { msg_send![super(self), setAccessibilityFocused: focused] }
+        }
+
+        /// The label that labels the field, as a screen reader asks for it
+        /// (`AXTitleUIElement`). The first run on macOS showed that a text
+        /// field given its label through `setAccessibilityTitleUIElement:`
+        /// alone answers the request with nothing.
+        #[unsafe(method_id(accessibilityTitleUIElement))]
+        fn accessibility_title_ui_element(&self) -> Option<Retained<NSTextField>> {
+            self.ivars().title.clone()
         }
     }
 );
 
 impl ValueField {
-    fn new(mtm: MainThreadMarker, name: &'static str, frame: NSRect) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(name);
+    fn new(
+        mtm: MainThreadMarker,
+        counted: &'static str,
+        title: Option<&Retained<NSTextField>>,
+        frame: NSRect,
+    ) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Field {
+            counted,
+            title: title.cloned(),
+        });
         // SAFETY: a text field's own initializer, with a plain frame.
         unsafe { msg_send![super(this), initWithFrame: frame] }
     }
@@ -127,10 +152,12 @@ impl ValueField {
 
 define_class!(
     // SAFETY: a secure text field may be subclassed; the class has no
-    // `Drop`, and each method hands the request on to the superclass's own.
+    // `Drop`, and each method hands the request on to the superclass's own,
+    // except the title element, which the field answers with its label.
     #[unsafe(super(NSSecureTextField, NSTextField, NSControl, NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "ExampleDeskSecretField"]
+    #[ivars = Retained<NSTextField>]
     struct SecretField;
 
     impl SecretField {
@@ -148,12 +175,18 @@ define_class!(
             // SAFETY: as above, with the value the request carried.
             unsafe { msg_send![super(self), setAccessibilityValue: value] }
         }
+
+        /// The label that labels the field, as for a value field.
+        #[unsafe(method_id(accessibilityTitleUIElement))]
+        fn accessibility_title_ui_element(&self) -> Option<Retained<NSTextField>> {
+            Some(self.ivars().clone())
+        }
     }
 );
 
 impl SecretField {
-    fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(());
+    fn new(mtm: MainThreadMarker, title: &Retained<NSTextField>, frame: NSRect) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(title.clone());
         // SAFETY: a secure text field's own initializer, with a plain frame.
         unsafe { msg_send![super(this), initWithFrame: frame] }
     }
@@ -293,7 +326,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
         .ok_or_else(|| "the window has no content view".to_owned())?;
     let top = 600.0;
     // The field nothing labels comes first.
-    let unnamed = ValueField::new(mtm, "unnamed", rect(160.0, top, 300.0, 24.0));
+    let unnamed = ValueField::new(mtm, "unnamed", None, rect(160.0, top, 300.0, 24.0));
     unnamed.setStringValue(&NSString::from_str("a value nothing labels"));
     content.addSubview(&unnamed);
     let rows: [(&str, &'static str, &str); 6] = [
@@ -309,7 +342,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
         let label = NSTextField::labelWithString(&NSString::from_str(name), mtm);
         label.setFrame(rect(10.0, y, 140.0, 24.0));
         content.addSubview(&label);
-        let field = ValueField::new(mtm, counted, rect(160.0, y, 300.0, 24.0));
+        let field = ValueField::new(mtm, counted, Some(&label), rect(160.0, y, 300.0, 24.0));
         field.setStringValue(&NSString::from_str(value));
         let labelling: &AnyObject = &label;
         // SAFETY: the label is a view of the same window, kept by it for as
@@ -324,7 +357,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
     let label = NSTextField::labelWithString(&NSString::from_str("Access code"), mtm);
     label.setFrame(rect(10.0, y, 140.0, 24.0));
     content.addSubview(&label);
-    let secret = SecretField::new(mtm, rect(160.0, y, 300.0, 24.0));
+    let secret = SecretField::new(mtm, &label, rect(160.0, y, 300.0, 24.0));
     secret.setStringValue(&NSString::from_str(SECRET));
     let labelling: &AnyObject = &label;
     // SAFETY: as for the fields above.

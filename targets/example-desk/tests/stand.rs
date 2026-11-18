@@ -492,6 +492,33 @@ mod on_macos {
             .map(|(role, subrole, title, _)| format!("{role}/{subrole} {title:?}"))
             .collect();
 
+        // Each labelled field, the secure one too, names its label as its
+        // title element, which is how a screen reader, and the desktop
+        // pack, find what labels it.
+        let titled: Vec<String> = found
+            .iter()
+            .filter(|(role, _, _, _)| role == "AXTextField")
+            .filter_map(|(_, _, _, field)| {
+                copy(field, "AXTitleUIElement")?
+                    .downcast::<AXUIElement>()
+                    .ok()
+            })
+            .map(|label| text(&label, "AXValue"))
+            .collect();
+        for name in [
+            "Order number",
+            "Customer",
+            "Status",
+            "Tracking",
+            "Reference",
+            "Access code",
+        ] {
+            assert!(
+                titled.iter().any(|title| title == name),
+                "no field names the label {name:?} as its title element: {titled:?}\n{seen:#?}"
+            );
+        }
+
         // A client that asks the secure field for its value is counted.
         let secret = found
             .iter()
