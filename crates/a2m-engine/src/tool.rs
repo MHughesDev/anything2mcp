@@ -812,10 +812,20 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         // shadow runs beside the verified one (decision 0207).
         run.shadow_allowed = run.job.kind == JobKind::Execute;
         let all = tool.steps.len();
-        read_steps_of(run, &loaded, &mut tool, 0, all).await?;
-        run.control
-            .send(EngineEvent::Result(kept(run, &tool.last)))
-            .await?;
+        let read = read_steps_of(run, &loaded, &mut tool, 0, all).await;
+        let sent = match read {
+            Ok(()) => run
+                .control
+                .send(EngineEvent::Result(kept(run, &tool.last)))
+                .await
+                .map_err(Stop::from),
+            Err(stop) => Err(stop),
+        };
+        // The comparisons of the job's shadows are kept only now, after
+        // the result was sent, within what is left of their one budget
+        // (decision 0251).
+        crate::shadow::keep(run).await;
+        sent?;
         Ok(Done::Completed)
     }
 }
@@ -902,8 +912,16 @@ async fn read_operation(
                 Ok(values) => {
                     // A binding in shadow runs beside it, within its bound,
                     // and changes nothing the caller is given.
-                    crate::shadow::beside(run, loaded, found, candidate.binding, &scope, &values)
-                        .await;
+                    crate::shadow::beside(
+                        run,
+                        loaded,
+                        found,
+                        candidate.binding,
+                        &scope,
+                        inputs,
+                        &values,
+                    )
+                    .await;
                     return Ok(values);
                 }
                 Err((failure, held)) => {

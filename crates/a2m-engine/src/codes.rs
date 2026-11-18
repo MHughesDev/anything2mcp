@@ -95,6 +95,14 @@ pub const SHADOW_NOT_KEPT: FailureCode = FailureCode::fixed("shadow_not_kept");
 /// `busy`: a shadow binding did not end within the time a shadow may take;
 /// it was cancelled and counted as not compared.
 pub const SHADOW_TIME_EXCEEDED: FailureCode = FailureCode::fixed("shadow_time_exceeded");
+/// `busy`: a binding in shadow was not given its requests at once without
+/// taking the share of the surface's rate budget left for callers' own
+/// reads; it sent nothing and was counted as not compared (decision 0251).
+pub const SHADOW_NO_RATE_BUDGET: FailureCode = FailureCode::fixed("shadow_no_rate_budget");
+/// `busy`: a binding in shadow reads through a surface whose session the
+/// live call does not hold; a shadow never asks for a session, so it sent
+/// nothing and was counted as not compared (decision 0251).
+pub const SHADOW_NO_SESSION: FailureCode = FailureCode::fixed("shadow_no_session");
 
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
@@ -135,6 +143,8 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Stale, "binding_changed"),
     (FailureClass::Busy, "shadow_not_kept"),
     (FailureClass::Busy, "shadow_time_exceeded"),
+    (FailureClass::Busy, "shadow_no_rate_budget"),
+    (FailureClass::Busy, "shadow_no_session"),
 ];
 
 pub(crate) fn fail(

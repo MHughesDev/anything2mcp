@@ -166,7 +166,7 @@ summary = "A mapped tool that a reviewer found runs free text is never called, a
 [[lint_rules]]
 code = "mcp.environment_refused"
 level = "error"
-summary = "A local server program is handed no variable of the engine's and none named for a credential."
+summary = "A local server program is handed no variable of the engine's, none that makes it load other code, and none named for a credential."
 
 [[lint_rules]]
 code = "mcp.unencrypted_credentials"

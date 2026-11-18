@@ -35,6 +35,8 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `GET /views/xml/declared` | An order as XML whose document type defines an entity built of another: an answer to refuse |
 | `GET /views/text/status`, `GET /views/text/legacy` | One status line as `text/plain; charset=utf-8`: the counts of orders and the newest; and another as an old device sends it, in ISO-8859-1, with no character set named |
 | `GET /views/bytes/orders/{order}/label` | A small binary label of the order (`application/octet-stream`), made by `views::label` |
+| `GET /views/hostile/{name}` | Answers a reader must refuse ([decision 0249](../../docs/decisions/0249-the-http-pack-reads-in-bounded-work-and-sends-nothing-that-may-write-outside-a-live-run.md)): `namespace`, an XML document whose default namespace has an address of 4 MB over 99,999 empty elements (`answers::long_namespace_document`); `control`, an order as XML whose customer holds an escape character as a reference and a bell; `control-text`, a status line with an escape character; `secret`, a binary label that carries `answers::ECHOED_SECRET` |
+| `POST /views/search/orders?status={status}` | The orders of one status, as JSON: a search behind `POST` that stores nothing. Any other query is refused with 422 |
 
 Rules a line-item write must pass: the order is a draft; the description is not empty; the quantity is 1 to 9999; the length is a number of inches that is a whole number of sixteenths. An update must carry a version, and a create must carry none: a version left out of an update, or sent with a create, is refused as invalid with 422, like any other field. A version that is present but is not the stored one is a conflict, refused with 409. A refused write stores nothing.
 

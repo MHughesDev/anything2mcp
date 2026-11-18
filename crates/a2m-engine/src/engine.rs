@@ -1,5 +1,6 @@
 //! The engine: one job in, one outcome out.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -42,9 +43,12 @@ pub struct EngineSettings {
     pub plans_kept: usize,
     /// The engine's version, for the trace.
     pub version: Version,
-    /// The longest a binding in shadow may take beside one live read
-    /// (decision 0207). The live call is never held longer by it: a shadow
-    /// that passes it is cancelled and counted as not compared.
+    /// The one budget of time every binding in shadow of a job shares,
+    /// their reads and the keeping of their comparisons together
+    /// (decisions 0207 and 0251). The call is never held longer by its
+    /// shadows, and less when its own time limit or lease ends first: a
+    /// shadow that passes it is cancelled and counted as not compared, and
+    /// a comparison that cannot be kept within it is dropped and counted.
     pub shadow_limit: Duration,
 }
 
@@ -107,6 +111,9 @@ pub struct ExclusiveNeed {
 pub struct Engine {
     pub(crate) deps: EngineDeps,
     plans: Mutex<Vec<Arc<Loaded>>>,
+    /// Shadow comparisons that could not be kept within the job's shadow
+    /// budget, or whose keeping failed (decision 0251).
+    pub(crate) shadows_lost: AtomicU64,
 }
 
 impl std::fmt::Debug for Engine {
@@ -162,7 +169,17 @@ impl Engine {
         Self {
             deps,
             plans: Mutex::new(Vec::new()),
+            shadows_lost: AtomicU64::new(0),
         }
+    }
+
+    /// How many shadow comparisons this engine made and could not keep:
+    /// their keeping failed, or did not end within what was left of the
+    /// job's shadow budget. Each was dropped; the call it was made beside
+    /// was not changed (decision 0251).
+    #[must_use]
+    pub fn shadow_comparisons_lost(&self) -> u64 {
+        self.shadows_lost.load(Ordering::Relaxed)
     }
 
     /// The plan by its hash, fetched through `Control` and checked against

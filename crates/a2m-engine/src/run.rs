@@ -161,6 +161,19 @@ pub(crate) struct Run<'a> {
     /// The operations a binding in shadow already ran beside in this job:
     /// at most once each.
     pub shadowed: Vec<OperationName>,
+    /// The one budget every binding in shadow of this job shares, set when
+    /// the first of them starts: when their reads must end, and when the
+    /// keeping of their comparisons must (decision 0251).
+    pub shadow_budget: Option<(tokio::time::Instant, tokio::time::Instant)>,
+    /// The comparisons made in this job, kept only after the call's result
+    /// was sent (decision 0251).
+    pub shadow_compared: Vec<crate::control::ShadowCompared>,
+    /// True while a binding in shadow reads: its rate budget is asked for
+    /// as a shadow's, never as a caller's.
+    pub shadow_reading: bool,
+    /// The rate budget's units this job was granted, one per step, on
+    /// every surface: what a shadow read's cost is counted from.
+    pub granted: std::sync::atomic::AtomicU64,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -247,6 +260,10 @@ impl<'a> Run<'a> {
             replay: None,
             shadow_allowed: false,
             shadowed: Vec::new(),
+            shadow_budget: None,
+            shadow_compared: Vec::new(),
+            shadow_reading: false,
+            granted: std::sync::atomic::AtomicU64::new(0),
             loaded,
         }
     }
@@ -763,13 +780,41 @@ impl<'a> Run<'a> {
     }
 
     /// Asks for a rate budget for the steps of a pass, when the surface
-    /// declares a limit.
+    /// declares a limit. While a binding in shadow reads, the budget is
+    /// asked for as a shadow's: all at once or not at all, never waiting,
+    /// and never below the share left for callers' own reads (decision
+    /// 0251). The steps granted are counted in [`Run::granted`].
     pub async fn budget(&self, held: usize, steps: usize) -> Result<(), Failure> {
         let surface = &self.held[held].surface_ref.surface;
-        if surface.rate.is_none() || steps == 0 {
+        if steps == 0 {
+            return Ok(());
+        }
+        let count = |steps: usize| {
+            self.granted.fetch_add(
+                u64::try_from(steps).unwrap_or(u64::MAX),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        };
+        if surface.rate.is_none() {
+            count(steps);
             return Ok(());
         }
         let mut wanted = u32::try_from(steps).unwrap_or(u32::MAX);
+        if self.shadow_reading {
+            if !self.control.shadow_rate(&surface.name, wanted).await? {
+                return Err(codes::fail(
+                    FailureClass::Busy,
+                    codes::SHADOW_NO_RATE_BUDGET,
+                    format!(
+                        "A binding in shadow was not given its requests on the surface `{}` without taking what callers' own reads need.",
+                        surface.name
+                    ),
+                    "Nothing to do; the binding is compared on a later call.",
+                ));
+            }
+            count(steps);
+            return Ok(());
+        }
         while wanted > 0 {
             let granted = self.control.rate(&surface.name, wanted).await?;
             if granted == 0 {
@@ -785,6 +830,7 @@ impl<'a> Run<'a> {
             }
             wanted = wanted.saturating_sub(granted);
         }
+        count(steps);
         Ok(())
     }
 
@@ -816,6 +862,15 @@ impl<'a> Run<'a> {
                 held.poisoned = true;
             }
         }
+    }
+
+    /// Whether the job holds a context on `surface` prepared under a
+    /// session lease, not poisoned: the live call's session, which a
+    /// binding in shadow may read through without asking for one.
+    pub fn holds_session_on(&self, surface: SurfaceIndex) -> bool {
+        self.held
+            .iter()
+            .any(|held| held.surface == surface && held.lease.is_some() && !held.poisoned)
     }
 
     /// Marks a held context as not to be used again, after a failure.

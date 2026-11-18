@@ -52,4 +52,5 @@ pub use job::{
     RecordSnapshot, RunSnapshot, ToolRef,
 };
 pub use loaded::{CURRENT, RECORD};
+pub use shadow::{shadow_evidence_environments, verified_binding};
 pub use values::{decode_values, encode_values};
