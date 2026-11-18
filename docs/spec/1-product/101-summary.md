@@ -1,5 +1,7 @@
 # 101. Summary
 
+This section is the product's summary: what it is for, who it is for, what makes it different, and what it does not do. It describes the product as designed; [section 704](../7-project/704-readiness.md) and the [README](../../../README.md) say how much of it is built.
+
 **North Star: latch onto any existing software or system that a person is entitled to use, and expose it to AI agents as deterministic, verified MCP tools.**
 
 **Anything2MCP** is an open-source toolkit. A developer, a person or an agent working for one, installs it, points it at a system that already exists, and builds tools over it. Each tool is a deterministic operation that has been proven to do what it says. Any agent that speaks the Model Context Protocol can call the tools, whoever made it.

@@ -1,6 +1,6 @@
 # 301. The web pack
 
-The web pack lets a target be a web application: something a person uses in a browser, through pages, forms, and the requests those pages send. It is the first pack to be built, and the one the kernel's first slices are proven with. It brings three modes: `ui`, which uses the page as a person would; `page_http`, which sends requests from inside the signed-in page; and `site_tools`, which calls tools a page registers for agents.
+The web pack lets a target be a web application: something a person uses in a browser, through pages, forms, and the requests those pages send. It was the first pack designed, and the kernel's first slices were planned around it; the first driver through the engine loop was the HTTP pack's ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)). It brings three modes: `ui`, which uses the page as a person would; `page_http`, which sends requests from inside the signed-in page; and `site_tools`, which calls tools a page registers for agents. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack is three crates. Their designs are the exact statement of how the code is arranged; this section says what the pack does and why.
 

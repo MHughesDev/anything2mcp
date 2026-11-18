@@ -1,6 +1,6 @@
 # 216. The vault and its keys
 
-The vault is where everything that must stay secret is kept encrypted: saved sessions, tokens, stored credentials, evidence, and the values the ledger holds. This section defines the key layout, where the top key lives on each kind of machine, how the session-ownership rule is backed by encryption, and what happens on rotation, backup, and loss. It extends the short description in [section 215](215-sessions-and-the-session-keeper.md).
+The vault is where everything that must stay secret is kept encrypted: saved sessions, tokens, stored credentials, evidence, and the values the ledger holds. This section defines the key layout, where the top key lives on each kind of machine, how the session-ownership rule is backed by encryption, and what happens on rotation, backup, and loss. It extends the short description in [section 215](215-sessions-and-the-session-keeper.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## What is protected
 

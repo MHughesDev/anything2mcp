@@ -1,6 +1,6 @@
 # 401. Overlaying tools on an existing system
 
-This is the method, end to end: how an existing system that knows nothing of us comes to have verified tools laid over it. It is the same for every kind of system. Each pack fills in what its kind needs: what a surface is, what can be observed, what a draft looks like, and what "cannot write" means for it. Several techniques here are taken from how the REA project observes applications ([research note 16](../../research/16-rea-methods.md)). One thing the method adds that REA does not have is the point of the whole design: every write is checked against the system itself.
+This is the method, end to end: how an existing system that knows nothing of us comes to have verified tools laid over it. It is the same for every kind of system. Each pack fills in what its kind needs: what a surface is, what can be observed, what a draft looks like, and what "cannot write" means for it. Several techniques here are taken from how the REA project observes applications ([research note 16](../../research/16-rea-methods.md)). One thing the method adds that REA does not have is the point of the whole design: every write is checked against the system itself. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 Anything2MCP supplies the evidence and the guardrails. Whoever builds the tools, a developer or an agent working for them, supplies the reasoning. No model provider is built in, and nothing a builder writes runs until it has passed the compiler and the gates.
 

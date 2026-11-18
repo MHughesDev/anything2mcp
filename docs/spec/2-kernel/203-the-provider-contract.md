@@ -1,6 +1,6 @@
 # 203. The provider contract
 
-A provider is anything that supplies capabilities to the runtime. This section is the contract every provider meets, whoever wrote it and however it runs. Anything2MCP owns this contract; no outside project defines any part of it. Decision: [record 0049](../../decisions/0049-a-neutral-kernel-and-packs-behind-one-provider-contract.md).
+A provider is anything that supplies capabilities to the runtime. This section is the contract every provider meets, whoever wrote it and however it runs. Anything2MCP owns this contract; no outside project defines any part of it. Decision: [record 0049](../../decisions/0049-a-neutral-kernel-and-packs-behind-one-provider-contract.md). Built today: for packs compiled into the binary; plug-ins in another process are not built (package F3).
 
 ## Three ways to be a provider
 

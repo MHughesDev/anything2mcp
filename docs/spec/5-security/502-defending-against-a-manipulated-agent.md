@@ -1,6 +1,6 @@
 # 502. Defending against a manipulated agent
 
-Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Anything2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing.
+Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Anything2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The aim is simple to state: a manipulated agent should be able to do nothing through Anything2MCP that the person could not have been asked to approve, and should not be able to make Anything2MCP reach, read, or send anything its tools do not openly declare.
 

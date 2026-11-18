@@ -1,6 +1,6 @@
 # 107. The bar: what the best means
 
-The owner's aim is that Anything2MCP be the best system of its kind. A claim like that is worth nothing unless it can be checked. This section turns it into a test: the dimensions on which a system that exposes existing systems to agents is judged, what the best looks like on each, the number or test that shows it, where it is measured, and where the design stands today. It also says what the product will not do to look better, how it compares with the kinds of approach that already exist, and how the bar is kept.
+The owner's aim is that Anything2MCP be the best system of its kind. A claim like that is worth nothing unless it can be checked. This section turns it into a test: the dimensions on which a system that exposes existing systems to agents is judged, what the best looks like on each, the number or test that shows it, where it is measured, and where the design stands today. It also says what the product will not do to look better, how it compares with the kinds of approach that already exist, and how the bar is kept. Its scorecard says, row by row, how far each proof has got.
 
 ## The dimensions
 

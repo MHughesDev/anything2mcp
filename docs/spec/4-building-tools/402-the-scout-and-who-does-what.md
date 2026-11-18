@@ -1,6 +1,6 @@
 # 402. The scout, and who does what
 
-A developer points the runtime at a system and wants tools. This section draws the line between the work the runtime does by itself, the work that stays with the developer or their agent, and the work only a person may do. It also says what the runtime assumes about the world and what it leaves out on purpose. Decisions: [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and [record 0059](../../decisions/0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md).
+A developer points the runtime at a system and wants tools. This section draws the line between the work the runtime does by itself, the work that stays with the developer or their agent, and the work only a person may do. It also says what the runtime assumes about the world and what it leaves out on purpose. Decisions: [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and [record 0059](../../decisions/0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The line
 

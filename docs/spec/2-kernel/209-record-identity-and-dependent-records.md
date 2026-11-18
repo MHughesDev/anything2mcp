@@ -1,6 +1,6 @@
 # 209. Record identity and dependent records
 
-The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 208 assumed the caller supplies a key. Many systems do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines.
+The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 208 assumed the caller supplies a key. Many systems do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines. Built today (package 3.8).
 
 ## The problem
 

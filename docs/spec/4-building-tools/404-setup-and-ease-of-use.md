@@ -1,6 +1,6 @@
 # 404. Setup and ease of use
 
-The ease-of-use target: from nothing to a first working read tool in under ten minutes, with no file written by hand.
+The ease-of-use target: from nothing to a first working read tool in under ten minutes, with no file written by hand. This section designs the path from install to a first tool. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ```text
 anything2mcp init                 # choose a profile; creates config and the local store

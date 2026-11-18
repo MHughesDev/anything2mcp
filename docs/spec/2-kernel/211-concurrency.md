@@ -1,6 +1,6 @@
 # 211. Concurrency: many callers at once
 
-One running system serves many agents and applications at the same time. A scheduler, not the callers, decides what runs when, so callers never collide on a session or a record.
+One running system serves many agents and applications at the same time. A scheduler, not the callers, decides what runs when, so callers never collide on a session or a record. This section designs the scheduler. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **What is shared and what is not.**
 

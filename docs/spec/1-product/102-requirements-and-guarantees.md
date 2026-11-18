@@ -1,5 +1,7 @@
 # 102. Requirements and guarantees
 
+This section lists what the system must do and the guarantees it gives. It states requirements, not what is built: [section 702](../7-project/702-requirements-audit.md) traces each one to the design, and [section 704](../7-project/704-readiness.md) gives the state of each section.
+
 What the system must do:
 
 | Area | Requirement |

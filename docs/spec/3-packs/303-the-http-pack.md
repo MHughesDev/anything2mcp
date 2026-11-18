@@ -1,6 +1,6 @@
 # 303. The HTTP pack
 
-The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request archetype: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads.
+The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request archetype: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no other pack. Its [design](../../architecture/crates/a2m-pack-http.md) is the exact statement of how the code is arranged; this section says what the pack does and why.
 

@@ -304,7 +304,7 @@ Section 226 also lists "the author of a version is never its only publisher" as 
 
 **What can only tighten.** A preset, and layers 5 to 8, on any protected key (`Layer::only_tightens`); a policy set published later, on every policy setting (`Settings::tighter`); a target's environment `approve_writes`, which is the stricter of it and the installation's. Pack settings are ceilings by the contract's convention, not by a check.
 
-**What only the installation sets.** 47 keys of scope I, among them the profile, the store, the vault, identity, the attempt limit, the time-limit ceiling, the shadow match counts, the scheduler's priority, the runners, audit retention, telemetry, every server and caller key, the MCP revisions, the whole network group, the provider switches, plug-ins, updates, and alerts. The installation file may also lock any key (`[locks] keys`) against every higher layer in both directions.
+**What only the installation sets.** 45 keys of scope I (39 are of scope U, and 11 of scope P), among them the profile, the store, the vault, identity, the attempt limit, the time-limit ceiling, the shadow match counts, the scheduler's priority, the runners, audit retention, telemetry, every server and caller key, the MCP revisions, the whole network group, the provider switches, plug-ins, updates, and alerts. The installation file may also lock any key (`[locks] keys`) against every higher layer in both directions.
 
 **The free space inside the frame,** in one line each: the scout and its budget, capture levels, retention, logging, keep-alive and waits, the transient retry count, tool listing and result size, the locale of what people see, each pack's ceilings, and, in a target's files, everything about the system: rates, timeouts, limits, environments, effect, hazard, permissions, field types.
 
@@ -351,7 +351,11 @@ Not edited; for the lead. Add a section after "Building tools":
 | | Run a person's own code on the path of a run, as a hook or a normalizer | Rules 1 and 6. Question open for the owner: [0239](docs/decisions/0239-whether-a-persons-own-code-may-run-on-the-path-of-a-run.md) |
 ```
 
-And change one existing line. In "The machine and the network", the row "Refuses to send a credential over an unencrypted link to another machine | Reach the outside through a proxy. One the person names is owed by decision 0208 | Not yet" stays; add to its "does" side nothing. In "People and agents", after "Holds a write until a person at the machine approves it", add to the "does not" side: "Tell the person that a run waits anywhere but the approval page" (Not yet).
+And add one row to "People and agents", directly after the row that begins "Holds a write until a person at the machine approves it":
+
+```markdown
+| Shows a waiting run on the approval page | Tell the person that a run waits anywhere else: no notification is built on one machine | Not yet |
+```
 
 ## Corrections section 226 needs
 

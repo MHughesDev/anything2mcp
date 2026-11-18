@@ -1,6 +1,6 @@
 # 702. Requirements audit
 
-Every stated requirement is covered by the design; five are covered only under conditions or limits outside Anything2MCP's control, and two rest on targets not yet measured.
+Every stated requirement is covered by the design; five are covered only under conditions or limits outside Anything2MCP's control, and two rest on targets not yet measured. It checks the design against the requirements; how much is built is in [section 704](704-readiness.md).
 
 | Requirement | Verdict | How | Condition or limit |
 | --- | --- | --- | --- |

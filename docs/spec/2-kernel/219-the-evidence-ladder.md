@@ -1,6 +1,6 @@
 # 219. The evidence ladder
 
-Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown or used at a higher level than its evidence supports. Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md).
+Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown or used at a higher level than its evidence supports. Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The levels
 

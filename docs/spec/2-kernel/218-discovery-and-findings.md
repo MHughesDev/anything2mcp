@@ -1,6 +1,6 @@
 # 218. Discovery and findings
 
-Discovery is how the runtime learns what a system can do. This section defines what a discoverer may do, what it returns, and the rules that stop a guess from passing as a fact. Much of the discipline here was learned from the REA project ([research note 16](../../research/16-rea-methods.md)); the design is ours.
+Discovery is how the runtime learns what a system can do. This section defines what a discoverer may do, what it returns, and the rules that stop a guess from passing as a fact. Much of the discipline here was learned from the REA project ([research note 16](../../research/16-rea-methods.md)); the design is ours. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## Three rules first
 

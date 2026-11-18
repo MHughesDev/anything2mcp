@@ -1,6 +1,6 @@
 # 305. The desktop pack
 
-The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface archetype.
+The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface archetype. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **It is the least designed of the first four packs.** Much of what the web pack settles by measurement is, for the desktop, still a question for a spike. This section says what is settled, what is assumed, and what must be learned before code is written. It is built in Phase 8, after the command pack has shown whether the kernel is ready for another pack.
 

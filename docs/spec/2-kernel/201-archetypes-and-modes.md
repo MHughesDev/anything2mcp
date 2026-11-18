@@ -1,6 +1,6 @@
 # 201. Archetypes and modes
 
-There are many kinds of system and few ways to reach one. This section names the seven archetypes, the ways a system can be reached, and shows that each fills the engine loop of [section 207](207-the-engine-loop.md) in the same way. It then says what a mode is, which modes the packs bring, how the runtime chooses among an operation's bindings at call time, and how a new binding earns its place.
+There are many kinds of system and few ways to reach one. This section names the seven archetypes, the ways a system can be reached, and shows that each fills the engine loop of [section 207](207-the-engine-loop.md) in the same way. It then says what a mode is, which modes the packs bring, how the runtime chooses among an operation's bindings at call time, and how a new binding earns its place. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 A mode is one concrete way of reaching a system, such as `ui`, `http`, or `mcp`. It is brought by a pack ([section 202](202-kernel-and-packs.md)) or a plug-in ([section 203](203-the-provider-contract.md)), and it belongs to exactly one archetype. A binding is how one mode carries out one operation; an operation can have several. Operations, pipelines, the ledger, and the policy gate are the same whatever the mode.
 

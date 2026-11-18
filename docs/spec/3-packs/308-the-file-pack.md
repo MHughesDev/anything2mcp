@@ -1,6 +1,6 @@
 # 308. The file pack
 
-The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it.
+The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 A file is the simplest system there is to verify, because the whole of it can be read again after every write. It is also the easiest to damage without noticing, because a careless save rewrites everything the tool did not mean to touch. This section is mostly about the second point.
 

@@ -1,6 +1,6 @@
 # 206. The compiler and the plan
 
-Target files are written for people and agents to read. The engine never reads them at call time. A compiler turns a target's files into one checked, hashed plan, and the engine runs only plans. This section defines the compiler's stages, what the plan contains, the lint rules, and how versions stay compatible.
+Target files are written for people and agents to read. The engine never reads them at call time. A compiler turns a target's files into one checked, hashed plan, and the engine runs only plans. This section defines the compiler's stages, what the plan contains, the lint rules, and how versions stay compatible. Built today: the compiler and the plan; the same plan bytes on three operating systems is not yet shown ([section 704](../7-project/704-readiness.md)).
 
 ## Why compile
 

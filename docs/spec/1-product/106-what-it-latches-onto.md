@@ -1,6 +1,6 @@
 # 106. What it latches onto
 
-Anything2MCP reaches any existing system, from a device's firmware to a hosted service, without changing what makes it trustworthy. This section sets out the levels at which a system can be reached, every kind of system considered so far with what supporting it takes, what is refused, and what the catalog shows. The owner's decision is [record 0048](../../decisions/0048-the-product-becomes-anything2mcp.md); the scope is [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md).
+Anything2MCP reaches any existing system, from a device's firmware to a hosted service, without changing what makes it trustworthy. This section sets out the levels at which a system can be reached, every kind of system considered so far with what supporting it takes, what is refused, and what the catalog shows. The owner's decision is [record 0048](../../decisions/0048-the-product-becomes-anything2mcp.md); the scope is [record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). Which kinds of system have a built pack is in the table of packs in the [README](../../../README.md); none has been tried against a real system.
 
 ## The claim
 

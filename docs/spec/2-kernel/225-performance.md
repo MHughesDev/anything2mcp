@@ -1,6 +1,6 @@
 # 225. Performance
 
-Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct.
+Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct. This section sets the budgets and how they are measured. Built today: the benchmark harness runs in CI; no budget is measured yet, and the 10% gate is not wired.
 
 **Budgets.** These are targets. None is measured yet; package 1.7 measures them, and a budget is then confirmed or revised by decision record.
 

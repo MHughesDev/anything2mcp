@@ -1,5 +1,7 @@
 # 703. Decisions and open questions
 
+This section lists the decisions taken in the specification and the questions still open. It is a list, not a design, and describes no code.
+
 Decisions taken in this spec:
 
 | Decision | Chosen | Main alternative | Why |

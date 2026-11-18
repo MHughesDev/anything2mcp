@@ -1,6 +1,6 @@
 # 221. The tool surface agents see
 
-Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the system.
+Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the system. This section designs that surface. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **No client is special.** Any client that speaks the protocol is served alike, whoever made it, a home-built runtime included. Nothing in the kernel knows which make of agent is calling, and conformance is tested against the protocol with at least two unrelated clients. A client's quirk, where one must be handled, is data in a profile ([decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). The guidance on list sizes below is cited from client makers' published advice and applies to every client.
 

@@ -1,5 +1,7 @@
 # 701. Prior art
 
+This section surveys what other products and projects do, and what this design takes from them or refuses. It describes no code of ours.
+
 Most existing products use AI to build automations and replay code to run them, but fall back to a live agent when replay fails. Anything2MCP keeps the first half and refuses the second, and adds what none of them combine: every mode in one engine, real identity handling, governance, and a server shape.
 
 | Project | What it does | Borrow | Where Anything2MCP goes further |

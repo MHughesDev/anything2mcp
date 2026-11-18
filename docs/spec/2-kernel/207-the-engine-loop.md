@@ -1,6 +1,6 @@
 # 207. The engine loop
 
-Every operation call in every run goes through the same eight-part engine loop, whatever the mode. Drivers fill in how each part is done. A pipeline step calls its operation once, or once per row. A write repeats parts 4 to 8 for each commit point; a read skips parts 4 and 7.
+Every operation call in every run goes through the same eight-part engine loop, whatever the mode. Drivers fill in how each part is done. A pipeline step calls its operation once, or once per row. A write repeats parts 4 to 8 for each commit point; a read skips parts 4 and 7. Built today: the loop runs reads and verified writes.
 
 The engine runs only compiled plans, and it never opens the store, calls the policy engine, or reads a target file. Everything it needs from outside its loop it asks for through one interface, `Control`: the plan by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, and sending events and evidence. In one process `a2m-actions` answers those calls directly; on a runner on another machine `a2m-runner` answers them over the link, so the same engine runs unchanged where there is no store ([`a2m-engine`](../../architecture/crates/a2m-engine.md)). It reaches a driver only through a handle from the registry, which refuses a step that commits unless it carries the token the ledger gave for the recorded intent. The engine names no mode, driver, or pack.
 

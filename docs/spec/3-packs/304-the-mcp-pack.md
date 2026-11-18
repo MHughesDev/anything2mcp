@@ -1,6 +1,6 @@
 # 304. The MCP pack
 
-The MCP pack lets a target be an MCP server that a system already provides. It reaches the server and re-exposes chosen tools of it, with this runtime's policy, approval, audit, and verification around every call. It brings one mode, `mcp`, in the request archetype.
+The MCP pack lets a target be an MCP server that a system already provides. It reaches the server and re-exposes chosen tools of it, with this runtime's policy, approval, audit, and verification around every call. It brings one mode, `mcp`, in the request archetype. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 Three ideas define it. **A mapping file names the only tools that can be reached,** each pinned by the digest of its definition, so the mapping is the upstream server's manifest. **Verification is added, not borrowed:** a server's success answer shows it accepted a call, never that the record holds what was sent. **The server's own tool list is a discoverer,** and a change to a mapped tool stops the bindings that use it.
 

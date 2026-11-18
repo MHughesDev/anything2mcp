@@ -1,6 +1,6 @@
 # 501. Security model
 
-The system holds live sessions to business systems, so it is designed on the assumption that callers, content from the system such as pages and records, and files can all be hostile. [Section 502](502-defending-against-a-manipulated-agent.md) covers an agent that has been steered by what it read, and [section 224](../2-kernel/224-when-the-engine-itself-fails.md) covers Anything2MCP's own parts failing.
+The system holds live sessions to business systems, so it is designed on the assumption that callers, content from the system such as pages and records, and files can all be hostile. [Section 502](502-defending-against-a-manipulated-agent.md) covers an agent that has been steered by what it read, and [section 224](../2-kernel/224-when-the-engine-itself-fails.md) covers Anything2MCP's own parts failing. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 | Threat | Example | Mitigation |
 | --- | --- | --- |

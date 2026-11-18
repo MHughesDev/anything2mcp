@@ -1,6 +1,6 @@
 # 503. Approval and sign-in surfaces
 
-Two moments need a person in front of a screen: approving a write, and signing in. Sections 212 and 215 say that these happen and who may do them. This section says what the person actually sees and what the engine has to build to show it, starting with the single-machine case that Phase 3 needs.
+Two moments need a person in front of a screen: approving a write, and signing in. Sections 212 and 215 say that these happen and who may do them. This section says what the person actually sees and what the engine has to build to show it, starting with the single-machine case. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## What a person must be able to do
 

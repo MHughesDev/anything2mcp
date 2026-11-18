@@ -1,6 +1,6 @@
 # 205. Target files
 
-Everything the system knows about a target is a folder of YAML files, each checked against a published JSON Schema before it loads. The files are compiled into a plan before anything runs ([section 206](206-the-compiler-and-the-plan.md)). Every field of every file is listed in the [file format reference](../../reference/file-formats.md). Names and fields below are placeholders for an imaginary system called `example`, here a web application with an HTTP interface beside it; they describe no real product.
+Everything the system knows about a target is a folder of YAML files, each checked against a published JSON Schema before it loads. The files are compiled into a plan before anything runs ([section 206](206-the-compiler-and-the-plan.md)). Every field of every file is listed in the [file format reference](../../reference/file-formats.md). Names and fields below are placeholders for an imaginary system called `example`, here a web application with an HTTP interface beside it; they describe no real product. Built today: for the kernel's file kinds and for each built pack's own kinds.
 
 ```text
 targets/example/

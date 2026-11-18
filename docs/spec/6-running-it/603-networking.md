@@ -1,6 +1,6 @@
 # 603. Networking
 
-The network design has three rules: one inbound endpoint, outbound-only runners, and egress limited to declared targets.
+The network design has three rules: one inbound endpoint, outbound-only runners, and egress limited to declared targets. This section designs the network of a server and its runners. Not built today for a server; on one machine the engine listens only on its own channel and the loopback page.
 
 **Inbound.** A single HTTPS listener, normally behind the organization's reverse proxy or API gateway:
 

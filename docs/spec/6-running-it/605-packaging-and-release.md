@@ -1,6 +1,6 @@
 # 605. Packaging and release
 
-What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today.
+What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today. Built today: the wheel and the npm packages are built and checked in CI; nothing is published.
 
 ## The repository
 

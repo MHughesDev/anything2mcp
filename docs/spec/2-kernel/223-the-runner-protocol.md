@@ -1,6 +1,6 @@
 # 223. The runner protocol
 
-Runners do the work; the control plane decides, records, and hands work out. This section defines how the two talk: how a runner joins, how it gets a job, how the control plane knows it is alive, what happens when it is not, and how secrets reach it. The message table in the technical reference is the summary; this is the design.
+Runners do the work; the control plane decides, records, and hands work out. This section defines how the two talk: how a runner joins, how it gets a job, how the control plane knows it is alive, what happens when it is not, and how secrets reach it. The message table in the technical reference is the summary; this is the design. Not built today: `a2m-runner` is an empty crate, and the protocol waits for Phase 7.
 
 ## Shape
 

@@ -1,6 +1,6 @@
 # 215. Sessions and the session keeper
 
-The session keeper is the part of the kernel that owns every signed-in state. It creates sessions, checks them, renews them, shares them between runs, and ends them. No driver, run, or caller ever signs in, refreshes a token, or touches a credential itself. The aim is one session kept alive for every caller allowed to use it, so that a person approves a second factor only as often as their organization's policy requires, not once per call.
+The session keeper is the part of the kernel that owns every signed-in state. It creates sessions, checks them, renews them, shares them between runs, and ends them. No driver, run, or caller ever signs in, refreshes a token, or touches a credential itself. The aim is one session kept alive for every caller allowed to use it, so that a person approves a second factor only as often as their organization's policy requires, not once per call. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The keeper lives in `a2m-auth`, with the auth providers that only hold or exchange a credential ([crate design](../../architecture/crates/a2m-auth.md)). How a session of one kind is made and renewed is the knowledge of the pack that knows that kind of system ([section 202](202-kernel-and-packs.md)). The browser-specific rules are the web pack's and are collected at the end of this section, under "Browser sessions in the web pack".
 
