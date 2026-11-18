@@ -8,9 +8,11 @@
 //! every folder on the way to where a link leads. Whoever can write one of
 //! them chooses what the path names, whatever the file at its end is.
 //!
-//! On Windows the check of who can write is not built: it needs the file's
-//! access list. There the path must be absolute, a file, and not a script.
-//! Access lists beyond the mode are not read on any system.
+//! On Unix the mode, the owner, and the group are read; access lists beyond
+//! the mode are not. A group's write counts as the administrator's only for
+//! the groups [`Trust`] holds. On Windows the owner and the discretionary
+//! access list of each folder and of the file are read, and a link, or any
+//! other reparse point, on the way is refused rather than followed.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -29,42 +31,101 @@ pub enum Refused {
     Missing,
     /// It is a shell, an interpreter, or a script one of them would run.
     Script,
-    /// It, or the folder or link named, can be written by another user. The
-    /// check is built for Unix only so far, so nothing makes this elsewhere
-    /// yet.
-    #[cfg_attr(not(unix), allow(dead_code))]
+    /// It, or the folder or link named, can be written by another user.
     Writable(PathBuf),
+    /// Who may change it, or the folder named, could not be read: an access
+    /// list that cannot be read, or holds an entry of a kind this check
+    /// does not read, is a refusal, never a pass.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Unreadable(PathBuf),
+    /// A link, or another kind of reparse point, on the way: on Windows
+    /// none is followed.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Link(PathBuf),
+    /// A path on another machine's share, or a device: its folders are not
+    /// this machine's to vouch for.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Elsewhere,
 }
 
-/// Checks the file at `path`.
+/// What the file is started as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A program that takes its arguments as data. A shell, an interpreter,
+    /// or a program that starts another is refused by name.
+    Program,
+    /// The interpreter of a fixed pair: it is given a script the target
+    /// keeps, and the name list does not refuse it. Every other check holds.
+    Interpreter,
+}
+
+/// The groups whose write, on Unix, counts as the system's own, as the
+/// administrator's does: a member could replace the file as the
+/// administrator anyway.
+///
+/// On macOS the group with id 80, to which the system gives its
+/// administrators, is always one: its members become the superuser through
+/// the system's own prompt. On Linux no group is one by default: a group's
+/// id says nothing about who is in it. Any other group is one only when the
+/// person names its numeric id in the protected setting
+/// `packs.command.admin_groups`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Trust {
+    named: Vec<u32>,
+}
+
+/// The groups the system itself gives only to its administrators.
+#[cfg(target_os = "macos")]
+const SYSTEM_ADMIN_GROUPS: &[u32] = &[80];
+#[cfg(not(target_os = "macos"))]
+const SYSTEM_ADMIN_GROUPS: &[u32] = &[];
+
+impl Trust {
+    /// The system's own groups and those a person named.
+    #[must_use]
+    pub fn with_groups(named: Vec<u32>) -> Self {
+        Self { named }
+    }
+
+    /// Whether a write by the group `id` counts as the system's own.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    fn holds(&self, id: u32) -> bool {
+        SYSTEM_ADMIN_GROUPS.contains(&id) || self.named.contains(&id)
+    }
+}
+
+/// Checks the file at `path`, to be started as `role`.
 ///
 /// # Errors
 ///
 /// The first reason found.
-pub fn check(path: &Path) -> Result<(), Refused> {
+pub fn check(path: &Path, trust: &Trust, role: Role) -> Result<(), Refused> {
     if !path.is_absolute() {
         return Err(Refused::NotAbsolute);
     }
-    if is_shell_or_interpreter(&path.to_string_lossy()) {
+    let by_name = role == Role::Program;
+    if by_name && is_shell_or_interpreter(&path.to_string_lossy()) {
         return Err(Refused::Script);
     }
     // Every folder and link from the declared path to the file itself.
-    let real = os::walk(path)?;
+    let real = os::walk(path, trust)?;
     let metadata = std::fs::metadata(&real).map_err(|_| Refused::Missing)?;
     if !metadata.is_file() {
         return Err(Refused::Missing);
     }
-    if is_shell_or_interpreter(&real.to_string_lossy()) {
+    if by_name && is_shell_or_interpreter(&real.to_string_lossy()) {
         return Err(Refused::Script);
     }
     let mut start = [0_u8; 2];
     let read = std::fs::File::open(&real)
         .and_then(|mut file| file.read(&mut start))
         .map_err(|_| Refused::Missing)?;
+    // A script is never started as a program, nor as an interpreter: an
+    // interpreter that is itself a script hands its own text to another.
     if read == 2 && &start == b"#!" {
         return Err(Refused::Script);
     }
-    os::owned_by_us(&real, &metadata)
+    os::owned_by_us(&real, &metadata, trust)
 }
 
 #[cfg(unix)]
@@ -73,7 +134,7 @@ mod os {
     use std::os::unix::fs::MetadataExt as _;
     use std::path::{Component, Path, PathBuf};
 
-    use super::Refused;
+    use super::{Refused, Trust};
 
     const OTHERS_WRITE: u32 = 0o002;
     const GROUP_WRITE: u32 = 0o020;
@@ -90,10 +151,12 @@ mod os {
 
     /// Whether only the engine's user or the administrator can change it.
     ///
-    /// A file or folder a group may write is refused whatever the group:
-    /// who its members are is not known here, and a member who is not the
-    /// engine's user is another user.
-    fn closed(metadata: &std::fs::Metadata, us: u32, folder: bool) -> bool {
+    /// A file or folder a group may write is refused unless `trust` holds
+    /// the group: who a group's members are is not known here, and a member
+    /// who is not the engine's user is another user, unless the system, or
+    /// the person in a protected setting, says the group is its
+    /// administrators'.
+    fn closed(metadata: &std::fs::Metadata, us: u32, folder: bool, trust: &Trust) -> bool {
         let mode = metadata.mode();
         if !ours(metadata, us) {
             return false;
@@ -101,7 +164,8 @@ mod os {
         // In a folder with the sticky mark, only an entry's owner may
         // replace it, so what we own there stays ours.
         let sticky = folder && mode & STICKY != 0;
-        mode & (OTHERS_WRITE | GROUP_WRITE) == 0 || sticky
+        let group_closed = mode & GROUP_WRITE == 0 || trust.holds(metadata.gid());
+        (mode & OTHERS_WRITE == 0 && group_closed) || sticky
     }
 
     /// The names of a path, last first, for a stack. `..` is kept as a
@@ -121,11 +185,11 @@ mod os {
     /// must be ours or the administrator's; where a link leads is walked
     /// the same way. So when this passes, nobody else can change what the
     /// declared path names between this check and a start.
-    pub(super) fn walk(declared: &Path) -> Result<PathBuf, Refused> {
+    pub(super) fn walk(declared: &Path, trust: &Trust) -> Result<PathBuf, Refused> {
         let us = rustix::process::getuid().as_raw();
         let root = PathBuf::from("/");
         let top = std::fs::metadata(&root).map_err(|_| Refused::Missing)?;
-        if !closed(&top, us, true) {
+        if !closed(&top, us, true, trust) {
             return Err(Refused::Writable(root));
         }
         let mut at = root.clone();
@@ -157,7 +221,7 @@ mod os {
                 }
                 ahead.extend(names(&target));
             } else if metadata.is_dir() {
-                if !closed(&metadata, us, true) {
+                if !closed(&metadata, us, true, trust) {
                     return Err(Refused::Writable(next));
                 }
                 at = next;
@@ -174,30 +238,45 @@ mod os {
 
     /// The file itself: it can be run, and nobody else can write it. Its
     /// folders were checked by [`walk`].
-    pub(super) fn owned_by_us(real: &Path, metadata: &std::fs::Metadata) -> Result<(), Refused> {
+    pub(super) fn owned_by_us(
+        real: &Path,
+        metadata: &std::fs::Metadata,
+        trust: &Trust,
+    ) -> Result<(), Refused> {
         if metadata.mode() & ANY_EXECUTE == 0 {
             return Err(Refused::Missing);
         }
         let us = rustix::process::getuid().as_raw();
-        if !closed(metadata, us, false) {
+        if !closed(metadata, us, false, trust) {
             return Err(Refused::Writable(real.to_path_buf()));
         }
         Ok(())
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+#[path = "safety/windows.rs"]
+mod os;
+
+#[cfg(not(any(unix, windows)))]
 mod os {
+    //! A system that is neither: nothing is known of who may write a file
+    //! there, so every program is refused (rule 7).
+
     use std::path::{Path, PathBuf};
 
-    use super::Refused;
+    use super::{Refused, Trust};
 
-    pub(super) fn walk(declared: &Path) -> Result<PathBuf, Refused> {
-        std::fs::canonicalize(declared).map_err(|_| Refused::Missing)
+    pub(super) fn walk(declared: &Path, _trust: &Trust) -> Result<PathBuf, Refused> {
+        Err(Refused::Unreadable(declared.to_path_buf()))
     }
 
-    pub(super) fn owned_by_us(_real: &Path, _metadata: &std::fs::Metadata) -> Result<(), Refused> {
-        Ok(())
+    pub(super) fn owned_by_us(
+        real: &Path,
+        _metadata: &std::fs::Metadata,
+        _trust: &Trust,
+    ) -> Result<(), Refused> {
+        Err(Refused::Unreadable(real.to_path_buf()))
     }
 }
 
@@ -224,7 +303,12 @@ pub fn digest_of(path: &Path) -> std::io::Result<Digest> {
 mod tests {
     use std::path::Path;
 
-    use super::{Refused, check};
+    use super::{Refused, Role, Trust};
+
+    /// The check of a program, with no group named.
+    fn check(path: &Path) -> Result<(), Refused> {
+        super::check(path, &Trust::default(), Role::Program)
+    }
 
     #[test]
     fn a_relative_path_a_missing_file_and_a_shell_are_refused() {

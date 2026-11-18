@@ -86,7 +86,7 @@ An MCP client starts `anything2mcp bridge`, which copies MCP messages over stand
 } } }
 ```
 
-The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["bridge", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect <client>` will write this block for you and is not built yet.
+The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["bridge", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect <client>` will write this block for you and is not built yet.
 
 ## How it works
 
