@@ -11,7 +11,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | Layer | Crates | May depend on |
 | --- | --- | --- |
 | 1. Types | `a2m-core` | Nothing internal |
-| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry` | Layer 1 |
+| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry`, `a2m-netstate` | Layer 1 |
 | 3. Stores | `a2m-files`, `a2m-ledger` | Layers 1 to 2 |
 | 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Layers 1 to 3 |
 | 5. Contract | `a2m-provider` | Layers 1 to 4 |

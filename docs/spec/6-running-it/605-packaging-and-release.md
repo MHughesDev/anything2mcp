@@ -16,6 +16,7 @@ anything2mcp/
     a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
     a2m-vault/            # envelope encryption, key-store back ends, redactor
     a2m-telemetry/        # traces, metrics, OpenTelemetry export
+    a2m-netstate/         # this machine's own network state, read from the system; sends nothing
     a2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
     a2m-policy/           # grants, effect classes, approvals, limits
     a2m-auth/             # auth providers, auth discovery, session keeper

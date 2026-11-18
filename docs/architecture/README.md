@@ -36,7 +36,7 @@ The binding table is in the [technical reference](../reference/technical-referen
 | Layer | Crates | Why it sits here |
 | --- | --- | --- |
 | 1. Types | `a2m-core` | The words everyone shares, and nothing that does anything |
-| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry` | Each stands alone: evaluating an expression, sealing a secret, emitting a span |
+| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry`, `a2m-netstate` | Each stands alone: evaluating an expression, sealing a secret, emitting a span, reading what the machine knows of its own networks |
 | 3. Stores | `a2m-files`, `a2m-ledger` | The two durable forms of knowledge: what a target is (files compiled to a plan) and what happened (the store). The compiler type-checks expressions, so it sits above `a2m-expr`. Everything that persists goes through `a2m-ledger`, so it sits below every service |
 | 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Each answers one question: may this happen, who is signed in, what records does this input hold |
 | 5. Contract | `a2m-provider` | The one doorway between the kernel and everything that knows a kind of system. It sits above the services because the extension points speak in their terms: a session lease, a source reader, a plan step |

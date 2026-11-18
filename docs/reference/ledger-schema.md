@@ -323,6 +323,35 @@ As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sq
 
 A promotion (`shadow_promotions`) is one row per workspace, target, operation, and binding digest: who promoted it and when, the matches in a row it was promoted on, the threshold in force, and the last comparison counted. As built by migration `0020-ledger-shadow-comparisons-and-promotions.sql`, which `a2m-ledger` owns ([decision 0207](../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). Both are append-only by trigger; a comparison is taken only beside a run that is `running`, and leaves only with its run, when retention purges it. Counts are queries over the rows: a mismatch starts the run of matches again, and `not_compared` neither counts nor starts it again.
 
+## watches, watch_checks, watch_changes, watch_baseline
+
+A watch: one published read with a fixed input, repeated on a schedule its person confirmed, and what changed between its checks. As built by migration `0021-ledger-watches-checks-and-changes.sql`, which `a2m-ledger` owns ([decision 0247](../decisions/0247-watches-the-ledgers-and-the-schedulers-halves.md)). No value of what a check read is kept in any of the four tables: only keyed digests, counts, names of outputs, and times. The values stay in the result of each check's run.
+
+| Column of `watches` | Type | Notes |
+| --- | --- | --- |
+| `id` | id | `watch_` and 32 hexadecimal characters |
+| `workspace_id`, `target`, `environment`, `operation`, `target_version_hash` | id, text, text, text, hash | The published read and the version it was confirmed for. Never changed (trigger) |
+| `effect` | enum | Always `read` (check constraint) |
+| `input_hash`, `input_ref` | hash, blob ref | The fixed input, as a run's are. Never changed (trigger) |
+| `ignore_outputs` | json | Output names left out of the digests |
+| `interval_seconds`, `ends_at` | int, ts | The schedule and the latest end. Never changed (trigger) |
+| `asked_by`, `acts_for`, `client_label`, `asked_at` | id, id, text, ts | Who asked, whose watch it is, which client, when |
+| `confirmed_by`, `confirmed_at`, `phase_ms` | id, ts, int | Set once, while `asked`, by the person it acts for and no one else (check constraint and trigger). Due time `n` is `confirmed_at + phase_ms + n × interval` |
+| `state` | enum | `asked`, `confirmed`, `running`, `paused`, `ended`; `running` only from `confirmed`, one check at a time; `ended` never changes |
+| `reason_class`, `reason_code` | enum, text | Why it paused or ended |
+| `next_due_index`, `not_before` | int, ts | The next due time not yet handled, which only grows; a refused admission's retry moment |
+| `running_check`, `checks` | int, int | The check under way; how many were begun |
+| `baseline_through`, `baseline_complete` | int, bool | The last check the baseline took; whether a complete check is in it |
+| `retention_state` | enum | `kept` or `purging`; a watch leaves only with the retention job, which is not built |
+
+`watch_checks` is one row per check, keyed by watch and number: the due time's index and moment, whether it was the one catch-up check after missed due times, the run of the read (a trigger refuses any run but the watch's own read: its operation, version, and input, for the person it acts for), when it began and ended, the outcome (`running`, `complete`, `cut_short`, `failed`, `faulted`), the class and code of a failure or fault, the count of records seen, and the counts of added, changed, removed, unseen, and unchanged records. One check per due time (unique index). Written when it begins and once when it ends, then never again.
+
+`watch_changes` is one row per change, in one sequence: `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, `ended`; the check that found it and the one that last saw the record before; the record's key as the workspace's keyed digest under the purpose `record_key` (as a record row names it), or `whole`; for `changed`, the names of the outputs that differ; for a gap, a pause, or an end, the class and code; for due times missed, the first, the last, and how many. Never changed (trigger).
+
+`watch_baseline` is the working state a check is compared with, one row per record the watch has seen: the keyed digest of its compared values together and of each output, and the check that last saw it. A newer check replaces the digests of the records it saw; a record proven removed is deleted; the whole baseline is deleted when the watch ends, and a trigger refuses a row for a watch with no check under way.
+
+Kept, and for how long: the watch, its checks, and its changes are kept for the retention class the watch was asked with, the class its read's runs take, and leave together when the retention job marks the watch `purging` (no such job is built, for runs or watches). The baseline lasts only while the watch is open. Nothing a device reported and no personal data a system holds is in any of them: a digest under the workspace's key cannot be reversed, and cannot be checked against a guess without the key. The principals who asked and confirmed are kept, as on every run.
+
 ## audit
 
 Unchanged from the technical reference: an append-only, hash-chained log of who did what. Ledger events are evidence about runs; the audit log is the record of decisions and administration.
