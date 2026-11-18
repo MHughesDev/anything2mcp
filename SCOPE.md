@@ -48,6 +48,7 @@ The full catalog, kind by kind, is the [coverage map](docs/reviews/coverage-map.
 | Runs a pipeline over many records of one target, with a checkpoint for each record | Join operations of two targets in one pipeline; undo the first when the second fails; carry on past a record the system refused | Not yet for the first; choice for the second and third (safe before easy) |
 | Takes a file a pipeline reads, from a folder the person allows | Hand a file back as a result, or send one to a system | Not yet |
 | Takes and gives times in UTC or at a fixed offset | Take a named time zone with daylight saving | Not yet |
+| Requires, when a target is compiled, that every free-text output from a system has a field type marked untrusted; keeps a system's words in a failure apart, bounded, and made neutral | Bound and make neutral a marked field in a tool's result, or tell the calling agent in the tool's schema which fields hold a system's own words: nothing after the compiler reads the mark (section 502 states both; a known gap) | Not yet |
 
 ## People and agents
 

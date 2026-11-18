@@ -1549,7 +1549,7 @@ impl TabSetup {
             .await
             .map_err(|error| browser_failure(&error, "the start of the session's browser"))?;
         browser
-            .import_state(mark, state, deadline)
+            .import_state(mark, state, &self.origins, deadline)
             .await
             .map(|_| ())
             .map_err(|error| browser_failure(&error, "the placing of the session's state"))
@@ -1612,6 +1612,21 @@ pub(crate) fn tab_setup(
         Some(lease) => {
             let mut sink = StatePlace::default();
             lease.apply(&mut sink).map_err(unsent)?;
+            // The state is taken only from a provider of this pack: another
+            // provider's header of the same name is not a browser's state
+            // (audit finding A7).
+            let ours = [
+                crate::sign_in::FORM_LOGIN,
+                crate::window::WINDOW_LOGIN,
+                crate::window::SSO_OIDC,
+                crate::window::SSO_SAML,
+            ]
+            .contains(&lease.grant().provider.as_str());
+            if sink.state.is_some() && !ours {
+                return Err(codes::not_usable(
+                    "the session's provider is not one of the web pack's, and only those hand over a browser's state",
+                ));
+            }
             if let Some(placed) = &sink.state {
                 let parsed = crate::sign_in::state_from(placed).ok_or_else(|| {
                     codes::not_usable(

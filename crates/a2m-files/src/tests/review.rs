@@ -450,7 +450,7 @@ fn a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends() {
     let set = stand_set().unwrap();
     let mut compiled = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
     let sign_in = &compiled.review.sign_ins[0];
-    assert_eq!(sign_in.provider.as_str(), "form_login");
+    assert_eq!(sign_in.provider.as_str(), "http_basic");
     assert_eq!(sign_in.credentials[0].role, "password");
     assert_eq!(
         sign_in.credentials[0].reference.to_string(),

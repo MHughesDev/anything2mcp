@@ -483,6 +483,13 @@ async fn a_wrong_password_is_refused_after_one_attempt_and_never_tried_again() {
         let asked = world.lease().await.unwrap_err();
         assert_eq!(asked.class(), FailureClass::SessionExpired);
     }
+    // Nor when the person asks for the sign-in again, twice: the provider
+    // refuses the refused credential before any page is opened.
+    for _ in 0..2 {
+        let again = world.sign_in().await.unwrap_err();
+        assert_eq!(again.class(), FailureClass::SessionExpired);
+        assert_eq!(again.code().as_str(), "credential_refused");
+    }
     world.keeper.idle().await;
     assert_eq!(world.app.auth_report().await.unwrap().sign_in_attempts, 1);
     assert!(!format!("{refused:?}").contains(WRONG));
@@ -839,5 +846,75 @@ async fn single_sign_on_crosses_to_the_identity_provider_and_back_and_a_stray_or
     let report = world.app.auth_report().await.unwrap();
     assert_eq!(report.identity_provider_sign_ins, 1);
     assert_eq!((report.strays_arrived, report.sign_ins), (0, 0));
+    world.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_in_a_browser_refuses_an_entry_that_also_covers_a_surface_of_another_kind() {
+    let stand = Stand::new("signin-kinds", Arc::new(a2m_core::NoSecrets));
+    for fixture in ["secure", "window"] {
+        let plan: Plan = compile(&stand.registry, fixture).plan;
+        let mut entry = entry_of(&plan.auth[0]);
+        entry.surfaces = EntrySurfaces::of(&plan, &plan.auth[0], &key().environment).published();
+        let provider = stand
+            .registry
+            .auth_providers()
+            .into_iter()
+            .find(|provider| provider.name() == entry.provider)
+            .unwrap();
+        provider.check(&entry).unwrap();
+        // The same entry, covering an `http` surface too: the session's
+        // cookies would go to that surface's driver as a header.
+        let mut other = entry.surfaces.surfaces[0].clone();
+        other.name = a2m_core::SurfaceName::new("api").unwrap();
+        other.kind = a2m_core::SurfaceKind::new("http").unwrap();
+        entry.surfaces.surfaces.push(other);
+        let refused = provider.check(&entry).unwrap_err();
+        assert_eq!(
+            refused.code().as_str(),
+            "auth_settings_invalid",
+            "{fixture}"
+        );
+        assert!(refused.message().contains("`api`"), "{refused}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_goes_into_the_checked_field_alone_and_never_into_a_page_with_a_foreign_frame() {
+    // The page moves the focus from the password field to a note field
+    // whenever it takes it: the password is set on the checked field by
+    // its node, and the note receives nothing.
+    let world = World::new("signin-focus", true).await;
+    world
+        .app
+        .set_auth_settings(&AuthSettings {
+            focus_thief: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!(report.typed_elsewhere, 0);
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (1, 1));
+    world.end().await;
+
+    // A frame of another origin on the sign-in page: a named stop before
+    // anything is entered, and nothing is sent.
+    let app = TestApp::start_with_identity_provider().await.unwrap();
+    let world = World::built("signin-frame", true, PASSWORD, "secure", app).await;
+    world
+        .app
+        .set_auth_settings(&AuthSettings {
+            foreign_frame: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+    let stopped = world.sign_in().await.unwrap_err();
+    assert_eq!(stopped.class(), FailureClass::UnknownVariant, "{stopped:?}");
+    assert_eq!(stopped.code().as_str(), "unexpected_page");
+    assert!(stopped.message().contains("frame"), "{stopped}");
+    assert_eq!(world.app.auth_report().await.unwrap().sign_in_attempts, 0);
     world.end().await;
 }

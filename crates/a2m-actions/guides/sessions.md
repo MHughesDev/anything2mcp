@@ -36,7 +36,7 @@ A map with one key, `auth`: a list, one entry per group of surfaces that share a
 | `mode` | `use_existing`, `managed_session`, or `custom` |
 | `provider` | An auth provider, such as `form_login` |
 | `probe` | A cheap signed-in read: an operation of the target. Name `probe_inputs` for it |
-| `expiry_signals` | Signs that the session ended: `redirect_host`, `status` with `path`, or `visible` |
+| `expiry_signals` | Signs that the session ended: `redirect_host`, `status` with `path`, or `visible`; on a web surface, `screen`, a screen whose `ready` shows |
 | `timeouts` | `idle_ms` and `absolute_ms`, when known |
 | `settings` | The provider's own names and plain values. Never a credential |
 | `credentials` | For `custom`: a role (such as `password`) to a vault reference |
@@ -44,17 +44,26 @@ A map with one key, `auth`: a list, one entry per group of surfaces that share a
 
 ```yaml
 auth:
-  - surfaces: [desk]
-    mode: managed_session
+  - surfaces: [app]
+    mode: custom
     provider: form_login
-    probe: example_order_get
-    probe_inputs: {order_id: "SO-1001"}
-    settings: {sign_in_path: "/login"}
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: sign_in
+      user_field: username
+      pass_field: password
+      submit: sign_in
+      refused: refused
     timeouts: {idle_ms: 1800000}
     credentials:
-      password: "vault://example/service/password"
+      user: "vault://example/app/user"
+      password: "vault://example/app/password"
     attempt_limit: 1
 ```
+
+For `form_login`, every setting names a part of a screen model in `screens/`: the sign-in screen, its two fields, the action that submits, and the variant that shows a refused credential. No locator goes in `auth.yaml`. Every credential reference starts with `vault://` and the target's own name.
 
 `auth.detect` says how each surface signs in, as claims for a person to confirm: whether the surface's kind keeps a session, which mode and provider `auth.yaml` declares for it, and whether its probe was answered or met a sign-in it needs. It recommends no mode or provider the files do not declare; those are named as unknown. A person confirms it by signing in.
 

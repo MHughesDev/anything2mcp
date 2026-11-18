@@ -138,6 +138,7 @@ fn providers_of(provider: &str, entry: &AuthEntry) -> Result<Vec<Address>, Failu
 
 impl Window {
     fn of(provider: &str, entry: &AuthEntry) -> Result<Self, Failure> {
+        crate::sign_in::only_web_surfaces(entry).map_err(|why| invalid(provider, &why))?;
         let mut webs = entry
             .surfaces
             .surfaces

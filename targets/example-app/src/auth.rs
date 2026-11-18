@@ -54,6 +54,16 @@ pub struct AuthSettings {
     /// instead of back to the application.
     #[serde(default)]
     pub identity_provider_strays: bool,
+    /// The sign-in page moves the focus from the password field to a note
+    /// field beside it whenever the password field takes it, and asks for
+    /// no password: a value typed into whatever holds the focus lands in the
+    /// note, which the application counts.
+    #[serde(default)]
+    pub focus_thief: bool,
+    /// The sign-in page holds a frame from the identity provider's origin,
+    /// for an application started with one.
+    #[serde(default)]
+    pub foreign_frame: bool,
 }
 
 /// A credential of the JSON interface that the control interface can revoke.
@@ -104,6 +114,9 @@ pub struct AuthReport {
     /// Requests that reached the identity provider at the origin nobody
     /// declared.
     pub strays_arrived: u64,
+    /// Sign-in forms whose note field, which only a focus thief offers,
+    /// held anything.
+    pub typed_elsewhere: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,12 +375,36 @@ async fn sign_in_page(State(state): State<AppState>, request: Request) -> Html<S
         Some("session_revoked") => "Your session was ended. Sign in again.",
         _ => "",
     };
-    let Html(form) = sign_in_form(&next_page(&fields), message);
-    if state.lock().await.auth.settings().person_at_the_window && message.is_empty() {
-        Html(form.replace("</main>", &format!("</main>\n{}", person_types("sign-in"))))
-    } else {
-        Html(form)
+    let Html(mut form) = sign_in_form(&next_page(&fields), message);
+    let inner = state.lock().await;
+    let settings = inner.auth.settings();
+    if settings.person_at_the_window && message.is_empty() {
+        form = form.replace("</main>", &format!("</main>\n{}", person_types("sign-in")));
     }
+    if settings.focus_thief {
+        form = form
+            .replace(
+                " type=\"password\" autocomplete=\"current-password\" required>",
+                " type=\"password\" autocomplete=\"current-password\">",
+            )
+            .replace(
+                "<p><button type=\"submit\">",
+                "<p><label for=\"note\">Note</label> <input id=\"note\" name=\"note\"></p>\n<p><button type=\"submit\">",
+            )
+            .replace(
+                "</main>",
+                "</main>\n<script>\ndocument.getElementById(\"password\").addEventListener(\"focus\", () =>                  document.getElementById(\"note\").focus());\n</script>",
+            );
+    }
+    if settings.foreign_frame
+        && let Some(provider) = inner.auth.sso.provider.as_deref()
+    {
+        form = form.replace(
+            "</form>",
+            &format!("</form>\n<iframe title=\"Elsewhere\" src=\"{provider}/authorize\"></iframe>"),
+        );
+    }
+    Html(form)
 }
 
 /// A script of the page that stands for a person at the window: it types
@@ -387,6 +424,9 @@ async fn sign_in(State(state): State<AppState>, body: String) -> Response {
     let mut inner = state.lock().await;
     let auth = &mut inner.auth;
     auth.report.sign_in_attempts += 1;
+    if fields.get("note").is_some_and(|note| !note.is_empty()) {
+        auth.report.typed_elsewhere += 1;
+    }
     if auth.report.locked {
         let form = sign_in_form(
             &next,

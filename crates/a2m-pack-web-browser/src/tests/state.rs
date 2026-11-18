@@ -103,8 +103,22 @@ async fn a_session_is_taken_out_placed_in_a_fresh_browser_and_never_written_to_d
 
     // Placed into a fresh browser, it signs that browser in, once.
     let fresh = stand.open(&profile("second")).await;
-    assert!(must(fresh.import_state("s1:1", &state, soon()).await));
-    assert!(!must(fresh.import_state("s1:1", &state, soon()).await));
+    // A state is placed only for the origins of the run: for another
+    // site's, nothing is placed (audit finding A7).
+    let refused = fresh
+        .import_state("s1:1", &state, &elsewhere, soon())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, BrowserError::ForeignOrigin(_)),
+        "{refused:?}"
+    );
+    assert!(must(
+        fresh.import_state("s1:1", &state, &origins, soon()).await
+    ));
+    assert!(!must(
+        fresh.import_state("s1:1", &state, &origins, soon()).await
+    ));
     let tab = must(fresh.acting_tab(&environment(), &origins).await);
     must(
         tab.goto(&Address::new(&app.url("/secure/orders")).unwrap(), soon())

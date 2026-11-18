@@ -1127,10 +1127,23 @@ impl Browser {
         &self,
         mark: &str,
         state: &BrowserState,
+        origins: &Origins,
         deadline: Deadline,
     ) -> Result<bool, BrowserError> {
         if lock(&self.inner.state_mark).as_deref() == Some(mark) {
             return Ok(false);
+        }
+        // Every cookie is for a host of the run's origins, or a domain above
+        // one: a state for another site is placed nowhere (audit finding A7).
+        let hosts: Vec<String> = origins.iter().filter_map(host_of).collect();
+        if let Some(outside) = state
+            .cookies
+            .iter()
+            .find(|cookie| !hosts.iter().any(|host| domain_covers(&cookie.domain, host)))
+        {
+            return Err(BrowserError::ForeignOrigin(
+                self.shared.redact.redact(&outside.domain),
+            ));
         }
         let cookies = state
             .cookies

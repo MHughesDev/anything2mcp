@@ -24,7 +24,8 @@
 //! publish step's tests do.
 //!
 //! The application's form sign-in with a second factor is not used here:
-//! its provider, `form_login`, belongs to the web pack and is not built.
+//! its provider, `form_login`, belongs to the web pack and is proven in
+//! that pack's own tests (decision 0245).
 //! The page's question for a second factor is proven in `a2m-local`.
 
 #![allow(

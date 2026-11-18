@@ -27,10 +27,10 @@ use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
     CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
-    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, GetTargetInfo,
-    HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable,
-    RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics,
-    SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
+    GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
+    NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
+    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -3483,6 +3483,54 @@ impl ActTab {
                 }
             }
         }
+    }
+
+    /// Where the tab's own document is, as the browser says, without asking
+    /// the page.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
+    /// browser is gone or does not answer.
+    pub async fn address(&self, deadline: Deadline) -> Result<String, BrowserError> {
+        let page = &self.page;
+        let info = page
+            .client
+            .call(
+                None,
+                &GetTargetInfo {
+                    target_id: &page.target,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|error| page.client_error(error))?;
+        Ok(page.redact.redact(&info.target_info.url))
+    }
+
+    /// The origin of every frame inside the tab's own document, as the
+    /// browser says, without asking the page; a frame that inherits its
+    /// document's origin (`about:blank`, `about:srcdoc`) is left out.
+    ///
+    /// # Errors
+    ///
+    /// As [`ActTab::address`].
+    pub async fn frame_origins(&self, deadline: Deadline) -> Result<Vec<String>, BrowserError> {
+        fn walk(tree: &crate::protocol::FrameTree, out: &mut Vec<String>) {
+            for child in &tree.child_frames {
+                if !child.frame.url.starts_with("about:") {
+                    out.push(child.frame.security_origin.clone());
+                }
+                walk(child, out);
+            }
+        }
+        let tree = self.page.call(&GetFrameTree {}, deadline).await?;
+        let mut out = Vec::new();
+        walk(&tree.frame_tree, &mut out);
+        Ok(out
+            .into_iter()
+            .map(|origin| self.page.redact.redact(&origin))
+            .collect())
     }
 
     /// Waits for `until`, and ends early when the tab refuses something or

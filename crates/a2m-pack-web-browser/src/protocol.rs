@@ -574,6 +574,35 @@ pub(crate) struct Navigate<'a> {
 }
 command!(Navigate<'_>, "Page.navigate" => Navigated);
 
+#[derive(Debug, Serialize)]
+pub(crate) struct GetFrameTree {}
+command!(GetFrameTree, "Page.getFrameTree" => FrameTreeReply);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameTreeReply {
+    pub frame_tree: FrameTree,
+}
+
+/// One frame and the frames inside it. Only where each frame is, and on
+/// which origin, is read.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameTree {
+    pub frame: FrameDescription,
+    #[serde(default)]
+    pub child_frames: Vec<FrameTree>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrameDescription {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub security_origin: String,
+}
+
 /// Puts a document the engine wrote into a frame, with no request.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -148,3 +148,15 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: taken up.** A command's help is generated from the registry, so the fix is one change to the generator and no hand-written text: every help gains the action's effect, who may run it, and whether a person at the machine is asked; and the help of an action that is not built says so in its first line, with what the product does today instead where the registry knows it.
 
 **Next.** Joins the package for what a person and an agent meet at the command line. The count of actions not built, 38 of 92, belongs in the readiness section beside the roadmap's counts.
+
+## Round 22 (2026-11-18, 04:47 UTC)
+
+**Idea.** An agent that calls a tool can tell which parts of the answer are the system's own words, and those words reach it bounded and made neutral, as section 502 says: free text from the system sits only in fields marked untrusted, limited in length and stripped of markup.
+
+**Test.** Followed the mark from where it is set to where it would have to be used: the field types and the compiler's lint, the plan, the engine that builds a result, the function that builds a tool's output schema, and the doors. Searched every crate for a reader of the mark. Reading only: no hostile text was sent through a running tool.
+
+**Result.** The first third of the sentence holds and the rest does not. The compiler refuses a free-text output whose field type is not marked untrusted, so the mark is always set. After that nothing reads it. The engine has no reader of the mark, so a marked field is returned at whatever length the pack allowed and with whatever characters it held; only the HTTP pack bounds and refuses control characters, since this morning, by its own rule. The output schema of a tool is built from the value's type alone, so the schema an agent is shown says `string` for a customer's note exactly as for a field the product made itself. The one place where a system's words are fenced and made neutral is a failure's `said`, which has its own ceiling and its own function for it.
+
+**Verdict: taken up.** A stated guarantee of section 502 is carried out at compile time only. Three changes close it. The engine applies one rule to every output field whose type is marked untrusted: a ceiling on its length and the same making-neutral that a failure's `said` already gets. The output schema of such a field says that it is text from the system and data, never an instruction, and states the ceiling, so that every client's model is told. A test sends text shaped like an instruction, with control and direction characters, through a real tool against the stand and reads what the agent receives.
+
+**Next.** A package in the engine and the compiler, after the validation in hand. Until it is built the scope page says so.

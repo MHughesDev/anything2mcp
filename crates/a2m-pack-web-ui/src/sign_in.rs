@@ -36,8 +36,8 @@ use a2m_core::{
     AccountName, Digest, Failure, FailureClass, Identity, Secret, SessionId, Timestamp,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Input, Look, Origins,
-    PageEnvironment, Primitive, ProfileKey, StateCookie, Visibility,
+    ActTab, Address, BrowserError, BrowserState, Browsers, By, Deadline, Input, Look, Origins,
+    PageEnvironment, Primitive, ProfileKey, Query, StateCookie, Visibility,
 };
 use serde::{Deserialize, Serialize};
 
@@ -160,6 +160,8 @@ pub(crate) fn page_lost(error: &BrowserError, what: &str) -> Failure {
 struct Pages {
     origin: Address,
     page: Address,
+    /// The sign-in screen's path.
+    path: String,
     screen: Screen,
     user: Field,
     password: Field,
@@ -170,6 +172,7 @@ struct Pages {
 }
 
 struct CodePages {
+    path: String,
     screen: Screen,
     field: Field,
     submit: Action,
@@ -214,8 +217,29 @@ fn variant_of(screen: &Screen, name: &str) -> Result<Variant, Failure> {
     })
 }
 
+/// Refuses an entry that covers a surface of a kind that is not the web
+/// pack's: the session's state is the browser's cookies, which only this
+/// pack's drivers place, and another pack's driver would send what it is
+/// given as a header of its own requests (decision 0254, audit finding A1).
+pub(crate) fn only_web_surfaces(entry: &AuthEntry) -> Result<(), String> {
+    match entry
+        .surfaces
+        .surfaces
+        .iter()
+        .find(|surface| surface.kind != WEB_SURFACE)
+    {
+        Some(other) => Err(format!(
+            "it covers the surface `{}` of the kind `{}`, and a sign-in in a browser covers surfaces of the kind `web` alone",
+            codes::shown(other.name.as_str()),
+            codes::shown(other.kind.as_str())
+        )),
+        None => Ok(()),
+    }
+}
+
 impl Pages {
     fn of(entry: &AuthEntry) -> Result<Self, Failure> {
+        only_web_surfaces(entry).map_err(|why| invalid(&why))?;
         let mut webs = entry
             .surfaces
             .surfaces
@@ -255,7 +279,8 @@ impl Pages {
         }
         let origin_text = origin_of(&surface.address)?;
         let origin = Address::new(&origin_text)?;
-        let page = Address::new(&format!("{origin_text}{}", fixed_path(screen)?))?;
+        let path = fixed_path(screen)?;
+        let page = Address::new(&format!("{origin_text}{path}"))?;
         let code = if CODE_SETTINGS
             .iter()
             .any(|name| entry.optional(name).is_some())
@@ -265,6 +290,7 @@ impl Pages {
                 return Err(invalid("its code screen is on another surface"));
             }
             Some(CodePages {
+                path: fixed_path(code_screen)?,
                 field: field_of(code_screen, setting(CODE_FIELD)?)?,
                 submit: action_of(code_screen, setting(CODE_SUBMIT)?)?,
                 refused: entry
@@ -291,6 +317,7 @@ impl Pages {
             screen: screen.clone(),
             origin,
             page,
+            path,
             code,
         })
     }
@@ -356,8 +383,9 @@ struct CookieRule {
     same_site: Option<String>,
 }
 
-/// One cookie with its value, as the driver is handed it.
-#[derive(Debug, Serialize, Deserialize)]
+/// One cookie with its value, as the driver is handed it. It has no
+/// `Debug`: its value is a credential (audit finding A7).
+#[derive(Serialize, Deserialize)]
 struct PlacedCookie {
     #[serde(flatten)]
     rule: CookieRule,
@@ -501,8 +529,27 @@ impl FormLogin {
             }
         }
 
+        // Each value goes into the element found and checked, by its node,
+        // on the declared screen of the declared origin, proven again just
+        // before (decision 0254, audit finding A4).
+        let here = Proof {
+            origin: &pages.origin,
+            path: &pages.path,
+            ready: pages.screen.ready.primitive(),
+        };
+        here.holds(&tab, deadline).await?;
         fill(&tab, &pages.user, &user, deadline, "the username").await?;
+        here.holds(&tab, deadline).await?;
         fill(&tab, &pages.password, &password, deadline, "the password").await?;
+        here.holds(&tab, deadline).await?;
+        // A sign that shows by now could not be told from the press's answer.
+        for sign in [Sign::Refused, Sign::Code, Sign::SignedIn] {
+            if signs.holds(&tab, sign, deadline).await? {
+                return Err(no_sign(
+                    "before the credential was sent; one of its signs already showed",
+                ));
+            }
+        }
         press(&tab, &pages.submit, deadline).await?;
 
         let deadline = Deadline::after(wait);
@@ -532,8 +579,15 @@ impl FormLogin {
             cx.register(&code);
             // The person's answer took the person's time, not the page's.
             let deadline = Deadline::after(wait);
+            let here = Proof {
+                origin: &pages.origin,
+                path: &code_pages.path,
+                ready: code_pages.screen.ready.primitive(),
+            };
+            here.holds(&tab, deadline).await?;
             fill(&tab, &code_pages.field, &code, deadline, "the code").await?;
             drop(code);
+            here.holds(&tab, deadline).await?;
             press(&tab, &code_pages.submit, deadline).await?;
             let deadline = Deadline::after(wait);
             sign = signs
@@ -690,6 +744,76 @@ async fn holds_now(
     }
 }
 
+/// What the page must be, just before a value is set or the action is
+/// pressed: the tab's own document at the declared path of the declared
+/// origin, by the browser's word; the screen's `ready` holding; and no
+/// frame of another origin inside it, which no screen model can declare.
+struct Proof<'a> {
+    origin: &'a Address,
+    path: &'a str,
+    ready: Primitive,
+}
+
+impl Proof<'_> {
+    async fn holds(&self, tab: &ActTab, deadline: Deadline) -> Result<(), Failure> {
+        let address = tab
+            .address(deadline)
+            .await
+            .map_err(|error| page_lost(&error, "a look at where the page is"))?;
+        let origin = self.origin.as_str().trim_end_matches('/');
+        let at = address
+            .strip_prefix(origin)
+            .filter(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+            .map(|rest| rest.split(['?', '#']).next().unwrap_or_default())
+            .map(|path| if path.is_empty() { "/" } else { path });
+        if at != Some(self.path) {
+            return Err(Failure::new(
+                FailureClass::UnknownVariant,
+                codes::UNEXPECTED_PAGE,
+                "The page is no longer the sign-in screen at its declared address. Nothing more was entered.",
+                "Look at the sign-in page; correct its screen if the application moved it.",
+            ));
+        }
+        if !holds_now(tab, &self.ready, deadline).await? {
+            return Err(no_sign("as a value was to be entered"));
+        }
+        let frames = tab
+            .frame_origins(deadline)
+            .await
+            .map_err(|error| page_lost(&error, "a look at the page's frames"))?;
+        // A frame element of the page itself, whatever its origin: a screen
+        // model declares no frame (declared frames are not built), and a
+        // frame of another process is not always in the browser's tree.
+        let framed = Query::new(By::Css {
+            selector: "iframe, frame, object, embed".to_owned(),
+        });
+        match tab.locate(&framed, deadline).await {
+            Err(BrowserError::NotFound) => {}
+            Ok(_) | Err(BrowserError::Ambiguous { .. }) => {
+                return Err(Failure::new(
+                    FailureClass::UnknownVariant,
+                    codes::UNEXPECTED_PAGE,
+                    "The sign-in page holds a frame, which its screen does not declare. Nothing was entered.",
+                    "Look at the sign-in page in a browser of your own; a sign-in page with a frame is not filled.",
+                ));
+            }
+            Err(error) => return Err(page_lost(&error, "a look at the page's frames")),
+        }
+        if let Some(foreign) = frames.iter().find(|frame| frame.as_str() != origin) {
+            return Err(Failure::new(
+                FailureClass::UnknownVariant,
+                codes::UNEXPECTED_PAGE,
+                format!(
+                    "The sign-in page holds a frame from another origin, `{}`, which its screen does not declare. Nothing was entered.",
+                    codes::shown(foreign)
+                ),
+                "Look at the sign-in page in a browser of your own; a sign-in page with a frame of another origin is not filled.",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The one element a field's or an action's locators find, in order; a
 /// later locator is tried only when an earlier one finds nothing.
 async fn element(
@@ -729,9 +853,15 @@ async fn fill(
     what: &str,
 ) -> Result<(), Failure> {
     let found = element(tab, &field.locate, deadline, what).await?;
-    tab.input(&found, &Input::Fill(value.expose().to_owned()), deadline)
-        .await
-        .map_err(|error| page_lost(&error, "the entering of a field"))
+    // Set on the element itself, by its node, in the one call that checks
+    // it: never typed into whatever holds the focus.
+    tab.input(
+        &found,
+        &Input::NativeSet(value.expose().to_owned()),
+        deadline,
+    )
+    .await
+    .map_err(|error| page_lost(&error, "the entering of a field"))
 }
 
 async fn press(tab: &ActTab, action: &Action, deadline: Deadline) -> Result<(), Failure> {

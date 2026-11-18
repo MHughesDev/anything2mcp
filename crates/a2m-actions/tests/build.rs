@@ -1839,14 +1839,14 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         .call(&agent, "run.get", json!({"run_id": result["run_id"]}))
         .await;
     assert!(got.result.is_some(), "{got:?}");
-    // The trial is a run the engine carried out: here it stops where the
-    // stand's sign-in is not registered, as a call of a published tool
-    // would, and nothing reached the stand's driver.
+    // The trial is a run the engine carried out: here it stops at the
+    // target's sign-in, which only the drafts declare, so no stored
+    // credential is used without its person (decision 0248), and nothing
+    // reached the stand's driver.
     assert_eq!(result["mode"], "stand", "{result}");
-    assert_eq!(
-        result["failure"]["code"], "auth_provider_unknown",
-        "{result}"
-    );
+    assert_eq!(result["status"], "needs_login", "{result}");
+    assert_eq!(result["failure"]["class"], "session_expired", "{result}");
+    assert_eq!(result["failure"]["code"], "needs_login", "{result}");
     assert!(world.reached.lock().unwrap().is_empty());
     let nothing = world.call(&agent, "tool.search", json!({})).await;
     assert_eq!(
