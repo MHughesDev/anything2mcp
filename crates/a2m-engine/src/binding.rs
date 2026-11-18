@@ -177,8 +177,7 @@ fn step_json(plan: &Plan, step: &Step) -> Option<Json> {
 /// The refusal of a pin whose binding is no longer the one it names.
 pub(crate) fn changed(pin: &BindingPin) -> Failure {
     crate::codes::fail(
-        a2m_core::FailureClass::Stale,
-        crate::codes::BINDING_CHANGED,
+        &crate::codes::row::BINDING_CHANGED,
         format!(
             "The binding {} (`{}`) of `{}` is not the binding the test or trial named: it moved, changed its mode, or changed what it does.",
             pin.position + 1,

@@ -188,8 +188,7 @@ impl Driver for Replay {
                 })),
                 Some(Recorded::Absent) => Ok(StepOutcome::Absent(Observed::default())),
                 None => Err(StepFailure::not_sent(codes::failure(
-                    a2m_core::FailureClass::UnknownVariant,
-                    codes::FIXTURE_NO_ANSWER,
+                    &codes::row::FIXTURE_NO_ANSWER,
                     format!(
                         "The fixture records no answer for the step `{}` ({}), so the test stops; nothing was sent.",
                         codes::shown(answer_name(step)),

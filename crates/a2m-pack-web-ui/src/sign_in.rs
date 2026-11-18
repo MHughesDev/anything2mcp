@@ -37,9 +37,7 @@ use a2m_auth::{
     PersonAsk, PersonReason, ProfileRef, ProviderName, ProviderNeeds, RawSign, SignInContext,
     SignedIn,
 };
-use a2m_core::{
-    AccountName, Digest, Failure, FailureClass, Identity, Secret, SessionId, Timestamp,
-};
+use a2m_core::{AccountName, Digest, Failure, Identity, Secret, SessionId, Timestamp};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, By, Deadline, Input, Look, Origins,
     PageEnvironment, Primitive, ProfileKey, Query, StateCookie, Visibility,
@@ -100,45 +98,35 @@ const PAGE_TIME: Duration = Duration::from_secs(30);
 const COOKIES: &str = "cookies";
 
 pub(crate) fn invalid(why: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_auth::codes::AUTH_SETTINGS_INVALID,
+    a2m_auth::codes::row::AUTH_SETTINGS_INVALID.failure(
         format!("The auth entry for `form_login` cannot be used: {why}."),
         "Name the sign-in screen and its parts under `settings`, as the web pack's design says, and store `user` and `password` under `credentials`.",
     )
 }
 
 fn refused() -> Failure {
-    Failure::new(
-        FailureClass::SessionExpired,
-        a2m_auth::codes::CREDENTIAL_REFUSED,
+    a2m_auth::codes::row::CREDENTIAL_REFUSED.failure(
         "The application's sign-in page refused the stored username or password. It is not tried again.",
         "Check the stored credential, store it again on the engine's sign-in page, and sign in once more.",
     )
 }
 
 fn needs_code(why: &str) -> Failure {
-    Failure::new(
-        FailureClass::SessionExpired,
-        a2m_auth::codes::NEEDS_MFA,
+    a2m_auth::codes::row::NEEDS_MFA.failure(
         format!("The application asks for a one-time code, and {why}."),
         "Sign in with `anything2mcp session login` while you are there to enter the code.",
     )
 }
 
 fn blocked() -> Failure {
-    Failure::new(
-        FailureClass::EdgeBlocked,
-        codes::SIGN_IN_BLOCKED,
+    codes::row::SIGN_IN_BLOCKED.failure(
         "The application's sign-in page shows the block the target declares. Nothing gets past it.",
         "Look at the application in a browser of your own; sign in again once the block is lifted.",
     )
 }
 
 fn no_sign(when: &str) -> Failure {
-    Failure::new(
-        FailureClass::UnknownVariant,
-        codes::UNEXPECTED_PAGE,
+    codes::row::UNEXPECTED_PAGE.failure(
         format!(
             "The sign-in page showed none of the signs the target declares {when}: not signed in, not refused, not blocked, and no code asked."
         ),
@@ -148,9 +136,7 @@ fn no_sign(when: &str) -> Failure {
 
 pub(crate) fn page_lost(error: &BrowserError, what: &str) -> Failure {
     error.failure().unwrap_or_else(|| {
-        Failure::new(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+        a2m_provider::codes::row::CONNECTION_LOST.failure(
             format!("The browser did not complete {what} of the sign-in."),
             "Sign in again.",
         )
@@ -448,9 +434,7 @@ impl FormLogin {
         // target says: anyone who can write a draft could name an address
         // of their own in it (decision 0245, with decision 0248).
         if !entry.surfaces.from_published {
-            return Err(Failure::new(
-                FailureClass::SessionExpired,
-                a2m_auth::codes::NEEDS_LOGIN,
+            return Err(a2m_auth::codes::row::NEEDS_LOGIN.failure(
                 "This sign-in is declared by drafts, and a stored password is filled in only on a page a published version of the target declares. Nothing was opened, filled, or sent.",
                 "Publish the target, then sign in with `anything2mcp session login`.",
             ));
@@ -627,9 +611,7 @@ pub(crate) fn material_of(
 ) -> Result<Material, Failure> {
     {
         if state.cookies.is_empty() {
-            return Err(Failure::new(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
+            return Err(codes::row::UNEXPECTED_PAGE.failure(
                 "The sign-in showed its success, and the browser holds no cookie for the application. A session kept in page storage is not built.",
                 "Look at how the application keeps its session.",
             ));
@@ -768,9 +750,7 @@ impl Proof<'_> {
             .map(|rest| rest.split(['?', '#']).next().unwrap_or_default())
             .map(|path| if path.is_empty() { "/" } else { path });
         if at != Some(self.path) {
-            return Err(Failure::new(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
+            return Err(codes::row::UNEXPECTED_PAGE.failure(
                 "The page is no longer the sign-in screen at its declared address. Nothing more was entered.",
                 "Look at the sign-in page; correct its screen if the application moved it.",
             ));
@@ -791,9 +771,7 @@ impl Proof<'_> {
         match tab.locate(&framed, deadline).await {
             Err(BrowserError::NotFound) => {}
             Ok(_) | Err(BrowserError::Ambiguous { .. }) => {
-                return Err(Failure::new(
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_PAGE,
+                return Err(codes::row::UNEXPECTED_PAGE.failure(
                     "The sign-in page holds a frame, which its screen does not declare. Nothing was entered.",
                     "Look at the sign-in page in a browser of your own; a sign-in page with a frame is not filled.",
                 ));
@@ -801,9 +779,7 @@ impl Proof<'_> {
             Err(error) => return Err(page_lost(&error, "a look at the page's frames")),
         }
         if let Some(foreign) = frames.iter().find(|frame| frame.as_str() != origin) {
-            return Err(Failure::new(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
+            return Err(codes::row::UNEXPECTED_PAGE.failure(
                 format!(
                     "The sign-in page holds a frame from another origin, `{}`, which its screen does not declare. Nothing was entered.",
                     codes::shown(foreign)
@@ -828,9 +804,7 @@ async fn element(
             Ok(found) => return Ok(found),
             Err(BrowserError::NotFound) => {}
             Err(BrowserError::Ambiguous { count }) => {
-                return Err(Failure::new(
-                    FailureClass::Drift,
-                    codes::LOCATOR_AMBIGUOUS,
+                return Err(codes::row::LOCATOR_AMBIGUOUS.failure(
                     format!("A locator of {what} on the sign-in page matches {count} elements."),
                     "Correct the screen so that each locator finds one element.",
                 ));
@@ -838,9 +812,7 @@ async fn element(
             Err(error) => return Err(page_lost(&error, "the finding of a field")),
         }
     }
-    Err(Failure::new(
-        FailureClass::Drift,
-        codes::LOCATOR_NOT_FOUND,
+    Err(codes::row::LOCATOR_NOT_FOUND.failure(
         format!("No locator of {what} finds anything on the sign-in page."),
         "Look at the sign-in page and correct its screen.",
     ))
@@ -946,9 +918,7 @@ impl AuthProvider for FormLogin {
         // The provider has no rung below a full sign-in; the keeper never
         // asks for one.
         Box::pin(async {
-            Err(Failure::new(
-                FailureClass::SessionExpired,
-                a2m_auth::codes::NEEDS_LOGIN,
+            Err(a2m_auth::codes::row::NEEDS_LOGIN.failure(
                 "A form sign-in is renewed only by signing in again.",
                 "Sign in with `anything2mcp session login`.",
             ))
@@ -991,9 +961,7 @@ pub(crate) fn inject_state(
 ) -> Result<(), Failure> {
     {
         let incomplete = || {
-            Failure::new(
-                FailureClass::SessionExpired,
-                a2m_auth::codes::NEEDS_LOGIN,
+            a2m_auth::codes::row::NEEDS_LOGIN.failure(
                 "The session cannot be used: its saved state is incomplete.",
                 "Sign in with `anything2mcp session login`, then run the tool again or resume the run.",
             )
@@ -1099,9 +1067,7 @@ pub(crate) fn expiry_signs(
 /// The stop of a run whose session has ended, as a declared sign shows.
 /// The driver stops; the engine tells the keeper, which alone renews.
 pub(crate) fn session_ended(shown: String) -> Failure {
-    Failure::new(
-        FailureClass::SessionExpired,
-        a2m_auth::codes::NEEDS_LOGIN,
+    a2m_auth::codes::row::NEEDS_LOGIN.failure(
         format!("{shown}: the target declares it as a sign that the session has ended."),
         "The session is signed in again by the session keeper; resume the run, or sign in with `anything2mcp session login`.",
     )

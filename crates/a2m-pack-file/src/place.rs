@@ -405,7 +405,7 @@ impl Named {
 /// The engine's user may not write the file itself.
 pub(crate) fn not_writable() -> StepFailure {
     stop(
-        codes::FILE_PROTECTED,
+        &codes::row::FILE_PROTECTED,
         "The engine's user may not write the file, and the file pack replaces no file it could not write.",
         "Give the engine's user the right to write the file if it is meant to be changed.",
     )

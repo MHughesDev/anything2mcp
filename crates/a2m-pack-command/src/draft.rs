@@ -74,7 +74,7 @@ const TYPED_BY_FILE: &str = "What type is the value that the usage line of the c
 pub(crate) struct CommandFromFinding;
 
 /// A lowercase name made of a text's letters and digits.
-fn slug(text: &str) -> String {
+pub(crate) fn slug(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         if c.is_ascii_alphanumeric() {

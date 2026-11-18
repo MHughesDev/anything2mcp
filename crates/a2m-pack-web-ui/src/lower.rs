@@ -14,8 +14,8 @@
 //! empty (decision 0112).
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -209,28 +209,14 @@ impl<'a> Lower<'a, '_> {
                 Err(wrong) => self.problems.push(wrong),
             }
         }
-        let mut step = self.step(
-            GOTO,
-            found,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_PAGE,
-            },
-        );
+        let mut step = self.step(GOTO, found, FailsAs::from(&codes::row::UNEXPECTED_PAGE));
         step.args = args;
         step.payload = self.encoded(&GotoStep { tab }, found.at);
         step
     }
 
     fn wait(&mut self, found: &Found<'_>, snapshot: bool) -> Step {
-        let mut step = self.step(
-            WAIT,
-            found,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_PAGE,
-            },
-        );
+        let mut step = self.step(WAIT, found, FailsAs::from(&codes::row::UNEXPECTED_PAGE));
         step.payload = self.encoded(&WaitStep { snapshot }, found.at);
         step
     }
@@ -285,14 +271,7 @@ impl<'a> Lower<'a, '_> {
                 payload.fields.push(item);
             }
         }
-        let mut step = self.step(
-            READ,
-            found,
-            FailsAs {
-                class: FailureClass::Drift,
-                code: codes::LOCATOR_NOT_FOUND,
-            },
-        );
+        let mut step = self.step(READ, found, FailsAs::from(&codes::row::LOCATOR_NOT_FOUND));
         step.payload = self.encoded(&payload, found.at);
         step
     }
@@ -350,14 +329,7 @@ impl<'a> Lower<'a, '_> {
                     "Give a value of such a type. Formatting a date or a quantity for a control is not built yet.",
                 );
             }
-            let mut step = self.step(
-                SET,
-                found,
-                FailsAs {
-                    class: FailureClass::Drift,
-                    code: codes::LOCATOR_NOT_FOUND,
-                },
-            );
+            let mut step = self.step(SET, found, FailsAs::from(&codes::row::LOCATOR_NOT_FOUND));
             step.args = vec![StepArg {
                 name: VALUE_ARG.to_owned(),
                 value: index,
@@ -396,14 +368,7 @@ impl<'a> Lower<'a, '_> {
             );
             return None;
         };
-        let mut step = self.step(
-            INVOKE,
-            found,
-            FailsAs {
-                class: FailureClass::Drift,
-                code: codes::LOCATOR_NOT_FOUND,
-            },
-        );
+        let mut step = self.step(INVOKE, found, FailsAs::from(&codes::row::LOCATOR_NOT_FOUND));
         step.commits = action.commits;
         step.payload = self.encoded(
             &InvokeStep {
@@ -515,9 +480,7 @@ impl Lowering for UiLowering {
             let decoded = if section.format == PAYLOAD_FORMAT {
                 section.payload.decode::<ScreenSection>()
             } else {
-                Err(a2m_core::Failure::new(
-                    FailureClass::Input,
-                    codes::STEP_NOT_USABLE,
+                Err(codes::row::STEP_NOT_USABLE.failure(
                     "The screens were compiled in another format.",
                     "Compile the target again.",
                 ))

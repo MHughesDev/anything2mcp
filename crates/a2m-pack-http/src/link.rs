@@ -10,7 +10,7 @@
 //! `target.yaml`, which the lint reports as a warning on every lint. No
 //! setting, variable, or caller's input turns it on.
 
-use a2m_core::{Failure, FailureClass, ScopedHost, SurfacePlan};
+use a2m_core::{Failure, ScopedHost, SurfacePlan};
 use a2m_files::{CompileMode, Diagnostic, Level, LintRule, ResolvedView, Stage};
 use serde::Deserialize;
 
@@ -62,8 +62,7 @@ pub(crate) fn plain_to_another_machine(url: &reqwest::Url) -> bool {
 /// machine. Nothing was sent.
 pub(crate) fn not_encrypted(surface: &str) -> Failure {
     codes::failure(
-        FailureClass::Policy,
-        codes::LINK_NOT_ENCRYPTED,
+        &codes::row::LINK_NOT_ENCRYPTED,
         format!(
             "The surface `{surface}` is reached over plain `http` at an address that is not a loopback address, and the request would carry the session's credential over that unencrypted link; nothing was sent."
         ),

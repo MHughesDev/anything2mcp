@@ -369,8 +369,7 @@ pub trait Control: Send + Sync {
         let _ = capture;
         Box::pin(async move {
             Err(codes::fail(
-                FailureClass::Busy,
-                codes::CAPTURE_NOT_KEPT,
+                &codes::row::CAPTURE_NOT_KEPT,
                 "The control plane keeps no captures, so the step's capture was dropped.",
                 "Nothing to do; the run goes on without it.",
             ))
@@ -395,8 +394,7 @@ pub trait Control: Send + Sync {
         let _ = (token, evidence);
         Box::pin(async move {
             Err(codes::fail(
-                FailureClass::Busy,
-                codes::ACKNOWLEDGEMENT_NOT_KEPT,
+                &codes::row::ACKNOWLEDGEMENT_NOT_KEPT,
                 "The system accepted the write, and the control plane cannot end a record on an acknowledgement alone, so it stays in doubt.",
                 "Look at the system; the run stops until the record is settled.",
             ))
@@ -484,8 +482,7 @@ pub trait Control: Send + Sync {
         let _ = compared;
         Box::pin(async move {
             Err(codes::fail(
-                FailureClass::Busy,
-                codes::SHADOW_NOT_KEPT,
+                &codes::row::SHADOW_NOT_KEPT,
                 "The control plane keeps no shadow comparisons.",
                 "Nothing to do; the call's result is the verified binding's.",
             ))

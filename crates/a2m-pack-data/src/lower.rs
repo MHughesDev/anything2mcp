@@ -7,9 +7,8 @@
 //! nothing here can place one in a statement's text.
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, LintCode,
-    Mode, PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb,
-    WriteEvidence,
+    EffectClass, FailsAs, FileKindName, IdentityStrategy, LintCode, Mode, PackPayload, PackRef,
+    SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
@@ -48,8 +47,9 @@ fn problem(code: &LintCode, stage: Stage, at: &Place, message: String, fix: &str
     Diagnostic::error(code.clone(), stage, at, message, fix)
 }
 
-fn fails(class: FailureClass, code: FailureCode) -> FailsAs {
-    FailsAs { class, code }
+/// A step that fails as the code of `row`, in the class its table gives it.
+fn fails(row: &a2m_core::CodeEntry) -> FailsAs {
+    FailsAs::from(row)
 }
 
 /// The verb a statement is bound with.
@@ -166,7 +166,7 @@ impl Lower<'_, '_> {
         assigned: bool,
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
-        let drift = || fails(FailureClass::Drift, codes::SCHEMA_CHANGED);
+        let drift = || fails(&codes::row::SCHEMA_CHANGED);
         let begin = self.step(
             BEGIN,
             name,
@@ -176,7 +176,7 @@ impl Lower<'_, '_> {
                 isolation: Some(statement.isolation),
                 rows: None,
             },
-            fails(FailureClass::Busy, codes::STORE_LOCKED),
+            fails(&codes::row::STORE_LOCKED),
         )?;
         let mut execute = self.step(EXECUTE, name, statement, &StepDetail::default(), drift())?;
         execute.args = self.args(name, statement, at, assigned, problems);
@@ -202,21 +202,21 @@ impl Lower<'_, '_> {
                 isolation: Some(statement.isolation),
                 rows: None,
             },
-            fails(FailureClass::Busy, codes::STORE_LOCKED),
+            fails(&codes::row::STORE_LOCKED),
         )?;
         let mut execute = self.step(
             EXECUTE,
             name,
             statement,
             &StepDetail::default(),
-            fails(FailureClass::Drift, codes::SCHEMA_CHANGED),
+            fails(&codes::row::SCHEMA_CHANGED),
         )?;
         execute.args = self.args(name, statement, at, false, problems);
         // No row changed: the record is gone, or the guard did not hold.
         let none_changed = match (statement.does, statement.guarded) {
-            (Does::Insert, _) => fails(FailureClass::UnknownVariant, codes::UNEXPECTED_STATUS),
-            (_, true) => fails(FailureClass::Stale, codes::VERSION_CONFLICT),
-            (_, false) => fails(FailureClass::Stale, codes::CHANGED_SINCE_PREVIEW),
+            (Does::Insert, _) => fails(&codes::row::UNEXPECTED_STATUS),
+            (_, true) => fails(&codes::row::VERSION_CONFLICT),
+            (_, false) => fails(&codes::row::CHANGED_SINCE_PREVIEW),
         };
         let expect = self.step(
             EXPECT_ROWS,
@@ -236,7 +236,7 @@ impl Lower<'_, '_> {
                 name,
                 statement,
                 &StepDetail::default(),
-                fails(FailureClass::Drift, codes::SCHEMA_CHANGED),
+                fails(&codes::row::SCHEMA_CHANGED),
             )?);
         }
         let mut commit = self.step(
@@ -244,7 +244,7 @@ impl Lower<'_, '_> {
             name,
             statement,
             &StepDetail::default(),
-            fails(FailureClass::PossibleCommit, codes::NO_CONFIRMATION),
+            fails(&a2m_provider::codes::row::NO_CONFIRMATION),
         )?;
         commit.commits = true;
         steps.push(commit);

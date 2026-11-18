@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use a2m_auth::SessionLease;
-use a2m_core::{FailureClass, Step, Value, Values};
+use a2m_core::{Step, Value, Values};
 use a2m_provider::{
     BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -96,19 +96,19 @@ fn unsent(error: &AxError, program: &str) -> StepFailure {
     StepFailure::not_sent(error.failure(program))
 }
 
-fn drift(code: a2m_core::FailureCode, message: String, next: &str) -> StepFailure {
-    StepFailure::not_sent(codes::failure(FailureClass::Drift, code, message, next))
+fn drift(row: &a2m_core::CodeEntry, message: String, next: &str) -> StepFailure {
+    StepFailure::not_sent(codes::failure(row, message, next))
 }
 
 fn missed(miss: Miss, what: &str) -> StepFailure {
     match miss {
         Miss::None => drift(
-            codes::LOCATOR_NOT_FOUND,
+            &codes::row::LOCATOR_NOT_FOUND,
             format!("No element of the window matches the locators of {what}."),
             "Take a snapshot of the window and correct the screen's locators.",
         ),
         Miss::Many(count) => drift(
-            codes::LOCATOR_AMBIGUOUS,
+            &codes::row::LOCATOR_AMBIGUOUS,
             format!(
                 "{count} elements of the window match a locator of {what}; the pack reads one only when it is the only one."
             ),
@@ -119,8 +119,7 @@ fn missed(miss: Miss, what: &str) -> StepFailure {
 
 fn unexpected(message: String) -> StepFailure {
     StepFailure::not_sent(codes::failure(
-        FailureClass::UnknownVariant,
-        codes::UNEXPECTED_PAGE,
+        &codes::row::UNEXPECTED_PAGE,
         message,
         "Check that the application shows the window the screen declares, then run the tool again.",
     ))
@@ -154,8 +153,7 @@ impl Held {
             None => Ok(tree),
             Some("seconds") => Err(unsent(&AxError::Timeout, &self.program)),
             Some(bound) => Err(StepFailure::not_sent(codes::failure(
-                FailureClass::UnknownVariant,
-                codes::READ_TOO_LARGE,
+                &codes::row::READ_TOO_LARGE,
                 format!(
                     "The window holds more than the desktop pack walks (its bound on {bound}); a locator cannot be proven to match once."
                 ),
@@ -198,7 +196,7 @@ impl Held {
                 }
                 many => {
                     return Err(drift(
-                        codes::LOCATOR_AMBIGUOUS,
+                        &codes::row::LOCATOR_AMBIGUOUS,
                         format!(
                             "{many} windows of the application have the role and the title of the screen `{}`.",
                             shown(&name)
@@ -277,7 +275,7 @@ impl Held {
                 .map_err(|miss| missed(miss, &format!("the table of `{}`", shown(name))))?;
             let mismatch = |why: &str| {
                 drift(
-                    codes::FINGERPRINT_MISMATCH,
+                    &codes::row::FINGERPRINT_MISMATCH,
                     format!("The table of the screen `{}` {why}.", shown(name)),
                     "Take a snapshot of the window and correct the screen's `header`.",
                 )
@@ -434,8 +432,7 @@ impl Held {
             return Ok(());
         }
         Err(StepFailure::not_sent(codes::failure(
-            FailureClass::Policy,
-            a2m_provider::codes::READ_ONLY_POSTURE,
+            &a2m_provider::codes::row::READ_ONLY_POSTURE,
             format!(
                 "A `{}` step acts on the application, and this run may not act so.",
                 step.kind
@@ -458,8 +455,7 @@ impl Held {
                 Ok(())
             }
             Err(_) => Err(StepFailure::not_sent(codes::failure(
-                FailureClass::Busy,
-                codes::SESSION_IN_USE,
+                &codes::row::SESSION_IN_USE,
                 "Another write held this desktop until the step's deadline; two runs never type into one desktop at once. Nothing was sent.".to_owned(),
                 "Run the tool again once the other write has ended.",
             ))),
@@ -567,8 +563,7 @@ impl Held {
         self.before_act(step, screen, &tree, input).await?;
         if node.secret {
             return Err(StepFailure::not_sent(codes::failure(
-                FailureClass::Policy,
-                codes::PASSWORD_SET_REFUSED,
+                &codes::row::PASSWORD_SET_REFUSED,
                 format!(
                     "{what} holds a secret; it is never set from an input a caller can see. Nothing was sent."
                 ),
@@ -580,10 +575,9 @@ impl Held {
             .prove(&self.app, &node)
             .await
             .map_err(|error| unsent(&error, &self.program))?;
-        let refused = |code, why: String, next: &str| {
+        let refused = |row: &a2m_core::CodeEntry, why: String, next: &str| {
             StepFailure::not_sent(codes::failure(
-                FailureClass::UnknownVariant,
-                code,
+                row,
                 format!("{what} {why}. Nothing was sent."),
                 next,
             ))
@@ -596,14 +590,14 @@ impl Held {
             Settable::Yes => {}
             Settable::ReadOnly => {
                 return Err(refused(
-                    codes::FIELD_READ_ONLY,
+                    &codes::row::FIELD_READ_ONLY,
                     "takes no value now: the application shows it read-only".to_owned(),
                     "Look at the application; the field may be locked for this record.",
                 ));
             }
             Settable::NoInterface => {
                 return Err(refused(
-                    codes::UNEXPECTED_CONTROL,
+                    &codes::row::UNEXPECTED_CONTROL,
                     "offers no text that may be set".to_owned(),
                     "Take a snapshot of the window and correct the screen's field.",
                 ));
@@ -614,8 +608,7 @@ impl Held {
             Ok(true) => {}
             Ok(false) => {
                 return Err(StepFailure::answered(codes::failure(
-                    FailureClass::UnknownVariant,
-                    codes::FIELD_READ_ONLY,
+                    &codes::row::FIELD_READ_ONLY,
                     format!(
                         "The application did not take the value for {what}. Nothing was saved."
                     ),
@@ -638,8 +631,7 @@ impl Held {
             .map_err(|error| sent_then(&error))?;
         if held != text {
             return Err(StepFailure::answered(codes::failure(
-                FailureClass::UnknownVariant,
-                codes::VALUE_NOT_HELD,
+                &codes::row::VALUE_NOT_HELD,
                 format!(
                     "After it was set, {what} holds another value than the one set: the application changed it. Nothing was saved."
                 ),
@@ -731,8 +723,7 @@ impl Held {
         }
         if let Some((variant, said)) = self.variant_shown(&tree, screen).await? {
             let refused = StepFailure::not_sent(codes::failure(
-                FailureClass::Rejected,
-                codes::APP_VALIDATION_ERROR,
+                &codes::row::APP_VALIDATION_ERROR,
                 format!(
                     "Before {what}, the window shows the variant `{}`, so its answer could not be told from it. The action was not done.",
                     shown(&variant)
@@ -751,8 +742,7 @@ impl Held {
             Ok(Some(true)) => {}
             Ok(None) => {
                 return Err(StepFailure::not_sent(codes::failure(
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_CONTROL,
+                    &codes::row::UNEXPECTED_CONTROL,
                     format!(
                         "{what} offers no action named `{}` exactly once. Nothing was sent.",
                         shown(&action.perform)
@@ -762,8 +752,7 @@ impl Held {
             }
             Ok(Some(false)) => {
                 return Err(StepFailure::answered(codes::failure(
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_CONTROL,
+                    &codes::row::UNEXPECTED_CONTROL,
                     format!("The application said it did not do {what}."),
                     "Look at the application; the action may not be offered for this record.",
                 )));
@@ -820,8 +809,7 @@ impl Held {
                     // A refusal the window shows after the action, which was
                     // not there before it, is the application's answer.
                     let refused = StepFailure::answered(codes::failure(
-                        FailureClass::Rejected,
-                        codes::APP_VALIDATION_ERROR,
+                        &codes::row::APP_VALIDATION_ERROR,
                         format!(
                             "After {what}, the window shows the variant `{}`.",
                             shown(&variant)
@@ -866,17 +854,13 @@ impl Held {
     /// saves, the record is in doubt.
     #[cfg(target_os = "linux")]
     fn no_confirmation(&self, step: &Step, what: &str, why: &str) -> StepFailure {
-        let (class, code) = if step.commits {
-            (
-                FailureClass::PossibleCommit,
-                a2m_provider::codes::NO_CONFIRMATION,
-            )
+        let row = if step.commits {
+            &a2m_provider::codes::row::NO_CONFIRMATION
         } else {
-            (FailureClass::UnknownVariant, codes::UNEXPECTED_PAGE)
+            &codes::row::UNEXPECTED_PAGE
         };
         StepFailure::unknown(codes::failure(
-            class,
-            code,
+            row,
             format!("{what} was done, and {why}."),
             "Reconcile the record: read it back before anything is written again.",
         ))

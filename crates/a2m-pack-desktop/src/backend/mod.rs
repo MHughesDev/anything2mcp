@@ -34,7 +34,7 @@ mod none;
 #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub(crate) use none::Look;
 
-use a2m_core::{Failure, FailureClass};
+use a2m_core::Failure;
 
 use crate::codes;
 use crate::tree::El;
@@ -138,8 +138,7 @@ impl AxError {
         match self {
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::NotRunning => codes::failure(
-                FailureClass::Busy,
-                codes::APPLICATION_NOT_RUNNING,
+                &codes::row::APPLICATION_NOT_RUNNING,
                 format!(
                     "No application in this session is the program `{program}` with the name the surface states and {}. The desktop pack starts nothing.",
                     if cfg!(any(windows, target_os = "macos")) {
@@ -152,8 +151,7 @@ impl AxError {
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Ambiguous(count) => codes::failure(
-                FailureClass::UnknownVariant,
-                codes::APPLICATION_AMBIGUOUS,
+                &codes::row::APPLICATION_AMBIGUOUS,
                 format!(
                     "{count} running applications are the program `{program}` with the name the surface states; the pack reads one only when it is the only one."
                 ),
@@ -161,15 +159,13 @@ impl AxError {
             ),
             #[cfg(target_os = "linux")]
             Self::AccessibilityOff => codes::failure(
-                FailureClass::Busy,
-                codes::ACCESSIBILITY_OFF,
+                &codes::row::ACCESSIBILITY_OFF,
                 "The session's accessibility setting is off, and the application publishes no accessibility tree while it is. The pack changes no setting.".to_owned(),
                 "Turn on the accessibility setting of your desktop (the toolkit accessibility switch), restart the application, and run the tool again.",
             ),
             #[cfg(windows)]
             Self::Elevated => codes::failure(
-                FailureClass::Busy,
-                codes::TARGET_ELEVATED,
+                &codes::row::TARGET_ELEVATED,
                 format!(
                     "The program `{program}` runs at a higher level than the engine (as administrator), and the pack does not reach it."
                 ),
@@ -177,15 +173,13 @@ impl AxError {
             ),
             #[cfg(target_os = "macos")]
             Self::NotTrusted => codes::failure(
-                FailureClass::Busy,
-                codes::ACCESSIBILITY_OFF,
+                &codes::row::ACCESSIBILITY_OFF,
                 "This program may not use the system's accessibility interface: the person has not allowed it, and the desktop pack reads nothing without it. The pack never allows it, and never asks the system to show its prompt.".to_owned(),
                 &trust_next(),
             ),
             #[cfg(any(windows, target_os = "macos"))]
             Self::NotOwned => codes::failure(
-                FailureClass::Policy,
-                codes::APPLICATION_NOT_OWNED,
+                &codes::row::APPLICATION_NOT_OWNED,
                 format!(
                     "The program `{program}` runs as another user{}, and the pack reads only the applications of the user the engine runs as{}.",
                     if cfg!(windows) { ", or in another session" } else { "" },
@@ -195,8 +189,7 @@ impl AxError {
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::NotProven => codes::failure(
-                FailureClass::UnknownVariant,
-                codes::APPLICATION_NOT_PROVEN,
+                &codes::row::APPLICATION_NOT_PROVEN,
                 format!(
                     "The running program `{program}` does not have the digest the surface states."
                 ),
@@ -204,8 +197,7 @@ impl AxError {
             ),
             #[cfg(target_os = "linux")]
             Self::Replaced => codes::failure(
-                FailureClass::UnknownVariant,
-                codes::APPLICATION_NOT_PROVEN,
+                &codes::row::APPLICATION_NOT_PROVEN,
                 format!(
                     "Before acting, the application is no longer the process of the program `{program}` that was proven when the run began, or the element is not that application's. Nothing was sent."
                 ),
@@ -213,22 +205,19 @@ impl AxError {
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Secret => codes::failure(
-                FailureClass::Policy,
-                codes::PASSWORD_READ_REFUSED,
+                &codes::row::PASSWORD_READ_REFUSED,
                 "The element is a control that holds a secret; its value is never read.".to_owned(),
                 "Read another field. A secret is never an output of a tool.",
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::TooLarge => codes::failure(
-                FailureClass::UnknownVariant,
-                codes::READ_TOO_LARGE,
+                &codes::row::READ_TOO_LARGE,
                 "A value of the window is longer than the desktop pack reads.".to_owned(),
                 "Read a field that holds less.",
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Lost(why) => codes::failure(
-                FailureClass::Transient,
-                a2m_provider::codes::CONNECTION_LOST,
+                &a2m_provider::codes::row::CONNECTION_LOST,
                 format!(
                     "The accessibility interface, or the application on it, went away or did not answer: {}.",
                     codes::shown(why)
@@ -236,8 +225,7 @@ impl AxError {
                 "Check that the application is still running, then run the tool again.",
             ),
             Self::Timeout => codes::failure(
-                FailureClass::Transient,
-                a2m_provider::codes::TIMEOUT,
+                &a2m_provider::codes::row::TIMEOUT,
                 "The application did not answer in time.".to_owned(),
                 "Run the tool again.",
             ),

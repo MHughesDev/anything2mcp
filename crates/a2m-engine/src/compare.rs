@@ -6,8 +6,7 @@
 //! as values: there is no float anywhere in a comparison.
 
 use a2m_core::{
-    Digest, Failure, FailureClass, FieldTypeIndex, InputIndex, OperationPlan, Sensitivity, Value,
-    Values,
+    Digest, Failure, FieldTypeIndex, InputIndex, OperationPlan, Sensitivity, Value, Values,
 };
 
 use crate::codes;
@@ -79,8 +78,7 @@ pub(crate) fn seen(
     for field in fields.iter().filter(|field| intended.contains(&field.name)) {
         let Some(value) = raw.get(&field.name) else {
             return Err(codes::fail(
-                FailureClass::UnknownVariant,
-                codes::FIELD_NOT_READ_BACK,
+                &codes::row::FIELD_NOT_READ_BACK,
                 format!(
                     "Reading the record gave no value for the field `{}`, so a write to it cannot be verified.",
                     field.name
@@ -92,8 +90,7 @@ pub(crate) fn seen(
             .normalize(Some(field.field_type), value)
             .map_err(|failure| {
                 codes::fail(
-                    FailureClass::UnknownVariant,
-                    codes::OUTPUT_UNEXPECTED,
+                    &codes::row::OUTPUT_UNEXPECTED,
                     format!(
                         "The value read for the field `{}` cannot be read as its type ({}).",
                         field.name,

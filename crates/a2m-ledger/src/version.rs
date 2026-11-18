@@ -67,9 +67,7 @@ impl Versions<'_, '_> {
     /// the bytes given.
     pub fn put(&mut self, version: &PublishedVersion) -> Result<(), Failure> {
         if Digest::of(&version.plan.bytes) != version.plan.hash {
-            return Err(Failure::new(
-                a2m_core::FailureClass::Input,
-                a2m_core::FailureCode::PLAN_HASH_MISMATCH,
+            return Err(a2m_core::codes::row::PLAN_HASH_MISMATCH.failure(
                 "The plan's hash is not the digest of its bytes.",
                 "Compile the target again and publish what the compiler gives.",
             ));

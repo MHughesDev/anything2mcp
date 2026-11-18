@@ -9,8 +9,8 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, FailureCode, Finding,
-    FindingKind, LimitationCode, PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
+    Address, Coverage, EvidenceLevel, FailsAs, Failure, Finding, FindingKind, LimitationCode,
+    PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -283,12 +283,7 @@ fn segment(name: &str) -> String {
 }
 
 fn invalid(message: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        FailureCode::FINDING_INVALID,
-        message,
-        "Report this to the pack's author.",
-    )
+    a2m_core::codes::row::FINDING_INVALID.failure(message, "Report this to the pack's author.")
 }
 
 /// The discoverer `catalog`.
@@ -331,10 +326,7 @@ impl Discoverer for CatalogDiscoverer {
                 refers_to: None,
                 args: Vec::new(),
                 timeout_ms: scope.bounds.seconds.saturating_mul(1000),
-                fails_as: FailsAs {
-                    class: FailureClass::UnknownVariant,
-                    code: codes::UNEXPECTED_STATUS,
-                },
+                fails_as: FailsAs::from(&codes::row::UNEXPECTED_STATUS),
                 commits: false,
                 lookup: false,
                 idempotent: false,

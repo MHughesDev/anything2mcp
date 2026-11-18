@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use a2m_actions::Paths;
-use a2m_core::{Failure, FailureClass, Version};
+use a2m_core::{Failure, Version};
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use hyper::client::conn::http1::SendRequest;
@@ -55,8 +55,8 @@ pub(crate) fn shown(path: &Path) -> String {
 
 /// An engine holds the channel and did not answer the hello in time.
 fn hello_unanswered(log: &Path) -> Failure {
-    codes::busy(
-        codes::ENGINE_UNREACHABLE,
+    codes::failure(
+        &codes::row::ENGINE_UNREACHABLE,
         "An engine holds the local channel and did not answer in time: it may still be opening its store, or it is stuck while starting.",
         format!(
             "Read the engine's log, `{}`. If the engine is stuck, stop its process and run the command again.",
@@ -68,9 +68,7 @@ fn hello_unanswered(log: &Path) -> Failure {
 /// The engine closed the connection before it answered the hello: nothing
 /// was sent, and the engine most likely stopped while it was starting.
 fn hello_lost(log: &Path) -> Failure {
-    Failure::new(
-        FailureClass::Transient,
-        codes::CONNECTION_LOST,
+    codes::row::CONNECTION_LOST.failure(
         "The engine closed the connection before it answered, so nothing was sent: it stopped while starting, or it is closing.",
         format!(
             "Read the engine's log, `{}`, for why it stopped, then run the command again.",
@@ -163,8 +161,8 @@ impl Connector {
         let said: Json = serde_json::from_slice(&body).map_err(|_| not_an_engine())?;
         if status != StatusCode::OK {
             return Err(if said["code"] == codes::LOCAL_API_MISMATCH.to_string() {
-                codes::input(
-                    codes::LOCAL_API_MISMATCH,
+                codes::failure(
+                    &codes::row::LOCAL_API_MISMATCH,
                     "The engine that runs speaks another version of the local API than this client.",
                     "Install the same version of the client and the engine, then run the command again.",
                 )
@@ -205,13 +203,13 @@ impl Connector {
         let stream = os::connect(&self.place, self.expected.as_str(), deadline)
             .await
             .map_err(|error| match error {
-                ConnectError::NotRunning => codes::busy(
-                    codes::ENGINE_UNREACHABLE,
+                ConnectError::NotRunning => codes::failure(
+                    &codes::row::ENGINE_UNREACHABLE,
                     "No engine answers on the local channel.",
                     "Start the engine with `anything2mcp serve`, then run the command again.",
                 ),
-                ConnectError::NotOurs => codes::policy(
-                    codes::PEER_NOT_ALLOWED,
+                ConnectError::NotOurs => codes::failure(
+                    &codes::row::PEER_NOT_ALLOWED,
                     "What listens on the local channel does not belong to this user, so nothing was sent to it.",
                     "Check who owns the engine's runtime directory, remove what is not yours to trust, and start the engine again.",
                 ),
@@ -230,8 +228,8 @@ impl Connector {
 }
 
 fn not_an_engine() -> Failure {
-    codes::input(
-        codes::HELLO_INVALID,
+    codes::failure(
+        &codes::row::HELLO_INVALID,
         "What answers on the local channel did not answer the hello as an engine does.",
         "Stop whatever holds the engine's channel, then run the command again.",
     )
@@ -424,6 +422,8 @@ impl Link {
 )]
 mod tests {
     use std::io::ErrorKind;
+
+    use a2m_core::FailureClass;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};

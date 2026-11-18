@@ -47,7 +47,7 @@ pub(crate) struct SaveJob {
 
 fn storage_full() -> StepFailure {
     stop(
-        codes::STORAGE_FULL,
+        &codes::row::STORAGE_FULL,
         "The disk or the folder is full, so the new file could not be written. The old file is untouched.",
         "Free space in the folder, then try again.",
     )
@@ -105,7 +105,7 @@ fn keep(temporary: &mut Temporary) -> Result<(), StepFailure> {
 
 fn not_kept() -> StepFailure {
     stop(
-        codes::METADATA_NOT_KEPT,
+        &codes::row::METADATA_NOT_KEPT,
         "The old file's owner, group, or permissions cannot be carried to the new file. Nothing was written.",
         "Check who owns the folder and the file, whether the engine's user may give a file to that owner and group, whether the file carries a set-user, set-group, or sticky bit, and, on Windows, whether the file has an access list of its own rather than its folder's.",
     )
@@ -113,7 +113,7 @@ fn not_kept() -> StepFailure {
 
 fn changed() -> StepFailure {
     stop(
-        codes::CHANGED_SINCE_PREVIEW,
+        &codes::row::CHANGED_SINCE_PREVIEW,
         "The file changed after it was read, so it was not replaced.",
         "Read the record again, look at the new preview, and approve again.",
     )
@@ -224,7 +224,7 @@ fn refusal(failure: Failure) -> Failure {
         not_allowed("its folder cannot be written to")
     } else if *code == a2m_provider::codes::DISK_FULL {
         codes::failure(
-            codes::STORAGE_FULL,
+            &codes::row::STORAGE_FULL,
             "The disk or the folder is full, so the file could not be replaced. The old file is untouched.",
             "Free space in the folder, then try again.",
         )
@@ -252,7 +252,7 @@ fn save_with(job: &SaveJob, before_last_look: impl FnOnce()) -> Result<(), StepF
     let old = job.target.regular().map_err(gone_is_changed)?;
     if old.permissions().readonly() {
         return Err(stop(
-            codes::FILE_PROTECTED,
+            &codes::row::FILE_PROTECTED,
             "The file is marked read-only, and the file pack replaces no file its owner protected.",
             "Remove the read-only mark if the file is meant to be changed.",
         ));

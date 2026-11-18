@@ -2145,8 +2145,8 @@ impl PersonSurface for LocalSurface {
         Box::pin(async move {
             let inner = &self.inner;
             if inner.desk.get().is_none() {
-                return Err(codes::busy(
-                    codes::SURFACE_UNAVAILABLE,
+                return Err(codes::failure(
+                    &codes::row::SURFACE_UNAVAILABLE,
                     "The engine cannot record an approval now, so no approval page is shown.",
                     "Run `anything2mcp doctor run` for the reason.",
                 ));
@@ -2244,8 +2244,8 @@ impl PersonSurface for LocalSurface {
         Box::pin(async move {
             let inner = &self.inner;
             if inner.desk.get().is_none() {
-                return Err(codes::busy(
-                    codes::SURFACE_UNAVAILABLE,
+                return Err(codes::failure(
+                    &codes::row::SURFACE_UNAVAILABLE,
                     "The engine cannot carry out a person's act now, so no page is shown.",
                     "Run `anything2mcp doctor run` for the reason.",
                 ));
@@ -2310,12 +2310,12 @@ impl PersonSurface for LocalSurface {
     fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>> {
         Box::pin(async move {
             let refused = |message: &str, next: &str| {
-                Err(codes::policy(codes::PRESENCE_FAILED, message, next))
+                Err(codes::failure(&codes::row::PRESENCE_FAILED, message, next))
             };
             // One prompt at a time, as for an approval.
             let Ok(_up) = self.inner.prompting.try_lock() else {
-                return Err(codes::busy(
-                    codes::PROMPT_BUSY,
+                return Err(codes::failure(
+                    &codes::row::PROMPT_BUSY,
                     "Another presence prompt is up on this machine.",
                     "Answer or close that prompt, then run the command again.",
                 ));
@@ -2324,8 +2324,8 @@ impl PersonSurface for LocalSurface {
             // waits for its person: on a system whose dialog shows fixed
             // text, the person reading that page would take it for theirs.
             if self.waiting() > 0 {
-                return Err(codes::busy(
-                    codes::PROMPT_BUSY,
+                return Err(codes::failure(
+                    &codes::row::PROMPT_BUSY,
                     "An approval page waits for its person on this machine, and no other presence prompt is raised meanwhile.",
                     "Answer or let that page close, then run the command again.",
                 ));

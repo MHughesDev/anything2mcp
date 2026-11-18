@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, FindingKind,
-    LimitationCode, PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
+    Address, Coverage, EvidenceLevel, FailsAs, Failure, Finding, FindingKind, LimitationCode,
+    PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -66,10 +66,7 @@ impl<'a> ReadClient<'a> {
             refers_to: None,
             args: Vec::new(),
             timeout_ms,
-            fails_as: FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_STATUS,
-            },
+            fails_as: FailsAs::from(&codes::row::UNEXPECTED_STATUS),
             commits: false,
             lookup: false,
             idempotent: false,
@@ -280,8 +277,7 @@ impl Discoverer for HttpDescription {
             let origin = Origin::of(&scope.surface.surface.address)?;
             let unreadable = |why: &str| {
                 codes::failure(
-                    FailureClass::Input,
-                    codes::DESCRIPTION_UNREADABLE,
+                    &codes::row::DESCRIPTION_UNREADABLE,
                     format!("No description could be read: {why}."),
                     "Put the description in the project's `sources` folder and run `anything2mcp scout run <target> --files '{\"description\": \"sources/<file>\"}'`.",
                 )

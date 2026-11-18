@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
-use a2m_core::{Digest, Failure, FailureClass, Plan, SurfaceName};
+use a2m_core::{Digest, Failure, Plan, SurfaceName};
 use a2m_ledger::{
     Acted, ActedToken, BlobRef, IntentToken, LockHeld, ReadBack, Reconciled, RecordIntent,
     RecordRef, Settled,
@@ -70,8 +70,7 @@ impl<'c> Timed<'c> {
         match tokio::time::timeout(self.limit, answer).await {
             Ok(answer) => answer,
             Err(_) => Err(codes::fail(
-                FailureClass::Busy,
-                codes::CONTROL_UNANSWERED,
+                &codes::row::CONTROL_UNANSWERED,
                 format!(
                     "The control plane did not answer `{call}` within the time the engine waits."
                 ),

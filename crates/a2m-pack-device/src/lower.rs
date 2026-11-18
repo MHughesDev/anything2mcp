@@ -9,9 +9,9 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, Hazard, IdentityStrategy, Mode,
-    PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName,
-    ValueType, Verb, WriteEvidence,
+    EffectClass, FailsAs, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload, PackRef,
+    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    WriteEvidence,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
@@ -151,7 +151,7 @@ impl Scene<'_> {
         &mut self,
         kind: &StepKind,
         payload: &StepPayload,
-        fails_as: (FailureClass, FailureCode),
+        fails_as: &a2m_core::CodeEntry,
         args: Vec<StepArg>,
         at: &Place,
     ) -> Option<Step> {
@@ -178,10 +178,7 @@ impl Scene<'_> {
             args,
             // An identification is a frame and its reply, like any other.
             timeout_ms: self.reply_ms,
-            fails_as: FailsAs {
-                class: fails_as.0,
-                code: fails_as.1,
-            },
+            fails_as: FailsAs::from(fails_as),
             commits,
             lookup: false,
             // No device write repeats: a frame with no reply cannot be
@@ -197,10 +194,7 @@ impl Scene<'_> {
         self.step(
             &kind,
             &StepPayload::Identify,
-            (
-                FailureClass::UnknownVariant,
-                codes::DEVICE_IDENTITY_MISMATCH,
-            ),
+            &codes::row::DEVICE_IDENTITY_MISMATCH,
             Vec::new(),
             at,
         )
@@ -211,7 +205,7 @@ impl Scene<'_> {
         self.step(
             &kind,
             &StepPayload::Reply,
-            (FailureClass::Transient, codes::TIMEOUT),
+            &codes::row::TIMEOUT,
             Vec::new(),
             at,
         )
@@ -222,7 +216,7 @@ impl Scene<'_> {
         self.step(
             &kind,
             payload,
-            (FailureClass::UnknownVariant, codes::UNEXPECTED_REPLY),
+            &codes::row::UNEXPECTED_REPLY,
             Vec::new(),
             at,
         )
@@ -237,7 +231,7 @@ impl Scene<'_> {
             &StepPayload::AskRead {
                 register: register.to_owned(),
             },
-            (FailureClass::Transient, codes::CONNECTION_LOST),
+            &codes::row::CONNECTION_LOST,
             Vec::new(),
             at,
         )?;
@@ -489,7 +483,7 @@ impl DeviceLowering {
                 arg: name.to_owned(),
                 reads_after,
             },
-            (FailureClass::Input, codes::VALUE_OUT_OF_RANGE),
+            &codes::row::VALUE_OUT_OF_RANGE,
             arg(),
             &value.at,
         )?;
@@ -500,7 +494,7 @@ impl DeviceLowering {
                 register: name.to_owned(),
                 arg: name.to_owned(),
             },
-            (FailureClass::PossibleCommit, codes::NO_CONFIRMATION),
+            &codes::row::NO_CONFIRMATION,
             arg(),
             &value.at,
         )?;

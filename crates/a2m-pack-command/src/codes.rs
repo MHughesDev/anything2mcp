@@ -67,6 +67,9 @@ a2m_core::failure_codes! {
     COMMAND_FILE_UNREADABLE = Input, "command_file_unreadable",
         meaning "A file handed to the scout as a completion file or a manual page cannot be read as one: it is not UTF-8 text, it is compressed in a form other than gzip, its gzip form is damaged, or it is no manual page in the `man` or the `mdoc` macros.",
         next "Hand the file as plain UTF-8 text, or a manual page compressed with gzip; uncompress a page compressed any other way first.";
+    POWERSHELL_FILE_UNREADABLE = Input, "powershell_file_unreadable",
+        meaning "A file handed to the scout as a PowerShell help file or a module manifest cannot be read as one: it is not UTF-8 text, it is not well-formed XML or declares a document type, it passes a bound of the reader, or it is no help file (`helpItems`) or no manifest (one table of data).",
+        next "Hand the module's XML help file, `<module>-help.xml`, or its manifest, `<module>.psd1`, as it ships; a help file that declares a document type is never read.";
     AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match",
         meaning "A lookup that must match one record matched more than one.",
         next "Find the records by hand, and decide which is the one that was written.";
@@ -96,6 +99,9 @@ pub const FINDING_KIND: &str = "command";
 /// The kind of finding about one file handed to the discoverer: a
 /// completion file or a manual page, and how much of it was read.
 pub const FILE_FINDING_KIND: &str = "command_file";
+/// The kind of finding about one command a PowerShell help file handed to
+/// the discoverer describes.
+pub const POWERSHELL_FINDING_KIND: &str = "powershell_command";
 /// The discoverer's name.
 pub const DISCOVERER: &str = "help";
 /// The step that starts a program and waits for it to end.
@@ -124,6 +130,14 @@ pub fn finding_kind() -> FindingKind {
 pub fn file_finding_kind() -> FindingKind {
     FindingKind::new(FILE_FINDING_KIND)
         .unwrap_or_else(|_| unreachable!("`command_file` is a well-formed finding kind"))
+}
+
+/// The kind of finding about a command a PowerShell help file describes,
+/// as a checked name.
+#[must_use]
+pub fn powershell_finding_kind() -> FindingKind {
+    FindingKind::new(POWERSHELL_FINDING_KIND)
+        .unwrap_or_else(|_| unreachable!("`powershell_command` is a well-formed finding kind"))
 }
 
 /// A lint code of the pack. `rule` is one of the fixed rule names of this

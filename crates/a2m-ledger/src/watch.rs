@@ -28,11 +28,7 @@ use crate::watch_compare::{
     Baseline, CheckDigests, CheckFault, Comparison, Held, RecordDigests, WatchKey, compare,
 };
 
-pub use crate::codes::{
-    WATCH_CHECK_NOT_COMPLETED, WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_DUE_MISSED,
-    WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ, WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS,
-    WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
-};
+pub use crate::codes::{WATCH_CHECK_NOT_COMPLETED, WATCH_DUE_MISSED, WATCH_ENDED};
 
 /// The shortest interval the ledger takes for a watch, whatever asks: the
 /// floor no setting lowers. The scheduler's setting may only raise it.
@@ -564,33 +560,29 @@ impl<'a> Tx<'a> {
     }
 }
 
-fn refused(class: FailureClass, code: FailureCode, what: &str, next: &str) -> Failure {
-    Failure::new(class, code, what.to_owned(), next.to_owned())
+fn refused(row: &a2m_core::CodeEntry, what: &str, next: &str) -> Failure {
+    row.failure(what, next)
 }
 
 fn state_refusal(state: WatchState) -> Failure {
     match state {
         WatchState::Asked => refused(
-            FailureClass::Policy,
-            WATCH_NOT_CONFIRMED,
+            &crate::codes::row::WATCH_NOT_CONFIRMED,
             "The watch has not been confirmed by its person, so it does nothing.",
             "Ask the person to confirm the watch on their own page.",
         ),
         WatchState::Running => refused(
-            FailureClass::Busy,
-            WATCH_CHECK_RUNNING,
+            &crate::codes::row::WATCH_CHECK_RUNNING,
             "A check of the watch is under way; a watch never runs two at once.",
             "Wait for the check to end.",
         ),
         WatchState::Paused => refused(
-            FailureClass::Busy,
-            WATCH_PAUSED,
+            &crate::codes::row::WATCH_PAUSED,
             "The watch is paused.",
             "See the watch's changes for why; it goes on when that is settled.",
         ),
         WatchState::Confirmed | WatchState::Ended => refused(
-            FailureClass::Policy,
-            WATCH_ENDED,
+            &crate::codes::row::WATCH_ENDED,
             "The watch has ended.",
             "Ask for a new watch.",
         ),
@@ -863,8 +855,7 @@ fn run_end(
             Ok(RunEnd::Gap(class, code))
         }
         _ => Err(refused(
-            FailureClass::Busy,
-            WATCH_CHECK_UNFINISHED,
+            &crate::codes::row::WATCH_CHECK_UNFINISHED,
             "The check's run has not ended.",
             "End the check when its run reaches a final state.",
         )),
@@ -942,8 +933,7 @@ impl Watches<'_, '_> {
     pub fn ask(&mut self, new: &NewWatch) -> Result<WatchRow, Failure> {
         if new.effect != EffectClass::Read {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_NOT_A_READ,
+                &crate::codes::row::WATCH_NOT_A_READ,
                 "Only a read can be watched; a watch never writes.",
                 "Watch an operation whose effect class is `read`.",
             ));
@@ -1033,16 +1023,14 @@ impl Watches<'_, '_> {
         }
         if by != watch.acts_for {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_NOT_YOURS,
+                &crate::codes::row::WATCH_NOT_YOURS,
                 "Only the person a watch acts for confirms it.",
                 "Ask that person to confirm it on their own page.",
             ));
         }
         if *current != watch.target_version {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_NEEDS_CONFIRMATION,
+                &crate::codes::row::WATCH_NEEDS_CONFIRMATION,
                 "The watch was asked for a version of its target that is no longer the published one.",
                 "Ask for a new watch of the published version.",
             ));
@@ -1111,8 +1099,7 @@ impl Watches<'_, '_> {
             && row.environment == watch.environment;
         if !own {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_RUN_NOT_ITS_OWN,
+                &crate::codes::row::WATCH_RUN_NOT_ITS_OWN,
                 "A watch's check is its own read, with its own input, for its own person, and this run is not.",
                 "Nothing to do; a watch runs nothing else.",
             ));
@@ -1248,8 +1235,7 @@ impl Watches<'_, '_> {
         let named = digest.keyed_digest(&watch.workspace, DigestPurpose::BlobName, bytes);
         if run.result.map(|stored| stored.digest()) != Some(named) {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_RUN_NOT_ITS_OWN,
+                &crate::codes::row::WATCH_RUN_NOT_ITS_OWN,
                 "The result given is not the stored result of the check's own run.",
                 "End the check with the bytes of its run's own result.",
             ));
@@ -1659,8 +1645,7 @@ impl Watches<'_, '_> {
             && !reason.may_resume()
         {
             return Err(refused(
-                FailureClass::Policy,
-                WATCH_NEEDS_CONFIRMATION,
+                &crate::codes::row::WATCH_NEEDS_CONFIRMATION,
                 "The watch paused because its read changed; it goes on only as a new watch its person confirms.",
                 "End this watch and ask for a new one.",
             ));
@@ -2030,6 +2015,10 @@ impl Watches<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codes::{
+        WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ,
+        WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS, WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
+    };
 
     fn words_of() -> Vec<&'static str> {
         let mut words: Vec<&'static str> = Vec::new();
@@ -2139,15 +2128,15 @@ mod tests {
             (WATCH_DUE_MISSED, FailureClass::Busy),
             (WATCH_CHECK_NOT_COMPLETED, FailureClass::Busy),
             (
-                crate::watch_compare::WATCH_KEY_REPEATED,
+                crate::codes::WATCH_KEY_REPEATED,
                 FailureClass::UnknownVariant,
             ),
             (
-                crate::watch_compare::WATCH_SHAPES_MIXED,
+                crate::codes::WATCH_SHAPES_MIXED,
                 FailureClass::UnknownVariant,
             ),
             (
-                crate::watch_compare::WATCH_RESULT_NOT_ITS_SHAPE,
+                crate::codes::WATCH_RESULT_NOT_ITS_SHAPE,
                 FailureClass::UnknownVariant,
             ),
         ];

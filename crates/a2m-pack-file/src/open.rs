@@ -6,7 +6,7 @@
 //! surface's checked folder, through `place`. Nothing here calculates a
 //! formula or opens a macro.
 
-use a2m_core::{Digest, Failure, FailureClass, FailureCode, Value};
+use a2m_core::{Digest, Failure, FailureCode, Value};
 use a2m_provider::StepFailure;
 use a2m_sources::json::{JsonNode, JsonValue, parse_document};
 use a2m_sources::{
@@ -40,25 +40,21 @@ pub(crate) fn held_by_another(error: &std::io::Error) -> bool {
 
 pub(crate) fn locked() -> Failure {
     codes::failure(
-        codes::FILE_LOCKED,
+        &codes::row::FILE_LOCKED,
         "Another program holds the file, so it cannot be read or replaced now.",
         "Close the file in the other program, then try again.",
     )
 }
 
 pub(crate) fn not_allowed(why: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_provider::codes::PATH_NOT_ALLOWED,
+    a2m_provider::codes::row::PATH_NOT_ALLOWED.failure(
         format!("The file is refused: {why}."),
         "Point the document at a regular file with one name, inside the surface's folder.",
     )
 }
 
 pub(crate) fn unavailable(what: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_provider::codes::FILE_UNAVAILABLE,
+    a2m_provider::codes::row::FILE_UNAVAILABLE.failure(
         format!("The file {what}."),
         "Check that the engine's user may read and write the folder.",
     )
@@ -66,7 +62,7 @@ pub(crate) fn unavailable(what: &str) -> Failure {
 
 pub(crate) fn missing() -> StepFailure {
     stop(
-        codes::FILE_MISSING,
+        &codes::row::FILE_MISSING,
         "The file is not at the place its document declares.",
         "Put the file back, or correct `file` in the document.",
     )
@@ -77,7 +73,7 @@ pub(crate) fn missing() -> StepFailure {
 pub(crate) fn read_file(file: &Named, max_bytes: u64) -> Result<Vec<u8>, StepFailure> {
     file.read(max_bytes)?.ok_or_else(|| {
         stop(
-            codes::FILE_TOO_LARGE,
+            &codes::row::FILE_TOO_LARGE,
             format!("The file has more than {max_bytes} bytes, the most the file pack reads."),
             "Raise `packs.file.max_bytes`, or point the document at a smaller file.",
         )
@@ -108,19 +104,19 @@ fn unreadable(failure: &Failure) -> StepFailure {
     let code: &FailureCode = failure.code();
     if code == &a2m_sources::SOURCE_PROTECTED {
         stop(
-            codes::FILE_PROTECTED,
+            &codes::row::FILE_PROTECTED,
             "The file is encrypted or protected by a password, and the file pack reads past no protection.",
             "Point the document at a file that is not protected.",
         )
     } else if code == &a2m_sources::SOURCE_TOO_LARGE {
         stop(
-            codes::FILE_TOO_LARGE,
+            &codes::row::FILE_TOO_LARGE,
             failure.message().to_owned(),
             "Raise the limits under `packs.file`, or point the document at a smaller file.",
         )
     } else {
         stop(
-            codes::FILE_UNREADABLE,
+            &codes::row::FILE_UNREADABLE,
             format!(
                 "The file does not parse as the format its document declares. {}",
                 failure.message()
@@ -184,7 +180,7 @@ pub(crate) fn parse(
 
 fn layout_differs(what: &str) -> StepFailure {
     stop(
-        codes::FINGERPRINT_MISMATCH,
+        &codes::row::FINGERPRINT_MISMATCH,
         format!("The file's {what} are not the ones its document declares under `fingerprint`."),
         "Look at what changed in the file, and correct the document or put the file's layout back.",
     )
@@ -322,7 +318,7 @@ pub(crate) struct Table {
 
 fn not_found(what: impl std::fmt::Display) -> StepFailure {
     stop(
-        codes::PLACE_NOT_FOUND,
+        &codes::row::PLACE_NOT_FOUND,
         format!("A place the document names is not in the file: {what}."),
         "Look at what changed in the file, and correct the document or put the place back.",
     )
@@ -367,7 +363,7 @@ fn rows_of_text(parsed: &Parsed, record: &RecordSpec) -> Result<Table, StepFailu
         let found = part.widths.get(row as usize - 1).copied().unwrap_or(0);
         if found != width {
             return Err(stop(
-                codes::FILE_UNREADABLE,
+                &codes::row::FILE_UNREADABLE,
                 format!("Row {row} of the file has {found} fields where its header has {width}."),
                 "Correct the row in the file.",
             ));
@@ -704,7 +700,7 @@ pub(crate) fn value_at(
     }
     if matches!(slot.cell.raw, RawCell::Formula { .. }) && !field.formula {
         return Err(stop(
-            codes::FORMULA_AT_PLACE,
+            &codes::row::FORMULA_AT_PLACE,
             format!(
                 "The place of the field `{}` holds a formula, and the document declares a value there.",
                 field.name
@@ -721,7 +717,7 @@ pub(crate) fn value_at(
     };
     typed(&slot.cell, typer, &context).map_err(|problem| {
         stop(
-            codes::VALUE_UNREADABLE,
+            &codes::row::VALUE_UNREADABLE,
             format!(
                 "The place of the field `{}` holds something its field type cannot read. {}",
                 field.name, problem.message

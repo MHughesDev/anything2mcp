@@ -8,7 +8,7 @@
 //! does, because each read left running is told to stop, reads an answer of
 //! bounded size, and gives its place back when its thread ends.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{Failure, FailureCode};
 use a2m_provider::StepFailure;
 
 a2m_core::failure_codes! {
@@ -85,20 +85,19 @@ pub const PASSED_ON: &[FailureCode] = &[
     a2m_auth::tls::TLS_HANDSHAKE_FAILED,
 ];
 
+/// A failure of the code of `row`, in the class its table gives it.
 pub(crate) fn failure(
-    class: FailureClass,
-    code: FailureCode,
+    row: &a2m_core::CodeEntry,
     message: impl Into<String>,
     next: &str,
 ) -> Failure {
-    Failure::new(class, code, message, next)
+    row.failure(message, next)
 }
 
 /// A step the driver cannot carry out as written. Nothing was sent.
 pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
-        FailureClass::Input,
-        STEP_NOT_USABLE,
+        &row::STEP_NOT_USABLE,
         format!(
             "The HTTP driver cannot carry out this step as the plan wrote it: {}.",
             why.into()
@@ -110,8 +109,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 #[cfg(not(feature = "tls"))]
 pub(crate) fn tls_not_enabled() -> Failure {
     failure(
-        FailureClass::Input,
-        TLS_NOT_ENABLED,
+        &row::TLS_NOT_ENABLED,
         "The surface is reached over HTTPS, and TLS is not built into this build of the HTTP pack.",
         "Use a surface reached over plain HTTP on this machine, or a build with TLS switched on.",
     )
@@ -121,8 +119,7 @@ pub(crate) fn tls_not_enabled() -> Failure {
 /// is the product's and is said; no value is.
 pub(crate) fn product_header_refused(name: &str) -> Failure {
     failure(
-        FailureClass::Policy,
-        PRODUCT_HEADER_REFUSED,
+        &row::PRODUCT_HEADER_REFUSED,
         format!(
             "The session's sign-in placed the header `{}`, which belongs to the product and never goes to a system; nothing was sent.",
             shown(name)
@@ -133,8 +130,7 @@ pub(crate) fn product_header_refused(name: &str) -> Failure {
 
 pub(crate) fn surface_not_declared(what: &str) -> Failure {
     failure(
-        FailureClass::Policy,
-        SURFACE_NOT_DECLARED,
+        &row::SURFACE_NOT_DECLARED,
         format!("{what} is not one of the addresses this run may reach."),
         "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.",
     )
@@ -144,8 +140,7 @@ pub(crate) fn surface_not_declared(what: &str) -> Failure {
 /// none for the record. Nothing was sent.
 pub(crate) fn version_not_read(endpoint: &str) -> Failure {
     failure(
-        FailureClass::Stale,
-        VERSION_NOT_READ,
+        &row::VERSION_NOT_READ,
         format!(
             "The endpoint `{endpoint}` sends the record's version with a write, and no version of the record was read in this pass; nothing was sent."
         ),
@@ -165,5 +160,48 @@ pub(crate) fn shown(text: &str) -> String {
         format!("{clean}…")
     } else {
         clean
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = failure(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
     }
 }

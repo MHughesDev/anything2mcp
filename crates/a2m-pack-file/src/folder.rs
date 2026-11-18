@@ -123,7 +123,7 @@ pub(crate) struct Listing {
 
 fn too_many() -> StepFailure {
     stop(
-        codes::FILE_TOO_LARGE,
+        &codes::row::FILE_TOO_LARGE,
         "The folder holds more entries than the file pack reads.",
         "Raise `packs.file.max_rows`, or name a folder that holds fewer entries.",
     )
@@ -342,7 +342,7 @@ fn held(folder: &Folder, name: &str, ceiling: usize) -> Result<Held, StepFailure
 
 fn other_case() -> StepFailure {
     stop(
-        codes::NAME_CASE_CONFLICT,
+        &codes::row::NAME_CASE_CONFLICT,
         "The folder holds an entry whose name differs from this one only in case. On a system that folds case they are one entry; on others they are two, so the pack does not take one for the other.",
         "Give the name exactly as the folder holds it, or choose a name that differs in more than case.",
     )
@@ -354,7 +354,7 @@ fn other_case() -> StepFailure {
 /// one form of letters written in two ways (decision 0272).
 fn other_form() -> StepFailure {
     stop(
-        codes::NAME_CASE_CONFLICT,
+        &codes::row::NAME_CASE_CONFLICT,
         "The folder's file system finds an entry by this name, and the folder lists it under another spelling: one that differs in case or in how its letters are composed. The pack does not take one for the other. Nothing was written.",
         "Give the name exactly as the folder lists it, or choose a name that differs in more than its spelling.",
     )
@@ -442,7 +442,7 @@ pub(crate) fn read(file: &Named, max_bytes: u64) -> Result<Option<Vec<u8>>, Step
 pub(crate) fn text(bytes: Vec<u8>) -> Result<String, StepFailure> {
     String::from_utf8(bytes).map_err(|_| {
         stop(
-            codes::VALUE_UNREADABLE,
+            &codes::row::VALUE_UNREADABLE,
             "The file's content is not UTF-8 text, and the file pack reads an entry's content only as text.",
             "Read the entry's name, size, and digest instead.",
         )
@@ -456,7 +456,7 @@ pub(crate) fn digest(file: &Named, max_bytes: u64) -> Result<Option<Digest>, Ste
 
 pub(crate) fn changed() -> StepFailure {
     stop(
-        codes::CHANGED_SINCE_PREVIEW,
+        &codes::row::CHANGED_SINCE_PREVIEW,
         "The folder changed after it was read: an entry has the name, or the entry is no longer the one that was read. Nothing was written.",
         "Read the folder again, look at the new preview, and approve again.",
     )
@@ -464,7 +464,7 @@ pub(crate) fn changed() -> StepFailure {
 
 fn no_second_name() -> StepFailure {
     stop(
-        codes::SHAPE_UNSUPPORTED,
+        &codes::row::SHAPE_UNSUPPORTED,
         "The folder's file system gives a file no second name, so a file cannot be put at a name without the risk of replacing one that appeared there. Nothing was written.",
         "Keep the folder on a file system that has hard links, or do not write entries of it.",
     )
@@ -480,7 +480,7 @@ fn linked(result: std::io::Result<()>) -> Result<(), StepFailure> {
             Err(no_second_name())
         }
         Err(error) if error.kind() == ErrorKind::StorageFull => Err(stop(
-            codes::STORAGE_FULL,
+            &codes::row::STORAGE_FULL,
             "The disk or the folder is full. Nothing was written.",
             "Free space in the folder, then try again.",
         )),
@@ -560,7 +560,7 @@ fn link_new(held: &HeldFolder, from: &str, to: &str, ceiling: usize) -> Result<(
 /// held and before anything was done. Nothing was written.
 fn moved_before() -> StepFailure {
     stop(
-        codes::CHANGED_SINCE_PREVIEW,
+        &codes::row::CHANGED_SINCE_PREVIEW,
         "The surface's folder was moved, or another put in its place, while the write was being made ready. Nothing was written.",
         "Put the folder back where the surface names it, read it again, and approve again.",
     )
@@ -894,7 +894,7 @@ fn delete_with(
 
 fn not_empty() -> StepFailure {
     stop(
-        codes::FOLDER_NOT_EMPTY,
+        &codes::row::FOLDER_NOT_EMPTY,
         "The folder is not empty, and the file pack removes only an empty folder. Nothing was removed.",
         "Remove its entries first, each as its own write.",
     )

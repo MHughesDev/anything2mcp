@@ -152,7 +152,7 @@ impl Quotes {
 
 fn unreadable(why: &str) -> StepFailure {
     stop(
-        codes::FILE_UNREADABLE,
+        &codes::row::FILE_UNREADABLE,
         format!("The file does not parse as the format its document declares: {why}."),
         "Correct the file, or correct `format` and `dialect` in the document.",
     )
@@ -166,7 +166,7 @@ fn not_read(why: &str) -> StepFailure {
 
 fn too_large(what: &str) -> StepFailure {
     stop(
-        codes::FILE_TOO_LARGE,
+        &codes::row::FILE_TOO_LARGE,
         format!("The file holds {what} than the file pack reads."),
         "Raise the limits under `packs.file`, or point the document at a smaller file.",
     )
@@ -741,12 +741,12 @@ impl Settings {
             (None, _) => Ok(None),
             (Some(one), None) if is(one, false) => Ok(Some(one)),
             (Some(_), None) => Err(stop(
-                codes::PLACE_NOT_FOUND,
+                &codes::row::PLACE_NOT_FOUND,
                 "The file holds this key only in another case, and programs differ on whether that is the same key.",
                 "Write the key in the document as the file spells it.",
             )),
             (Some(_), Some(_)) => Err(stop(
-                codes::KEY_NOT_UNIQUE,
+                &codes::row::KEY_NOT_UNIQUE,
                 "The file holds this key twice in one section, or in two spellings that differ only in case, so the place cannot be told.",
                 "Remove the second key from the file.",
             )),

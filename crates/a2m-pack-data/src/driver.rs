@@ -23,9 +23,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{
-    FailsAs, Failure, FailureClass, FailureCode, RecordKey, Redact, Step, Value, Values,
-};
+use a2m_core::{CodeEntry, Failure, RecordKey, Redact, Step, Value, Values};
 use a2m_provider::{
     BoxFuture, Capture, CheckedPath, Cleanup, Deadline, Driver, DriverHealth, FileIdentity,
     Observed, Posture, PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput,
@@ -203,19 +201,14 @@ pub(crate) struct Session {
     lost: bool,
 }
 
-fn failure(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    Failure::new(class, code, message, next)
+/// A failure of the code of `row`, in the class its table gives it.
+fn failure(row: &CodeEntry, message: impl Into<String>, next: impl Into<String>) -> Failure {
+    row.failure(message, next)
 }
 
 fn unexpected(message: &str) -> Failure {
     failure(
-        FailureClass::UnknownVariant,
-        codes::UNEXPECTED_STATUS,
+        &codes::row::UNEXPECTED_STATUS,
         message,
         "Report this to the pack's author; the run can be started again.",
     )
@@ -223,8 +216,7 @@ fn unexpected(message: &str) -> Failure {
 
 fn drift(message: &str) -> Failure {
     failure(
-        FailureClass::Drift,
-        codes::SCHEMA_CHANGED,
+        &codes::row::SCHEMA_CHANGED,
         message,
         "Run discovery again, compare the store's catalog with the statements file, and publish a corrected version.",
     )
@@ -232,8 +224,7 @@ fn drift(message: &str) -> Failure {
 
 fn lost() -> Failure {
     failure(
-        FailureClass::Transient,
-        codes::CONNECTION_LOST,
+        &a2m_provider::codes::row::CONNECTION_LOST,
         "The connection to the store ended before the step was sent.",
         "Start the run again; this step sent nothing.",
     )
@@ -242,8 +233,7 @@ fn lost() -> Failure {
 /// A statement of the plan that is not one plain read or one keyed write.
 fn not_allowed(message: &str) -> Failure {
     failure(
-        FailureClass::Policy,
-        codes::STATEMENT_NOT_ALLOWED,
+        &codes::row::STATEMENT_NOT_ALLOWED,
         message,
         "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.",
     )
@@ -252,8 +242,7 @@ fn not_allowed(message: &str) -> Failure {
 /// A statement declared a read that would change data.
 fn read_wrote() -> Failure {
     failure(
-        FailureClass::Policy,
-        codes::READ_STATEMENT_WROTE,
+        &codes::row::READ_STATEMENT_WROTE,
         "A statement declared as a read tried to change data, and it was refused.",
         "Correct the statement or declare it `effect: write`; do not use the binding as a read.",
     )
@@ -263,8 +252,7 @@ fn read_wrote() -> Failure {
 #[cfg(feature = "postgres")]
 fn too_powerful() -> Failure {
     failure(
-        FailureClass::Policy,
-        codes::IDENTITY_IS_ADMINISTRATOR,
+        &codes::server::row::IDENTITY_IS_ADMINISTRATOR,
         "The identity the session signs in as is a superuser, bypasses row security, may replicate or make roles, or owns tables of the schema, so the store's own rights would not bar what a statement does. Nothing was sent.",
         "Sign in as a role that owns nothing and holds only the rights to read and write the rows the target names.",
     )
@@ -274,8 +262,7 @@ fn too_powerful() -> Failure {
 #[cfg(feature = "postgres")]
 fn leads_elsewhere() -> Failure {
     failure(
-        FailureClass::Policy,
-        codes::CONNECTION_LEADS_ELSEWHERE,
+        &codes::server::row::CONNECTION_LEADS_ELSEWHERE,
         "The connection does not lead where the plan's surface names: the server reports another database, role, or `search_path`, or another address or port than when the connection was opened. It was closed, and nothing was sent.",
         "Check the surface's address, port, database, and schema, and what else may change a connection's settings; then start the run again.",
     )
@@ -285,8 +272,7 @@ fn leads_elsewhere() -> Failure {
 /// with: another file was put at its name.
 fn file_replaced() -> Failure {
     failure(
-        FailureClass::Drift,
-        codes::STORE_FILE_REPLACED,
+        &codes::row::STORE_FILE_REPLACED,
         "The store's file was replaced by another file at its name since the run was prepared, so nothing was sent to it.",
         "Check what replaced the file, then start the run again.",
     )
@@ -294,8 +280,7 @@ fn file_replaced() -> Failure {
 
 fn not_by_key(message: &str) -> Failure {
     failure(
-        FailureClass::Drift,
-        codes::READ_NOT_BY_KEY,
+        &codes::row::READ_NOT_BY_KEY,
         message,
         "Compare the record's key and columns in the statements file with the store's catalog, and publish a corrected version.",
     )
@@ -323,14 +308,12 @@ fn same_value(bound: &Bound, cell: &Cell) -> bool {
 fn refused(refusal: Refusal, access: Access) -> Failure {
     match refusal {
         Refusal::Locked => failure(
-            FailureClass::Busy,
-            codes::STORE_LOCKED,
+            &codes::row::STORE_LOCKED,
             "Another connection held the store's lock for the whole time limit.",
             "Try again when the other program has finished its work.",
         ),
         Refusal::TimedOut => failure(
-            codes::TRANSIENT,
-            codes::TIMEOUT,
+            &a2m_provider::codes::row::TIMEOUT,
             "The statement ran past its time limit and was stopped.",
             "Try again, or raise the statement's `time_limit`.",
         ),
@@ -338,8 +321,7 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
         // constraint, its name, goes apart from it, and `act` redacts it.
         Refusal::Constraint { kind, named } => {
             let refused = failure(
-                FailureClass::Rejected,
-                codes::CONSTRAINT_VIOLATED,
+                &codes::row::CONSTRAINT_VIOLATED,
                 format!("A constraint of the store refused the write (kind: {kind})."),
                 "Correct the values so that they satisfy the store's constraints; nothing was written.",
             );
@@ -350,8 +332,7 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
         }
         Refusal::ReadOnly if access == Access::ReadOnly => read_wrote(),
         Refusal::ReadOnly | Refusal::Denied => failure(
-            FailureClass::Policy,
-            codes::DENIED_BY_STORE,
+            &codes::row::DENIED_BY_STORE,
             "The store does not let this identity write.",
             "Ask the store's owner for the right to write, or use a route that has it.",
         ),
@@ -359,20 +340,17 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
             "A table, a column, or a parameter of the statement differs from what the target declares.",
         ),
         Refusal::Unavailable => failure(
-            FailureClass::Transient,
-            codes::UPSTREAM_UNAVAILABLE,
+            &codes::row::UPSTREAM_UNAVAILABLE,
             "The store cannot be opened.",
             "Check that the store's file exists and can be read, then try again.",
         ),
         Refusal::TooLarge => failure(
-            FailureClass::UnknownVariant,
-            codes::RESULT_TOO_LARGE,
+            &codes::row::RESULT_TOO_LARGE,
             "The statement's result holds more text than the limit allows.",
             "Lower the statement's `max_rows`, or raise the pack's `result_bytes` setting.",
         ),
         Refusal::NotAllowed => failure(
-            FailureClass::Policy,
-            codes::STATEMENT_NOT_ALLOWED,
+            &codes::row::STATEMENT_NOT_ALLOWED,
             "The connection's own guard refused the statement: it is not one plain read or one keyed write.",
             "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.",
         ),
@@ -384,8 +362,7 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
         #[cfg(feature = "postgres")]
         Refusal::TooPowerful => too_powerful(),
         Refusal::Other(code) => failure(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_STATUS,
+            &codes::row::UNEXPECTED_STATUS,
             format!("The store answered with an error no rule covers (result code {code})."),
             "Look at the store's own log, then report the code to the pack's author.",
         ),
@@ -595,8 +572,7 @@ impl Session {
         }
         if access == Access::ReadWrite && !self.may_write {
             return Err(StepFailure::not_sent(failure(
-                FailureClass::Policy,
-                codes::READ_ONLY_POSTURE,
+                &a2m_provider::codes::row::READ_ONLY_POSTURE,
                 "A transaction that may write was asked for where nothing may be written.",
                 "Run the operation live, or against a declared test record.",
             )));
@@ -777,8 +753,7 @@ impl Session {
             let Some(value) = given.and_then(bound) else {
                 return Err(self
                     .not_sent(failure(
-                        FailureClass::Input,
-                        codes::VALUE_NOT_BINDABLE,
+                        &codes::row::VALUE_NOT_BINDABLE,
                         format!(
                             "The parameter `{}` of the statement `{name}` was given no value, or one that is a list, a record, or a moment.",
                             param.name
@@ -887,8 +862,7 @@ impl Session {
                     // not show that the write reaches nothing else.
                     Err(Unseen::Truncated) => {
                         return Err(Stopped::Unsent(failure(
-                            FailureClass::UnknownVariant,
-                            codes::CATALOG_TOO_LARGE,
+                            &codes::row::CATALOG_TOO_LARGE,
                             format!(
                                 "The store holds more than {CATALOG_TABLES} tables and views, so its catalog cannot show that the write reaches no data beyond the rows it names."
                             ),
@@ -973,18 +947,14 @@ impl Session {
             });
         }
         // Any other count rolls back, so nothing is committed.
-        let FailsAs { class, code } = step.fails_as.clone();
         let found = if changed < expected {
-            failure(
-                class,
-                code,
+            step.fails_as.failure(
                 "The write changed no row: the record, or its version, is not what the preview saw.",
                 "Read the record again, look at what changed, and decide whether to write again.",
             )
         } else {
             failure(
-                FailureClass::Drift,
-                codes::KEY_NOT_UNIQUE,
+                &codes::row::KEY_NOT_UNIQUE,
                 "The write matched more than one row, so its key does not identify one record.",
                 "Correct the record's key in the statements file; nothing was written.",
             )
@@ -998,8 +968,7 @@ impl Session {
             (Cell::Text(text), Stored::Text | Stored::Either) => Ok(Value::Text(text)),
             (Cell::Whole(number), Stored::Whole | Stored::Either) => Ok(Value::Int(number)),
             (Cell::Float | Cell::Bytes, _) => Err(failure(
-                FailureClass::UnknownVariant,
-                codes::VALUE_KIND_UNSUPPORTED,
+                &codes::row::VALUE_KIND_UNSUPPORTED,
                 format!(
                     "The field `{}` holds a float or bytes, and no rule reads either exactly.",
                     column.field
@@ -1008,8 +977,7 @@ impl Session {
             )),
             #[cfg(feature = "postgres")]
             (Cell::Unsupported, _) => Err(failure(
-                FailureClass::UnknownVariant,
-                codes::VALUE_KIND_UNSUPPORTED,
+                &codes::row::VALUE_KIND_UNSUPPORTED,
                 format!(
                     "The field `{}` holds a value of a type the data pack has no rule for, such as a moment with no zone.",
                     column.field
@@ -1129,8 +1097,7 @@ impl Session {
         let rows = ran.rows.len();
         let outcome = match statement.returns {
             Returns::OneOrNone if ran.more => Err(failure(
-                FailureClass::Drift,
-                codes::KEY_NOT_UNIQUE,
+                &codes::row::KEY_NOT_UNIQUE,
                 "A read by key matched more than one row.",
                 "Correct the record's key in the statements file.",
             )),
@@ -1243,8 +1210,7 @@ impl Session {
             // for; whatever else ran in the transaction is rolled back.
             return Err(self
                 .not_sent(failure(
-                    FailureClass::Policy,
-                    codes::READ_ONLY_POSTURE,
+                    &a2m_provider::codes::row::READ_ONLY_POSTURE,
                     "A commit was asked for by a step that is not marked as the commit point, so nothing was written.",
                     "Send the commit as the binding's commit point, after its intent is stored.",
                 ))
@@ -1295,8 +1261,7 @@ impl Session {
                 self.open = None;
                 self.ran = None;
                 Err(StepFailure::unknown(failure(
-                    FailureClass::PossibleCommit,
-                    codes::NO_CONFIRMATION,
+                    &a2m_provider::codes::row::NO_CONFIRMATION,
                     "The commit was sent and the store's answer did not arrive, so the write may have landed.",
                     "Reconcile the record: read it back by its key before anything is written again.",
                 )))
@@ -1396,8 +1361,7 @@ impl SqlDriver {
         });
         let Some(path) = path else {
             return Err(StepFailure::not_sent(failure(
-                FailureClass::Input,
-                codes::PATH_NOT_ALLOWED,
+                &a2m_provider::codes::row::PATH_NOT_ALLOWED,
                 format!(
                     "The run was given no checked path for the file of the surface `{}` in the root `{root}`.",
                     surface.name
@@ -1443,8 +1407,7 @@ impl Driver for SqlDriver {
                 // every other surface a run reaches is.
                 if !cx.destinations.contains(&surface.address) {
                     return Err(StepFailure::not_sent(failure(
-                        FailureClass::Policy,
-                        codes::SURFACE_NOT_DECLARED,
+                        &codes::server::row::SURFACE_NOT_DECLARED,
                         format!(
                             "The surface `{}` is not among the destinations the operation may reach.",
                             surface.name

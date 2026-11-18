@@ -37,8 +37,8 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Verb,
+    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -286,10 +286,7 @@ fn read_steps(
         GOTO,
         found.section,
         &found.name,
-        FailsAs {
-            class: FailureClass::UnknownVariant,
-            code: codes::UNEXPECTED_PAGE,
-        },
+        FailsAs::from(&codes::row::UNEXPECTED_PAGE),
     );
     goto.args = holes_of(cx, &found.entry.page, REACH_ARG, at, problems);
     goto.payload = encoded(
@@ -304,10 +301,7 @@ fn read_steps(
         REQUEST,
         found.section,
         &found.name,
-        FailsAs {
-            class: FailureClass::Drift,
-            code: codes::RESPONSE_SCHEMA_MISMATCH,
-        },
+        FailsAs::from(&codes::row::RESPONSE_SCHEMA_MISMATCH),
     );
     request.args = holes_of(cx, &found.entry.path, PATH_ARG, at, problems);
     request.payload = encoded(&payload, at, problems);
@@ -443,10 +437,7 @@ impl PageHttpLowering {
             GOTO,
             found.section,
             &found.name,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_PAGE,
-            },
+            FailsAs::from(&codes::row::UNEXPECTED_PAGE),
         );
         goto.args = holes_of(cx, &found.entry.page, REACH_ARG, at, &mut problems);
         goto.payload = encoded(&GotoStep { tab: TabKind::Act }, at, &mut problems);
@@ -455,10 +446,7 @@ impl PageHttpLowering {
             REQUEST,
             found.section,
             &found.name,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_STATUS,
-            },
+            FailsAs::from(&codes::row::UNEXPECTED_STATUS),
         );
         request.args = holes_of(cx, &found.entry.path, PATH_ARG, at, &mut problems);
         request.payload = encoded(
@@ -922,8 +910,7 @@ impl Session {
                 ))));
             }
             return Err(StepFailure::not_sent(fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
+                &codes::row::UNEXPECTED_PAGE,
                 format!(
                     "The page of the request `{name}` was answered from another address, as a sign-in page is when the session has ended. Nothing was sent from it."
                 ),
@@ -1076,8 +1063,7 @@ impl Session {
         }
         if !entry.is_ok(answer.status) {
             return Err(StepFailure::answered(fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_STATUS,
+                &codes::row::UNEXPECTED_STATUS,
                 format!(
                     "The request `{name}` was answered with the status {}, which it does not declare.",
                     answer.status
@@ -1146,8 +1132,7 @@ impl Session {
         };
         if !may {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::Policy,
-                a2m_provider::codes::READ_ONLY_POSTURE,
+                &a2m_provider::codes::row::READ_ONLY_POSTURE,
                 format!("The request `{name}` writes, and this run may not write."),
                 "Run the operation live, or against a declared test record.",
             )));
@@ -1177,8 +1162,7 @@ impl Session {
                 (_, None) => continue,
                 _ => {
                     return Err(StepFailure::not_sent(fail(
-                        FailureClass::Input,
-                        codes::STEP_NOT_USABLE,
+                        &codes::row::STEP_NOT_USABLE,
                         format!(
                             "The value for the body field `{}` of the request `{name}` is not of the kind its entry declares.",
                             shown(field)
@@ -1195,8 +1179,7 @@ impl Session {
             .find(|field| !fields.contains_key(*field))
         {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::Input,
-                codes::STEP_NOT_USABLE,
+                &codes::row::STEP_NOT_USABLE,
                 format!(
                     "The request `{name}` requires the body field `{}`, and it was given no value.",
                     shown(missing)
@@ -1284,8 +1267,7 @@ impl Session {
             // first, which may have landed. Measured with the stand's
             // fault "lost after commit" (decision 0206).
             Verdict::TokenRefused => Err(StepFailure::unknown(fail(
-                FailureClass::PossibleCommit,
-                a2m_provider::codes::NO_CONFIRMATION,
+                &a2m_provider::codes::row::NO_CONFIRMATION,
                 format!(
                     "The application refused the request `{name}` for its anti-forgery token, with an answer the entry declares for that: the page's token is stale or used, perhaps by an earlier sending of this same write."
                 ),
@@ -1297,8 +1279,7 @@ impl Session {
             // finding S3). The record is read back before it is settled.
             Verdict::Refused(said) => {
                 let refused = StepFailure::unknown(fail(
-                    FailureClass::PossibleCommit,
-                    a2m_provider::codes::NO_CONFIRMATION,
+                    &a2m_provider::codes::row::NO_CONFIRMATION,
                     format!(
                         "The application refused the request `{name}` with the status {}, which the entry declares as a refusal of its values; the browser may have sent it twice, so the refusal can answer a second sending of a write that landed.",
                         answer.status
@@ -1320,8 +1301,7 @@ impl Session {
 /// before anything is sent again.
 fn in_doubt(name: &str, why: &str) -> StepFailure {
     StepFailure::unknown(fail(
-        FailureClass::PossibleCommit,
-        a2m_provider::codes::NO_CONFIRMATION,
+        &a2m_provider::codes::row::NO_CONFIRMATION,
         format!("The request `{name}` was sent from inside the page, and {why}."),
         "Reconcile the record: read it back before anything is written again.",
     ))
@@ -1427,8 +1407,7 @@ fn checked(
 /// differs and never quotes a value.
 fn mismatch(name: &str, why: String) -> StepFailure {
     StepFailure::answered(fail(
-        FailureClass::Drift,
-        codes::RESPONSE_SCHEMA_MISMATCH,
+        &codes::row::RESPONSE_SCHEMA_MISMATCH,
         format!("The answer to the request `{name}` is not the shape its entry declares: {why}."),
         "Look at what the application answers now, and correct the entry under `page_requests/`.",
     ))
@@ -1590,8 +1569,7 @@ impl Driver for PageHttpDriver {
                         && !matches!(&done, Err(failed) if failed.sent == a2m_provider::Sent::NotSent) =>
                 {
                     Err(StepFailure::unknown(fail(
-                        FailureClass::PossibleCommit,
-                        a2m_provider::codes::NO_CONFIRMATION,
+                        &a2m_provider::codes::row::NO_CONFIRMATION,
                         format!(
                             "The write was sent from inside the page, and then the page did something no rule covers: {}",
                             failure.message()

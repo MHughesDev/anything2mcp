@@ -18,7 +18,7 @@
 //! question, quoting the name, in a screen of its own); a type other than
 //! `untrusted_text`; a window whose title is not plain words.
 
-use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, OperationName};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 use serde_json::Value as Json;
 
@@ -74,9 +74,7 @@ fn is_name(text: &str) -> bool {
 }
 
 fn unreadable() -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_core::FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "A `window` finding is not in the form the desktop pack's discoverer writes.",
         "Take the snapshot again with the version of the desktop pack that is enabled.",
     )

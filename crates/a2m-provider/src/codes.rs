@@ -18,7 +18,7 @@
 //!   closes.
 //! - `disk_full` does not: a person frees space.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{CodeEntry, Failure, FailureCode};
 
 a2m_core::failure_codes! {
     MANIFEST_INVALID = Input, "manifest_invalid",
@@ -175,45 +175,13 @@ pub fn is_kernel_only(code: &FailureCode) -> bool {
     KERNEL_ONLY.contains(&code.as_str())
 }
 
+/// A failure of the code of `row`, in the class its table gives it.
 pub(crate) fn failure(
-    class: FailureClass,
-    code: FailureCode,
+    row: &CodeEntry,
     message: impl Into<String>,
     next_step: impl Into<String>,
 ) -> Failure {
-    Failure::new(class, code, message, next_step)
-}
-
-pub(crate) fn input(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    failure(FailureClass::Input, code, message, next)
-}
-
-pub(crate) fn policy(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    failure(FailureClass::Policy, code, message, next)
-}
-
-pub(crate) fn busy(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    failure(FailureClass::Busy, code, message, next)
-}
-
-pub(crate) fn unknown_variant(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    failure(FailureClass::UnknownVariant, code, message, next)
+    row.failure(message, next_step)
 }
 
 /// Text from outside, cut before it is shown in a message.
@@ -228,5 +196,48 @@ pub(crate) fn shown(text: &str) -> String {
         format!("{clean}…")
     } else {
         clean
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = failure(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
     }
 }

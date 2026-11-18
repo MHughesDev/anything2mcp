@@ -295,13 +295,13 @@ class AuditCatches(unittest.TestCase):
         table.write_text(planted, encoding="utf-8")
         self.assert_finding("codes", "`plan_expression_unloadable` has an empty next step")
 
-    def test_a_migrated_crate_with_a_loose_code_is_a_fault(self):
+    def test_a_code_declared_outside_a_table_is_a_fault(self):
         source = self.root / "crates" / "a2m-expr" / "src" / "error.rs"
         text = source.read_text(encoding="utf-8")
         cut = text.index("/// A place inside an expression")
         loose = '/// Planted.\npub const PLANTED_LOOSE: FailureCode = FailureCode::fixed("planted_loose");\n\n'
         source.write_text(text[:cut] + loose + text[cut:], encoding="utf-8")
-        self.assert_finding("codes", "a2m-expr has moved to the `failure_codes!` table form, and declares `planted_loose` outside it")
+        self.assert_finding("codes", "crates/a2m-expr/src/error.rs: `planted_loose` is declared outside a `failure_codes!` table")
 
 
 if __name__ == "__main__":

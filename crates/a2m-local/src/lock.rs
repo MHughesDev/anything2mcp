@@ -82,8 +82,8 @@ const fn identity(_metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
 }
 
 fn running() -> Failure {
-    codes::busy(
-        codes::ENGINE_RUNNING,
+    codes::failure(
+        &codes::row::ENGINE_RUNNING,
         "An engine already runs for this user and data directory.",
         "Use the running engine, or stop it with `anything2mcp engine stop` first.",
     )

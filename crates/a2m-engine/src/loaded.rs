@@ -4,8 +4,7 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    Digest, ExprIndex, Failure, FailureClass, FieldTypeIndex, InputPlan, Plan, Sensitivity, Value,
-    Values,
+    Digest, ExprIndex, Failure, FieldTypeIndex, InputPlan, Plan, Sensitivity, Value, Values,
 };
 use a2m_expr::{Bindings, Normalizer, Program, names};
 
@@ -33,8 +32,7 @@ impl Loaded {
     pub fn load(plan: Arc<Plan>, expected: &Digest) -> Result<Self, Failure> {
         let unverified = || {
             codes::fail(
-                FailureClass::Policy,
-                codes::PLAN_UNVERIFIED,
+                &codes::row::PLAN_UNVERIFIED,
                 "The plan handed to the engine is not the plan the job names by its hash.",
                 "Publish the target again from its stored sources.",
             )
@@ -98,8 +96,7 @@ impl Loaded {
     pub fn holds(&self, index: ExprIndex, scope: &Scope) -> Result<bool, Failure> {
         self.eval(index, scope)?.as_bool().ok_or_else(|| {
             codes::fail(
-                FailureClass::UnknownVariant,
-                codes::CONDITION_NOT_BOOLEAN,
+                &codes::row::CONDITION_NOT_BOOLEAN,
                 "A condition of the plan gave a value that is neither true nor false.",
                 "Compare the condition in the target files with what the system returns.",
             )
@@ -175,8 +172,7 @@ impl Loaded {
             Ok(out)
         } else {
             Err(codes::fail(
-                FailureClass::Input,
-                codes::INPUT_INVALID,
+                &codes::row::INPUT_INVALID,
                 format!("The inputs were refused: {}.", problems.join("; ")),
                 "Correct every input named and call the tool again.",
             ))

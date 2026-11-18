@@ -236,8 +236,8 @@ impl RegistryBuilder {
             settings: Values::new(),
         };
         if manifest.provider.kind != ProviderKind::Pack {
-            pending.problems.push(codes::input(
-                codes::MANIFEST_INVALID,
+            pending.problems.push(codes::failure(
+                &codes::row::MANIFEST_INVALID,
                 format!("`{name}` is compiled in and its manifest says it is a plug-in."),
                 "Write `kind = \"pack\"` in the pack's manifest.",
             ));
@@ -335,8 +335,8 @@ impl RegistryBuilder {
             Ok(manifest) => {
                 let mut problems = Vec::new();
                 if manifest.provider.kind != ProviderKind::Plugin {
-                    problems.push(codes::input(
-                        codes::MANIFEST_INVALID,
+                    problems.push(codes::failure(
+                        &codes::row::MANIFEST_INVALID,
                         format!(
                             "`{}` was found as a plug-in and its manifest says it is a pack.",
                             manifest.provider.name
@@ -403,8 +403,8 @@ impl RegistryBuilder {
                 .enumerate()
                 .any(|(other, p)| other != index && p.manifest.provider.name == *name);
             if twice {
-                let failure = codes::input(
-                    codes::PROVIDER_DUPLICATE,
+                let failure = codes::failure(
+                    &codes::row::PROVIDER_DUPLICATE,
                     format!("Two providers carry the name `{name}`."),
                     "Remove one of the two.",
                 );
@@ -431,8 +431,8 @@ impl RegistryBuilder {
                     if differs {
                         conflicts.push((
                             index,
-                            codes::input(
-                                codes::MODE_CONFLICT,
+                            codes::failure(
+                                &codes::row::MODE_CONFLICT,
                                 format!(
                                     "The mode `{}` is registered with two archetypes, here and by `{other_name}`.",
                                     mode.name
@@ -451,8 +451,8 @@ impl RegistryBuilder {
                     {
                         conflicts.push((
                             index,
-                            codes::input(
-                                codes::MODE_CONFLICT,
+                            codes::failure(
+                                &codes::row::MODE_CONFLICT,
                                 format!(
                                     "The surface kind `{}` is registered here and by `{other_name}`.",
                                     kind.name
@@ -479,8 +479,8 @@ impl RegistryBuilder {
                         if other.manifest.owns(of, kind, surface_kind) {
                             conflicts.push((
                                 index,
-                                codes::input(
-                                    codes::KIND_OWNER_CONFLICT,
+                                codes::failure(
+                                    &codes::row::KIND_OWNER_CONFLICT,
                                     format!(
                                         "The kind `{kind}` of `{surface_kind}` surfaces is owned here and by `{other_name}`."
                                     ),
@@ -551,8 +551,8 @@ impl RegistryBuilder {
                     .iter()
                     .find(|p| owner(p))
                     .map(|p| p.manifest.provider.name.to_string());
-                soft[index].push(codes::input(
-                    codes::KIND_OWNER_MISSING,
+                soft[index].push(codes::failure(
+                    &codes::row::KIND_OWNER_MISSING,
                     format!(
                         "`{}` reads the kind `{}` of `{}` surfaces, and no enabled provider owns it.",
                         pending[index].manifest.provider.name,
@@ -698,8 +698,8 @@ impl RegistryBuilder {
                 if readers.contains_key(&reader_name) {
                     problems.push(RegistryProblem {
                         provider: Some(name.clone()),
-                        failure: codes::input(
-                            codes::KIND_OWNER_CONFLICT,
+                        failure: codes::failure(
+                            &codes::row::KIND_OWNER_CONFLICT,
                             format!(
                                 "The source reader `{reader_name}` is registered by two providers."
                             ),
@@ -918,8 +918,8 @@ impl Registry {
     /// The candidate that drives a mode, with the reason it is the one.
     fn chosen(&self, mode: &Mode) -> Result<(&ModeEntry, &Candidate, ChoiceReason), Failure> {
         let entry = self.inner.modes.get(mode).ok_or_else(|| {
-            codes::input(
-                codes::MODE_UNKNOWN,
+            codes::failure(
+                &codes::row::MODE_UNKNOWN,
                 format!("No enabled provider registered the mode `{mode}`."),
                 "Enable the provider that brings the mode; `anything2mcp provider list` shows them.",
             )
@@ -930,8 +930,8 @@ impl Registry {
             .filter(|candidate| candidate.driver.is_some())
             .collect();
         let unavailable = |candidate: &Candidate| {
-            codes::busy(
-                codes::PROVIDER_UNAVAILABLE,
+            codes::failure(
+                &codes::row::PROVIDER_UNAVAILABLE,
                 format!(
                     "The provider `{}`, which drives the mode `{mode}`, is `{}` here.",
                     candidate.provider,
@@ -949,8 +949,8 @@ impl Registry {
                 .iter()
                 .find(|candidate| candidate.provider == *named)
                 .ok_or_else(|| {
-                    codes::busy(
-                        codes::PROVIDER_UNAVAILABLE,
+                    codes::failure(
+                        &codes::row::PROVIDER_UNAVAILABLE,
                         format!(
                             "The settings name `{named}` for the mode `{mode}`, and it registered no driver for it."
                         ),
@@ -970,8 +970,8 @@ impl Registry {
             .collect();
         match (ready.as_slice(), drivers.as_slice()) {
             ([one], _) => Ok((entry, one, ChoiceReason::OnlyProvider)),
-            ([], []) => Err(codes::input(
-                codes::MODE_UNKNOWN,
+            ([], []) => Err(codes::failure(
+                &codes::row::MODE_UNKNOWN,
                 format!("The mode `{mode}` is registered and no enabled provider drives it."),
                 "Enable a provider that drives the mode.",
             )),
@@ -987,8 +987,8 @@ impl Registry {
                         )
                     })
                     .collect();
-                Err(codes::input(
-                    codes::PROVIDER_AMBIGUOUS,
+                Err(codes::failure(
+                    &codes::row::PROVIDER_AMBIGUOUS,
                     format!(
                         "More than one ready provider drives the mode `{mode}`: {}.",
                         listed.join(", ")
@@ -1027,8 +1027,8 @@ impl Registry {
     pub fn driver(&self, mode: &Mode) -> Result<DriverHandle, Failure> {
         let (entry, candidate, reason) = self.chosen(mode)?;
         let Some(driver) = &candidate.driver else {
-            return Err(codes::input(
-                codes::MODE_UNKNOWN,
+            return Err(codes::failure(
+                &codes::row::MODE_UNKNOWN,
                 format!("No enabled provider drives the mode `{mode}`."),
                 "Enable a provider that drives the mode.",
             ));
@@ -1106,8 +1106,8 @@ impl Registry {
             .get(name.as_str())
             .cloned()
             .ok_or_else(|| {
-                codes::input(
-                    codes::NOT_REGISTERED,
+                codes::failure(
+                    &codes::row::NOT_REGISTERED,
                     format!(
                         "No enabled provider registered the source reader `{}`.",
                         name.as_str()

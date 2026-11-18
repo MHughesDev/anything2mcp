@@ -736,16 +736,16 @@ pub struct Manifest {
 }
 
 fn invalid(field: &str, why: &str) -> Failure {
-    codes::input(
-        codes::MANIFEST_INVALID,
+    codes::failure(
+        &codes::row::MANIFEST_INVALID,
         format!("The manifest field `{field}` is wrong: {why}."),
         "Correct the provider's manifest.",
     )
 }
 
 fn undeclared(what: String) -> Failure {
-    codes::policy(
-        codes::EFFECT_NOT_DECLARED,
+    codes::failure(
+        &codes::row::EFFECT_NOT_DECLARED,
         what,
         "Declare it in the provider's manifest, where a person can review it, or remove what asks for it.",
     )
@@ -779,8 +779,8 @@ fn is_absolute_anywhere(path: &str) -> bool {
 /// path. Never a bare name to be searched for, and never a way out.
 fn program_path(field: &str, path: &str) -> Result<(), Failure> {
     let refused = |why: &str| {
-        codes::input(
-            codes::PATH_NOT_ALLOWED,
+        codes::failure(
+            &codes::row::PATH_NOT_ALLOWED,
             format!(
                 "The manifest field `{field}` names the program `{}`: {why}.",
                 shown(path)
@@ -890,8 +890,8 @@ impl Manifest {
     #[allow(clippy::too_many_lines)] // one check after another, each a few lines; splitting hides the order
     pub fn parse(text: &str) -> Result<Self, Failure> {
         let raw: RawManifest = toml::from_str(text).map_err(|error| {
-            codes::input(
-                codes::MANIFEST_INVALID,
+            codes::failure(
+                &codes::row::MANIFEST_INVALID,
                 format!("The manifest cannot be read: {}", shown(error.message())),
                 match error.span() {
                     Some(span) => format!(
@@ -907,8 +907,8 @@ impl Manifest {
             return Err(invalid("manifest_format", "this build reads format 1"));
         }
         if raw.contract != CONTRACT {
-            return Err(codes::input(
-                codes::CONTRACT_UNSUPPORTED,
+            return Err(codes::failure(
+                &codes::row::CONTRACT_UNSUPPORTED,
                 format!(
                     "The manifest was written for provider contract {}, and this build offers contract {CONTRACT}.",
                     raw.contract
@@ -974,15 +974,15 @@ impl Manifest {
 
         // Modes and surface kinds: one entry, one archetype.
         if !unique(raw.modes.iter().map(|mode| &mode.name)) {
-            return Err(codes::input(
-                codes::MODE_CONFLICT,
+            return Err(codes::failure(
+                &codes::row::MODE_CONFLICT,
                 format!("The provider `{}` registers one mode twice.", provider.name),
                 "State each mode once, with its one archetype.",
             ));
         }
         if !unique(raw.surface_kinds.iter().map(|kind| &kind.name)) {
-            return Err(codes::input(
-                codes::MODE_CONFLICT,
+            return Err(codes::failure(
+                &codes::row::MODE_CONFLICT,
                 format!(
                     "The provider `{}` registers one surface kind twice.",
                     provider.name
@@ -1184,8 +1184,8 @@ impl Manifest {
             // inside it. A pack is compiled in and has none: a relative
             // path would be looked for in the engine's own working folder.
             if provider.kind == ProviderKind::Pack && !is_absolute_anywhere(&program.path) {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
+                return Err(codes::failure(
+                    &codes::row::PATH_NOT_ALLOWED,
                     format!(
                         "The manifest field `effects.processes` names the program `{}` by a relative path, and a pack has no folder of its own.",
                         shown(&program.path)
@@ -1256,8 +1256,8 @@ impl Manifest {
                     .iter()
                     .any(|path| !is_absolute_anywhere(path))
             {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
+                return Err(codes::failure(
+                    &codes::row::PATH_NOT_ALLOWED,
                     format!(
                         "The requirement `{}` is looked for at a place that is not a fixed absolute path.",
                         shown(&needed.name)
@@ -1379,8 +1379,8 @@ impl Manifest {
     /// declare or a value that does not fit.
     pub fn validate_settings(&self, given: &Values) -> Result<Values, Failure> {
         let wrong = |key: &str, why: &str| {
-            codes::input(
-                codes::PACK_SETTINGS_INVALID,
+            codes::failure(
+                &codes::row::PACK_SETTINGS_INVALID,
                 format!(
                     "The setting `packs.{}.{}` is wrong: {why}.",
                     self.provider.name,

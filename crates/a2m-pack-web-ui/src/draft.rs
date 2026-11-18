@@ -29,7 +29,7 @@
 //! than `untrusted_text`, since what a cell holds is a sample nobody stated
 //! the type of; an example; a test.
 
-use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, OperationName, Subject};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName, Subject};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 use serde_json::Value as Json;
 
@@ -109,9 +109,7 @@ struct Table {
 }
 
 fn unreadable() -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_core::FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "A `screen` finding is not in the form the web pack's discoverers write.",
         "Take the snapshot again with the version of the web pack that is enabled.",
     )

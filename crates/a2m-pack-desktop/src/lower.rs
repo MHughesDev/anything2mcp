@@ -20,8 +20,8 @@
 //! field of each key input's name.
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -175,17 +175,11 @@ impl<'a> Lower<'a, '_> {
     }
 
     fn unexpected() -> FailsAs {
-        FailsAs {
-            class: FailureClass::UnknownVariant,
-            code: codes::UNEXPECTED_PAGE,
-        }
+        FailsAs::from(&codes::row::UNEXPECTED_PAGE)
     }
 
     fn not_found() -> FailsAs {
-        FailsAs {
-            class: FailureClass::Drift,
-            code: codes::LOCATOR_NOT_FOUND,
-        }
+        FailsAs::from(&codes::row::LOCATOR_NOT_FOUND)
     }
 
     fn goto(&self, found: &Found<'_>) -> Step {

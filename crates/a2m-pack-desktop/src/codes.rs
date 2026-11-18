@@ -11,7 +11,7 @@
 //! accessibility, start it without administrator rights, or run the target
 //! on a system the pack is built for.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{CodeEntry, Failure, FailureCode};
 use a2m_provider::StepFailure;
 
 a2m_core::failure_codes! {
@@ -92,20 +92,15 @@ a2m_core::failure_codes! {
 /// them.
 pub const PASSED_ON: &[FailureCode] = &[];
 
-pub(crate) fn failure(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next: &str,
-) -> Failure {
-    Failure::new(class, code, message, next)
+/// A failure of the code of `row`, in the class its table gives it.
+pub(crate) fn failure(row: &CodeEntry, message: impl Into<String>, next: &str) -> Failure {
+    row.failure(message, next)
 }
 
 /// A step the driver cannot carry out as written. Nothing was sent.
 pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
-        FailureClass::Input,
-        STEP_NOT_USABLE,
+        &row::STEP_NOT_USABLE,
         format!(
             "The desktop driver cannot carry out this step as the plan wrote it: {}.",
             why.into()
@@ -119,8 +114,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn writes_not_built() -> StepFailure {
     StepFailure::not_sent(failure(
-        FailureClass::Busy,
-        WRITES_NOT_BUILT,
+        &row::WRITES_NOT_BUILT,
         format!(
             "The desktop pack changes applications only on Linux in this version; this system is {}. Nothing was sent.",
             std::env::consts::OS
@@ -133,8 +127,7 @@ pub(crate) fn writes_not_built() -> StepFailure {
 #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub(crate) fn system_not_built() -> Failure {
     failure(
-        FailureClass::Busy,
-        SYSTEM_NOT_BUILT,
+        &row::SYSTEM_NOT_BUILT,
         format!(
             "The desktop pack reads applications only on Linux, Windows, and macOS in this version; this system is {}.",
             std::env::consts::OS

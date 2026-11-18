@@ -21,10 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{
-    AccountName, Digest, EffectClass, Failure, FailureClass, FailureCode, Identity, Secret, Step,
-    Value,
-};
+use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input,
     Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue,
@@ -160,8 +157,7 @@ impl Tab<'_> {
                 .await
                 .map_err(|error| browser_failure(&error, what)),
             Self::Observe(_) => Err(StepFailure::not_sent(fail(
-                FailureClass::Policy,
-                a2m_provider::codes::READ_ONLY_POSTURE,
+                &a2m_provider::codes::row::READ_ONLY_POSTURE,
                 "This run may only look at the page, and its tab cannot act.".to_owned(),
                 "Run the operation where it may act.",
             ))),
@@ -215,8 +211,7 @@ struct Session {
 pub(crate) fn origin_of(address: &str) -> Result<String, Failure> {
     let unusable = |why: &str| {
         codes::failure(
-            FailureClass::Input,
-            codes::ADDRESS_INVALID,
+            &a2m_pack_web_browser::codes::row::ADDRESS_INVALID,
             format!("The surface's address cannot be used by the web pack: {why}."),
             "Write the surface's `origin` as `https://host`, with a port if it has one, and nothing after it.",
         )
@@ -306,8 +301,8 @@ pub(crate) fn until(step: &Step, input: &StepInput<'_>) -> Deadline {
     Deadline::after(own.min(input.deadline.remaining()))
 }
 
-pub(crate) fn fail(class: FailureClass, code: FailureCode, message: String, next: &str) -> Failure {
-    codes::failure(class, code, message, next)
+pub(crate) fn fail(row: &a2m_core::CodeEntry, message: String, next: &str) -> Failure {
+    codes::failure(row, message, next)
 }
 
 /// Whether the request an error belongs to may have reached the page.
@@ -328,54 +323,46 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
     let again = "Run the tool again.";
     let failure = match error {
         BrowserError::NotFound => fail(
-            FailureClass::Drift,
-            codes::LOCATOR_NOT_FOUND,
+            &codes::row::LOCATOR_NOT_FOUND,
             format!("No locator of {what} matches an element of the page."),
             "Look at the page and correct the screen's locators.",
         ),
         BrowserError::Ambiguous { count } => fail(
-            FailureClass::Drift,
-            codes::LOCATOR_AMBIGUOUS,
+            &codes::row::LOCATOR_AMBIGUOUS,
             format!("A locator of {what} matches {count} elements, and exactly one must match."),
             "Make the locator more exact; the first of several is never picked.",
         ),
         BrowserError::NotActionable(
             reason @ (Reason::WrongControl | Reason::NoSuchOption | Reason::NotEditable),
         ) => fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_CONTROL,
+            &codes::row::UNEXPECTED_CONTROL,
             format!(
                 "The element found for {what} cannot be operated as its control says: {reason}."
             ),
             "Look at the page; correct the field's `control`, or declare the state the page is in.",
         ),
         BrowserError::NotActionable(reason) => fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_PAGE,
+            &codes::row::UNEXPECTED_PAGE,
             format!("The element found for {what} cannot be used now: {reason}."),
             "Look at the page; declare the state it is in as a variant of the screen.",
         ),
         BrowserError::Timeout { .. } => fail(
-            FailureClass::Transient,
-            a2m_provider::codes::TIMEOUT,
+            &a2m_provider::codes::row::TIMEOUT,
             format!("The page did not answer in the time the step allows, at {what}."),
             again,
         ),
         BrowserError::Crashed { .. } | BrowserError::Disconnected { .. } => fail(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+            &a2m_provider::codes::row::CONNECTION_LOST,
             format!("The browser was lost at {what}."),
             again,
         ),
         BrowserError::NotLoaded(_) => fail(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+            &a2m_provider::codes::row::CONNECTION_LOST,
             format!("The page did not load, at {what}."),
             "Check that the application is reachable, then run the tool again.",
         ),
         BrowserError::RequestFailed(_) => fail(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+            &a2m_provider::codes::row::CONNECTION_LOST,
             format!("A request of the page did not complete, at {what}."),
             again,
         ),
@@ -383,30 +370,26 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
         // a session that has expired is often answered so. It is not a lost
         // connection, and the read is not run again on its own.
         BrowserError::Redirected => fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_STATUS,
+            &codes::row::UNEXPECTED_STATUS,
             format!(
                 "The answer to {what} was a redirect, which a read from inside the page does not follow."
             ),
             "Look at where the application sends the read; if the session has expired, sign in again before the tool is run.",
         ),
         BrowserError::UnexpectedDialog { .. } => fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_DIALOG,
+            &codes::row::UNEXPECTED_DIALOG,
             format!("The page opened a dialog that no screen declares, at {what}."),
             "Look at the page; a dialog is declared before a run may answer it.",
         ),
         BrowserError::TooLarge { limit } => fail(
-            FailureClass::UnknownVariant,
-            codes::READ_TOO_LARGE,
+            &codes::row::READ_TOO_LARGE,
             format!("What {what} shows is longer than the limit of {limit} characters."),
             "Raise `packs.web.max_read_chars`, or read a smaller part of the page.",
         ),
         // The base classes this one itself, above; kept here so that the
         // match names every error.
         BrowserError::ForeignOrigin(origin) => fail(
-            FailureClass::Policy,
-            codes::SURFACE_NOT_DECLARED,
+            &codes::row::SURFACE_NOT_DECLARED,
             format!(
                 "The page is on `{}`, which is not an origin this run may reach, at {what}. Nothing was read or sent there.",
                 shown(origin)
@@ -416,16 +399,14 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
         // A write from inside the page, before anything was sent: the page
         // does not hold its token where the entry says (decision 0206).
         BrowserError::Token(a2m_pack_web_browser::TokenProblem::Missing) => fail(
-            FailureClass::Drift,
-            codes::ANTI_FORGERY_NOT_FOUND,
+            &codes::row::ANTI_FORGERY_NOT_FOUND,
             format!(
                 "The page holds no anti-forgery token where the entry says, at {what}. Nothing was sent."
             ),
             "Look at where the page holds its token now, and correct the entry's `anti_forgery`.",
         ),
         BrowserError::Token(problem) => fail(
-            FailureClass::UnknownVariant,
-            codes::ANTI_FORGERY_UNREADABLE,
+            &codes::row::ANTI_FORGERY_UNREADABLE,
             format!("At {what}, {problem}. Nothing was sent."),
             "Look at the page; a token is read from one place that holds one text.",
         ),
@@ -433,8 +414,7 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
         | BrowserError::WriteRefused(_)
         | BrowserError::PasswordField
         | BrowserError::LaunchFailed(_) => fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_PAGE,
+            &codes::row::UNEXPECTED_PAGE,
             format!("The browser answered in a way no rule covers, at {what}."),
             "Report this to the web pack's author.",
         ),
@@ -462,8 +442,7 @@ pub(crate) fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
 pub(crate) fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
     let refused = |why: &str| {
         StepFailure::not_sent(fail(
-            FailureClass::Input,
-            codes::ADDRESS_VALUE_REFUSED,
+            &a2m_pack_web_browser::codes::row::ADDRESS_VALUE_REFUSED,
             format!("The value for `{name}` cannot stand in the screen's address: {why}."),
             "Give a value that is one segment of an address: letters, digits, `-`, `.`, `_`, and `~`.",
         ))
@@ -597,8 +576,7 @@ impl Session {
             return Ok(());
         }
         Err(StepFailure::not_sent(fail(
-            FailureClass::Policy,
-            a2m_provider::codes::READ_ONLY_POSTURE,
+            &a2m_provider::codes::row::READ_ONLY_POSTURE,
             format!(
                 "A `{}` step acts on the page, and this run may not act so.",
                 step.kind
@@ -697,8 +675,7 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
     let place = shown(&address.as_ref().map(Address::origin).unwrap_or_default());
     Some(if first.method == NAVIGATION {
         fail(
-            FailureClass::Policy,
-            codes::SURFACE_NOT_DECLARED,
+            &codes::row::SURFACE_NOT_DECLARED,
             format!(
                 "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
             ),
@@ -706,8 +683,7 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
         )
     } else if LEFT_THE_PAGE.contains(&first.method.as_str()) {
         fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_PAGE,
+            &codes::row::UNEXPECTED_PAGE,
             format!(
                 "The page tried something no screen declares, at {what}: a new window or a download (`{}`). The browser refused it.",
                 shown(&first.method)
@@ -723,8 +699,7 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
             .map(path_by_structure)
             .unwrap_or_default();
         fail(
-            FailureClass::Policy,
-            codes::PAGE_WRITE_REFUSED,
+            &codes::row::PAGE_WRITE_REFUSED,
             format!(
                 "The page sent a request that could change the system (`{}` to `{}`), at {what}, in a tab that may only read. The browser failed it before it left, and the run stops: a read is never made where the page may write.",
                 shown(&first.method),
@@ -821,8 +796,7 @@ impl Session {
             if let Some(fingerprint) = fingerprint {
                 let mismatch = |why: &str| {
                     StepFailure::not_sent(fail(
-                        FailureClass::Drift,
-                        codes::FINGERPRINT_MISMATCH,
+                        &codes::row::FINGERPRINT_MISMATCH,
                         format!("The element found for {what} fails its fingerprint: {why}."),
                         "Look at the page and correct the screen; the element may have moved, or another may have taken its name.",
                     ))
@@ -1000,8 +974,7 @@ impl Session {
             Ok(()) => {}
             Err(BrowserError::Timeout { .. }) => {
                 return Err(StepFailure::not_sent(fail(
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_PAGE,
+                    &codes::row::UNEXPECTED_PAGE,
                     format!(
                         "The page did not become {what} in the time the step allows: neither its `ready` condition nor one of its variants held."
                     ),
@@ -1038,8 +1011,7 @@ impl Session {
                 }))
             }
             Some((variant, Handling::Stop)) => Err(StepFailure::answered(fail(
-                FailureClass::Rejected,
-                codes::APP_VALIDATION_ERROR,
+                &codes::row::APP_VALIDATION_ERROR,
                 format!("The page shows the variant `{variant}` of {what}, which stops a run."),
                 "Look at the page; the application refused.",
             ))),
@@ -1123,8 +1095,7 @@ impl Session {
             };
             let table = parse_rows(&text, rows).ok_or_else(|| {
                 StepFailure::answered(fail(
-                    FailureClass::Drift,
-                    codes::FINGERPRINT_MISMATCH,
+                    &codes::row::FINGERPRINT_MISMATCH,
                     format!(
                         "The headings or the rows of {what} are not the ones the screen declares."
                     ),
@@ -1242,8 +1213,7 @@ impl Session {
             }
         }
         Err(StepFailure::unknown(fail(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_CONTROL,
+            &codes::row::UNEXPECTED_CONTROL,
             format!(
                 "{what} does not hold the text it was given, by filling, by typing, or by its own setter."
             ),
@@ -1285,21 +1255,18 @@ impl Session {
                 .variants
                 .get(shown_before)
                 .map_or(Handling::Stop, |variant| variant.handling);
-            let (class, code, next) = match handling {
+            let (row, next) = match handling {
                 Handling::Stop => (
-                    FailureClass::Rejected,
-                    codes::APP_VALIDATION_ERROR,
+                    &codes::row::APP_VALIDATION_ERROR,
                     "Correct the values and run the tool again; the page refused them before the action was performed.",
                 ),
                 Handling::Absent => (
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_PAGE,
+                    &codes::row::UNEXPECTED_PAGE,
                     "Look at the page; the record is not where the action would act on it.",
                 ),
             };
             let refused = StepFailure::not_sent(fail(
-                class,
-                code,
+                row,
                 format!(
                     "Before {what}, the page shows the variant `{shown_before}`, so its answer to the action could not be told from it. The action was not performed."
                 ),
@@ -1318,8 +1285,7 @@ impl Session {
             .await?
         {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
+                &codes::row::UNEXPECTED_PAGE,
                 format!(
                     "Before {what}, the page already shows the action's confirmation, so its answer to the action could not be told from it. The action was not performed."
                 ),
@@ -1335,17 +1301,13 @@ impl Session {
         // confirmation, or a state the screen declares instead, neither of
         // which was there before the click.
         let no_confirmation = |why: String| {
-            let (class, code) = if step.commits {
-                (
-                    FailureClass::PossibleCommit,
-                    a2m_provider::codes::NO_CONFIRMATION,
-                )
+            let row = if step.commits {
+                &a2m_provider::codes::row::NO_CONFIRMATION
             } else {
-                (FailureClass::UnknownVariant, codes::UNEXPECTED_PAGE)
+                &codes::row::UNEXPECTED_PAGE
             };
             StepFailure::unknown(fail(
-                class,
-                code,
+                row,
                 format!("{what} was performed, and {why}."),
                 "Reconcile the record: read it back before anything is written again.",
             ))
@@ -1423,8 +1385,7 @@ impl Session {
                 // there before it, is the application's answer to it.
                 (Handling::Stop, _) => {
                     let refused = StepFailure::answered(fail(
-                        FailureClass::Rejected,
-                        codes::APP_VALIDATION_ERROR,
+                        &codes::row::APP_VALIDATION_ERROR,
                         format!("After {what}, the page shows the variant `{variant}`."),
                         "Correct the values and run the tool again; the application refused them.",
                     ));
@@ -1440,8 +1401,7 @@ impl Session {
                     "then the page showed the variant `{variant}`, which does not say whether the save landed"
                 )),
                 (Handling::Absent, false) => StepFailure::answered(fail(
-                    FailureClass::UnknownVariant,
-                    codes::UNEXPECTED_PAGE,
+                    &codes::row::UNEXPECTED_PAGE,
                     format!("After {what}, the page shows the variant `{variant}`."),
                     "Look at the page; the record is not where the action left it.",
                 )),
@@ -1506,8 +1466,7 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
         "select" => Ok(Rule::Select),
         "checkbox" => Ok(Rule::Check),
         other => Err(StepFailure::not_sent(fail(
-            FailureClass::UnknownVariant,
-            codes::UNKNOWN_CONTROL,
+            &codes::row::UNKNOWN_CONTROL,
             format!(
                 "The plan names the control `{}`, and this driver has no rule for it.",
                 shown(other)
@@ -1571,8 +1530,7 @@ pub(crate) fn tab_setup(
     }
     if cx.deadline.passed() {
         return Err(unsent(fail(
-            FailureClass::Transient,
-            a2m_provider::codes::TIMEOUT,
+            &a2m_provider::codes::row::TIMEOUT,
             "The time for preparing a tab had passed before it began.".to_owned(),
             "Run the tool again.",
         )));
@@ -1839,8 +1797,7 @@ impl Driver for UiDriver {
             };
             Err(if step.commits {
                 StepFailure::unknown(fail(
-                    FailureClass::PossibleCommit,
-                    a2m_provider::codes::NO_CONFIRMATION,
+                    &a2m_provider::codes::row::NO_CONFIRMATION,
                     format!(
                         "The action was performed, and then the page did something no rule covers: {}",
                         failure.message()
@@ -1956,10 +1913,7 @@ mod tests {
             }),
             args: Vec::new(),
             timeout_ms: 1000,
-            fails_as: a2m_core::FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_PAGE,
-            },
+            fails_as: a2m_core::FailsAs::from(&codes::row::UNEXPECTED_PAGE),
             commits: false,
             lookup: false,
             idempotent: false,

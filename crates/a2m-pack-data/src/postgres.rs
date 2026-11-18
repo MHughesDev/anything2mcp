@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{Failure, FailureClass, ScopedHost, Secret, SurfacePlan};
+use a2m_core::{ScopedHost, Secret, SurfacePlan};
 use a2m_provider::StepFailure;
 use bytes::BytesMut;
 use tokio::runtime::Handle;
@@ -83,9 +83,7 @@ pub(crate) fn server_of(
     // (decision 0240): the address as written, never a name.
     let host: Option<IpAddr> = surface.address.parse().ok();
     let Some(host) = host.filter(|ip| !ScopedHost::of_ip(*ip).may_leave_this_machine()) else {
-        return Err(StepFailure::not_sent(Failure::new(
-            FailureClass::Policy,
-            codes::LINK_NOT_ENCRYPTED,
+        return Err(StepFailure::not_sent(codes::server::row::LINK_NOT_ENCRYPTED.failure(
             format!(
                 "The surface `{}` is not on the loopback address, and this version of the data pack makes no encrypted link to a server store. An unencrypted link is never made, and nothing was sent.",
                 surface.name
@@ -94,12 +92,12 @@ pub(crate) fn server_of(
         )));
     };
     let (Some(port), Some(database)) = (fields.port, fields.database.clone()) else {
-        return Err(StepFailure::not_sent(Failure::new(
-            FailureClass::UnknownVariant,
-            codes::UNEXPECTED_STATUS,
-            "The surface states no port or no database.",
-            "Compile the target again: the surface kind requires both.",
-        )));
+        return Err(StepFailure::not_sent(
+            codes::row::UNEXPECTED_STATUS.failure(
+                "The surface states no port or no database.",
+                "Compile the target again: the surface kind requires both.",
+            ),
+        ));
     };
     let schema = fields
         .schema
@@ -138,9 +136,7 @@ pub(crate) fn server_of(
 }
 
 fn not_carried(message: &str) -> StepFailure {
-    StepFailure::not_sent(Failure::new(
-        FailureClass::Input,
-        codes::CREDENTIAL_NOT_CARRIED,
+    StepFailure::not_sent(codes::server::row::CREDENTIAL_NOT_CARRIED.failure(
         message,
         "Sign the target in with the provider `http_basic`, whose setting `user` is the store's role and whose credential `password` is its password.",
     ))

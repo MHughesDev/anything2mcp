@@ -614,8 +614,8 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 fn hello_invalid(why: &str) -> Response {
     refusal(
         StatusCode::BAD_REQUEST,
-        &codes::input(
-            codes::HELLO_INVALID,
+        &codes::failure(
+            &codes::row::HELLO_INVALID,
             format!("The connection did not open with a well-formed hello: {why}."),
             "Reach the engine through `anything2mcp` or its SDK bridge, which say hello first.",
         ),
@@ -648,8 +648,8 @@ async fn front(
         if api != LOCAL_API {
             return refusal(
                 StatusCode::BAD_REQUEST,
-                &codes::input(
-                    codes::LOCAL_API_MISMATCH,
+                &codes::failure(
+                    &codes::row::LOCAL_API_MISMATCH,
                     format!(
                         "The client speaks local API version {api} and the engine speaks {LOCAL_API}."
                     ),

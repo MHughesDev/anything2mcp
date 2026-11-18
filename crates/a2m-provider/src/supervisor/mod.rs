@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use a2m_core::{Digest, Failure, FailureClass, SubsystemState};
+use a2m_core::{Digest, Failure, SubsystemState};
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
@@ -483,8 +483,8 @@ struct Identified {
 }
 
 fn not_the_declared_program(path: &Path) -> Failure {
-    codes::policy(
-        codes::EFFECT_NOT_DECLARED,
+    codes::failure(
+        &codes::row::EFFECT_NOT_DECLARED,
         format!(
             "The program `{}` is not the one that was declared: its digest is different.",
             codes::shown(&path.display().to_string())
@@ -500,8 +500,8 @@ fn not_the_declared_program(path: &Path) -> Failure {
 /// published plan, must be the digest found. Blocking.
 fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, Failure> {
     let not_found = || {
-        codes::input(
-            codes::PROGRAM_NOT_FOUND,
+        codes::failure(
+            &codes::row::PROGRAM_NOT_FOUND,
             format!(
                 "The program `{}` is not there, or cannot be read.",
                 codes::shown(&program.path.display().to_string())
@@ -528,8 +528,8 @@ fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, F
             }
         }
         if !declared {
-            return Err(codes::policy(
-                codes::EFFECT_NOT_DECLARED,
+            return Err(codes::failure(
+                &codes::row::EFFECT_NOT_DECLARED,
                 format!(
                     "The provider `{}` asked to start a program that neither its manifest nor the published plan declares.",
                     scope.provider
@@ -654,8 +654,8 @@ impl WorkFolder {
     /// Makes the folder. Blocking.
     fn make() -> Result<Self, Failure> {
         let failed = |why: &str| {
-            codes::busy(
-                codes::START_FAILED,
+            codes::failure(
+                &codes::row::START_FAILED,
                 format!("No working folder of its own could be made for the program: {why}."),
                 "Check that the system's temporary folder is there, has room, and is closed to other users, then try again.",
             )
@@ -799,8 +799,8 @@ fn identify_and_start(
 ) -> Result<Started, Failure> {
     for value in search_paths(spec) {
         if let Err(folder) = search_path_closed(&value) {
-            return Err(codes::policy(
-                codes::VARIABLE_REFUSED,
+            return Err(codes::failure(
+                &codes::row::VARIABLE_REFUSED,
                 format!(
                     "A launch gives the program a `PATH` that names the folder `{}`, which another user could change, or which is not named by an absolute path: the program, and on Windows the system, load code from the folders it names.",
                     codes::shown(&folder.display().to_string())
@@ -832,16 +832,16 @@ fn identify_and_start(
     drop(program);
     match started {
         Ok((group, pipes)) => Ok((group, pipes, digest, verified, work)),
-        Err(StartError::Changed) => Err(codes::policy(
-            codes::EFFECT_NOT_DECLARED,
+        Err(StartError::Changed) => Err(codes::failure(
+            &codes::row::EFFECT_NOT_DECLARED,
             format!(
                 "The program `{}` was replaced between its check and its start, and was not started.",
                 codes::shown(&spec.program.path.display().to_string())
             ),
             "Review the program that is installed now, then try again.",
         )),
-        Err(StartError::Failed(error)) => Err(codes::busy(
-            codes::START_FAILED,
+        Err(StartError::Failed(error)) => Err(codes::failure(
+            &codes::row::START_FAILED,
             format!(
                 "The operating system did not start `{}`: {}.",
                 codes::shown(&spec.program.path.display().to_string()),
@@ -856,8 +856,8 @@ fn identify_and_start(
 fn owner_mark() -> Result<String, Failure> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| {
-        codes::busy(
-            codes::START_FAILED,
+        codes::failure(
+            &codes::row::START_FAILED,
             "The operating system gave no random bytes for an owner mark.",
             "Try again; if it persists, check the machine's random source.",
         )
@@ -951,15 +951,15 @@ impl Supervisor {
     /// Checks the counts and the place, before anything is started.
     fn admit(&self, spec: &LaunchSpec) -> Result<(), Failure> {
         let state = self.inner.state.lock().map_err(|_| {
-            codes::busy(
-                codes::START_FAILED,
+            codes::failure(
+                &codes::row::START_FAILED,
                 "The supervisor's own state is broken.",
                 "Restart the engine.",
             )
         })?;
         if state.stopping {
-            return Err(codes::busy(
-                codes::SHUTTING_DOWN,
+            return Err(codes::failure(
+                &codes::row::SHUTTING_DOWN,
                 "The engine is stopping and starts nothing.",
                 "Start the engine again.",
             ));
@@ -969,8 +969,8 @@ impl Supervisor {
             .iter()
             .find(|left| left.kind.as_ref() == Some(&spec.kind))
         {
-            return Err(codes::busy(
-                codes::CLEANUP_INCOMPLETE,
+            return Err(codes::failure(
+                &codes::row::CLEANUP_INCOMPLETE,
                 format!(
                     "An earlier `{}` subsystem could not be cleaned up: {}",
                     spec.kind, left.what
@@ -991,8 +991,8 @@ impl Supervisor {
             .filter(|entry| entry.kind == spec.kind)
             .count();
         if running >= limit {
-            return Err(codes::busy(
-                codes::SUBSYSTEM_LIMIT,
+            return Err(codes::failure(
+                &codes::row::SUBSYSTEM_LIMIT,
                 format!(
                     "{running} `{}` subsystems run, which is the limit.",
                     spec.kind
@@ -1006,8 +1006,8 @@ impl Supervisor {
                 .values()
                 .any(|entry| entry.kind == spec.kind && entry.place == spec.place);
         if taken {
-            return Err(codes::busy(
-                codes::SUBSYSTEM_LIMIT,
+            return Err(codes::failure(
+                &codes::row::SUBSYSTEM_LIMIT,
                 format!(
                     "A `{}` subsystem already holds the place asked for.",
                     spec.kind
@@ -1037,8 +1037,8 @@ impl Supervisor {
             .chain(spec.env.set.iter().map(|(name, _)| name.as_str()))
             .find(|name| is_engine_variable(name))
         {
-            return Err(codes::policy(
-                codes::ENGINE_VARIABLE_REFUSED,
+            return Err(codes::failure(
+                &codes::row::ENGINE_VARIABLE_REFUSED,
                 format!(
                     "A launch names the variable `{}`, which belongs to the engine and is never handed to a program.",
                     name.chars().take(64).collect::<String>()
@@ -1054,8 +1054,8 @@ impl Supervisor {
             .chain(spec.env.set.iter().map(|(name, _)| name.as_str()))
             .find(|name| redirects_loading(name))
         {
-            return Err(codes::policy(
-                codes::VARIABLE_REFUSED,
+            return Err(codes::failure(
+                &codes::row::VARIABLE_REFUSED,
                 format!(
                     "A launch names the variable `{}`, which makes a program load code other than its own.",
                     name.chars().take(64).collect::<String>()
@@ -1064,8 +1064,8 @@ impl Supervisor {
             ));
         }
         if !spec.program.path.is_absolute() {
-            return Err(codes::input(
-                codes::PROGRAM_NOT_FOUND,
+            return Err(codes::failure(
+                &codes::row::PROGRAM_NOT_FOUND,
                 "A program is started by its absolute path, never by a name to search for.",
                 "Name the program's absolute path where it is declared.",
             ));
@@ -1082,8 +1082,8 @@ impl Supervisor {
             })
         };
         let (group, pipes, digest, verified, mut folder) = work.await.map_err(|_| {
-            codes::busy(
-                codes::START_FAILED,
+            codes::failure(
+                &codes::row::START_FAILED,
                 "The start of a program was interrupted.",
                 "Try again; if it persists, restart the engine.",
             )
@@ -1118,8 +1118,8 @@ impl Supervisor {
             for folder in [entry.work.take(), folder.take()].into_iter().flatten() {
                 folder.remove().await;
             }
-            return Err(codes::busy(
-                codes::SHUTTING_DOWN,
+            return Err(codes::failure(
+                &codes::row::SHUTTING_DOWN,
                 "The engine is stopping and starts nothing.",
                 "Start the engine again.",
             ));
@@ -1157,8 +1157,8 @@ impl Supervisor {
             .await
             .map_err(not_started)?;
         let LinkKind::OneShot(link) = link_kind else {
-            return Err(not_started(codes::busy(
-                codes::START_FAILED,
+            return Err(not_started(codes::failure(
+                &codes::row::START_FAILED,
                 "A one-shot run lost its link.",
                 "Report this as a defect of the engine.",
             )));
@@ -1247,9 +1247,7 @@ impl Supervisor {
 
         if timed_out {
             return Err(ConnFailure {
-                failure: Failure::new(
-                    FailureClass::Transient,
-                    codes::TIMEOUT,
+                failure: codes::row::TIMEOUT.failure(
                     format!(
                         "The program ran longer than its limit of {} ms and was ended.",
                         link.time_limit.as_millis()
@@ -1336,8 +1334,8 @@ impl Supervisor {
         let Some((to_child, from_child)) = pipes else {
             self.forget(id);
             group.reap().await;
-            return Err(codes::busy(
-                codes::START_FAILED,
+            return Err(codes::failure(
+                &codes::row::START_FAILED,
                 "A foreign link was started without its pipe.",
                 "Report this as a defect of the engine.",
             ));

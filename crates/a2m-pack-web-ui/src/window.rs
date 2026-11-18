@@ -32,7 +32,7 @@ use a2m_auth::{
     PersonAsk, PersonReason, ProviderName, ProviderNeeds, RawSign, SignInAddress, SignInContext,
     SignedIn,
 };
-use a2m_core::{AccountName, Failure, FailureClass, Identity, Timestamp};
+use a2m_core::{AccountName, Failure, Identity, Timestamp};
 use a2m_pack_web_browser::{
     Address, BrowserError, Browsers, Deadline, LaunchReason, Look, Origins, PageEnvironment,
     ProfileKey, Visibility,
@@ -60,18 +60,14 @@ const IDENTITY_PROVIDERS: &str = "identity_providers";
 const PERSON_TIME: Duration = Duration::from_secs(300);
 
 fn invalid(provider: &str, why: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_auth::codes::AUTH_SETTINGS_INVALID,
+    a2m_auth::codes::row::AUTH_SETTINGS_INVALID.failure(
         format!("The auth entry for `{provider}` cannot be used: {why}."),
         "Name the sign-in screen and the screen that shows the person is signed in under `settings`, as the web pack's design says.",
     )
 }
 
 fn not_now(why: &str) -> Failure {
-    Failure::new(
-        FailureClass::SessionExpired,
-        a2m_auth::codes::NEEDS_LOGIN,
+    a2m_auth::codes::row::NEEDS_LOGIN.failure(
         format!("The sign-in window was not finished: {why}."),
         "Sign in with `anything2mcp session login` while you are at this machine.",
     )
@@ -320,16 +316,12 @@ impl WindowLogin {
             // a window, a download. Each ends the sign-in.
             if let Some(refused) = tab.blocked().first() {
                 return Err(if refused.method == "NAVIGATION" {
-                    Failure::new(
-                        FailureClass::Policy,
-                        codes::SURFACE_NOT_DECLARED,
+                    codes::row::SURFACE_NOT_DECLARED.failure(
                         "The sign-in window was sent to an origin the target does not declare. The browser ended the move, and the sign-in with it.",
                         "Declare the identity provider's origin under `identity_providers` and as a surface of the target, if it is one, and sign in again.",
                     )
                 } else {
-                    Failure::new(
-                        FailureClass::UnknownVariant,
-                        codes::UNEXPECTED_PAGE,
+                    codes::row::UNEXPECTED_PAGE.failure(
                         "A page of the sign-in opened a window or began a download, which the browser refused. The sign-in is ended.",
                         "Look at the sign-in in a browser of your own.",
                     )

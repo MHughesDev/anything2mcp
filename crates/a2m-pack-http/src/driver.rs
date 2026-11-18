@@ -15,9 +15,7 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, RawSign, SessionLease};
 use a2m_core::EnvironmentKind;
-use a2m_core::{
-    Failure, FailureClass, FailureCode, Redact, Secret, Step, SurfaceIndex, Value, Values,
-};
+use a2m_core::{Failure, Redact, Secret, Step, SurfaceIndex, Value, Values};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -62,8 +60,7 @@ impl Origin {
     pub(crate) fn of(address: &str) -> Result<Self, Failure> {
         let unusable = |why: &str| {
             codes::failure(
-                FailureClass::Input,
-                codes::STEP_NOT_USABLE,
+                &codes::row::STEP_NOT_USABLE,
                 format!("The surface's address cannot be used by the HTTP pack: {why}."),
                 "Write the surface's `base` as `http://host` or `https://host`, with a port and a path if it has them.",
             )
@@ -155,8 +152,7 @@ impl CredentialSink for Held {
         #[cfg(feature = "tls")]
         {
             self.cannot = Some(codes::failure(
-                FailureClass::Input,
-                codes::AUTH_SCHEME_NOT_BUILT,
+                &codes::row::AUTH_SCHEME_NOT_BUILT,
                 "The session signs in with a client certificate, which this version of the HTTP pack does not present.",
                 "Use a provider that places a header or a cookie, such as `api_key`, `bearer_static`, or `http_basic`.",
             ));
@@ -165,8 +161,7 @@ impl CredentialSink for Held {
 
     fn challenge_credential(&mut self, scheme: ChallengeScheme, _user: &str, _secret: &Secret) {
         self.cannot = Some(codes::failure(
-            FailureClass::Input,
-            codes::AUTH_SCHEME_NOT_BUILT,
+            &codes::row::AUTH_SCHEME_NOT_BUILT,
             format!(
                 "The session signs in by the `{}` scheme, whose exchange this version of the HTTP pack does not carry out.",
                 scheme.as_str()
@@ -291,19 +286,13 @@ pub(crate) struct HttpDriver {
     overruns: Arc<Overruns>,
 }
 
-fn failure_of(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next: &str,
-) -> Failure {
-    Failure::new(class, code, message, next)
+fn failure_of(row: &a2m_core::CodeEntry, message: impl Into<String>, next: &str) -> Failure {
+    row.failure(message, next)
 }
 
 fn needs_login(why: &str) -> Failure {
     failure_of(
-        FailureClass::SessionExpired,
-        a2m_auth::codes::NEEDS_LOGIN,
+        &a2m_auth::codes::row::NEEDS_LOGIN,
         format!("The session cannot be used: {why}."),
         "Sign in again, then run the tool again or resume the run.",
     )
@@ -352,8 +341,7 @@ impl HttpDriver {
             .build()
             .map_err(|_| {
                 failure_of(
-                    FailureClass::Input,
-                    codes::STEP_NOT_USABLE,
+                    &codes::row::STEP_NOT_USABLE,
                     "The HTTP client could not be set up on this machine.",
                     "Report this to the HTTP pack's author.",
                 )
@@ -393,8 +381,7 @@ impl HttpDriver {
         }
         if cx.deadline.passed() {
             return Err(unsent(failure_of(
-                FailureClass::Transient,
-                a2m_provider::codes::TIMEOUT,
+                &a2m_provider::codes::row::TIMEOUT,
                 "The time for preparing the HTTP client had passed before it began.",
                 "Run the tool again.",
             )));
@@ -553,8 +540,7 @@ enum Lost {
 /// takes as settled.
 fn in_doubt(endpoint: &str, why: &str) -> StepFailure {
     StepFailure::unknown(failure_of(
-        FailureClass::PossibleCommit,
-        a2m_provider::codes::NO_CONFIRMATION,
+        &a2m_provider::codes::row::NO_CONFIRMATION,
         format!("The write to the endpoint `{endpoint}` was sent, and {why}."),
         "Reconcile the record: read it back before anything is written again.",
     ))
@@ -563,8 +549,7 @@ fn in_doubt(endpoint: &str, why: &str) -> StepFailure {
 fn lost(how: &Lost, commits: bool, endpoint: &str) -> StepFailure {
     match (how, commits) {
         (Lost::BeforeSending, _) => StepFailure::not_sent(failure_of(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+            &a2m_provider::codes::row::CONNECTION_LOST,
             format!("No connection could be made for the endpoint `{endpoint}`; nothing was sent."),
             "Check that the system is reachable, then run the tool again.",
         )),
@@ -572,16 +557,14 @@ fn lost(how: &Lost, commits: bool, endpoint: &str) -> StepFailure {
             in_doubt(endpoint, "no complete answer came back")
         }
         (Lost::AfterSending, false) => StepFailure::unknown(failure_of(
-            FailureClass::Transient,
-            a2m_provider::codes::CONNECTION_LOST,
+            &a2m_provider::codes::row::CONNECTION_LOST,
             format!(
                 "The connection was lost before the endpoint `{endpoint}` had answered in full."
             ),
             "Run the tool again.",
         )),
         (Lost::TimedOut, false) => StepFailure::unknown(failure_of(
-            FailureClass::Transient,
-            a2m_provider::codes::TIMEOUT,
+            &a2m_provider::codes::row::TIMEOUT,
             format!("The endpoint `{endpoint}` did not answer in the time the step allows."),
             "Run the tool again, or raise the step's timeout in the target's defaults.",
         )),
@@ -656,8 +639,7 @@ impl Session {
     ) -> Result<Received, NotReceived> {
         let refused = |why: &str| {
             NotReceived::Refused(failure_of(
-                FailureClass::Input,
-                codes::STEP_NOT_USABLE,
+                &codes::row::STEP_NOT_USABLE,
                 format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
                 "Compile the target again with the version of the HTTP pack that is enabled.",
             ))
@@ -1021,8 +1003,7 @@ impl HttpDriver {
                 &format!("its answer was larger than {most} bytes and was not read"),
             ),
             NotReceived::TooLarge => StepFailure::answered(failure_of(
-                FailureClass::UnknownVariant,
-                codes::RESPONSE_TOO_LARGE,
+                &codes::row::RESPONSE_TOO_LARGE,
                 format!("The endpoint `{name}` answered with more than {most} bytes."),
                 "Raise `max_response_bytes` on the endpoint if the answer is meant to be that large.",
             )),
@@ -1193,8 +1174,7 @@ fn may_send(
         built.method.word().to_owned()
     };
     Err(StepFailure::not_sent(codes::failure(
-        FailureClass::Policy,
-        a2m_provider::codes::READ_ONLY_POSTURE,
+        &a2m_provider::codes::row::READ_ONLY_POSTURE,
         format!(
             "The endpoint `{name}` is reached by {by}, which may change the system, and this run may not change it; nothing was sent."
         ),
@@ -1400,8 +1380,7 @@ impl Overruns {
             return Ok(());
         }
         Err(codes::failure(
-            FailureClass::Busy,
-            codes::READS_STILL_RUNNING,
+            &codes::row::READS_STILL_RUNNING,
             format!(
                 "{} answers of this surface, and {} of the HTTP pack, are still being read after their steps ran out of time; no new one is begun, and nothing was sent.",
                 here, counts.all
@@ -1501,8 +1480,7 @@ async fn validate(
     let accepted = template.answers.ok.contains(&status) && !answer.absent;
     let drift = |why: String| {
         answered(failure_of(
-            FailureClass::Drift,
-            codes::RESPONSE_SCHEMA_MISMATCH,
+            &codes::row::RESPONSE_SCHEMA_MISMATCH,
             format!(
                 "The answer of the endpoint `{name}` does not fit the shape the endpoint declares: {why}."
             ),
@@ -1549,8 +1527,7 @@ async fn validate(
         }
         OffThread::OutOfTime => {
             return Err(answered(failure_of(
-                FailureClass::Transient,
-                a2m_provider::codes::TIMEOUT,
+                &a2m_provider::codes::row::TIMEOUT,
                 format!(
                     "The answer of the endpoint `{name}` was not read in the time the step allows."
                 ),
@@ -1580,24 +1557,21 @@ async fn validate(
             let json = record.map_err(|unread| match unread {
                 Unread::Shape(why) => drift(why),
                 Unread::DocumentType => answered(failure_of(
-                    FailureClass::UnknownVariant,
-                    codes::DOCUMENT_TYPE_REFUSED,
+                    &codes::row::DOCUMENT_TYPE_REFUSED,
                     format!(
                         "The answer of the endpoint `{name}` declares a document type, which is never read; no value was taken from it."
                     ),
                     "Ask the system's owner for the answer without a document type, or read it another way.",
                 )),
                 Unread::TooLarge(why) => answered(failure_of(
-                    FailureClass::UnknownVariant,
-                    codes::RESPONSE_TOO_LARGE,
+                    &codes::row::RESPONSE_TOO_LARGE,
                     format!(
                         "The answer of the endpoint `{name}` is past a bound of what is read: {why}."
                     ),
                     "Raise `max_depth` or `max_elements` under the endpoint's `answer` if the answer is meant to be that large; the other bounds are fixed.",
                 )),
                 Unread::HoldsSecret => answered(failure_of(
-                    FailureClass::UnknownVariant,
-                    codes::ANSWER_HOLDS_SECRET,
+                    &codes::row::ANSWER_HOLDS_SECRET,
                     format!(
                         "The answer of the endpoint `{name}` holds a registered secret, so neither its length nor its digest is returned."
                     ),
@@ -1629,8 +1603,7 @@ async fn validate(
             .map(|seconds| format!(" It asks to wait {seconds} seconds."))
             .unwrap_or_default();
         return Err(answered(failure_of(
-            FailureClass::Transient,
-            codes::UPSTREAM_UNAVAILABLE,
+            &codes::row::UPSTREAM_UNAVAILABLE,
             format!(
                 "The endpoint `{name}` answered that the system is not available now, with status {status}.{wait}"
             ),
@@ -1659,8 +1632,7 @@ async fn validate(
             (None, None) => String::new(),
         };
         return Err(answered(failure_of(
-            FailureClass::Stale,
-            codes::VERSION_CONFLICT,
+            &codes::row::VERSION_CONFLICT,
             format!(
                 "The record was changed since it was read, and the endpoint `{name}` refused the write.{versions}"
             ),
@@ -1669,8 +1641,7 @@ async fn validate(
     }
     if is(&template.answers.refused).is_some() {
         let refused = answered(failure_of(
-            FailureClass::Rejected,
-            codes::APP_VALIDATION_ERROR,
+            &codes::row::APP_VALIDATION_ERROR,
             format!(
                 "The system refused the request to the endpoint `{name}` with status {status}, in the shape the endpoint declares for a refusal."
             ),
@@ -1682,8 +1653,7 @@ async fn validate(
         });
     }
     Err(answered(failure_of(
-        FailureClass::UnknownVariant,
-        codes::UNEXPECTED_STATUS,
+        &codes::row::UNEXPECTED_STATUS,
         format!(
             "The endpoint `{name}` answered with status {status}, in a form the endpoint does not declare."
         ),
@@ -1771,8 +1741,7 @@ impl HttpDriver {
         for wanted in &payload.values {
             let value = taken(json, &wanted.path, wanted.take).ok_or_else(|| {
                 StepFailure::answered(failure_of(
-                    FailureClass::Drift,
-                    codes::RESPONSE_SCHEMA_MISMATCH,
+                    &codes::row::RESPONSE_SCHEMA_MISMATCH,
                     format!(
                         "The answer of the endpoint `{name}` holds a value at `{}` that is not of the type the operation's output `{}` declares.",
                         wanted.path.join("."),
@@ -1785,8 +1754,7 @@ impl HttpDriver {
             // character but a tab or a line break (decision 0249).
             if holds_control(&value) {
                 return Err(StepFailure::answered(failure_of(
-                    FailureClass::Drift,
-                    codes::RESPONSE_SCHEMA_MISMATCH,
+                    &codes::row::RESPONSE_SCHEMA_MISMATCH,
                     format!(
                         "The answer of the endpoint `{name}` holds a control character at `{}`, which is never returned as the operation's output `{}`.",
                         wanted.path.join("."),
@@ -1860,8 +1828,7 @@ impl HttpDriver {
                 NotReceived::Lost(how) => lost(&how, false, &probe.path),
                 NotReceived::Refused(failure) => StepFailure::not_sent(failure),
                 NotReceived::TooLarge => StepFailure::answered(failure_of(
-                    FailureClass::UnknownVariant,
-                    codes::RESPONSE_TOO_LARGE,
+                    &codes::row::RESPONSE_TOO_LARGE,
                     format!("The system answered a probe with more than {most} bytes."),
                     "Give the description as a file instead.",
                 )),

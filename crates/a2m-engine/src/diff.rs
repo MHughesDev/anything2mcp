@@ -313,9 +313,7 @@ impl Diff {
     /// `input`, `payload_unreadable`, when the bytes are not a diff.
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
         serde_json::from_slice(bytes).map_err(|_| {
-            Failure::new(
-                a2m_core::FailureClass::Input,
-                a2m_core::FailureCode::PAYLOAD_UNREADABLE,
+            a2m_core::codes::row::PAYLOAD_UNREADABLE.failure(
                 "A stored diff cannot be read back.",
                 "Preview the run again.",
             )
