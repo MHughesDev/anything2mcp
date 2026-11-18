@@ -2181,6 +2181,7 @@ impl<'a> Compiler<'a> {
             (names::RECORD, record_type()),
         ]);
         let mut bindings = Vec::new();
+        let mut review = OpReview::default();
         let mut fine = true;
         // Whatever a pack marks, a write saves at least once and a read
         // saves nothing: the count is what puts an intent in the ledger.
@@ -2361,9 +2362,12 @@ impl<'a> Compiler<'a> {
                     operation: info,
                     env: steps_env.clone(),
                 };
-                lowering.lower(&resolved, &cx)
+                lowering.lower(&resolved, &cx).map(|lowered| {
+                    let statement = lowering.statement(&resolved, &lowered, &cx);
+                    (lowered, statement)
+                })
             };
-            let lowered = match lowered {
+            let (lowered, statement) = match lowered {
                 Ok(lowered) => lowered,
                 Err(problems) => {
                     self.problems.extend(problems);
@@ -2371,6 +2375,37 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             };
+            if let Some(written) = &info.fixed {
+                match self.fixed_place_of(lowering.as_ref(), &registered.pack, &resolved, &lowered)
+                {
+                    Ok(place) => match &review.place {
+                        Some(first) if *first != place => {
+                            self.error(
+                                codes::PLACE_NOT_FIXED,
+                                Stage::Analyze,
+                                &binding.at,
+                                format!(
+                                    "This binding names the place `{}` of `{}` files on `{}`, and an earlier binding names `{}` of `{}` files on `{}`; the record is one place.",
+                                    shown(&place.name), place.kind, place.surface,
+                                    shown(&first.name), first.kind, first.surface
+                                ),
+                                "Name the same place in every binding of the operation, or write each place's operation on its own.".to_owned(),
+                            );
+                            fine = false;
+                        }
+                        _ => review.place = Some(place),
+                    },
+                    Err((message, fix)) => {
+                        let at = if binding.at.file == written.file {
+                            binding.at.clone()
+                        } else {
+                            written.clone()
+                        };
+                        self.error(codes::PLACE_NOT_FIXED, Stage::Analyze, &at, message, fix);
+                        fine = false;
+                    }
+                }
+            }
             let evidence = lowering.evidence(&resolved, &lowered);
             let by = LoweredBy {
                 lowering: lowering.as_ref(),
@@ -2380,7 +2415,9 @@ impl<'a> Compiler<'a> {
                 evidence,
             };
             match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
-                Some(surface) => bindings.push(BindingPlan {
+                Some(surface) => bindings.push({
+                    review.bindings.push((mode.clone(), surface, statement));
+                    BindingPlan {
                     mode,
                     verb,
                     status,
@@ -2392,6 +2429,7 @@ impl<'a> Compiler<'a> {
                     settle_ms: lowered.settle_ms,
                     evidence,
                     precondition,
+                    }
                 }),
                 None => fine = false,
             }
@@ -2399,6 +2437,7 @@ impl<'a> Compiler<'a> {
         if !fine {
             return None;
         }
+        self.reviews.insert(info.name.clone(), review);
         let key: Vec<InputIndex> = info
             .key
             .iter()
@@ -2445,6 +2484,86 @@ impl<'a> Compiler<'a> {
             },
             examples: Vec::new(),
             decision_points: Vec::new(),
+        })
+    }
+
+    /// The fixed place one binding names, held to what the file kind that
+    /// declares it says of the documents on the binding's surface
+    /// (decision 0252). A lowering names the place; only its file kind,
+    /// reading the target's own document, can say that the place is fixed.
+    fn fixed_place_of(
+        &self,
+        lowering: &dyn Lowering,
+        pack: &str,
+        resolved: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+    ) -> Result<PlaceReview, (String, String)> {
+        let mode = resolved.mode;
+        let Some(named) = lowering.fixed_place(resolved) else {
+            return Err((
+                format!("The operation's record is one fixed place, and this `{mode}` binding names no fixed place."),
+                "Name one place the target's files fix, in the way the mode's pack reads it; or give the operation the inputs that are the record's key and leave out `place: fixed`.".to_owned(),
+            ));
+        };
+        let Some(surface) = self.model.surface(lowered.surface.as_str()) else {
+            return Err((
+                format!("The `{mode}` binding acts on a surface the target does not declare."),
+                "Correct the pack's lowering.".to_owned(),
+            ));
+        };
+        let kind = &named.kind;
+        let owned = self
+            .set
+            .file_kind(kind, surface.kind)
+            .filter(|registered| {
+                registered.pack == pack
+                    || lowering
+                        .reads()
+                        .iter()
+                        .any(|(read, of)| read == kind && of == surface.kind)
+            });
+        let Some(registered) = owned else {
+            return Err((
+                format!(
+                    "The `{mode}` binding names a place of `{kind}` files, which its pack neither owns nor reads for `{}` surfaces.",
+                    surface.kind
+                ),
+                "Correct the pack's lowering: a fixed place is declared by a file kind of its own pack.".to_owned(),
+            ));
+        };
+        let declared = self
+            .model
+            .entries
+            .get(&(kind.clone(), surface.kind.clone()))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(|doc| {
+                self.model
+                    .surface_of(doc, kind, self.set)
+                    .is_some_and(|on| on.name == surface.name)
+            })
+            .any(|doc| {
+                registered
+                    .item
+                    .fixed_places(doc)
+                    .iter()
+                    .any(|place| place.value.name == named.name)
+            });
+        if !declared {
+            return Err((
+                format!(
+                    "The `{mode}` binding names `{}`, which no `{kind}` file on the surface `{}` declares a fixed place.",
+                    shown(&named.name),
+                    surface.name
+                ),
+                "Name a place that always exists and that no input chooses, or give the operation the inputs that are the record's key and leave out `place: fixed`.".to_owned(),
+            ));
+        }
+        Ok(PlaceReview {
+            surface: surface.name.clone(),
+            kind: kind.clone(),
+            name: named.name,
         })
     }
 
