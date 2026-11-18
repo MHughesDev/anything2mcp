@@ -1,10 +1,8 @@
 //! What crosses from the browser into the engine's process while an acting
-//! tab signs in and writes (decision 0254, audit finding M7): the password
-//! a page is given, the cookies the application sets, and the page's own
-//! anti-forgery token are in no network event, because an acting tab hears
-//! none. Only the hold on the tab's origins still sees them, in the pause
-//! of each of the tab's own document requests, and the one reply that
-//! hands the session's state out on purpose.
+//! tab signs in and writes (decision 0254, audit finding M7), by the
+//! message that carries it: a posted body in no network event, and the
+//! cookies and the token only in the events named here, so that a new
+//! carrier fails this test.
 
 use example_app::forgery::TOKEN_PREFIX;
 use example_app::harness::{SESSION_COOKIE, USERNAME};
@@ -19,7 +17,7 @@ use super::*;
 const TYPED: &str = "secret-for-tests-typed-into-the-page-5e71";
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_acting_tab_hears_no_password_cookie_or_token_of_its_page() {
+async fn an_acting_tab_hears_no_posted_body_and_its_cookies_and_token_only_where_named() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("quiet");
     let origins = origins(&app);
@@ -100,13 +98,14 @@ async fn an_acting_tab_hears_no_password_cookie_or_token_of_its_page() {
     }
     assert_eq!(app.stored_notes().await.unwrap().notes["A-100"], "Quiet");
 
-    // No network event carried the typed password, a token, or the
-    // session's cookie: the tab hears none. What still carries them is the
-    // one event the hold on the tab's origins needs, the pause of each of
-    // its own document requests, which holds such a request's headers (its
-    // cookies) and a posted form's body; and the one reply that hands the
-    // session's state out, on purpose.
-    let hold = ["Fetch.requestPaused"];
+    // What crossed, by the message that carried it. The typed password
+    // only in the pause of the form's post, a document request the hold
+    // on the tab's origins needs: no network event carries a request's
+    // body any more. The token and the session's cookie still cross, in
+    // the cookies of requests and answers and in a header a write sets,
+    // which the browser's network events carry and which the acting tab
+    // needs on to pass a service worker by; and in the one reply that
+    // hands the session's state out, on purpose.
     let only = |needle: &str, allowed: &[&str]| {
         let heard = witness::holding(needle);
         let other: Vec<&String> = heard
@@ -116,16 +115,23 @@ async fn an_acting_tab_hears_no_password_cookie_or_token_of_its_page() {
         assert!(other.is_empty(), "heard in {other:?}");
         heard
     };
-    // The form's post is a document request: the hold pauses it.
-    assert!(!only(TYPED, &hold).is_empty());
-    only(TOKEN_PREFIX, &hold);
+    assert!(!only(TYPED, &["Fetch.requestPaused"]).is_empty());
+    let carried = [
+        "Fetch.requestPaused",
+        "Network.requestWillBeSent",
+        "Network.requestWillBeSentExtraInfo",
+        "Network.responseReceivedExtraInfo",
+    ];
+    only(TOKEN_PREFIX, &carried);
     let cookie = must(browser.export_state(&origins, soon()).await)
         .cookies
         .into_iter()
         .find(|cookie| cookie.name == SESSION_COOKIE)
         .expect("the session cookie is held")
         .value;
-    let heard = only(cookie.expose(), &["Fetch.requestPaused", "reply"]);
+    let mut with_reply = carried.to_vec();
+    with_reply.push("reply");
+    let heard = only(cookie.expose(), &with_reply);
     assert_eq!(
         heard.iter().filter(|method| *method == "reply").count(),
         1,

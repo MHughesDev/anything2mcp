@@ -28,7 +28,7 @@ use crate::protocol::{
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
     CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
     FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, HandleDialog,
-    InsertText, MediaFeature, Navigate, NetworkDisable, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
+    InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
     RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
     SetLifecycleEvents, SetLocale, SetTimezone,
 };
@@ -1288,13 +1288,11 @@ impl Page {
                 .filter(|(of, _)| *of == loader)
                 .map(|(_, status)| *status);
         }
-        let (address, title, page_status) = self.page_now(deadline).await?;
+        let (address, title) = self.address_and_title(deadline).await?;
         Ok(Loaded {
             address,
             title,
-            // An observing tab hears the document's answer; an acting tab
-            // hears no network event, and the page says (decision 0254).
-            status: document_status.or(page_status),
+            status: document_status,
         })
     }
 
@@ -1302,22 +1300,10 @@ impl Page {
         &self,
         deadline: Deadline,
     ) -> Result<(String, String), BrowserError> {
-        let (address, title, _) = self.page_now(deadline).await?;
-        Ok((address, title))
-    }
-
-    /// The page's address and title, and the status of the answer its
-    /// document came in when the page's own record of its load says.
-    async fn page_now(
-        &self,
-        deadline: Deadline,
-    ) -> Result<(String, String, Option<u16>), BrowserError> {
         #[derive(Deserialize)]
         struct Now {
             address: String,
             title: String,
-            #[serde(default)]
-            status: u16,
         }
         let evaluated = self
             .in_world(
@@ -1332,7 +1318,6 @@ impl Page {
         Ok((
             self.redact.redact(&now.address),
             self.redact.redact(&now.title),
-            (now.status > 0).then_some(now.status),
         ))
     }
 
@@ -3069,18 +3054,19 @@ async fn prepare(
         // the page reaches the application as sent, once, and no worker
         // answers or changes it (decision 0245, audit finding M6).
         //
-        // Its network events are never switched on: they would carry into
-        // the engine's process the password a page is given, the cookies
-        // the application sets and sends, and the anti-forgery token of a
-        // write, and nothing an acting tab proves rests on them. A write's
-        // "sent" and "answered" are the page's own request and its answer,
-        // through the helper (decision 0254, audit finding M7).
+        // Its network events stay on: the browser passes the service
+        // worker by only while they are, and switching them off undoes it
+        // (measured, decision 0254). What they would carry of a posted body
+        // is cut: no request's body is put in an event, so the password a
+        // form posts and a token sent in a write's body never cross into
+        // the engine's process by them (audit finding M7). A write's "sent"
+        // and "answered" rest on none of them: they are the page's own
+        // request and its answer, through the helper.
         page.call(&fetch_documents(), deadline).await?;
-        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+        page.call(&NetworkEnable::keeping(page.max_read).without_bodies(), deadline)
             .await?;
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
-        page.call(&NetworkDisable {}, deadline).await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }
     page.call(&PageEnable {}, deadline).await?;

@@ -3052,16 +3052,18 @@ async fn a_binding_is_never_written_verified_by_hand() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
-/// Shadow bindings in the product (decision 0207, decision 0219): a live
+/// Shadow bindings in the product (decisions 0207, 0219, and 0251): a live
 /// read of a tool with a verified binding and one in shadow is compared on
-/// every call, `shadow.report` counts the matches by the shadow binding's
-/// digest, a mismatch starts the count again and is named by output alone,
-/// and `binding.promote` of the shadow binding is a person's act on the
-/// threshold's run of exact matches.
+/// every call, `shadow.report` counts the distinct inputs that matched by
+/// the shadow binding's digest, one input called again is one input, a
+/// mismatch starts the count again and is named by output alone, and
+/// `binding.promote` of the shadow binding is a person's act on the
+/// threshold's distinct inputs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_promoted_by_a_person()
  {
     use std::sync::atomic::Ordering;
+    const ORDERS: [&str; 4] = ["SO-1002", "SO-1003", "SO-1004", "SO-1005"];
     let world = World::open().await;
     world.kernel.start_runner_loop(2).await.unwrap();
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
@@ -3131,7 +3133,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
         "a binding whose files did not change has one digest in the drafts and the plan"
     );
 
-    let read = || {
+    let read = |order: &'static str| {
         let world = &world;
         async move {
             // The surface allows ten requests a second, and a shadow read is
@@ -3141,7 +3143,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
                 .call(
                     &world.person,
                     "tool.call",
-                    json!({"tool": "example_order_get", "input": {"order_id": "SO-1001"}}),
+                    json!({"tool": "example_order_get", "input": {"order_id": order}}),
                 )
                 .await;
             let called = called.result.unwrap();
@@ -3179,11 +3181,26 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
         }
     };
 
-    // Five reads: five matches by the shadow binding's digest.
+    // Five reads of one order: five matches, and one distinct input, which
+    // makes nothing promotable (decision 0251).
     for _ in 0..5 {
-        read().await;
+        read("SO-1001").await;
     }
     assert_eq!(world.more.spare.load(Ordering::SeqCst), 5);
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!(standing["matches"], 5, "{reported}");
+    assert_eq!(standing["distinct_inputs"], 1, "{reported}");
+    assert_eq!(standing["not_promotable"], "too_few", "{reported}");
+    assert_eq!(standing["evidence_from"], json!(["test"]), "{reported}");
+    assert_eq!(standing["against_verified_now"], true, "{reported}");
+    assert_eq!(standing["environments"][0]["requests"], 5, "{reported}");
+    assert!(!reported.to_string().contains("SO-1001"), "{reported}");
+
+    // Four more orders: five distinct inputs that matched.
+    for order in ORDERS {
+        read(order).await;
+    }
     let reported = report().await;
     let standing = &reported["bindings"][0];
     assert_eq!(
@@ -3198,15 +3215,16 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
             &standing["in_a_row"],
             &standing["threshold"]
         ),
-        (&json!(5), &json!(5), &json!(5)),
+        (&json!(9), &json!(9), &json!(5)),
         "{reported}"
     );
+    assert_eq!(standing["distinct_inputs"], 5, "{reported}");
     assert_eq!(standing["promotable"], true, "{reported}");
 
     // One mismatch: the count starts again, and the report names the
     // output and how it differed, never a value.
     world.more.spare_differs.store(true, Ordering::SeqCst);
-    read().await;
+    read("SO-1001").await;
     world.more.spare_differs.store(false, Ordering::SeqCst);
     let reported = report().await;
     let standing = &reported["bindings"][0];
@@ -3233,9 +3251,11 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
             .contains("status: shadow")
     );
 
-    // Five matches in a row again: an agent is refused, a person promotes.
-    for _ in 0..5 {
-        read().await;
+    // Five distinct inputs that match again: an agent is refused, a person
+    // promotes.
+    read("SO-1001").await;
+    for order in ORDERS {
+        read(order).await;
     }
     assert_eq!(report().await["bindings"][0]["promotable"], true);
     let refused = promote(agent.clone()).await;
@@ -3245,7 +3265,11 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert!(promoted.ok, "{:?}", promoted.error);
     let promoted = promoted.result.unwrap();
     assert_eq!(promoted["promoted"], true, "{promoted}");
-    assert_eq!(promoted["evidence"]["shadow"]["matches_in_a_row"], 5);
+    assert_eq!(promoted["evidence"]["shadow"]["distinct_inputs"], 5);
+    assert_eq!(
+        promoted["evidence"]["shadow"]["environments"],
+        json!([{"environment": "test", "distinct_inputs": 5, "matches": 5}])
+    );
     assert_eq!(
         std::fs::read_to_string(&operation).unwrap(),
         with_shadow.replace("    status: shadow\n", "    status: \"verified\"\n")

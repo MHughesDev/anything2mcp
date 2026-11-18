@@ -881,6 +881,10 @@ pub(crate) struct NetworkEnable {
     pub max_resource_buffer_size: u64,
     /// The most bytes of answers it keeps for the tab in all.
     pub max_total_buffer_size: u64,
+    /// The longest body of a request an event may carry; the browser's own
+    /// bound when left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_post_data_size: Option<u64>,
 }
 command!(NetworkEnable, "Network.enable" => Nothing);
 
@@ -898,6 +902,15 @@ impl NetworkEnable {
         Self {
             max_resource_buffer_size: one,
             max_total_buffer_size: one.saturating_mul(4),
+            max_post_data_size: None,
+        }
+    }
+
+    /// The same, and no request's body in any event.
+    pub(crate) fn without_bodies(self) -> Self {
+        Self {
+            max_post_data_size: Some(0),
+            ..self
         }
     }
 }
@@ -907,11 +920,6 @@ pub(crate) struct BypassServiceWorker {
     pub bypass: bool,
 }
 command!(BypassServiceWorker, "Network.setBypassServiceWorker" => Nothing);
-
-/// Switches a tab's network events off.
-#[derive(Debug, Serialize)]
-pub(crate) struct NetworkDisable {}
-command!(NetworkDisable, "Network.disable" => Nothing);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
