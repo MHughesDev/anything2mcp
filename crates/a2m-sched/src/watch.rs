@@ -587,7 +587,8 @@ impl Scheduler {
     /// nothing; the budgets it spends leave their reserve to others. When
     /// admission refuses (a hold, a full queue, a spent budget), nothing is
     /// kept of it, and the watch is not tried again before the moment the
-    /// answer gives.
+    /// answer gives: for a spent budget, the moment it refills; for any
+    /// other refusal, a lease's length later; never past the next due time.
     ///
     /// # Errors
     ///
@@ -646,8 +647,17 @@ impl Scheduler {
                 Ok(CheckAdmission::Started(started))
             }
             Err(refused) if ADMISSION_WAITS.contains(refused.code()) => {
-                // Not before a lease's length, nor past the next due time.
-                let wait = settings.lease_length.min(check.watch.interval);
+                // A spent budget says when it refills: the check waits that
+                // long, so that its due time does not pass while it waits.
+                // Any other refusal waits a lease's length. Never past the
+                // next due time.
+                let wait = match refused.retry_after_ms() {
+                    Some(ms) if refused.code() == &crate::failure::RATE_LIMITED => {
+                        Duration::from_millis(ms)
+                    }
+                    _ => settings.lease_length,
+                }
+                .min(check.watch.interval);
                 let until = tables::plus(self.now(), wait);
                 self.store()
                     .write(Durability::Relaxed, move |tx| {
