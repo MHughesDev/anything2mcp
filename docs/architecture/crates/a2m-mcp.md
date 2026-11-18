@@ -10,7 +10,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
 | Depends on | `a2m-core`, `a2m-actions`, `a2m-policy` for the name of a toolset. Outside: `axum` for the HTTP types and the router; `futures-core` for one stream trait; `serde_json`; Tokio. The protocol layer is this crate's own. The official Rust SDK, `rmcp`, was built on first and left, because its tree holds a crate declared unmaintained ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md), which supersedes that part of [decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md); [research note 18](../../research/18-mcp-server-base.md)) |
-| Built in | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
+| Roadmap packages | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
 | Carries out | Spec sections [221](../../spec/2-kernel/221-the-tool-surface-agents-see.md), [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for MCP, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the MCP face, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md); the MCP half of [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) |
 
 ## Owns

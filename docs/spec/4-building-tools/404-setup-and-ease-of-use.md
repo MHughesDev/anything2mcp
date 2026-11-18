@@ -8,7 +8,7 @@ anything2mcp add https://app...   # probe the app, detect sign-in, sign in once
 anything2mcp learn                # watch a person or an agent use the app; draft files
 anything2mcp test                 # run the publish gates
 anything2mcp publish              # make an immutable version
-anything2mcp connect claude       # write the MCP client config; also: vscode, cursor, copilot-studio
+anything2mcp connect [<profile>]  # print the MCP client block; a profile kept as data writes it into that client's file
 anything2mcp serve                # run as a server in the configured profile
 ```
 

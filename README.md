@@ -21,11 +21,11 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio bridge, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
 
-Not built yet: `connect` (writing a client's configuration), plug-ins, MCP over HTTP for a shared server, remote runners, ten of the twelve publish gates (the schema and lint gate and the offline replay run; `test` lists the rest as not run), and drafting of writes (the scout drafts reads only). The presence prompts of macOS and Windows are written and not yet run by a person. The [roadmap](docs/plan/roadmap.md) has every package and its state.
+Not built yet: plug-ins, MCP over HTTP for a shared server, remote runners, ten of the twelve publish gates (the schema and lint gate and the offline replay run; `test` lists the rest as not run), and drafting of writes (the scout drafts reads only). The presence prompts of macOS and Windows are written and not yet run by a person. The [roadmap](docs/plan/roadmap.md) has every package and its state.
 
 ## Try it from source
 
-You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes a passphrase, which a command hands to the engine it starts.
+You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes its root key from a passphrase by default: set it in the shell (16 bytes or more, and keep it), and a command hands it to the engine it starts.
 
 ```sh
 git clone https://github.com/MHughesDev/anything2mcp && cd anything2mcp
@@ -35,8 +35,6 @@ example-app &                    # example-app is listening on http://127.0.0.1:
 
 mkdir ~/a2m-try && cd ~/a2m-try
 export A2M_HOME="$PWD/home"
-mkdir -p "$A2M_HOME/installation"
-printf '[vault]\nbackend = "passphrase"\n' > "$A2M_HOME/installation/settings.toml"
 export A2M_VAULT_PASSPHRASE='a passphrase of your own'
 mkdir first-project && cd first-project
 
@@ -44,7 +42,7 @@ mkdir first-project && cd first-project
 # draft and try its reads. Nothing here writes to the application.
 anything2mcp init
 anything2mcp target add example --address http://127.0.0.1:4010/ --kind http
-anything2mcp scout run example        # long; its `text` at the end sums it up
+anything2mcp scout run example        # prints its summary; `scout report example --json` has the whole report
 anything2mcp try example --tool example_api_orders_get --input '{"order_id": "A-100"}'
 ```
 
@@ -86,7 +84,7 @@ An MCP client starts `anything2mcp bridge`, which copies MCP messages over stand
 } } }
 ```
 
-The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["bridge", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect <client>` will write this block for you and is not built yet.
+The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["bridge", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect` prints this block for your project; a client profile you keep as data writes it into that client's file.
 
 ## How it works
 

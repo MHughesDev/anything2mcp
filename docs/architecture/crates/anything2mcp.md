@@ -12,7 +12,7 @@ The product: the one program, and the only code that names a pack. It reads the 
 | Layer | 11, Product |
 | May depend on | Everything |
 | Depends on | `a2m-actions`, `a2m-provider`, `a2m-core`, `a2m-vault`, `a2m-telemetry`, `a2m-policy`, `a2m-auth`, `a2m-local`, `a2m-mcp`, `a2m-api`, and every pack crate that is built. To come: `a2m-runner` and the desktop pack. Outside: `serde_json`, Tokio, axum for the router the roles are joined in, and `futures-core` for the one stream the bridge wraps; all four are in the tree of the role crates already. No command-line parser crate: the command tree is data, and a small parser of our own reads it ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md)) |
-| Built in | Roadmap package 1.1 (a command that prints one read, in process); 1.4 (`serve` on one machine, commands as thin clients); 1.5 (the command tree from the registry); 5.2 (shortcuts and `init`); 6.2 and 7.1 (server and runner roles) |
+| Roadmap packages | Roadmap package 1.1 (a command that prints one read, in process); 1.4 (`serve` on one machine, commands as thin clients); 1.5 (the command tree from the registry); 5.2 (shortcuts and `init`); 6.2 and 7.1 (server and runner roles) |
 | Carries out | Spec sections [226](../../spec/2-kernel/226-configuration.md) for loading, [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for the clients, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the command face, [605](../../spec/6-running-it/605-packaging-and-release.md) and [605](../../spec/6-running-it/605-packaging-and-release.md) for what is shipped |
 
 ## Owns
