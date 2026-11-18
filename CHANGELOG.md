@@ -147,6 +147,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - The `ci` preset no longer sets the log format, the log place, or `authoring.capture.enabled`: none of the three is built.
 - A request whose project file differs from the one the engine applies gets the warning `project_settings_differ`.
 - Every setting takes effect at the next start of the engine, and the documents no longer say otherwise.
+- The sessions guide (`docs get sessions`) shows `form_login` as the provider takes it: settings that name parts of a screen model, and `user` and `password` credentials under the target's own `vault://` references.
 
 ### Safety fixes
 
