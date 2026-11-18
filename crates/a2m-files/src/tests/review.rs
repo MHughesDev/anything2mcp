@@ -424,6 +424,58 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
     assert_eq!(reads, ["example_order_get", "example_order_check"]);
 }
 
+/// Every text of a summary passes through the function a page gives,
+/// such as the redactor; the fixed sentences, the checked names, and a
+/// secret's absence stay as they are.
+#[test]
+fn every_text_of_the_summary_passes_through_the_function_given() {
+    let set = set_with(Arc::new(Stating {
+        inner: testing::lowering(),
+        names_place: true,
+    }));
+    let mut review = compiled_with(&stating_files(), &set, CompileMode::Draft)
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .review;
+    let test: Environment = "test".parse().unwrap();
+    assert!(review.state_sent_to(
+        0,
+        &test,
+        Some(vec![SentAddress {
+            address: "https://test.example.com/login".to_owned(),
+            what: "the sign-in form".to_owned(),
+        }])
+    ));
+    let before = serde_json::to_string(&review).unwrap();
+    let mapped = review.map_text(&|_| "hidden-text".to_owned());
+    let after = serde_json::to_string(&mapped).unwrap();
+    for text in [
+        "/usr/bin/example-interpreter",
+        "\"-I\"",
+        "scripts/put.example",
+        "/opt/example/bin/helper",
+        "EXAMPLE_MODE",
+        "\"test\"}",
+        "http://127.0.0.1:8080",
+        "https://test.example.com/login",
+        "the sign-in form",
+        "\"password\"",
+    ] {
+        assert!(before.contains(text), "{text}: {before}");
+        assert!(!after.contains(text), "{text}: {after}");
+    }
+    for kept in [
+        SCRIPT_NOTICE,
+        REACH_NOT_STATED,
+        r#""value":{"kind":"secret"}"#,
+        "example_line_item_upsert",
+        "vault://example/service/password",
+    ] {
+        assert!(after.contains(kept), "{kept}: {after}");
+    }
+    assert_eq!(mapped.items.len(), review.items.len());
+    assert_eq!(mapped.sign_ins.len(), review.sign_ins.len());
+}
+
 #[test]
 fn a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing() {
     let set = stand_set().unwrap();
