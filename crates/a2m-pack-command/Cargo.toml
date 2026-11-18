@@ -18,11 +18,10 @@ serde.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 
-[target.'cfg(unix)'.dependencies]
+# The frozen copy of the check before decision 0250, which one test
+# compares with the provider's.
+[target.'cfg(unix)'.dev-dependencies]
 rustix.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [dev-dependencies]
 a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }

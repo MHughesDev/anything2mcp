@@ -125,8 +125,14 @@ mod same_verdict {
             &at("open").join("example-far"),
         );
         link(&program, &at("shared").join("example-tool"));
-        link(&at("closed").join("example-b"), &at("closed").join("example-a"));
-        link(&at("closed").join("example-a"), &at("closed").join("example-b"));
+        link(
+            &at("closed").join("example-b"),
+            &at("closed").join("example-a"),
+        );
+        link(
+            &at("closed").join("example-a"),
+            &at("closed").join("example-b"),
+        );
         link(Path::new("/bin/sh"), &at("closed").join("example-shell"));
         let group = {
             use std::os::unix::fs::MetadataExt as _;

@@ -68,3 +68,15 @@ The owner asked for the ideas the first rounds would most likely reach to be tes
 **Verdict: ruled out.** There is no such command among those reached. The result stands as evidence for the claim that the command line is safe to drive from a program.
 
 **Next.** Nothing to build. Still open for a later round: whether exit codes tell "try again later" from the other failures, which this run could not reach.
+
+## Round 16 (2026-11-18, 03:47 UTC)
+
+**Idea.** A person can read the engine's own log at a glance and see what it has been doing.
+
+**Test.** Read the log files under a scratch engine's home after some three hundred commands and several starts and stops of the engine, then asked the product the same question through its own commands (`engine logs`, `audit query`, `run list`). One build, one home, the default settings.
+
+**Result.** There is nothing to read. The engine's log file is empty: zero bytes. The file of the engine's own output holds fifteen lines, all about starting and being ready. The audit holds three entries, each the engine closing. The command that should show the log, `engine logs`, refuses when run as a command on the engine's own machine, with a fix that says to run it as a command on the machine the engine runs on. What the engine did can be found only run by run, through `run list` and each run's trace.
+
+**Verdict: changed.** The question was whether the log reads well; the finding is that at the default level the engine writes nothing a person could use to answer "what happened, and why did it stop". Taken up in two parts. First, `engine logs` is to work as a command where the engine runs: the refusal is either a fault in this build or a fault in the design, and either way a person cannot read the log with the command made for it. Second, at the default level the log carries one line for each start and each stop of the engine with what caused it, and one for each refused call with its class and code and never its input. The second part would have answered, on the day it happened, the one test failure nobody has explained: an engine that stopped for a reason recorded only as "asked".
+
+**Next.** Both parts join the package for what a person and an agent meet at the command line. The first is checked against a fresh build before anything is changed.

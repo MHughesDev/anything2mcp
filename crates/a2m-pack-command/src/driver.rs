@@ -273,6 +273,25 @@ impl CliDriver {
                 "Compile the target again from files that do not name the engine's variables.",
             ));
         }
+        // Nor a variable that makes a program load code other than its own:
+        // the compiler refuses them, the driver, and the supervisor.
+        if let Some(name) = program.and_then(|program| {
+            program
+                .env_set
+                .keys()
+                .chain(program.env_pass.iter())
+                .find(|name| a2m_provider::redirects_loading(name))
+        }) {
+            return Err(not_sent(
+                FailureClass::Input,
+                codes::STEP_NOT_USABLE,
+                format!(
+                    "The plan hands the program the variable `{}`, which makes a program load code other than its own.",
+                    name.chars().take(64).collect::<String>()
+                ),
+                "Compile the target again from files that do not name such a variable.",
+            ));
+        }
         let pass = passed(program);
         let set: Vec<(String, OsString)> = program
             .map(|program| {
@@ -419,6 +438,29 @@ impl CliDriver {
         } else {
             Role::Program
         };
+        // An interpreter is started only in the one form the provider's
+        // closed table gives it, by its declared name and by the name of
+        // the file its path leads to (decision 0250).
+        if interprets {
+            let real = std::fs::canonicalize(&path).ok();
+            for program in &on_surface {
+                let fixed = program.interpreter.clone().unwrap_or_default();
+                let names = std::iter::once(path.clone()).chain(real.clone());
+                for name in names {
+                    if a2m_provider::interpreter_form(&name.to_string_lossy(), &fixed).is_err() {
+                        return Err(not_sent(
+                            FailureClass::Policy,
+                            PROGRAM_PATH_UNSAFE,
+                            format!(
+                                "The interpreter `{}` is not started with the fixed arguments its files declare: they are not the one form in which it reads a script file and takes what follows as data.",
+                                shown(&name.display().to_string())
+                            ),
+                            "Declare an interpreter the pack starts as a pair, with the fixed arguments of its form, and publish.",
+                        ));
+                    }
+                }
+            }
+        }
         let checked = path.clone();
         let trust = self.trust.clone();
         let verdict = joined(move || {
@@ -514,7 +556,11 @@ impl CliDriver {
             .roots
             .folder(&self.runs_root, Access::Write)
             .map_err(StepFailure::not_sent)?;
-        root.create_dir_all().map_err(StepFailure::not_sent)?;
+        // Each folder this makes is the engine's user's alone from the
+        // moment it exists; one that was there already is checked where a
+        // script is put in it.
+        root.create_private_dir_all()
+            .map_err(StepFailure::not_sent)?;
         for _ in 0..FOLDER_TRIES {
             let number = self.next_folder.fetch_add(1, Ordering::Relaxed);
             let folder = root
@@ -523,7 +569,7 @@ impl CliDriver {
             // Made new, or not at all: a folder this call makes was empty
             // and the run's own when it was made. Whatever already stands
             // at the name is left as it is, and the next name is taken.
-            match folder.create_dir() {
+            match folder.create_private_dir() {
                 Ok(()) => return Ok(folder),
                 Err(failure) => {
                     if matches!(folder.entry_kind(), Ok(EntryKind::Absent) | Err(_)) {
@@ -737,7 +783,7 @@ impl CliDriver {
         let elements = match (&program.interpreter, &command.script) {
             (None, None) => elements,
             (Some(fixed), Some(script)) => {
-                let copy = script_copy(session, &name, script)?;
+                let copy = script_copy(session, &name, script, &self.trust)?;
                 let mut whole = fixed.clone();
                 whole.push(copy);
                 whole.extend(elements);
@@ -1096,7 +1142,18 @@ const MOST_SCRIPT_BYTES: u64 = 1024 * 1024;
 /// and checked again: the interpreter is handed the bytes that were
 /// checked, in a folder no other user may write, whatever happens to the
 /// target's own file after this.
-fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String, StepFailure> {
+///
+/// That no other user may write it is checked, not assumed: the copy, its
+/// folder, and every folder on the way to it are held to the provider's
+/// check as a file the engine wrote, after the copy is read back and
+/// immediately before the interpreter is started. Nobody but the engine's
+/// user and the administrator can then change what the interpreter opens.
+fn script_copy(
+    session: &Session,
+    name: &str,
+    script: &Script,
+    trust: &Trust,
+) -> Result<String, StepFailure> {
     let (Some(project), Some(folder)) = (session.project.as_ref(), session.scripts.as_ref()) else {
         return Err(StepFailure::not_sent(Failure::new(
             FailureClass::Input,
@@ -1143,6 +1200,22 @@ fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String,
     let written = copy.read(MOST_SCRIPT_BYTES).map_err(|_| missing())?;
     if Digest::of(&written).to_string() != script.digest {
         return Err(changed("as copied for the run"));
+    }
+    if let Err(why) = safety::check(copy.as_path(), trust, Role::Script) {
+        let what = match &why {
+            Refused::Writable(at) | Refused::Unreadable(at) | Refused::Link(at) => {
+                shown(&at.display().to_string())
+            }
+            _ => shown(&copy.as_path().display().to_string()),
+        };
+        return Err(not_sent(
+            FailureClass::Policy,
+            PROGRAM_PATH_UNSAFE,
+            format!(
+                "The copy of the script `{shown_path}` of the command `{name}` is not started: another user could change it, or who may change `{what}` could not be read."
+            ),
+            "Keep the command pack's `command_runs` folder, and every folder above it, to the engine's user alone, with no write access for anyone else.",
+        ));
     }
     copy.as_path()
         .to_str()

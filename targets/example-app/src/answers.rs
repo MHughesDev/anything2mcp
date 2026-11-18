@@ -11,16 +11,16 @@
 //!   the same characters in it.
 //! - `GET /views/hostile/secret`: a binary label that carries
 //!   [`ECHOED_SECRET`], as a system that echoes a credential would.
-//! - `POST /views/search/orders`: the orders of one status, for a JSON body
-//!   `{"status": "draft"}`. It reads only, and stores nothing; it is the
-//!   search a service puts behind `POST`.
+//! - `POST /views/search/orders?status=draft`: the orders of one status,
+//!   as JSON. It reads only, and stores nothing; it is the search a service
+//!   puts behind `POST`.
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::AppState;
 use crate::store::OrderStatus;
@@ -72,15 +72,12 @@ async fn hostile(Path(name): Path<String>) -> Response {
     }
 }
 
-/// The orders of one status. A body that is not `{"status": ...}` with a
-/// status the store knows is refused with 422.
-async fn search(State(state): State<AppState>, body: String) -> Response {
-    let wanted = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|value| value.get("status")?.as_str().map(str::to_owned));
-    let status = match wanted.as_deref() {
-        Some("draft") => OrderStatus::Draft,
-        Some("submitted") => OrderStatus::Submitted,
+/// The orders of one status. A query that is not `status=` and a status
+/// the store knows is refused with 422.
+async fn search(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
+    let status = match query.as_deref() {
+        Some("status=draft") => OrderStatus::Draft,
+        Some("status=submitted") => OrderStatus::Submitted,
         _ => {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,

@@ -421,7 +421,8 @@ async fn an_acting_tab_writes_from_inside_its_page_with_the_page_s_own_token_whi
     }
 
     // The application quotes a refused body back, the token with it: the
-    // answer handed out holds the mark in its place.
+    // answer is withheld whole in the page, whatever the spelling of the
+    // token in it (decision 0245, audit finding S4).
     must(tab.goto(&page, soon()).await);
     let refused = must(
         tab.write_from_page(
@@ -435,7 +436,8 @@ async fn an_acting_tab_writes_from_inside_its_page_with_the_page_s_own_token_whi
         .await,
     );
     assert_eq!(refused.status, 422);
-    assert!(refused.body.contains("[redacted]"), "{}", refused.body);
+    assert!(refused.withheld);
+    assert!(refused.body.is_empty(), "{}", refused.body);
     assert!(
         !refused.body.contains(example_app::forgery::TOKEN_PREFIX),
         "{}",

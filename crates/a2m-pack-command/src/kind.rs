@@ -1558,6 +1558,19 @@ mod tests {
         }
     }
 
+    /// The fifth safety audit's PR-1 and M4: the command interpreter's `/k`
+    /// and `/r` run what follows them as `/c` does, and it reads options in
+    /// either case. A dash before the letter is another program's flag.
+    #[test]
+    fn the_command_interpreters_options_that_run_their_value_are_known_in_either_case() {
+        for runs in ["/k", "/K", "/r", "/R", "/C", "/c"] {
+            assert!(runs_its_value(runs), "{runs}");
+        }
+        for plain in ["-k", "-r", "-R", "/x"] {
+            assert!(!runs_its_value(plain), "{plain}");
+        }
+    }
+
     #[test]
     fn a_flag_that_runs_its_value_is_known_in_each_spelling() {
         for runs in [

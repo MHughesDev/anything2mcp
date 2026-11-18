@@ -47,7 +47,54 @@ impl LintRule for ShellProgram {
                         .is_some()
                 })
         };
-        surfaces
+        // The interpreter of a pair is started only in the one form the
+        // provider's closed table gives it, in which it reads a script file
+        // and takes what follows as data (decision 0250).
+        let mut found: Vec<Diagnostic> = Vec::new();
+        for surface in &surfaces {
+            for doc in docs
+                .iter()
+                .filter(|doc| doc.text("surface").or(first) == Some(surface.name.as_str()))
+            {
+                let Some(interpreter) = doc
+                    .get("program")
+                    .and_then(|program| program.get("interpreter"))
+                else {
+                    continue;
+                };
+                let fixed: Vec<String> = interpreter
+                    .get("args")
+                    .map(Located::items)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|item| item.as_text().unwrap_or_default().to_owned())
+                    .collect();
+                let why = match a2m_provider::interpreter_form(surface.address, &fixed) {
+                    Ok(()) => continue,
+                    Err(a2m_provider::InterpreterRefused::ReadsItsLineAsCode) => {
+                        "reads its whole command line as code, so a value given to its script would be read as a command too".to_owned()
+                    }
+                    Err(a2m_provider::InterpreterRefused::NotKnown) => {
+                        "is not an interpreter the pack knows the form of: no test has proved that it takes what follows its script as data".to_owned()
+                    }
+                    Err(a2m_provider::InterpreterRefused::NotItsForm(form)) => format!(
+                        "is given fixed arguments other than its one form, which is `[{}]`",
+                        form.join(", ")
+                    ),
+                };
+                found.push(Diagnostic::error(
+                    self.code(),
+                    Stage::Lint,
+                    &interpreter.at,
+                    format!(
+                        "The surface `{}` names an interpreter that {why}.",
+                        surface.name
+                    ),
+                    "Name an interpreter the pack starts as a pair (the POSIX shell, Python, Windows PowerShell, or AppleScript), with the fixed arguments of its form, or name the program itself.",
+                ));
+            }
+        }
+        found.extend(surfaces
             .iter()
             .filter(|surface| is_shell_or_interpreter(surface.address))
             .filter(|surface| !pairs_only(surface.name.as_str()))
@@ -62,8 +109,8 @@ impl LintRule for ShellProgram {
                     ),
                     "Name the program itself, by its absolute path; a shell is never started. An interpreter runs only a script the target keeps: declare `program.interpreter` in every `commands/` file on the surface.",
                 )
-            })
-            .collect()
+            }));
+        found
     }
 }
 
