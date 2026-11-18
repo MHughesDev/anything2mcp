@@ -5,30 +5,20 @@ Usage, from the repository root:
 
     python3 tools/failure_codes.py                 # rewrite the table between the markers
     python3 tools/failure_codes.py --check         # exit 1 and name each difference if it is stale
-    python3 tools/failure_codes.py --list          # print the table, and the crates outside the table form
+    python3 tools/failure_codes.py --list          # print the table, and write nothing
     python3 tools/failure_codes.py --root DIR      # work on another copy of the repository
 
-The crates hold the knowledge; this tool only reads it, as text, without a build. A code is found in
-six places, strongest first:
+The crates hold the knowledge; this tool only reads it, as text, without a build. Every crate declares
+its codes in one form (decision 0258): the rows of its `a2m_core::failure_codes! { NAME = Class,
+"code", meaning "...", next "..." [, passes by_itself | not_by_itself] [, then ("noun.verb", "what
+for")]; ... }` table, and, for a pack, also its manifest's `[[failure_codes]]` entries, which give a
+class and may give a meaning. A code of another crate a pack passes on is in its manifest alone.
 
-  0. a row of the table form, `a2m_core::failure_codes! { NAME = Class, "code", meaning "...",
-     next "..." [, passes by_itself | not_by_itself] [, then ("noun.verb", "what for")]; ... }`,
-     which alone gives a code its next step and whether it passes by itself;
-  1. an older class table: `(FailureClass::X, "code")`, in an `ALL` list or inside a `codes! { ... }`
-     macro;
-  2. a provider manifest's `[[failure_codes]]` entries;
-  3. a constant `pub const NAME: FailureCode = FailureCode::fixed("code");` whose doc comment names
-     its class (`class `busy`.` or a leading `` `busy`: ``);
-  4. the same constant, used in a `Failure::new(FailureClass::X, NAME, ...)` call, or in a helper
-     call named after its class (`policy(NAME, ...)`);
-  5. a literal `FailureCode::fixed("code")` inside such a call.
-
-A code that no place gives a class to, or that two places give two classes to, is a fault: the tool
-names it and exits 1 in every mode. So is a row of the table form that cannot be read, or that has an
-empty meaning or next step; one code given two answers to whether it passes by itself; and, in a crate
-named in MIGRATED, a code declared anywhere but a `failure_codes!` table or a manifest, so that a crate
-that has moved to the table form cannot slip back. Places 1, 3, 4 and 5 are read until every crate has
-moved; `--list` names the crates that have not. Lint codes (`kernel.*`) are another vocabulary and are not read.
+These are faults, which the tool names and for which it exits 1 in every mode: a code declared with
+two classes; a row of the table form that cannot be read, or that has an empty meaning or next step;
+one code given two answers to whether it passes by itself; and a code declared outside a table, as a
+literal `FailureCode::fixed("code")` in a crate's source, so that no crate can slip back into an
+older form. Lint codes (`kernel.*`) are another vocabulary and are not read.
 Standard library only; Python 3.11 or newer.
 """
 import re
@@ -45,17 +35,10 @@ END = "<!-- failure-codes:end -->"
 CLASS_ORDER = ["policy", "input", "session_expired", "edge_blocked", "drift", "unknown_variant",
                "rejected", "mismatch", "possible_commit", "stale", "transient", "busy"]
 CLASSES = set(CLASS_ORDER)
-# The crates whose codes are all in a `failure_codes!` table (or, for a pack, also its manifest).
-MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry", "a2m-vault", "a2m-policy", "a2m-files", "a2m-api", "a2m-mcp", "a2m-netstate", "a2m-sched", "a2m-ledger", "a2m-auth", "a2m-provider", "a2m-engine", "a2m-actions", "a2m-local", "a2m-pack-web-probe", "a2m-pack-stream", "a2m-pack-device", "a2m-pack-data", "a2m-pack-command", "a2m-pack-http", "a2m-pack-mcp", "a2m-pack-desktop", "a2m-pack-web-browser", "a2m-pack-web-ui"}
 PASSES = {"by_itself": "yes", "not_by_itself": "no"}
 
 CODE = r"[a-z][a-z0-9_]*"
-TABLE_ROW = re.compile(rf'\(\s*FailureClass::(\w+)\s*,\s*"({CODE})"\s*\)')
-MACRO_ROW = re.compile(rf'(?:^|\n)((?:\s*///[^\n]*\n)*)\s*\w+\s*=\s*(\w+)\s*,\s*"({CODE})"\s*;')
-CONST = re.compile(rf'((?:[ \t]*///[^\n]*\n)*)[ \t]*(?:pub(?:\([a-z]+\))?\s+)?const\s+(\w+)\s*:\s*(?:FailureCode|Self)\s*=\s*'
-                   rf'(?:FailureCode|Self)::fixed\(\s*"({CODE})"\s*\)\s*;')
 INLINE = re.compile(rf'FailureCode::fixed\(\s*"({CODE})"\s*\)')
-CLASS_USE = re.compile(r"FailureClass::(\w+)")
 STR = r'"((?:[^"\\]|\\.)*)"'
 FC_START = re.compile(r"^[^\n/]*?\bfailure_codes!\s*\{", re.M)
 FC_ROW = re.compile(rf'\s*(\w+)\s*=\s*(\w+)\s*,\s*"({CODE})"\s*,\s*meaning\s*{STR}\s*,\s*next\s*{STR}'
@@ -65,25 +48,6 @@ TEST_FILE = re.compile(r"(^|/)(tests|benches|examples|target)/|(^|/)(tests|test_
 
 def snake(name):
     return re.sub(r"(?<!^)([A-Z])", r"_\1", name).lower()
-
-
-def tidy(doc_lines):
-    """The text of a run of `///` lines, as one line."""
-    text = " ".join(re.sub(r"^\s*///\s?", "", l).strip() for l in doc_lines.strip("\n").split("\n") if l.strip())
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def split_doc(doc):
-    """(class named by the doc comment or None, the doc with that naming taken out)."""
-    m = re.match(r"^`(\w+)`:\s*(.*)$", doc)
-    if m and m.group(1) in CLASSES:
-        return m.group(1), m.group(2)
-    m = re.search(r"\s*\b[Cc]lass `(\w+)`[.;:]?\s*", doc)
-    if m and m.group(1) in CLASSES:
-        rest = (doc[:m.start()] + " " + doc[m.end():]).strip()
-        rest = re.sub(r"\s+", " ", rest)
-        return m.group(1), re.sub(r"(?<=[a-z)`])$", ".", rest.strip()) if rest and rest[-1] not in ".!?" else rest
-    return None, doc
 
 
 def unescape(text):
@@ -191,18 +155,13 @@ class Found:
         self.by_code = defaultdict(lambda: {"classes": defaultdict(set), "crates": set(), "meanings": {},
                                             "rows": {}})
         self.faults = []
-        self.crate_sources = defaultdict(set)   # crate -> kinds of place its codes were found
-        self.crate_codes = defaultdict(set)
 
     def add(self, crate, code, cls, how, meaning=None):
         row = self.by_code[code]
         row["crates"].add(crate)
-        if cls:
-            row["classes"][cls].add((crate, how))
+        row["classes"][cls].add((crate, how))
         if meaning and crate not in row["meanings"]:
             row["meanings"][crate] = meaning
-        self.crate_sources[crate].add(how)
-        self.crate_codes[crate].add(code)
 
 
 def source_files(crate_dir):
@@ -215,33 +174,7 @@ def source_files(crate_dir):
 def read_rust(p):
     text = p.read_text(encoding="utf-8")
     cut = re.search(r"^#\[cfg\(test\)\]", text, re.M)
-    text = text[:cut.start()] if cut else text
-    # A `reasons` module holds why a watch paused or ended, kept as codes: not failure codes.
-    return re.sub(r"^pub mod reasons \{.*?^\}", "", text, flags=re.M | re.S)
-
-
-HELPER = re.compile(r"\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)[^{;]*\{")
-
-
-def helpers(texts):
-    """Functions that take a failure code and build a failure of one class: name -> class."""
-    found = {}
-    for text in texts.values():
-        for m in HELPER.finditer(text):
-            if "FailureCode" not in m.group(2):
-                continue
-            body = text[m.end():]
-            stop = re.search(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:const\s+)?fn\s|^impl\b|^\}", body, re.M)
-            body = body[:stop.start()] if stop else body
-            used = {snake(c) for c in CLASS_USE.findall(body)}
-            if len(used) == 1 and next(iter(used)) in CLASSES:
-                found.setdefault(m.group(1), next(iter(used)))
-    return found
-
-
-def sole_class(text):
-    used = {snake(c) for c in CLASS_USE.findall(text)}
-    return next(iter(used)) if len(used) == 1 and next(iter(used)) in CLASSES else None
+    return text[:cut.start()] if cut else text
 
 
 def scan(root=repo):
@@ -262,102 +195,17 @@ def scan(root=repo):
                     f.add(crate, entry["code"], entry["class"], "manifest", entry.get("meaning"))
                 else:
                     f.faults.append(f"{toml.relative_to(root).as_posix()}: a failure_codes entry has no valid class and code: {entry!r}")
-        texts = {}
         for p in source_files(crate_dir):
-            rows, rest = table_rows(read_rust(p), p.relative_to(root).as_posix(), f.faults)
-            texts[p] = rest
+            rel = p.relative_to(root).as_posix()
+            rows, rest = table_rows(read_rust(p), rel, f.faults)
             for code, cls, meaning, nxt, passes, then in rows:
                 f.add(crate, code, cls, "macro", meaning)
                 f.by_code[code]["rows"].setdefault(crate, (meaning, nxt, passes, then))
-        consts = {}  # name -> (code, doc class, meaning), per crate
-        helper_of = helpers(texts)
-        home = {}
-        for p, text in texts.items():
-            rel = p.relative_to(root).as_posix()
-            for cls, code in (TABLE_ROW.findall(text) if "FailureClass::" in text else []):
-                if snake(cls) not in CLASSES:
-                    f.faults.append(f"{rel}: `{code}` is given the class `{cls}`, which is not a failure class")
-                    continue
-                f.add(crate, code, snake(cls), "table")
-            for doc, cls, code in (MACRO_ROW.findall(text) if "codes!" in text else []):
-                if snake(cls) in CLASSES:
-                    _, meaning = split_doc(tidy(doc))
-                    f.add(crate, code, snake(cls), "table", meaning or None)
-            for doc, name, code in (CONST.findall(text) if "::fixed(" in text else []):
-                dcls, meaning = split_doc(tidy(doc))
-                consts[name] = (code, dcls, meaning)
-                home[name] = p
-        # Meanings for codes a table already gave: the same constant's doc comment.
-        for name, (code, dcls, meaning) in consts.items():
-            known = f.by_code.get(code)
-            if known and crate in known["crates"] and any(c == crate for ss in known["classes"].values() for c, _ in ss):
-                if meaning and crate not in known["meanings"]:
-                    known["meanings"][crate] = meaning
-                if dcls:
-                    known["classes"][dcls].add((crate, "doc"))
-                continue
-            used = classes_of_uses(texts, name, helper_of)
-            if dcls:
-                f.add(crate, code, dcls, "doc", meaning)
-            elif used:
-                for u in sorted(used):
-                    f.add(crate, code, u, "use", meaning)
-            elif home[name] and sole_class(texts[home[name]]):
-                f.add(crate, code, sole_class(texts[home[name]]), "file", meaning)
-            else:
-                f.add(crate, code, None, "unclassed", meaning)
-        # A literal code in a failure call, with its class on the lines before it.
-        declared = {code for code, _, _ in consts.values()}
-        for p, text in texts.items():
-            rel = p.relative_to(root).as_posix()
-            for m in INLINE.finditer(text):
-                code = m.group(1)
-                if code in declared or any(code == c for c, _, _ in consts.values()):
-                    continue
-                before = text[max(0, m.start() - 160):m.start()]
-                line_start = text.rfind("\n", 0, m.start())
-                if re.match(r"\s*(pub(\([a-z]+\))?\s+)?const\s", text[line_start + 1:m.start()]):
-                    continue
-                near = CLASS_USE.findall(before)
-                f.add(crate, code, snake(near[-1]) if near and snake(near[-1]) in CLASSES else None, "literal")
-    for crate in sorted(MIGRATED):
-        if "macro" not in f.crate_sources.get(crate, set()):
-            f.faults.append(f"{crate} is named in MIGRATED in tools/failure_codes.py and has no `failure_codes!` table")
-            continue
-        for code in sorted(f.crate_codes[crate]):
-            loose = sorted({how for ss in f.by_code[code]["classes"].values() for c, how in ss
-                            if c == crate and how not in ("macro", "manifest")}
-                           | ({"unclassed"} if crate in f.by_code[code]["crates"]
-                              and not any(c == crate for ss in f.by_code[code]["classes"].values() for c, _ in ss)
-                              else set()))
-            if loose:
-                f.faults.append(f"{crate} has moved to the `failure_codes!` table form, and declares `{code}` outside it "
-                                f"(found as {', '.join(loose)}); declare it in the crate's table")
+            # Outside a table, a code is named only by a constant of a table or a manifest's code.
+            for m in INLINE.finditer(rest):
+                f.faults.append(f"{rel}: `{m.group(1)}` is declared outside a `failure_codes!` table, as "
+                                f"`FailureCode::fixed`; declare it in {crate}'s table and use the constant")
     return f
-
-
-def classes_of_uses(texts, name, helper_of):
-    """The classes a constant is used with: `Failure::new(FailureClass::X, NAME` or `x(NAME`."""
-    found = set()
-    token = re.compile(rf"(?<![\w:])(?:\w+::)*{re.escape(name)}\b")
-    for text in texts.values():
-        if name not in text:
-            continue
-        for m in token.finditer(text):
-            line_start = text.rfind("\n", 0, m.start()) + 1
-            if re.match(r"\s*(pub(\([a-z]+\))?\s+)?const\s", text[line_start:m.end()]):
-                continue
-            before = text[max(0, m.start() - 120):m.start()]
-            call = re.search(r"FailureClass::(\w+)\s*,\s*$", before)
-            if call and snake(call.group(1)) in CLASSES:
-                found.add(snake(call.group(1)))
-                continue
-            helper = re.search(r"\b(\w+)\(\s*$", before)
-            if helper and helper.group(1) in CLASSES:
-                found.add(helper.group(1))
-            elif helper and helper.group(1) in helper_of:
-                found.add(helper_of[helper.group(1)])
-    return found
 
 
 def layers(root):
@@ -393,15 +241,10 @@ def resolve(f, root=repo):
     prefer = preference(root)
     rows, faults = [], list(f.faults)
     for code, row in sorted(f.by_code.items()):
-        strong = {c for c, ss in row["classes"].items() if any(how in ("macro", "table", "manifest", "doc") for _, how in ss)}
-        classes = strong or set(row["classes"])
+        classes = set(row["classes"])
         if len(classes) > 1:
             where = "; ".join(f"`{c}` in " + ", ".join(sorted({f'{cr} ({how})' for cr, how in row['classes'][c]})) for c in sorted(classes))
             faults.append(f"`{code}` is declared with more than one class: {where}")
-            continue
-        if not classes:
-            faults.append(f"`{code}` is declared in {', '.join(sorted(row['crates']))} with no class a program can read "
-                          "(no table row, no manifest entry, no class in its doc comment, no failure call that uses it)")
             continue
         cls = next(iter(classes))
         answers = {passes for _, _, passes, _ in row["rows"].values()}
@@ -432,16 +275,6 @@ def render(rows):
     for cls, code, crates, meaning, nxt, passes in rows:
         out.append(f"| `{cls}` | `{code}` | {', '.join(f'`{c}`' for c in crates)} | {cell(meaning)} | {cell(nxt)} | {passes} |")
     return "\n".join(out)
-
-
-def outside_table_form(f):
-    """Crates that declare a code anywhere but a `failure_codes!` table or a manifest."""
-    found = []
-    for crate in sorted(f.crate_codes):
-        kinds = f.crate_sources[crate] - {"macro", "manifest"}
-        if kinds:
-            found.append((crate, len(f.crate_codes[crate]), sorted(kinds)))
-    return found
 
 
 def current_block(text):
@@ -487,8 +320,6 @@ def main():
         print("fault:", fault)
     if "--list" in sys.argv:
         print(render(rows))
-        for crate, n, kinds in outside_table_form(f):
-            print(f"outside the failure_codes! form: {crate}: {n} codes, found as {', '.join(kinds)}")
         return 1 if faults else 0
     path = repo / REFERENCE
     text = path.read_text(encoding="utf-8")

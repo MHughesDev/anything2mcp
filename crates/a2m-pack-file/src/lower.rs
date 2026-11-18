@@ -7,9 +7,8 @@
 //! fills the value of a key or of a field, and nothing else.
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, LintCode,
-    Mode, PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName,
-    ValueType, Verb,
+    CodeEntry, EffectClass, FailsAs, FileKindName, IdentityStrategy, LintCode, Mode, PackPayload,
+    PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
@@ -115,16 +114,12 @@ impl Steps<'_> {
         kind: StepKind,
         spec: &StepSpec,
         args: Vec<StepArg>,
-        fails: FailureCode,
+        fails: &CodeEntry,
         commits: bool,
         lookup: bool,
     ) -> Result<Step, Diagnostic> {
         let payload = PackPayload::encode(spec)
             .map_err(|failure| problem(self.at, failure.message().to_owned(), "Report this."))?;
-        let class = codes::ALL
-            .iter()
-            .find(|(_, code)| *code == fails)
-            .map_or(FailureClass::PossibleCommit, |(class, _)| *class);
         Ok(Step {
             kind,
             refers_to: Some(PackRef {
@@ -133,7 +128,7 @@ impl Steps<'_> {
             }),
             args,
             timeout_ms: self.timeout_ms,
-            fails_as: FailsAs { class, code: fails },
+            fails_as: FailsAs::from(fails),
             commits,
             lookup,
             idempotent: !commits,
@@ -147,7 +142,7 @@ impl Steps<'_> {
             OPEN,
             &StepSpec::Open { for_write },
             Vec::new(),
-            codes::FILE_MISSING,
+            &codes::row::FILE_MISSING,
             false,
             false,
         )
@@ -167,7 +162,7 @@ impl Steps<'_> {
                 expect,
             },
             key,
-            codes::PLACE_NOT_FOUND,
+            &codes::row::PLACE_NOT_FOUND,
             false,
             lookup,
         )
@@ -180,7 +175,7 @@ impl Steps<'_> {
                 record: record.to_owned(),
             },
             Vec::new(),
-            codes::VALUE_UNREADABLE,
+            &codes::row::VALUE_UNREADABLE,
             false,
             false,
         )
@@ -526,7 +521,7 @@ impl Lowering for FileLowering {
                             limit,
                         },
                         Vec::new(),
-                        codes::VALUE_UNREADABLE,
+                        &codes::row::VALUE_UNREADABLE,
                         false,
                         false,
                     )?,
@@ -602,7 +597,7 @@ impl Lowering for FileLowering {
                         change,
                     },
                     set_args,
-                    codes::ROUND_TRIP_FAILED,
+                    &codes::row::ROUND_TRIP_FAILED,
                     false,
                     false,
                 )?,
@@ -610,7 +605,7 @@ impl Lowering for FileLowering {
                     SAVE,
                     &StepSpec::Save,
                     Vec::new(),
-                    a2m_provider::codes::NO_CONFIRMATION,
+                    &a2m_provider::codes::row::NO_CONFIRMATION,
                     true,
                     false,
                 )?,
@@ -619,7 +614,7 @@ impl Lowering for FileLowering {
                 READ,
                 &StepSpec::Confirm,
                 Vec::new(),
-                codes::CHANGED_SINCE_PREVIEW,
+                &codes::row::CHANGED_SINCE_PREVIEW,
                 false,
                 false,
             )?];

@@ -16,9 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use a2m_core::{
-    Digest, DigestPurpose, Failure, FailureClass, KeyedDigest, RecordKey, Values, WorkspaceId,
-};
+use a2m_core::{Digest, DigestPurpose, Failure, KeyedDigest, RecordKey, Values, WorkspaceId};
 
 use crate::watch::WatchId;
 
@@ -35,8 +33,6 @@ pub const fn value_purpose() -> DigestPurpose {
 pub const VALUE_DOMAIN: &[u8] = b"anything2mcp watch value 2";
 /// What every digest of a watch's whole record begins with.
 const RECORD_DOMAIN: &[u8] = b"anything2mcp watch record 2";
-
-pub use crate::codes::{WATCH_KEY_REPEATED, WATCH_RESULT_NOT_ITS_SHAPE, WATCH_SHAPES_MIXED};
 
 /// How a watch names one record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -179,21 +175,15 @@ impl CheckFault {
     #[must_use]
     pub fn failure(&self) -> Failure {
         match self {
-            Self::KeyRepeated(_) => Failure::new(
-                FailureClass::UnknownVariant,
-                WATCH_KEY_REPEATED,
+            Self::KeyRepeated(_) => crate::codes::row::WATCH_KEY_REPEATED.failure(
                 "Two records the read returned have one key, so the check cannot be compared.",
                 "Check the key the operation declares for its records; the watch goes on and compares the next check.",
             ),
-            Self::ShapesMixed => Failure::new(
-                FailureClass::UnknownVariant,
-                WATCH_SHAPES_MIXED,
+            Self::ShapesMixed => crate::codes::row::WATCH_SHAPES_MIXED.failure(
                 "The read returned keyed records and a whole result at once, so the check cannot be compared.",
                 "Check the operation's outputs; the watch goes on and compares the next check.",
             ),
-            Self::NotItsShape => Failure::new(
-                FailureClass::UnknownVariant,
-                WATCH_RESULT_NOT_ITS_SHAPE,
+            Self::NotItsShape => crate::codes::row::WATCH_RESULT_NOT_ITS_SHAPE.failure(
                 "The check's result is not of the shape the watch was asked with, so the check cannot be compared.",
                 "Check the operation's outputs and the key it declares; the watch goes on and compares the next check.",
             ),
@@ -437,6 +427,8 @@ pub fn compare(older: &Baseline, newer: &CheckDigests) -> Comparison {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codes::WATCH_KEY_REPEATED;
+    use a2m_core::FailureClass;
 
     /// A keyed digest for tests: the plain digest of the purpose, the
     /// workspace, and the bytes.

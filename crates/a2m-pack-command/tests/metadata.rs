@@ -1,5 +1,6 @@
 //! What the scout learns from a fish completion file and a manual page a
-//! person hands it, against the command-line test stand (decision 0284).
+//! person hands it (decision 0284), and from a PowerShell help file and a
+//! module manifest (decision 0290), against the command-line test stand.
 //! What was started is asked of the stand's own record of every start.
 
 #![allow(
@@ -199,7 +200,15 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
         .files_taken(&description(&surface))
         .into_iter()
         .collect();
-    assert_eq!(taken, ["completions", "manual"]);
+    assert_eq!(
+        taken,
+        [
+            "completions",
+            "manual",
+            "module_manifest",
+            "powershell_help"
+        ]
+    );
 
     let (report, findings, _) = discover(
         &stand,
@@ -415,4 +424,340 @@ async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_not
     }
     let show = command(&findings, "item show").found().to_owned();
     assert!(show.contains(a2m_core::REDACTED), "{show}");
+}
+
+/// A target whose one surface is Windows PowerShell, by its file's name,
+/// as the pack's lint knows it: the PowerShell drafts are drafted into it.
+fn powershell_target(stand: &Stand, folder: &Folder) -> a2m_files::TargetRoot {
+    let program = folder
+        .path()
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    for (path, text) in stand_files(stand) {
+        if path == "target.yaml" || path == "types.yaml" {
+            let text = text.replace(
+                &format!(
+                    "'{}'",
+                    stand.program().display().to_string().replace('\'', "''")
+                ),
+                &format!("'{}'", program.display().to_string().replace('\'', "''")),
+            );
+            std::fs::write(folder.path().join(&path), text).unwrap();
+        }
+    }
+    let target = std::fs::read_to_string(folder.path().join("target.yaml")).unwrap();
+    assert!(target.contains("powershell.exe"), "{target}");
+    a2m_files::TargetRoot::new(folder.path())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_powershell_help_file_and_a_manifest_are_read_as_data_and_draft_fixed_pairs() {
+    let folder = Folder::new("powershell");
+    let stand = Stand::start().unwrap();
+    let control = stand.control().clone();
+    let seed = control.stored_items().unwrap();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let (report, findings, before) = discover(
+        &stand,
+        &folder,
+        &registry,
+        &[
+            (
+                "powershell_help",
+                "Example.Inventory-help.xml",
+                source("Example.Inventory-help.xml"),
+            ),
+            (
+                "module_manifest",
+                "Example.Inventory.psd1",
+                source("Example.Inventory.psd1"),
+            ),
+        ],
+        &NoSecrets,
+    )
+    .await;
+    let report = report.unwrap();
+
+    // One finding for each file, which says how much of it was read.
+    let files = of_kind(&findings, "command_file");
+    assert_eq!(files.len(), 2);
+    let manifest = json(files[0]);
+    assert_eq!(
+        (manifest["name"].as_str(), manifest["form"].as_str()),
+        (Some("module_manifest"), Some("psd1"))
+    );
+    assert_eq!(manifest["version"], "1.4.0");
+    assert_eq!(
+        manifest["exported"],
+        serde_json::json!([
+            "Get-ExampleItem",
+            "Set-ExampleItem",
+            "Remove-ExampleItem",
+            "gei"
+        ])
+    );
+    // What it exports that the help file does not describe.
+    assert_eq!(
+        manifest["unlisted"],
+        serde_json::json!(["Remove-ExampleItem", "gei"])
+    );
+    assert_eq!(manifest["read"], 9);
+    assert_eq!(manifest["unread"], serde_json::json!({"not_literal": 1}));
+    assert_eq!(files[0].coverage(), a2m_core::Coverage::Partial);
+    let help = json(files[1]);
+    assert_eq!(
+        (
+            help["name"].as_str(),
+            help["form"].as_str(),
+            help["read"].as_u64()
+        ),
+        (Some("powershell_help"), Some("maml"), Some(2))
+    );
+    assert_eq!(help["unread"], serde_json::json!({}));
+    assert_eq!(help["unlisted"], serde_json::json!([]));
+    assert_eq!(files[1].coverage(), a2m_core::Coverage::Complete);
+    for file in &files {
+        assert_eq!(file.level(), EvidenceLevel::Inferred);
+        assert_eq!(file.source(), Source::Artifact);
+    }
+    assert_eq!(report.dropped, 1);
+
+    // One finding for each command the help describes, derived from the
+    // help file's, with each parameter as the help states it.
+    let commands = of_kind(&findings, "powershell_command");
+    assert_eq!(commands.len(), 2);
+    for command in &commands {
+        assert_eq!(command.level(), EvidenceLevel::Inferred);
+        assert_eq!(command.source(), Source::Artifact);
+        assert_eq!(command.derived_from(), [files[1].id()]);
+    }
+    let get = json(commands[0]);
+    assert_eq!(get["name"], "Get-ExampleItem");
+    assert_eq!(get["synopsis"], "Gets one item of the example inventory.");
+    let sku = &get["sets"][0][0];
+    assert_eq!(
+        (
+            sku["name"].as_str(),
+            sku["type"].as_str(),
+            sku["required"].as_bool()
+        ),
+        (Some("Sku"), Some("System.String"), Some(true))
+    );
+    assert_eq!(sku["position"], "0");
+    assert_eq!(sku["pipeline"], serde_json::json!(["by_value"]));
+    assert!(
+        sku["about"]
+            .as_str()
+            .unwrap()
+            .starts_with("The item's code")
+    );
+    let detailed = &get["sets"][0][1];
+    assert_eq!(
+        (detailed["switch"].as_bool(), detailed["about"].as_str()),
+        (Some(true), Some("Prints the item's history too."))
+    );
+    let set = json(commands[1]);
+    assert_eq!(set["sets"].as_array().unwrap().len(), 2);
+
+    // Nothing in either file was run, and no module was imported: the
+    // stand started only the declared help and version forms.
+    let starts = control.invocations().unwrap();
+    for start in &starts {
+        assert!(
+            matches!(start.args[0].as_str(), "--version" | "--help" | "help"),
+            "{:?}",
+            start.args
+        );
+    }
+    assert!(starts.len() >= before);
+    assert!(control.writes().unwrap().is_empty());
+    assert_eq!(control.stored_items().unwrap(), seed);
+
+    // The drafts: each command a fixed pair of Windows PowerShell in its
+    // one form and a script the target keeps, which only a person names;
+    // each parameter given by name.
+    let target = Folder::new("powershell-draft");
+    let root = powershell_target(&stand, &target);
+    let ours: Vec<Finding> = findings
+        .iter()
+        .filter(|finding| finding.kind().as_str() == "powershell_command")
+        .cloned()
+        .collect();
+    let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
+        .draft(&ours)
+        .unwrap();
+    assert_eq!(drafted.written.len(), 2, "{drafted:?}");
+    let draft =
+        |name: &str| std::fs::read_to_string(target.path().join("commands").join(name)).unwrap();
+    let get = draft("get_exampleitem.yaml");
+    for expected in [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        "flag: \"-Sku\"",
+        "param: \"sku\"",
+        "flag: \"-Detailed\"",
+        "when: \"detailed\"",
+        "flag: \"-Rows\"",
+        "type: \"integer\"",
+    ] {
+        assert!(get.contains(expected), "{expected} in {get}");
+    }
+    let set = draft("set_exampleitem.yaml");
+    for expected in [
+        "set_exampleitem_1:",
+        "set_exampleitem_2:",
+        "flag: \"-Force\"",
+        "flag: \"-InputObject\"",
+    ] {
+        assert!(set.contains(expected), "{expected} in {set}");
+    }
+    // `-WhatIf` is PowerShell's own: it words the question of the effect
+    // and is never a param.
+    assert!(!set.contains("-WhatIf"), "{set}");
+    let asked = |command: &str, word: &str| -> String {
+        drafted
+            .open_questions
+            .iter()
+            .find(|open| {
+                open.quoting.as_ref().is_some_and(|quoting| {
+                    quoting.words().first().map(String::as_str) == Some(command)
+                        && quoting.words().iter().any(|quoted| quoted == word)
+                })
+            })
+            .map(|open| open.quoting.as_ref().unwrap().sentence().to_owned())
+            .unwrap_or_else(|| panic!("no question on {command} quoting {word}"))
+    };
+    assert!(asked("Set-ExampleItem", "WhatIf").contains("changes something"));
+    assert!(asked("Get-ExampleItem", "System.String").contains("What type"));
+    assert!(asked("Set-ExampleItem", "Example.Inventory.ExampleItem").contains("What type"));
+    // `Rows` is a whole number by its type, and not asked.
+    assert!(
+        drafted.open_questions.iter().all(|open| open
+            .quoting
+            .as_ref()
+            .is_none_or(|quoting| !quoting.words().iter().any(|word| word == "Rows"))),
+        "{drafted:?}"
+    );
+    for never in ["effect: \"read\"", "effect: \"write\""] {
+        assert!(!get.contains(never) && !set.contains(never));
+    }
+    // Each draft compiles but for its questions, on a surface that is
+    // Windows PowerShell.
+    for (path, problems) in &drafted.kept_failing {
+        for problem in problems.iter() {
+            assert_eq!(
+                problem.code.as_str(),
+                "kernel.open_question",
+                "{path:?}: {problem:?}"
+            );
+        }
+    }
+    assert_eq!(control.invocations().unwrap().len(), starts.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_help_file_with_an_entity_too_large_or_not_help_starts_nothing_and_fetches_nothing() {
+    let folder = Folder::new("powershell-refused");
+    let stand = Stand::start().unwrap();
+    let control = stand.control().clone();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    // A listener the external entity names: it must never be reached.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let marker = folder.path().join("marker.txt");
+    std::fs::write(&marker, "marker-for-tests-5512").unwrap();
+    let with_entity = format!(
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE helpItems [\n  <!ENTITY far SYSTEM \"http://127.0.0.1:{port}/help\">\n  <!ENTITY near SYSTEM \"file:///{}\">\n]>\n<helpItems schema=\"maml\" xmlns=\"http://msh\"><command:command xmlns:command=\"http://schemas.microsoft.com/maml/dev/command/2004/10\"><command:details><command:name>&far;&near;</command:name></command:details></command:command></helpItems>\n",
+        marker.display().to_string().replace('\\', "/")
+    );
+    let many = format!("<helpItems>{}</helpItems>", "<a/>".repeat(150_000));
+    let cases: [(&str, &str, Vec<u8>, &str); 5] = [
+        (
+            "powershell_help",
+            "entity-help.xml",
+            with_entity.into_bytes(),
+            "powershell_file_unreadable",
+        ),
+        (
+            "powershell_help",
+            "Example.Inventory.psd1",
+            source("Example.Inventory.psd1"),
+            "powershell_file_unreadable",
+        ),
+        (
+            "powershell_help",
+            "many-help.xml",
+            many.into_bytes(),
+            "powershell_file_unreadable",
+        ),
+        (
+            "powershell_help",
+            "large-help.xml",
+            vec![b' '; 1_048_577],
+            "file_unavailable",
+        ),
+        (
+            "module_manifest",
+            "not-a-manifest.psd1",
+            b"Get-ExampleItem -Sku SK-1001\n".to_vec(),
+            "powershell_file_unreadable",
+        ),
+    ];
+    for (name, file, bytes, code) in cases {
+        let (report, findings, before) = discover(
+            &stand,
+            &folder,
+            &registry,
+            &[(name, file, bytes)],
+            &NoSecrets,
+        )
+        .await;
+        let failure = report.unwrap_err();
+        assert_eq!(failure.code().as_str(), code, "{file}: {failure:?}");
+        assert!(findings.is_empty(), "{file}");
+        assert!(!failure.message().contains("marker-for-tests"), "{file}");
+        // Nothing was started after the file was read.
+        assert_eq!(control.invocations().unwrap().len(), before, "{file}");
+    }
+    // The entity's address was never asked for.
+    assert_eq!(
+        listener.accept().map_err(|error| error.kind()).err(),
+        Some(std::io::ErrorKind::WouldBlock)
+    );
+
+    // An element the reader does not know, inside a part it reads, leaves
+    // that command unread and counted; the rest of the file is read.
+    let unknown = String::from_utf8(source("Example.Inventory-help.xml"))
+        .unwrap()
+        .replacen(
+            "<maml:name>Rows</maml:name>",
+            "<maml:name>Rows</maml:name><command:mandatoryInSet>All</command:mandatoryInSet>",
+            1,
+        )
+        .replacen(
+            "<command:command ",
+            "<providerHelp><Name>Example</Name></providerHelp>\n  <command:command ",
+            1,
+        );
+    let (report, findings, _) = discover(
+        &stand,
+        &folder,
+        &registry,
+        &[("powershell_help", "unknown-help.xml", unknown.into_bytes())],
+        &NoSecrets,
+    )
+    .await;
+    report.unwrap();
+    let help = json(of_kind(&findings, "command_file")[0]);
+    assert_eq!(help["read"], 1);
+    assert_eq!(
+        help["unread"],
+        serde_json::json!({"not_command": 1, "unknown_element": 1})
+    );
+    let commands = of_kind(&findings, "powershell_command");
+    assert_eq!(commands.len(), 1);
+    assert!(commands[0].found().contains("Set-ExampleItem"));
 }

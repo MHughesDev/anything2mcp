@@ -5,7 +5,10 @@
 //! The test application serves its description at no place the HTTP pack
 //! looks by convention (a fault answers every request for it with 404), so
 //! what the scout knows of the described operations comes from the file
-//! alone. The device stand publishes no map; the map is a file. Every path
+//! alone. The device stand publishes no map; the map is a file. A
+//! PowerShell help file describes commands that the command-line stand's
+//! program does not know; they are read from the file and nothing is
+//! started for them. Every path
 //! that leads out of the `sources` folder, every hidden file, and every
 //! name no discoverer reads is refused before anything starts.
 
@@ -22,6 +25,7 @@ use std::path::Path;
 use common::{Folder, Machine, World};
 use example_app::faults::{Fault, FaultKind};
 use example_app::harness::TestApp;
+use example_cli::harness::Stand;
 use example_device::TestDevice;
 use serde_json::{Value as Json, json};
 
@@ -391,5 +395,99 @@ async fn a_name_no_discoverer_takes_is_refused_with_the_names_taken() {
         assert!(fix.contains("description"), "{fix}");
     }
     assert_eq!(runs(&world).await, 0);
+    world.close().await;
+}
+
+/// The synthetic help file of the imaginary module `Example.Inventory`,
+/// which the command pack's own tests read.
+fn powershell_help() -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("a2m-pack-command")
+            .join("tests")
+            .join("fixtures")
+            .join("sources")
+            .join("Example.Inventory-help.xml"),
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_nothing_of_it() {
+    let stand = Stand::start().unwrap();
+    let digest = a2m_core::Digest::of(&std::fs::read(stand.program()).unwrap());
+    let platform = a2m_provider::current_platform();
+    let quoted = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "''"));
+    let machine = Machine::new(
+        "inventory",
+        &[
+            ("'/opt/example/bin/example-cli'", &quoted(stand.program())),
+            ("'/var/lib/example/home'", &quoted(stand.home())),
+            (
+                "linux-x86_64: [\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"]",
+                &format!("{platform}: [\"sha256:{digest}\"]"),
+            ),
+        ],
+    )
+    .on_disk();
+    let sources = machine.project.path().join("sources");
+    std::fs::create_dir_all(&sources).unwrap();
+    std::fs::write(
+        sources.join("Example.Inventory-help.xml"),
+        powershell_help(),
+    )
+    .unwrap();
+    let handed = files("powershell_help", "sources/Example.Inventory-help.xml");
+    let world = machine.open().await;
+
+    let read = world
+        .ok(&["discover", "run", "example", "--files", &handed])
+        .await;
+    assert_eq!(read["by_kind"]["powershell_command"], 2, "{read}");
+    assert_eq!(read["by_kind"]["command_file"], 1, "{read}");
+
+    let scouted = world
+        .ok(&["scout", "run", "example", "--fresh", "--files", &handed])
+        .await;
+    assert_eq!(
+        found_by_kind(&scouted)["powershell_command"],
+        json!({"inferred": 2}),
+        "{scouted}"
+    );
+    let written = drafted(&scouted);
+    for file in [
+        "commands/get_exampleitem.yaml",
+        "commands/set_exampleitem.yaml",
+    ] {
+        assert!(
+            written.iter().any(|one| one == file),
+            "{file} in {written:?}"
+        );
+        let draft = std::fs::read_to_string(
+            machine
+                .project
+                .path()
+                .join("targets")
+                .join("example")
+                .join(file),
+        )
+        .unwrap();
+        // A fixed pair of Windows PowerShell in its one form, whose script
+        // only a person names.
+        assert!(draft.contains("\"-File\""), "{draft}");
+        assert!(draft.contains("script: {open_question:"), "{draft}");
+    }
+    // Only the program's declared help and version forms were started;
+    // nothing of the help file was, and nothing was written.
+    let starts = stand.control().invocations().unwrap();
+    for start in &starts {
+        assert!(
+            matches!(start.args[0].as_str(), "--version" | "--help" | "help"),
+            "{:?}",
+            start.args
+        );
+    }
+    assert!(stand.control().writes().unwrap().is_empty());
     world.close().await;
 }

@@ -20,9 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{
-    Digest, Failure, FailureClass, FailureCode, Hazard, Plan, Redact, Step, Value, Values,
-};
+use a2m_core::{Digest, Failure, Hazard, Plan, Redact, Step, Value, Values};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -117,19 +115,13 @@ struct LinkState {
     posture: Posture,
 }
 
-fn fail(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    codes::failure(class, code, message, next)
+fn fail(row: &a2m_core::CodeEntry, message: impl Into<String>, next: impl Into<String>) -> Failure {
+    codes::failure(row, message, next)
 }
 
 fn plan_unreadable(what: &str) -> StepFailure {
     StepFailure::not_sent(fail(
-        FailureClass::Input,
-        codes::PAYLOAD_UNREADABLE,
+        &codes::row::PAYLOAD_UNREADABLE,
         format!("The plan cannot be carried out on a device link: {what}."),
         "Compile the target again with the device pack that is enabled now.",
     ))
@@ -137,8 +129,7 @@ fn plan_unreadable(what: &str) -> StepFailure {
 
 fn link_lost_before() -> StepFailure {
     StepFailure::not_sent(fail(
-        FailureClass::Transient,
-        codes::CONNECTION_LOST,
+        &codes::row::CONNECTION_LOST,
         "The link to the device was lost earlier in this run, so nothing more was sent.",
         "Open the link again; the device is identified again before anything is read.",
     ))
@@ -146,8 +137,7 @@ fn link_lost_before() -> StepFailure {
 
 fn no_confirmation(what: &str) -> StepFailure {
     StepFailure::unknown(fail(
-        FailureClass::PossibleCommit,
-        codes::NO_CONFIRMATION,
+        &codes::row::NO_CONFIRMATION,
         format!(
             "A write frame was sent to the device and {what}, so the write may have been applied."
         ),
@@ -157,8 +147,7 @@ fn no_confirmation(what: &str) -> StepFailure {
 
 fn read_only() -> StepFailure {
     StepFailure::not_sent(fail(
-        FailureClass::Policy,
-        a2m_provider::codes::READ_ONLY_POSTURE,
+        &a2m_provider::codes::row::READ_ONLY_POSTURE,
         "A write frame was asked for where nothing may be written.",
         "Run the operation live, as a step that commits.",
     ))
@@ -173,8 +162,7 @@ const fn may_write(posture: Posture) -> bool {
 
 fn budget_exceeded(what: &str) -> StepFailure {
     StepFailure::not_sent(fail(
-        FailureClass::Policy,
-        codes::FRAME_BUDGET_EXCEEDED,
+        &codes::row::FRAME_BUDGET_EXCEEDED,
         format!("{what} Nothing was sent."),
         "Do the work in smaller runs, or raise the device pack's setting `max_frames_per_run`.",
     ))
@@ -320,8 +308,7 @@ impl LinkState {
         let (index, name, map) = self.map(step)?;
         if !self.identified.contains(&(index, name.to_owned())) {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::UnknownVariant,
-                codes::DEVICE_IDENTITY_MISMATCH,
+                &codes::row::DEVICE_IDENTITY_MISMATCH,
                 "The device on this link was not compared with the map, so nothing was sent.",
                 "Identify the device first: every binding of the device mode starts with an `open` step.",
             )));
@@ -342,8 +329,7 @@ impl LinkState {
         // not always without effect on a device.
         if self.posture == Posture::Discovery && *request != Request::Identify {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::Policy,
-                codes::DISCOVERY_IDENTIFIES_ONLY,
+                &codes::row::DISCOVERY_IDENTIFIES_ONLY,
                 "A frame other than identification was asked for during discovery, so nothing was sent.",
                 "Read a register through an operation, in a run that is not discovery.",
             )));
@@ -430,8 +416,7 @@ impl LinkState {
                     no_confirmation("the link failed while it was being sent")
                 } else {
                     StepFailure::unknown(fail(
-                        FailureClass::Transient,
-                        codes::CONNECTION_LOST,
+                        &codes::row::CONNECTION_LOST,
                         "The link to the device failed while a read request was being sent.",
                         "Open the link again and read again.",
                     ))
@@ -473,20 +458,17 @@ impl LinkState {
                         no_confirmation("the acknowledgement that came was damaged")
                     }
                     (false, LinkError::Closed) => StepFailure::unknown(fail(
-                        FailureClass::Transient,
-                        codes::CONNECTION_LOST,
+                        &codes::row::CONNECTION_LOST,
                         "The link to the device closed before the reply to a read came.",
                         "Open the link again and read again.",
                     )),
                     (false, LinkError::TimedOut) => StepFailure::unknown(fail(
-                        FailureClass::Transient,
-                        codes::TIMEOUT,
+                        &codes::row::TIMEOUT,
                         "The device did not reply to a read in the time its map allows.",
                         "Read again; if it keeps happening, check the link and the map's `pace`.",
                     )),
                     (false, LinkError::Corrupt) => StepFailure::unknown(fail(
-                        FailureClass::Transient,
-                        codes::FRAME_CORRUPT,
+                        &codes::row::FRAME_CORRUPT,
                         "The reply to a read was damaged or was not for the request.",
                         "Open the link again and read again.",
                     )),
@@ -513,20 +495,17 @@ impl LinkState {
 fn refused_read(refusal: Refusal) -> StepFailure {
     StepFailure::answered(match refusal {
         Refusal::Busy => fail(
-            FailureClass::Transient,
-            codes::DEVICE_BUSY,
+            &codes::row::DEVICE_BUSY,
             "The device answered that it is busy and did not carry out the read.",
             "Read again later.",
         ),
         Refusal::NoAnswerBehindGateway => fail(
-            FailureClass::Transient,
-            codes::TIMEOUT,
+            &codes::row::TIMEOUT,
             "A gateway answered that the device behind it did not respond.",
             "Check the unit address of the surface, then read again.",
         ),
         Refusal::Function | Refusal::Address | Refusal::Value | Refusal::Other(_) => fail(
-            FailureClass::Rejected,
-            codes::DEVICE_REFUSED,
+            &codes::row::DEVICE_REFUSED,
             "The device refused the read with an exception.",
             "Check the register's address and layout in the map against the device's documentation.",
         ),
@@ -539,14 +518,12 @@ fn refused_write(refusal: Refusal) -> StepFailure {
         // Busy says the request was not accepted. It is still never sent
         // again by itself: the step is not idempotent.
         Refusal::Busy => StepFailure::answered(fail(
-            FailureClass::Transient,
-            codes::DEVICE_BUSY,
+            &codes::row::DEVICE_BUSY,
             "The device answered that it is busy and did not carry out the write.",
             "Nothing was written and nothing is sent again by itself; run the operation again when the device is free.",
         )),
         Refusal::Function | Refusal::Address | Refusal::Value => StepFailure::answered(fail(
-            FailureClass::Rejected,
-            codes::DEVICE_REFUSED,
+            &codes::row::DEVICE_REFUSED,
             "The device refused the write with an exception: an address or a value it will not take. Nothing was written.",
             "Check the register's range and access in the map against the device's documentation.",
         )),
@@ -576,8 +553,7 @@ impl DeviceDriver {
             Some(Reply::Identity(found)) => Ok((found, capture)),
             Some(Reply::Refused(refusal)) => Err(refused_read(refusal)),
             _ => Err(StepFailure::answered(fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_REPLY,
+                &codes::row::UNEXPECTED_REPLY,
                 "The device answered the request to identify itself with a reply of no declared form.",
                 "Check that the surface names the protocol the device speaks.",
             ))),
@@ -615,8 +591,7 @@ impl DeviceDriver {
         let (found, capture) = self.identify(state, input, reply_within).await?;
         let mismatch = |what: &str| {
             StepFailure::answered(fail(
-                FailureClass::UnknownVariant,
-                codes::DEVICE_IDENTITY_MISMATCH,
+                &codes::row::DEVICE_IDENTITY_MISMATCH,
                 format!(
                     "The device on this link {what} the map `{}`, so nothing is read from it or written to it.",
                     key.1
@@ -650,8 +625,7 @@ impl DeviceDriver {
             && found.get("serial") != Some(declared)
         {
             return Err(StepFailure::answered(fail(
-                FailureClass::UnknownVariant,
-                codes::DEVICE_IDENTITY_MISMATCH,
+                &codes::row::DEVICE_IDENTITY_MISMATCH,
                 "The device on this link does not report the serial its surface declares for this environment: it is another unit, so nothing is read from it or written to it.",
                 "Check the surface's address in this environment. If the unit was replaced, prove the map against the new unit in a test environment and declare its serial under `serials:`.",
             )));
@@ -713,8 +687,7 @@ impl DeviceDriver {
             // built.
             Some(Hazard::Physical) => {
                 return Err(StepFailure::not_sent(fail(
-                    FailureClass::UnknownVariant,
-                    codes::PHYSICAL_NOT_BUILT,
+                    &codes::row::PHYSICAL_NOT_BUILT,
                     format!(
                         "The register `{register}` has the hazard `physical`, and a write that moves, heats, or opens something is not built. No frame was sent."
                     ),
@@ -725,8 +698,7 @@ impl DeviceDriver {
         }
         if state.serial.is_none() {
             return Err(StepFailure::not_sent(fail(
-                FailureClass::Policy,
-                codes::DEVICE_SERIAL_NOT_DECLARED,
+                &codes::row::DEVICE_SERIAL_NOT_DECLARED,
                 "The surface declares no serial for the device of this environment, so nothing is written to it. No frame was sent.",
                 "Declare the unit's serial for this environment under `serials:` on the surface, after proving the map against that unit.",
             )));
@@ -738,20 +710,17 @@ impl DeviceDriver {
             .map_err(|unwritable| {
                 StepFailure::not_sent(match unwritable {
                     Unwritable::WrongKind => fail(
-                        FailureClass::Input,
-                        codes::SCHEMA_INVALID,
+                        &codes::row::SCHEMA_INVALID,
                         format!("The value for the register `{register}` is absent or is not of the kind the register takes. No frame was sent."),
                         "Give a value of the register's field type.",
                     ),
                     Unwritable::OutOfRange => fail(
-                        FailureClass::Input,
-                        codes::VALUE_OUT_OF_RANGE,
+                        &codes::row::VALUE_OUT_OF_RANGE,
                         format!("The value for the register `{register}` is outside the safe range its map declares. No frame was sent."),
                         "Give a value inside the register's range.",
                     ),
                     Unwritable::NotRepresentable => fail(
-                        FailureClass::Input,
-                        codes::VALUE_OUT_OF_RANGE,
+                        &codes::row::VALUE_OUT_OF_RANGE,
                         format!("The value for the register `{register}` is not a whole number of the register's steps, or is more than it can hold. No frame was sent."),
                         "Give a value the register can hold exactly; nothing is rounded on the way to a device.",
                     ),
@@ -898,8 +867,7 @@ impl DeviceDriver {
         let capture = self.capture(&unread.sent, &unread.reply);
         let unexpected = || {
             StepFailure::answered(fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_REPLY,
+                &codes::row::UNEXPECTED_REPLY,
                 "The device answered a read with a reply of no form its map declares.",
                 "Check the register's layout in the map against the device's documentation.",
             ))
@@ -985,8 +953,7 @@ impl Driver for DeviceDriver {
             let surface = &cx.surface.surface;
             let not_declared = |what: &str| {
                 StepFailure::not_sent(fail(
-                    FailureClass::Policy,
-                    codes::SURFACE_NOT_DECLARED,
+                    &codes::row::SURFACE_NOT_DECLARED,
                     format!("The link was not opened: {what}."),
                     "Declare the device's link as a surface of the kind `device_link`, with its address in the run's environment.",
                 ))
@@ -1011,20 +978,17 @@ impl Driver for DeviceDriver {
                 .map_err(|error| {
                     StepFailure::not_sent(match error {
                         OpenError::Address => fail(
-                            FailureClass::Input,
-                            codes::SCHEMA_INVALID,
+                            &codes::row::SCHEMA_INVALID,
                             "The address of the device link is not of the form its protocol takes.",
                             "Write the address as a network address and a port, such as `192.0.2.7:502`.",
                         ),
                         OpenError::TimedOut => fail(
-                            FailureClass::Transient,
-                            codes::TIMEOUT,
+                            &codes::row::TIMEOUT,
                             "The device did not accept a link in time.",
                             "Check that the device is on and reachable, then try again.",
                         ),
                         OpenError::Refused => fail(
-                            FailureClass::Transient,
-                            codes::CONNECTION_LOST,
+                            &codes::row::CONNECTION_LOST,
                             "The device refused the link.",
                             "Check that the device is on and reachable, then try again.",
                         ),
@@ -1142,8 +1106,7 @@ mod tests {
     use std::time::Duration;
 
     use a2m_core::{
-        FailsAs, FailureClass, NoSecrets, PackPayload, PackRef, SectionIndex, Step, StepKind,
-        Values,
+        FailsAs, NoSecrets, PackPayload, PackRef, SectionIndex, Step, StepKind, Values,
     };
     use a2m_provider::{BoxFuture, Deadline, Driver, Posture, Prepared, StepInput};
     use tokio::time::Instant;
@@ -1229,10 +1192,7 @@ mod tests {
             }),
             args: Vec::new(),
             timeout_ms: 1000,
-            fails_as: FailsAs {
-                class: FailureClass::Transient,
-                code: codes::TIMEOUT,
-            },
+            fails_as: FailsAs::from(&codes::row::TIMEOUT),
             commits: false,
             lookup: false,
             idempotent: false,

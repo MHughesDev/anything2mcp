@@ -136,3 +136,47 @@ a2m_core::failure_codes! {
 /// Every failure code of a watch the ledger produces, with its one class:
 /// the last fourteen rows of the table.
 pub const WATCH_CODES: &[(a2m_core::FailureClass, &str)] = ALL.split_at(ALL.len() - 14).1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class. `ledger.rs`
+    /// rebuilds a stored failure with the class its row recorded.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" && name != "ledger.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = row.failure("A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
+    }
+}

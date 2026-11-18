@@ -25,9 +25,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use a2m_core::{
-    BindingStatus, Environment, EnvironmentKind, FailureClass, OperationPlan, Plan, Values,
-};
+use a2m_core::{BindingStatus, Environment, EnvironmentKind, OperationPlan, Plan, Values};
 use a2m_ledger::{Difference, DifferingOutput, ShadowOutcome};
 use a2m_provider::Posture;
 use tokio::time::Instant;
@@ -169,7 +167,7 @@ pub(crate) async fn beside(
                         // held is not used again.
                         run.poison_posture(SHADOW_POSTURE);
                         ShadowOutcome::NotCompared {
-                            class: FailureClass::Busy,
+                            class: codes::row::SHADOW_TIME_EXCEEDED.class,
                             code: codes::SHADOW_TIME_EXCEEDED,
                         }
                     }
@@ -227,8 +225,7 @@ async fn read(
     if run.loaded.plan.auth_of(binding.surface).is_some() && !run.holds_session_on(binding.surface)
     {
         return Err(codes::fail(
-            FailureClass::Busy,
-            codes::NO_BINDING,
+            &codes::row::NO_BINDING,
             format!(
                 "The binding in shadow through the mode `{}` reads through a surface whose session the call does not hold.",
                 binding.mode

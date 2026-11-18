@@ -229,6 +229,7 @@ dependencies = [
  "a2m-vault",
  "example-cli",
  "miniz_oxide",
+ "quick-xml",
  "regex",
  "rustix",
  "serde",

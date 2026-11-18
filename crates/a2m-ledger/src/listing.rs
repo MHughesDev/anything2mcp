@@ -6,8 +6,8 @@
 //! the store and guesses a key cannot confirm the guess.
 
 use a2m_core::{
-    Digest, DigestPurpose, Environment, Failure, FailureClass, OperationName, PrincipalId, RunId,
-    RunState, TargetName, Timestamp, WorkspaceId,
+    Digest, DigestPurpose, Environment, Failure, OperationName, PrincipalId, RunId, RunState,
+    TargetName, Timestamp, WorkspaceId,
 };
 
 use crate::codec::{moment, parse, parse_opt};
@@ -46,9 +46,7 @@ impl CallerKey {
             || text.len() > CALLER_KEY_LONGEST
             || !text.bytes().all(|byte| byte.is_ascii_graphic())
         {
-            return Err(Failure::new(
-                FailureClass::Input,
-                IDEMPOTENCY_KEY_INVALID,
+            return Err(crate::codes::row::IDEMPOTENCY_KEY_INVALID.failure(
                 format!(
                     "An idempotency key is 1 to {CALLER_KEY_LONGEST} printable characters, with no space."
                 ),

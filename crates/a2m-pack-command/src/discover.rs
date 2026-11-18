@@ -27,9 +27,14 @@ use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::codes::{self, DISCOVERER, PACK, SPAWN, SURFACE_KIND, TIMEOUT};
-use crate::metadata::{COMPLETIONS, FileRead, Handed, MANUAL, OptionFound, Takes};
+use crate::maml::HelpRead;
+use crate::metadata::{
+    COMPLETIONS, FileRead, Handed, MANUAL, MODULE_MANIFEST, OptionFound, POWERSHELL_HELP, Takes,
+};
 use crate::model::{Probe, StepPayload};
-use crate::{fish, manual};
+use crate::powershell::PowerShellCommandFound;
+use crate::psd1::ManifestRead;
+use crate::{fish, maml, manual, psd1};
 
 /// How many `commands/` files of one target are asked for their forms.
 const MOST_PROGRAMS: u32 = 16;
@@ -106,8 +111,19 @@ pub struct CommandFileFound {
     pub unread: BTreeMap<String, u64>,
     /// The options it states of the program as a whole.
     pub program_options: Vec<ProgramOption>,
-    /// The words of commands it speaks of that the help does not list.
+    /// The words of commands it speaks of that the help does not list. Of
+    /// a PowerShell help file, the commands it describes that a module
+    /// manifest handed with it does not export; of a manifest, the commands
+    /// it exports that a help file handed with it does not describe.
     pub unlisted: Vec<String>,
+    /// Of a module manifest, the commands it exports by name. Left out of
+    /// the text when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exported: Vec<String>,
+    /// Of a module manifest, the module's version. Left out of the text
+    /// when the manifest does not state it as data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl CommandFound {
@@ -351,6 +367,15 @@ fn program_name(address: &str) -> String {
     }
 }
 
+fn powershell_unreadable(name: &str, why: &str) -> Failure {
+    codes::failure(
+        FailureClass::Input,
+        codes::POWERSHELL_FILE_UNREADABLE,
+        format!("The file handed to the scout as `{name}` cannot be read: {why}."),
+        "Hand the module's XML help file, `<module>-help.xml`, or its manifest, `<module>.psd1`, as it ships; a help file that declares a document type is never read.",
+    )
+}
+
 fn file_unreadable(name: &str, why: &str) -> Failure {
     codes::failure(
         FailureClass::Input,
@@ -382,14 +407,49 @@ fn payload<T: Serialize>(found: &T) -> Result<String, Failure> {
         .map(|payload| String::from_utf8_lossy(payload.as_bytes()).into_owned())
 }
 
+/// Every file the scout was handed, read.
+struct HandedFiles {
+    /// The completion file and the manual page.
+    lines: Vec<(Handed, Digest)>,
+    /// The PowerShell help file.
+    help: Option<(HelpRead, Digest)>,
+    /// The module manifest.
+    manifest: Option<(ManifestRead, Digest)>,
+}
+
 /// Reads each file the scout was handed under a name this discoverer
 /// declares, before any program is started: a file that cannot be read
 /// stops the discovery with nothing run. The text is redacted whole before
 /// it is read.
-fn handed(scope: &DiscoveryScope<'_>) -> Result<Vec<(Handed, Digest)>, Failure> {
+fn handed(scope: &DiscoveryScope<'_>) -> Result<HandedFiles, Failure> {
     let program = program_name(&scope.surface.surface.address);
     let limit = usize::try_from(scope.bounds.bytes).unwrap_or(usize::MAX);
     let mut files = Vec::new();
+    // The PowerShell files are data: neither is run, and the module they
+    // describe is never imported (decision 0290).
+    let powershell = |name: &str| -> Result<Option<(String, Digest)>, Failure> {
+        let Some(path) = scope.paths.get(name) else {
+            return Ok(None);
+        };
+        let bytes = path.read(scope.bounds.bytes)?;
+        let text = String::from_utf8(bytes.clone())
+            .map_err(|_| powershell_unreadable(name, "it is not UTF-8 text"))?;
+        Ok(Some((scope.redact.redact(&text), Digest::of(&bytes))))
+    };
+    let help = powershell(POWERSHELL_HELP)?
+        .map(|(text, digest)| {
+            maml::read(&text, scope.redact)
+                .map(|read| (read, digest))
+                .map_err(|why| powershell_unreadable(POWERSHELL_HELP, why))
+        })
+        .transpose()?;
+    let manifest = powershell(MODULE_MANIFEST)?
+        .map(|(text, digest)| {
+            psd1::read(&text)
+                .map(|read| (read, digest))
+                .map_err(|why| powershell_unreadable(MODULE_MANIFEST, why))
+        })
+        .transpose()?;
     for name in [COMPLETIONS, MANUAL] {
         let Some(path) = scope.paths.get(name) else {
             continue;
@@ -409,7 +469,11 @@ fn handed(scope: &DiscoveryScope<'_>) -> Result<Vec<(Handed, Digest)>, Failure> 
         };
         files.push((Handed { name, read }, Digest::of(&bytes)));
     }
-    Ok(files)
+    Ok(HandedFiles {
+        lines: files,
+        help,
+        manifest,
+    })
 }
 
 impl HelpDiscoverer {
@@ -437,6 +501,8 @@ impl HelpDiscoverer {
                 })
                 .collect(),
             unlisted,
+            exported: Vec::new(),
+            version: None,
         };
         let format = if file.name == MANUAL {
             "manual_page"
@@ -472,6 +538,140 @@ impl HelpDiscoverer {
             );
         }
         finding.build().map_err(finding_failed)
+    }
+
+    /// The finding about a PowerShell help file or a module manifest.
+    fn powershell_file_finding(
+        &self,
+        found: &CommandFileFound,
+        format: &str,
+        digest: Digest,
+        unread: u64,
+    ) -> Result<Finding, Failure> {
+        let mut finding = Finding::about(
+            Subject::File {
+                digest,
+                format: format.to_owned(),
+                part: None,
+            },
+            codes::file_finding_kind(),
+            payload(found)?,
+            Source::Artifact,
+            produced_by(),
+            self.clock.now(),
+        )
+        .level(EvidenceLevel::Inferred)
+        .coverage(if unread == 0 {
+            Coverage::Complete
+        } else {
+            Coverage::Partial
+        })
+        .limitation(
+            LimitationCode::NotExercised,
+            "The file was read as data and never run, and the module it describes was never imported. Nothing it says was tried, and a part it holds in a form the reader does not know is counted as unread, not interpreted.",
+        );
+        if found.unread.contains_key("bound") {
+            finding = finding.limitation(
+                LimitationCode::Truncated,
+                "The file holds more than the reader takes from one file.",
+            );
+        }
+        finding.build().map_err(finding_failed)
+    }
+
+    /// The findings about the PowerShell files handed: one for each file,
+    /// then one for each command the help file describes, derived from the
+    /// help file's.
+    fn powershell_findings(
+        &self,
+        help: Option<(HelpRead, Digest)>,
+        manifest: Option<(ManifestRead, Digest)>,
+        report: &mut DiscoveryReport,
+        out: &mut dyn FindingSink,
+    ) -> Result<(), Failure> {
+        let described: Vec<String> = help
+            .iter()
+            .flat_map(|(read, _)| read.commands.iter().map(|command| command.name.clone()))
+            .collect();
+        let exported: Option<&Vec<String>> = manifest.as_ref().map(|(read, _)| &read.exported);
+        let counts = |unread: &BTreeMap<&'static str, u64>| -> BTreeMap<String, u64> {
+            unread
+                .iter()
+                .map(|(why, count)| ((*why).to_owned(), *count))
+                .collect()
+        };
+        if let Some((read, digest)) = &manifest {
+            let unread: u64 = read.unread.values().sum();
+            report.dropped += unread;
+            let found = CommandFileFound {
+                name: MODULE_MANIFEST.to_owned(),
+                form: "psd1".to_owned(),
+                read: read.read,
+                unread: counts(&read.unread),
+                program_options: Vec::new(),
+                unlisted: if help.is_some() {
+                    read.exported
+                        .iter()
+                        .filter(|name| !described.iter().any(|d| d.eq_ignore_ascii_case(name)))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                exported: read.exported.clone(),
+                version: read.version.clone(),
+            };
+            out.found(self.powershell_file_finding(&found, "module_manifest", *digest, unread)?)?;
+        }
+        let Some((read, digest)) = help else {
+            return Ok(());
+        };
+        let unread: u64 = read.unread.values().sum();
+        report.dropped += unread;
+        let found = CommandFileFound {
+            name: POWERSHELL_HELP.to_owned(),
+            form: "maml".to_owned(),
+            read: read.read,
+            unread: counts(&read.unread),
+            program_options: Vec::new(),
+            unlisted: exported.map_or_else(Vec::new, |exported| {
+                described
+                    .iter()
+                    .filter(|name| !exported.iter().any(|e| e.eq_ignore_ascii_case(name)))
+                    .cloned()
+                    .collect()
+            }),
+            exported: Vec::new(),
+            version: None,
+        };
+        let parent = self.powershell_file_finding(&found, "powershell_help", digest, unread)?;
+        out.found(parent.clone())?;
+        for command in read.commands {
+            let part = command.name.clone();
+            let found = PowerShellCommandFound::from(command);
+            let finding = Finding::about(
+                Subject::File {
+                    digest,
+                    format: "powershell_help".to_owned(),
+                    part: Some(part),
+                },
+                codes::powershell_finding_kind(),
+                payload(&found)?,
+                Source::Artifact,
+                produced_by(),
+                self.clock.now(),
+            )
+            .level(EvidenceLevel::Inferred)
+            .limitation(
+                LimitationCode::NotExercised,
+                "A PowerShell help file handed to the scout describes the command. It was read as data: the command was never run and its module never imported, and whether it reads or writes is not known until a person declares it.",
+            )
+            .derived_from(&parent)
+            .build()
+            .map_err(finding_failed)?;
+            out.found(finding)?;
+        }
+        Ok(())
     }
 
     /// The finding about one listed command. With options a handed file
@@ -536,7 +736,11 @@ impl HelpDiscoverer {
         scope: &DiscoveryScope<'_>,
         out: &mut dyn FindingSink,
     ) -> Result<DiscoveryReport, Failure> {
-        let files = handed(scope)?;
+        let HandedFiles {
+            lines: files,
+            help,
+            manifest,
+        } = handed(scope)?;
         let mut report = DiscoveryReport::default();
         let mut seen = 0_usize;
         let mut commands: Vec<(CommandFound, Digest)> = Vec::new();
@@ -638,6 +842,7 @@ impl HelpDiscoverer {
                 crate::metadata::options_of(&found.name, found.usage.as_deref(), &files_read);
             out.found(self.command_finding(&found, digest, &parents)?)?;
         }
+        self.powershell_findings(help, manifest, &mut report, out)?;
         Ok(report)
     }
 }
@@ -726,10 +931,27 @@ impl Describer for HelpDescriber {
                 files.len()
             ));
         }
+        // What a PowerShell help file described: commands of PowerShell,
+        // never run, and no module imported.
+        let powershell = findings
+            .iter()
+            .filter(|finding| *finding.kind() == codes::powershell_finding_kind())
+            .filter_map(|finding| PowerShellCommandFound::read(finding).ok())
+            .collect::<Vec<_>>();
+        for found in &powershell {
+            untrusted.push(self.redact.redact(&found.name));
+        }
+        if !powershell.is_empty() {
+            text.push_str(&format!(
+                " A PowerShell help file describes {} commands; none was run and no module was imported, and each runs only as a script the target keeps, with Windows PowerShell.",
+                powershell.len()
+            ));
+        }
         Description {
             text,
             data: Values::new()
                 .with("commands", count(read.len()))
+                .with("powershell_commands", count(powershell.len()))
                 .with("files", count(files.len()))
                 .with("described", count(described))
                 .with("unread", i64::try_from(unread).unwrap_or(i64::MAX)),

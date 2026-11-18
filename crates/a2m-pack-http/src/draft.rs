@@ -13,7 +13,7 @@
 //! question, and a nested value is left out, since an output is one value
 //! or one list of values.
 
-use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, OperationName};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::json::Json;
@@ -119,9 +119,7 @@ fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) 
 }
 
 fn unreadable() -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_core::FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "A `described_operation` finding is not in the form the HTTP pack writes.",
         "Import the description again with the version of the HTTP pack that is enabled.",
     )

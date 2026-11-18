@@ -24,7 +24,7 @@
 //! - `shadow_time_exceeded` does: a later call runs the shadow binding
 //!   again, and it may end in time.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{CodeEntry, Failure};
 
 a2m_core::failure_codes! {
     PLAN_UNVERIFIED = Policy, "plan_unverified",
@@ -149,20 +149,63 @@ a2m_core::failure_codes! {
         passes by_itself;
 }
 
-pub(crate) fn fail(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next_step: &str,
-) -> Failure {
-    Failure::new(class, code, message.into(), next_step.to_owned())
+/// A failure of the code of `row`, in the class its table gives it.
+pub(crate) fn fail(row: &CodeEntry, message: impl Into<String>, next_step: &str) -> Failure {
+    row.failure(message, next_step)
 }
 
 pub(crate) fn job_invalid(what: impl Into<String>) -> Failure {
     fail(
-        FailureClass::Input,
-        JOB_INVALID,
+        &row::JOB_INVALID,
         what,
         "Submit the job again for a tool, environment, and surface the published plan holds.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class, or from what
+    /// a step's plan says it fails as. `tool.rs` remakes a recorded
+    /// failure, or one it adds to, in the class it already has.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs")
+                    && name != "tests.rs"
+                    && name != "tool.rs"
+                {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = fail(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
+    }
 }

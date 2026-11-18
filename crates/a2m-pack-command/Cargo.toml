@@ -16,6 +16,9 @@ a2m-telemetry = { path = "../a2m-telemetry" }
 # Inflates a manual page handed compressed with gzip; already in the tree
 # for a2m-sources.
 miniz_oxide.workspace = true
+# Reads a PowerShell XML help file; already in the workspace for
+# a2m-pack-http (decision 0290).
+quick-xml.workspace = true
 regex.workspace = true
 serde.workspace = true
 sha2.workspace = true

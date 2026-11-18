@@ -23,11 +23,14 @@ mod json;
 mod kind;
 mod lint;
 mod lower;
+mod maml;
 mod manual;
 mod metadata;
 mod model;
 mod output;
 mod pattern;
+mod powershell;
+mod psd1;
 mod safety;
 
 use std::sync::Arc;
@@ -94,7 +97,8 @@ impl Pack for CommandPack {
                 .lowering(Arc::new(lower::CliLowering::new()))
                 .lint_rule(Arc::new(lint::ShellProgram))
                 .lint_rule(Arc::new(lint::WriteExitDeclared))
-                .drafting_rule(Arc::new(draft::CommandFromFinding)),
+                .drafting_rule(Arc::new(draft::CommandFromFinding))
+                .drafting_rule(Arc::new(powershell::PowerShellFromFinding)),
         )?;
         to.discoverer(
             Arc::new(discover::HelpDiscoverer {

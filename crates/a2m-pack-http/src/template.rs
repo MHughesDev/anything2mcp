@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use a2m_core::{Failure, FailureClass, Value, Values};
+use a2m_core::{Failure, Value, Values};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
@@ -447,8 +447,7 @@ fn scalar_text(value: &Value) -> Option<String> {
 
 fn refused(position: &str, why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::PATH_VALUE_REFUSED,
+        &codes::row::PATH_VALUE_REFUSED,
         format!("The value for {position} was refused: {why}."),
         "Give a value that is one plain name or number, as the system shows it.",
     )
@@ -494,8 +493,7 @@ pub(crate) fn build(
 ) -> Result<Built, Failure> {
     let unusable = |why: String| {
         codes::failure(
-            FailureClass::Input,
-            codes::STEP_NOT_USABLE,
+            &codes::row::STEP_NOT_USABLE,
             format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )

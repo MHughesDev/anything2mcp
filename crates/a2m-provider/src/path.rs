@@ -98,8 +98,8 @@ pub struct Roots {
 }
 
 fn refuse(relative: &str, why: &str) -> Failure {
-    codes::input(
-        codes::PATH_NOT_ALLOWED,
+    codes::failure(
+        &codes::row::PATH_NOT_ALLOWED,
         format!("The path `{}` is refused: {why}.", shown(relative)),
         "Name a file inside the root by a relative path with forward slashes and no `..`.",
     )
@@ -275,8 +275,8 @@ impl Roots {
     /// exist, or is not a folder, or the name is taken.
     pub fn add(&mut self, name: RootName, folder: &Path, access: Access) -> Result<(), Failure> {
         let unusable = |why: &str| {
-            codes::input(
-                codes::PATH_NOT_ALLOWED,
+            codes::failure(
+                &codes::row::PATH_NOT_ALLOWED,
                 format!("The root `{name}` cannot be used: {why}."),
                 "Name an existing folder by its absolute path in the settings.",
             )
@@ -314,8 +314,8 @@ impl Roots {
     /// `input`/`path_not_allowed` when the name is taken.
     pub fn add_project(&mut self, name: RootName, access: Access) -> Result<(), Failure> {
         if self.roots.contains_key(&name) {
-            return Err(codes::input(
-                codes::PATH_NOT_ALLOWED,
+            return Err(codes::failure(
+                &codes::row::PATH_NOT_ALLOWED,
                 format!("The root `{name}` cannot be used: a root of that name exists."),
                 "Name an existing folder by its absolute path in the settings.",
             ));
@@ -373,8 +373,8 @@ impl Roots {
         for name in write {
             if let Some(root) = self.roots.get(name) {
                 if !root.write {
-                    return Err(codes::policy(
-                        codes::EFFECT_NOT_DECLARED,
+                    return Err(codes::failure(
+                        &codes::row::EFFECT_NOT_DECLARED,
                         format!(
                             "The root `{name}` is read only here and a provider declares it writes there."
                         ),
@@ -389,15 +389,15 @@ impl Roots {
 
     fn root(&self, name: &RootName, access: Access) -> Result<&Root, Failure> {
         let root = self.roots.get(name).ok_or_else(|| {
-            codes::policy(
-                codes::EFFECT_NOT_DECLARED,
+            codes::failure(
+                &codes::row::EFFECT_NOT_DECLARED,
                 format!("The root `{name}` is not one this caller may use."),
                 "Declare the root in the provider's manifest, and name its folder in the settings.",
             )
         })?;
         if access == Access::Write && !root.write {
-            return Err(codes::policy(
-                codes::EFFECT_NOT_DECLARED,
+            return Err(codes::failure(
+                &codes::row::EFFECT_NOT_DECLARED,
                 format!("The root `{name}` may be read and not written."),
                 "Declare the root under `write_roots` in the provider's manifest.",
             ));
@@ -486,8 +486,8 @@ impl Roots {
 /// none, and is checked with the run's paths.
 fn bound<'a>(name: &RootName, root: &'a Root) -> Result<&'a Path, Failure> {
     root.path.as_deref().ok_or_else(|| {
-        codes::input(
-            codes::PROJECT_FOLDER_MISSING,
+        codes::failure(
+            &codes::row::PROJECT_FOLDER_MISSING,
             format!("The root `{name}` stands for the project folder of each request, and none was given here."),
             "Check the path with the run's checked paths, which hold the request's project folder.",
         )
@@ -645,8 +645,8 @@ impl CheckedPath {
     }
 
     fn unavailable(&self, what: &str) -> Failure {
-        codes::input(
-            codes::FILE_UNAVAILABLE,
+        codes::failure(
+            &codes::row::FILE_UNAVAILABLE,
             format!("The file `{self}` {what}."),
             "Check that the file exists and that the engine may use it.",
         )
@@ -671,8 +671,8 @@ impl CheckedPath {
         if self.access == Access::Write {
             Ok(())
         } else {
-            Err(codes::policy(
-                codes::EFFECT_NOT_DECLARED,
+            Err(codes::failure(
+                &codes::row::EFFECT_NOT_DECLARED,
                 format!("The path `{self}` was checked for reading and not for writing."),
                 "Check the path with write access, in a root the manifest declares it writes.",
             ))
@@ -705,8 +705,8 @@ impl CheckedPath {
 
     /// The path is no longer inside its root.
     fn outside(&self) -> Failure {
-        codes::input(
-            codes::PATH_NOT_ALLOWED,
+        codes::failure(
+            &codes::row::PATH_NOT_ALLOWED,
             format!("The path `{self}` no longer resolves inside its root."),
             "Remove the link that was placed in the folder, then try again.",
         )
@@ -714,8 +714,8 @@ impl CheckedPath {
 
     /// A link stands where a file is to be written or removed.
     fn through_a_link(&self) -> Failure {
-        codes::input(
-            codes::PATH_NOT_ALLOWED,
+        codes::failure(
+            &codes::row::PATH_NOT_ALLOWED,
             format!(
                 "The path `{self}` is a link, and a file is never written or removed through a link."
             ),
@@ -1007,14 +1007,14 @@ impl CheckedPath {
         );
         let _ = raw;
         if locked {
-            codes::busy(
-                codes::PATH_LOCKED,
+            codes::failure(
+                &codes::row::PATH_LOCKED,
                 format!("The file `{self}` {doing}: another program holds it."),
                 "Close the program that holds the file, then call again.",
             )
         } else if full {
-            codes::busy(
-                codes::DISK_FULL,
+            codes::failure(
+                &codes::row::DISK_FULL,
                 format!("The file `{self}` {doing}: the disk is full."),
                 "Free space on the disk, then call again.",
             )
@@ -1022,14 +1022,14 @@ impl CheckedPath {
             error.kind(),
             ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
         ) {
-            codes::input(
-                codes::PATH_DENIED,
+            codes::failure(
+                &codes::row::PATH_DENIED,
                 format!("The file `{self}` {doing}: the engine's user may not write it."),
                 "Let the engine's user write the file and its folder, or name another file.",
             )
         } else if error.kind() == ErrorKind::NotFound {
-            codes::input(
-                codes::PATH_MISSING,
+            codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The file `{self}` {doing}: it, or its folder, is not there."),
                 "Check that the file and its folder exist.",
             )
@@ -1055,8 +1055,8 @@ impl CheckedPath {
         self.writable()?;
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
-            codes::input(
-                codes::PATH_MISSING,
+            codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The file `{self}` cannot be saved: its folder is not there."),
                 "Check that the file's folder exists.",
             )
@@ -1103,8 +1103,8 @@ impl CheckedPath {
     pub fn flush_folder(&self) -> Result<(), Failure> {
         let (folder, _) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
-            codes::input(
-                codes::PATH_MISSING,
+            codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The folder of `{self}` is not there."),
                 "Check that the file's folder exists.",
             )
@@ -1127,8 +1127,8 @@ impl CheckedPath {
     pub fn identity(&self) -> Result<FileIdentity, Failure> {
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
-            codes::input(
-                codes::PATH_MISSING,
+            codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The file `{self}` is not there."),
                 "Check that the file exists.",
             )
@@ -1160,8 +1160,8 @@ impl CheckedPath {
                 path: self.clone(),
                 folder,
             }),
-            Err(place::Unreached::Absent) => Err(codes::input(
-                codes::PATH_MISSING,
+            Err(place::Unreached::Absent) => Err(codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The folder `{self}` is not there."),
                 "Check that the folder exists.",
             )),
@@ -1184,8 +1184,8 @@ impl CheckedPath {
         self.writable()?;
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
-            codes::input(
-                codes::PATH_MISSING,
+            codes::failure(
+                &codes::row::PATH_MISSING,
                 format!("The file `{self}` is not there."),
                 "Check that the file exists.",
             )
@@ -1193,8 +1193,8 @@ impl CheckedPath {
         match folder.kind(name) {
             Ok(EntryKind::File) => {}
             Ok(EntryKind::Absent) => {
-                return Err(codes::input(
-                    codes::PATH_MISSING,
+                return Err(codes::failure(
+                    &codes::row::PATH_MISSING,
                     format!("The file `{self}` is not there."),
                     "Check that the file exists.",
                 ));
@@ -1294,8 +1294,8 @@ impl FileIdentity {
         place::handle_identity(file)
             .map(|(device, file)| Self { device, file })
             .map_err(|_| {
-                codes::input(
-                    codes::FILE_UNAVAILABLE,
+                codes::failure(
+                    &codes::row::FILE_UNAVAILABLE,
                     "An open file's identity could not be read.",
                     "Try again; if it persists, check the file system.",
                 )
@@ -1724,8 +1724,8 @@ impl CheckedPaths {
     /// folder the engine was started in.
     pub fn project_folder(&self) -> Result<&CheckedPath, Failure> {
         self.project.as_ref().ok_or_else(|| {
-            codes::input(
-                codes::PROJECT_FOLDER_MISSING,
+            codes::failure(
+                &codes::row::PROJECT_FOLDER_MISSING,
                 "The run names a file of the project, and the call that started it came with no project folder.",
                 "Call the tool from inside the project, through a door that states its folder.",
             )

@@ -40,7 +40,7 @@
 //! version reads none exactly), for a nested value, or for a value some
 //! answers left out; an example; a test.
 
-use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, OperationName, Subject};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName, Subject};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 use serde_json::Value as Json;
 
@@ -102,9 +102,7 @@ fn not_reproduced(found: &Json) -> Option<(Vec<String>, bool, Vec<String>)> {
 }
 
 fn unreadable() -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_core::FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "An `exchange` finding is not in the form the web pack's discoverers write.",
         "Capture the exchanges again with the version of the web pack that is enabled.",
     )

@@ -32,8 +32,6 @@ use crate::failure;
 use crate::ledger::{EventKind, Fence};
 use crate::tx::{Row, SqlValue, Tx};
 
-pub use crate::codes::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
-
 /// How one output of the shadow binding differed from the verified one's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Difference {
@@ -421,18 +419,14 @@ impl<'a> Tx<'a> {
 }
 
 fn not_counted(what: &str) -> Failure {
-    Failure::new(
-        FailureClass::Policy,
-        SHADOW_NOT_COUNTED,
+    crate::codes::row::SHADOW_NOT_COUNTED.failure(
         format!("The shadow comparison is not counted: {what}."),
         "Nothing to do; a shadow is counted only beside a live read under way.",
     )
 }
 
 fn write_not_built() -> Failure {
-    Failure::new(
-        FailureClass::Busy,
-        SHADOW_WRITE_NOT_BUILT,
+    crate::codes::row::SHADOW_WRITE_NOT_BUILT.failure(
         "The shadow of a binding of an operation that writes is not built.",
         "Keep the operation on its verified binding; a binding that writes is not promoted through shadow yet.",
     )
@@ -944,9 +938,7 @@ impl Shadows<'_, '_> {
                 through_seq,
             } => (evidence, threshold, through_seq),
             Promotable::No(why) => {
-                return Err(Failure::new(
-                    FailureClass::Policy,
-                    SHADOW_NOT_PROMOTABLE,
+                return Err(crate::codes::row::SHADOW_NOT_PROMOTABLE.failure(
                     why.sentence(),
                     "See `anything2mcp shadow report` for how the binding compared, and promote it when it has earned it.",
                 ));

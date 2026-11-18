@@ -188,8 +188,7 @@ fn status_qualifies(status: BindingStatus, posture: Posture) -> bool {
 /// a session, an edge block, or drift.
 fn no_binding(why: String) -> Failure {
     codes::fail(
-        FailureClass::Busy,
-        codes::NO_BINDING,
+        &codes::row::NO_BINDING,
         why,
         "Check the binding's status and its provider with `anything2mcp engine status`.",
     )
@@ -323,8 +322,7 @@ impl<'a> Run<'a> {
             .is_some_and(|limit| self.engine.deps.clock.elapsed() >= limit)
         {
             return Err(Stop::Fail(codes::fail(
-                FailureClass::Busy,
-                codes::RUN_TIME_EXCEEDED,
+                &codes::row::RUN_TIME_EXCEEDED,
                 "The run passed the longest time its pipeline allows.",
                 "Resume the run; what it verified stays verified.",
             )));
@@ -434,8 +432,7 @@ impl<'a> Run<'a> {
         if qualified.is_empty() {
             return Err(best.unwrap_or_else(|| {
                 codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_BINDING,
+                    &codes::row::NO_BINDING,
                     format!(
                         "The operation `{}` has no binding that may act.",
                         operation.name
@@ -493,16 +490,14 @@ impl<'a> Run<'a> {
             .any(|(surface, state)| surface == surface_name && !session_usable(*state))
         {
             return Ok(Err(codes::fail(
-                FailureClass::SessionExpired,
-                codes::NEEDS_LOGIN,
+                &codes::row::NEEDS_LOGIN,
                 format!("The session of the surface `{surface_name}` has ended."),
                 "Sign in again with `anything2mcp session login`, then resume the run.",
             )));
         }
         if conditions.edge_blocked.contains(surface_name) {
             return Ok(Err(codes::fail(
-                FailureClass::EdgeBlocked,
-                codes::EDGE_BLOCKED,
+                &codes::row::EDGE_BLOCKED,
                 format!("The surface `{surface_name}` is blocked at the edge."),
                 "Wait for the block to end; the engine does not go around it.",
             )));
@@ -513,8 +508,7 @@ impl<'a> Run<'a> {
             .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
         {
             return Ok(Err(codes::fail(
-                FailureClass::Drift,
-                codes::BINDING_DRIFTED,
+                &codes::row::BINDING_DRIFTED,
                 format!(
                     "The binding of `{}` through the mode `{}` has drifted.",
                     operation.name, binding.mode
@@ -711,8 +705,7 @@ impl<'a> Run<'a> {
             Ok(None) => return Err(panicked(mode, "preparing")),
             Err(_) => {
                 return Err(codes::fail(
-                    FailureClass::Transient,
-                    codes::PREPARE_TIMED_OUT,
+                    &codes::row::PREPARE_TIMED_OUT,
                     format!(
                         "The driver of the mode `{}` was not ready within its time limit.",
                         mode
@@ -803,8 +796,7 @@ impl<'a> Run<'a> {
         if self.shadow_reading {
             if !self.control.shadow_rate(&surface.name, wanted).await? {
                 return Err(codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_RATE_BUDGET,
+                    &codes::row::NO_RATE_BUDGET,
                     format!(
                         "A binding in shadow was not given its requests on the surface `{}` without taking what callers' own reads need.",
                         surface.name
@@ -819,8 +811,7 @@ impl<'a> Run<'a> {
             let granted = self.control.rate(&surface.name, wanted).await?;
             if granted == 0 {
                 return Err(codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_RATE_BUDGET,
+                    &codes::row::NO_RATE_BUDGET,
                     format!(
                         "No rate budget was granted for the surface `{}`.",
                         surface.name
@@ -917,8 +908,7 @@ impl<'a> Run<'a> {
                 // to the system it would be looked up, or written, as if
                 // it were that value.
                 return Err(StepFailure::not_sent(codes::fail(
-                    FailureClass::UnknownVariant,
-                    codes::ARGUMENT_MASKED,
+                    &codes::row::ARGUMENT_MASKED,
                     format!(
                         "An argument of a `{}` step holds the mask of a value the redactor removed, and a mask is never sent to the system.",
                         cx.step.kind
@@ -968,8 +958,7 @@ impl<'a> Run<'a> {
                         // panic: the record is in doubt.
                         held.poisoned = true;
                         Err(StepFailure::unknown(codes::fail(
-                            FailureClass::PossibleCommit,
-                            codes::NO_CONFIRMATION,
+                            &codes::row::NO_CONFIRMATION,
                             format!(
                                 "The driver of the mode `{}` panicked in a `{}` step that commits.",
                                 held.mode, cx.step.kind
@@ -998,9 +987,7 @@ impl<'a> Run<'a> {
                     }
                     Err(_) => {
                         held.poisoned = true;
-                        Err(StepFailure::unknown(Failure::new(
-                            cx.step.fails_as.class,
-                            cx.step.fails_as.code.clone(),
+                        Err(StepFailure::unknown(cx.step.fails_as.failure(
                             format!(
                                 "A `{}` step did not end within its time limit.",
                                 cx.step.kind
@@ -1188,8 +1175,7 @@ impl<'a> Run<'a> {
         for (position, step) in steps.iter().enumerate() {
             if step.commits {
                 return Err(StepFailure::not_sent(codes::fail(
-                    FailureClass::Policy,
-                    codes::SANDBOX_READ_ONLY,
+                    &codes::row::SANDBOX_READ_ONLY,
                     format!(
                         "A `{}` step that commits stands where only reading is allowed.",
                         step.kind
@@ -1264,8 +1250,7 @@ impl<'a> Run<'a> {
         match &self.job.conditions.health {
             KernelHealth::Ok => Ok(()),
             KernelHealth::Degraded(cause) => Err(codes::fail(
-                FailureClass::Busy,
-                codes::ENGINE_DEGRADED,
+                &codes::row::ENGINE_DEGRADED,
                 format!("The engine takes reads only for now ({cause})."),
                 "See `anything2mcp engine status`, and call the tool again when it is ready.",
             )),
@@ -1311,8 +1296,7 @@ pub(crate) fn masked(value: &Value) -> bool {
 /// panicked.
 fn panicked(mode: &Mode, doing: &str) -> Failure {
     codes::fail(
-        FailureClass::UnknownVariant,
-        codes::DRIVER_PANICKED,
+        &codes::row::DRIVER_PANICKED,
         format!("The driver of the mode `{mode}` panicked in `{doing}`."),
         "Report this to the provider's author; the engine went on without the step.",
     )

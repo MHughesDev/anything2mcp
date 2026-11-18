@@ -11,9 +11,8 @@
 //! `extract` of the save's own answer.
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
-    WriteEvidence,
+    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
@@ -413,10 +412,7 @@ impl<'a> Lower<'a, '_> {
         let mut step = self.step(
             REQUEST,
             found,
-            FailsAs {
-                class: FailureClass::UnknownVariant,
-                code: codes::UNEXPECTED_STATUS,
-            },
+            FailsAs::from(&codes::row::UNEXPECTED_STATUS),
         );
         step.args = args;
         step.payload = self.encoded(&payload, found.at);
@@ -471,10 +467,7 @@ impl<'a> Lower<'a, '_> {
         self.step(
             VALIDATE,
             found,
-            FailsAs {
-                class: FailureClass::Drift,
-                code: codes::RESPONSE_SCHEMA_MISMATCH,
-            },
+            FailsAs::from(&codes::row::RESPONSE_SCHEMA_MISMATCH),
         )
     }
 
@@ -579,10 +572,7 @@ impl<'a> Lower<'a, '_> {
         let mut step = self.step(
             EXTRACT,
             found,
-            FailsAs {
-                class: FailureClass::Drift,
-                code: codes::RESPONSE_SCHEMA_MISMATCH,
-            },
+            FailsAs::from(&codes::row::RESPONSE_SCHEMA_MISMATCH),
         );
         step.payload = self.encoded(&payload, found.at);
         step

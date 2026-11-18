@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, Finding, FindingKind,
-    LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
+    Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, PackPayload,
+    ProducedBy, Source, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
@@ -334,9 +334,7 @@ fn key_candidates(open: &OpenFile) -> Vec<String> {
 }
 
 pub(crate) fn invalid(what: &str) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         format!("A finding of the file pack cannot be made or read: {what}."),
         "Report this to the provider's author.",
     )

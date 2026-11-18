@@ -9,7 +9,7 @@
 //! The pack has no `busy` code of its own; the browser engine's
 //! `browser_unavailable` does not pass by itself.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{CodeEntry, Failure, FailureCode};
 use a2m_provider::StepFailure;
 
 a2m_core::failure_codes! {
@@ -90,20 +90,15 @@ pub const PASSED_ON: &[FailureCode] = &[
     ADDRESS_VALUE_REFUSED,
 ];
 
-pub(crate) fn failure(
-    class: FailureClass,
-    code: FailureCode,
-    message: impl Into<String>,
-    next: &str,
-) -> Failure {
-    Failure::new(class, code, message, next)
+/// A failure of the code of `row`, in the class its table gives it.
+pub(crate) fn failure(row: &CodeEntry, message: impl Into<String>, next: &str) -> Failure {
+    row.failure(message, next)
 }
 
 /// A step the driver cannot carry out as written. Nothing was sent.
 pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
-        FailureClass::Input,
-        STEP_NOT_USABLE,
+        &row::STEP_NOT_USABLE,
         format!(
             "The interface driver cannot carry out this step as the plan wrote it: {}.",
             why.into()
@@ -114,8 +109,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 
 pub(crate) fn surface_not_declared(what: &str) -> Failure {
     failure(
-        FailureClass::Policy,
-        SURFACE_NOT_DECLARED,
+        &row::SURFACE_NOT_DECLARED,
         format!("{what} is not one of the addresses this run may reach."),
         "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.",
     )
@@ -134,5 +128,48 @@ pub(crate) fn shown(text: &str) -> String {
         format!("{clean}…")
     } else {
         clean
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = failure(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
+        }
     }
 }

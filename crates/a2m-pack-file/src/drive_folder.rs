@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use a2m_core::{Digest, Failure, FailureClass, Step, Value, Values};
+use a2m_core::{Digest, Step, Value, Values};
 use a2m_provider::{Access, FileIdentity, Observed, Posture, StepFailure, StepInput, StepOutcome};
 
 use crate::codes::{self, plan_unreadable, stop};
@@ -86,7 +86,7 @@ fn name_of(input: &StepInput<'_>, arg: &str) -> Result<String, StepFailure> {
     match input.args.get(arg) {
         Some(Value::Text(name)) => Ok(name.clone()),
         Some(_) => Err(stop(
-            codes::VALUE_UNPARSABLE,
+            &codes::row::VALUE_UNPARSABLE,
             "An entry's name is text.",
             "Give the entry's name as text.",
         )),
@@ -158,7 +158,7 @@ impl Entries {
                     Some(Value::Text(text)) => Some(text.clone()),
                     Some(_) => {
                         return Err(stop(
-                            codes::VALUE_UNPARSABLE,
+                            &codes::row::VALUE_UNPARSABLE,
                             "A position is the text a read of the file gave.",
                             "Give the position the last read returned, or none to read from the start.",
                         ));
@@ -185,9 +185,7 @@ impl Entries {
                         ));
                     }
                     if folder.access() != Access::Write {
-                        return Err(StepFailure::not_sent(Failure::new(
-                            FailureClass::Policy,
-                            a2m_provider::codes::EFFECT_NOT_DECLARED,
+                        return Err(StepFailure::not_sent(a2m_provider::codes::row::EFFECT_NOT_DECLARED.failure(
                             "The surface's folder is in a root the file pack may read and not write.",
                             "Put the folder in a root named `files` that the settings make writable.",
                         )));
@@ -280,14 +278,14 @@ impl Entries {
                     }
                     (Expect::Present, None) => {
                         return Err(stop(
-                            codes::PLACE_NOT_FOUND,
+                            &codes::row::PLACE_NOT_FOUND,
                             "The folder holds no entry of the name given.",
                             "Check the name, or list the folder's entries.",
                         ));
                     }
                     (Expect::Absent, Some(_)) => {
                         return Err(stop(
-                            codes::CHANGED_SINCE_PREVIEW,
+                            &codes::row::CHANGED_SINCE_PREVIEW,
                             "The folder holds an entry of this name already, so none was created.",
                             "Read the entry, look at the new preview, and approve again.",
                         ));
@@ -346,7 +344,7 @@ impl Entries {
                         Some(Value::Null) => Vec::new(),
                         Some(_) => {
                             return Err(stop(
-                                codes::VALUE_UNPARSABLE,
+                                &codes::row::VALUE_UNPARSABLE,
                                 "A file's content is text.",
                                 "Give the content as text.",
                             ));
@@ -355,7 +353,7 @@ impl Entries {
                     };
                     if bytes.len() as u64 > max {
                         return Err(stop(
-                            codes::FILE_TOO_LARGE,
+                            &codes::row::FILE_TOO_LARGE,
                             "The content is larger than the most the folder's declaration lets the pack write.",
                             "Raise `content_max_bytes` in the folder's file, or write less.",
                         ));
@@ -390,7 +388,7 @@ impl Entries {
                         )?;
                         let Some(old) = old else {
                             return Err(stop(
-                                codes::FILE_TOO_LARGE,
+                                &codes::row::FILE_TOO_LARGE,
                                 "The file is larger than the most bytes the file pack reads.",
                                 "Raise `packs.file.max_bytes`.",
                             ));
@@ -417,7 +415,7 @@ impl Entries {
                         }
                         if to == current.name {
                             return Err(stop(
-                                codes::VALUE_UNPARSABLE,
+                                &codes::row::VALUE_UNPARSABLE,
                                 "The new name is the name the entry has.",
                                 "Give another name.",
                             ));
@@ -441,7 +439,7 @@ impl Entries {
                                 )?;
                                 let Some(bytes) = bytes else {
                                     return Err(stop(
-                                        codes::FILE_TOO_LARGE,
+                                        &codes::row::FILE_TOO_LARGE,
                                         "The file is larger than the most bytes the file pack reads, and a file is removed only when its bytes are the ones that were read.",
                                         "Raise `packs.file.max_bytes`.",
                                     ));
@@ -482,9 +480,7 @@ impl Entries {
                     _ => false,
                 };
                 if !allowed {
-                    return Err(StepFailure::not_sent(Failure::new(
-                        FailureClass::Policy,
-                        a2m_provider::codes::READ_ONLY_POSTURE,
+                    return Err(StepFailure::not_sent(a2m_provider::codes::row::READ_ONLY_POSTURE.failure(
                         "A change to a folder was asked for where nothing may be written, or by a step that is not marked as the commit point, so nothing was changed.",
                         "Run the operation live, or against a declared test record, with the save as the binding's commit point.",
                     )));
@@ -595,7 +591,7 @@ impl Entries {
                     Ok(StepOutcome::Done(Observed::default()))
                 } else {
                     Err(StepFailure::answered(codes::failure(
-                        codes::CHANGED_SINCE_PREVIEW,
+                        &codes::row::CHANGED_SINCE_PREVIEW,
                         "The folder does not hold what was saved: another writer changed it since.",
                         "Read the entry back to see what the folder holds now.",
                     )))
@@ -642,7 +638,7 @@ fn content_of(
     let named = folder::named(at, &entry.name, spec.depth)?;
     let Some(bytes) = folder::read(&named, max)? else {
         return Err(stop(
-            codes::FILE_TOO_LARGE,
+            &codes::row::FILE_TOO_LARGE,
             "The file is larger than the most the folder's declaration lets the pack read as content.",
             "Raise `content_max_bytes` in the folder's file, or read the entry's digest instead.",
         ));

@@ -122,7 +122,7 @@ An unknown that a tool depends on is shown in the review summary before publishi
 | --- | --- | --- |
 | Interface | The accessibility tree as a snapshot; which screen models match | Nothing by default |
 | Request | Captured exchanges while a person uses the system; a listing the service computes, such as an MCP server's tools | A published schema or contract; the system's own code, through an optional provider |
-| Command | The program's own help and version output, in the forms the target declares | Its manual; completion data |
+| Command | The program's own help and version output, in the forms the target declares | Its manual; completion data; a PowerShell module's help file and manifest |
 | Bridge | The functions the host lists | A type library, a dictionary, headers |
 | Artifact | The structure of a real file: sheets, named ranges, keys | A format's published schema |
 | Stream | Topics the broker lists; a bounded sample of messages | Registered schemas |

@@ -833,8 +833,8 @@ impl DriverHandle {
         authority: Authority<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         if !self.facts.steps.contains(&step.kind) {
-            return Err(refused(codes::unknown_variant(
-                codes::STEP_KIND_UNKNOWN,
+            return Err(refused(codes::failure(
+                &codes::row::STEP_KIND_UNKNOWN,
                 format!(
                     "The mode `{}` declares no step of the kind `{}`.",
                     self.facts.mode, step.kind
@@ -848,8 +848,8 @@ impl DriverHandle {
             // The mode says a step of this kind always saves. Sent as a
             // step that commits nothing, it would be a write with no intent
             // stored and no token, on the word of whoever built the step.
-            return Err(refused(codes::policy(
-                codes::INTENT_MISSING,
+            return Err(refused(codes::failure(
+                &codes::row::INTENT_MISSING,
                 format!(
                     "A `{}` step always commits in the mode `{}`, and was sent as a step that commits nothing.",
                     step.kind, self.facts.mode
@@ -861,8 +861,8 @@ impl DriverHandle {
         match result {
             Err(failure) => Err(self.checked_failure(failure, Some(step))),
             Ok(StepOutcome::Absent(_)) if !step.lookup => {
-                Err(StepFailure::answered(codes::unknown_variant(
-                    codes::UNEXPECTED_ABSENT,
+                Err(StepFailure::answered(codes::failure(
+                    &codes::row::UNEXPECTED_ABSENT,
                     format!(
                         "A `{}` step that is not a lookup reported its record absent.",
                         step.kind
@@ -873,8 +873,8 @@ impl DriverHandle {
             Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed))
                 if step.commits && !observed.for_reconcile.is_empty() =>
             {
-                Err(StepFailure::answered(codes::unknown_variant(
-                    codes::RECONCILE_TOO_LATE,
+                Err(StepFailure::answered(codes::failure(
+                    &codes::row::RECONCILE_TOO_LATE,
                     format!(
                         "The committing `{}` step returned values for reconcile, which must be known before the write is sent.",
                         step.kind
@@ -930,8 +930,8 @@ impl DriverHandle {
         authority: Authority<'_>,
     ) -> Result<(), StepFailure> {
         let missing = |why: &str| {
-            refused(codes::policy(
-                codes::INTENT_MISSING,
+            refused(codes::failure(
+                &codes::row::INTENT_MISSING,
                 format!("A step that commits was refused before it was sent: {why}."),
                 "Store the record's intent in the ledger, and pass the token it gives for this record.",
             ))
@@ -943,8 +943,8 @@ impl DriverHandle {
             guard.posture,
             Posture::Live | Posture::Sandbox { test_records: true }
         ) {
-            return Err(refused(codes::policy(
-                codes::READ_ONLY_POSTURE,
+            return Err(refused(codes::failure(
+                &codes::row::READ_ONLY_POSTURE,
                 "A step that commits was asked for where nothing may be written.",
                 "Run the operation live, or against a declared test record.",
             )));
@@ -979,8 +979,8 @@ impl DriverHandle {
                 })
                 || is_contract_code(failure.class(), failure.code()));
         if !declared {
-            failure = codes::unknown_variant(
-                codes::UNDECLARED_CODE,
+            failure = codes::failure(
+                &codes::row::UNDECLARED_CODE,
                 format!(
                     "The driver of the mode `{}` failed with `{}/{}`, which its manifest does not declare.",
                     self.facts.mode,
@@ -1008,13 +1008,12 @@ impl DriverHandle {
             };
         if in_doubt {
             sent = Sent::Unknown;
-            failure = Failure::new(
-                FailureClass::PossibleCommit,
-                codes::NO_CONFIRMATION,
-                failure.message().to_owned(),
-                "Reconcile the record: read it back before anything is written again.",
-            )
-            .carrying_said(&failure);
+            failure = codes::row::NO_CONFIRMATION
+                .failure(
+                    failure.message().to_owned(),
+                    "Reconcile the record: read it back before anything is written again.",
+                )
+                .carrying_said(&failure);
         }
         StepFailure { failure, sent }
     }

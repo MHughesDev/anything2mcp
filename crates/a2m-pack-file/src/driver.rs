@@ -11,9 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_auth::SessionLease;
-use a2m_core::{
-    Digest, Failure, FailureClass, FieldTypeIndex, FieldTypePlan, Plan, Step, Value, Values,
-};
+use a2m_core::{Digest, FieldTypeIndex, FieldTypePlan, Plan, Step, Value, Values};
 use a2m_expr::Normalizer;
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
@@ -245,9 +243,7 @@ pub(crate) fn surface_folder(
 }
 
 fn timed_out() -> StepFailure {
-    StepFailure::not_sent(Failure::new(
-        FailureClass::Transient,
-        a2m_provider::codes::TIMEOUT,
+    StepFailure::not_sent(a2m_provider::codes::row::TIMEOUT.failure(
         "The step's deadline passed before the file was touched.",
         "Try again.",
     ))
@@ -353,7 +349,7 @@ fn row_with_key(
         let canonical: Vec<u8> = this.iter().flat_map(Value::canonical_bytes).collect();
         if !seen.insert(canonical) {
             return Err(stop(
-                codes::KEY_NOT_UNIQUE,
+                &codes::row::KEY_NOT_UNIQUE,
                 "Two records of the file share one key, so they cannot be told apart.",
                 "Remove the duplicate from the file, or declare a key that is unique.",
             ));
@@ -389,7 +385,7 @@ fn values_of(
 
 fn round_trip(why: &str) -> StepFailure {
     stop(
-        codes::ROUND_TRIP_FAILED,
+        &codes::row::ROUND_TRIP_FAILED,
         format!(
             "The change cannot be made without touching something else in the file: {why}. Nothing was written."
         ),
@@ -530,14 +526,14 @@ fn locate(
         (Expect::Present, None) if step.lookup => StepOutcome::Absent(Observed::default()),
         (Expect::Present, None) => {
             return Err(stop(
-                codes::PLACE_NOT_FOUND,
+                &codes::row::PLACE_NOT_FOUND,
                 "No record of the file has the key given.",
                 "Check the key, or read the records the file holds.",
             ));
         }
         (Expect::Absent, Some(_)) => {
             return Err(stop(
-                codes::CHANGED_SINCE_PREVIEW,
+                &codes::row::CHANGED_SINCE_PREVIEW,
                 "A record with this key is in the file already, so none was added.",
                 "Read the record, look at the new preview, and approve again.",
             ));
@@ -662,7 +658,7 @@ fn formula_guard(field: &FieldSpec, value: &Value, text: &str) -> Result<(), Ste
     }
     let refused = |how: &str, next: &str| {
         Err(StepFailure::not_sent(codes::failure(
-            codes::VALUE_BEGINS_FORMULA,
+            &codes::row::VALUE_BEGINS_FORMULA,
             format!(
                 "The value for the field `{}` begins with {how}, so a spreadsheet program that opens the file would not keep it as text. Nothing was written.",
                 field.name
@@ -740,7 +736,7 @@ fn set(
                 }
                 let Some(span) = slot.and_then(|slot| slot.span) else {
                     return Err(stop(
-                        codes::PLACE_NOT_FOUND,
+                        &codes::row::PLACE_NOT_FOUND,
                         format!(
                             "The record has no place for the field `{}` to be set at.",
                             field.name
@@ -875,7 +871,7 @@ fn set(
         .ok_or_else(|| round_trip("two of its changes meet in the same bytes"))?;
     if bytes.len() as u64 > limits.max_bytes {
         return Err(stop(
-            codes::FILE_TOO_LARGE,
+            &codes::row::FILE_TOO_LARGE,
             "The file would grow beyond the most bytes the file pack writes.",
             "Raise `packs.file.max_bytes`.",
         ));
@@ -942,9 +938,7 @@ impl FileDriver {
             _ => false,
         };
         if !allowed {
-            return Err(StepFailure::not_sent(Failure::new(
-                FailureClass::Policy,
-                a2m_provider::codes::READ_ONLY_POSTURE,
+            return Err(StepFailure::not_sent(a2m_provider::codes::row::READ_ONLY_POSTURE.failure(
                 "A save was asked for where nothing may be written, or by a step that is not marked as the commit point, so the file was not replaced.",
                 "Run the operation live, or against a declared test record, with the save as the binding's commit point.",
             )));
@@ -963,12 +957,12 @@ impl FileDriver {
         };
         may_be_written(&loaded.spec)?;
         if current.path.folder().access() != Access::Write {
-            return Err(StepFailure::not_sent(Failure::new(
-                FailureClass::Policy,
-                a2m_provider::codes::EFFECT_NOT_DECLARED,
-                "The surface's folder is in a root the file pack may read and not write.",
-                "Put the file in a root named `files` that the settings make writable.",
-            )));
+            return Err(StepFailure::not_sent(
+                a2m_provider::codes::row::EFFECT_NOT_DECLARED.failure(
+                    "The surface's folder is in a root the file pack may read and not write.",
+                    "Put the file in a root named `files` that the settings make writable.",
+                ),
+            ));
         }
         let job = SaveJob {
             target: current.path.clone(),
@@ -1006,7 +1000,7 @@ impl FileDriver {
             Ok(Observed::default())
         } else {
             Err(StepFailure::answered(codes::failure(
-                codes::CHANGED_SINCE_PREVIEW,
+                &codes::row::CHANGED_SINCE_PREVIEW,
                 "The file at the path is not the one that was saved: another writer changed it since.",
                 "Read the record back to see what the file holds now.",
             )))

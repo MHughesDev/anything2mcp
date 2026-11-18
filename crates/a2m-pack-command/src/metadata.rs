@@ -17,6 +17,10 @@ use crate::draft::usage_parts;
 pub const COMPLETIONS: &str = "completions";
 /// The name under which a manual page is handed to the scout.
 pub const MANUAL: &str = "manual";
+/// The name under which a PowerShell XML help file is handed to the scout.
+pub const POWERSHELL_HELP: &str = "powershell_help";
+/// The name under which a PowerShell module manifest is handed to the scout.
+pub const MODULE_MANIFEST: &str = "module_manifest";
 /// Where the help's own statement of an option comes from.
 pub const HELP: &str = "help";
 

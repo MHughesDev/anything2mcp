@@ -23,8 +23,8 @@ const fn is_name(text: &str, longest: usize) -> bool {
 }
 
 fn refused(kind: &str, text: &str) -> Failure {
-    codes::input(
-        codes::MANIFEST_INVALID,
+    codes::failure(
+        &codes::row::MANIFEST_INVALID,
         format!("`{}` is not a valid {kind} name.", shown(text)),
         "Write the name in lowercase letters, digits, and underscores, starting with a letter.",
     )

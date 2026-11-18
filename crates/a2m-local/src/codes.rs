@@ -24,7 +24,7 @@
 //!   until what `anything2mcp doctor run` names is repaired.
 
 use crate::connector::Seen;
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{CodeEntry, Failure};
 
 a2m_core::failure_codes! {
     ENGINE_RUNNING = Busy, "engine_running",
@@ -43,7 +43,7 @@ a2m_core::failure_codes! {
         meaning "The connection to the engine ended before a request was sent, so the engine never had it.",
         next "Run the command again once an engine answers (`anything2mcp serve` starts one).";
     ANSWER_LOST = PossibleCommit, "answer_lost",
-        meaning "The engine may have had a request, and its answer was lost: what the request asked may have been done, a write among it.",
+        meaning "The engine may have had a request, such as a tool call, and its answer was lost: what the request asked may have been done, a write among it.",
         next "If the request carried an idempotency key, send the same request again with the same key and nothing changed: it gives back the run the first one started, finished or not, and starts no other. If it carried none, do not send it again, because a second request may start a second run and write twice: find its run first with the run list (`anything2mcp run list --since <ms>`, with `--tool <tool>` for a tool call), from one minute before the request was sent, and do what that run's `next` says.";
     PEER_NOT_ALLOWED = Policy, "peer_not_allowed",
         meaning "A connection from another user, or an engine owned by another user.",
@@ -74,37 +74,13 @@ a2m_core::failure_codes! {
         passes not_by_itself;
 }
 
-/// The next step this crate's table gives for `code`, for a failure whose
-/// case adds nothing to it.
-fn next_for(code: &FailureCode) -> &'static str {
-    TABLE
-        .iter()
-        .find(|entry| entry.code == code.as_str())
-        .map_or("Run the command again.", |entry| entry.next)
-}
-
-pub(crate) fn busy(
-    code: FailureCode,
+/// A failure of the code of `row`, in the class its table gives it.
+pub(crate) fn failure(
+    row: &CodeEntry,
     message: impl Into<String>,
     next: impl Into<String>,
 ) -> Failure {
-    Failure::new(FailureClass::Busy, code, message, next)
-}
-
-pub(crate) fn policy(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    Failure::new(FailureClass::Policy, code, message, next)
-}
-
-pub(crate) fn input(
-    code: FailureCode,
-    message: impl Into<String>,
-    next: impl Into<String>,
-) -> Failure {
-    Failure::new(FailureClass::Input, code, message, next)
+    row.failure(message, next)
 }
 
 /// The connection ended before the request was sent: nothing reached the
@@ -115,14 +91,12 @@ pub(crate) fn lost() -> Failure {
 
 /// As [`lost`], saying what the client saw, in a word of the closed list.
 pub(crate) fn lost_seeing(seen: Seen) -> Failure {
-    Failure::new(
-        FailureClass::Transient,
-        CONNECTION_LOST,
+    row::CONNECTION_LOST.failure(
         format!(
             "The connection to the engine ended before the request was sent, so the engine did not have it. What the client saw: {}.",
             seen.words()
         ),
-        next_for(&CONNECTION_LOST),
+        row::CONNECTION_LOST.next,
     )
 }
 
@@ -130,14 +104,12 @@ pub(crate) fn lost_seeing(seen: Seen) -> Failure {
 /// The channel cannot know what the request was, so it never says that
 /// sending it again is safe: a write sent twice may be written twice.
 pub(crate) fn answer_lost(seen: Seen) -> Failure {
-    Failure::new(
-        FailureClass::PossibleCommit,
-        ANSWER_LOST,
+    row::ANSWER_LOST.failure(
         format!(
             "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run. What the client saw: {}.",
             seen.words()
         ),
-        next_for(&ANSWER_LOST),
+        row::ANSWER_LOST.next,
     )
 }
 
@@ -147,8 +119,8 @@ pub(crate) fn answer_lost(seen: Seen) -> Failure {
 /// system's fixed words for that number, which name no path, so that a
 /// person can look it up; for an error that has no number, its kind.
 pub(crate) fn unavailable(what: &str, error: &std::io::Error) -> Failure {
-    busy(
-        CHANNEL_UNAVAILABLE,
+    failure(
+        &row::CHANNEL_UNAVAILABLE,
         format!(
             "{what} cannot be opened on this machine ({}).",
             error_words(error)
@@ -189,8 +161,8 @@ pub(crate) fn socket_path_too_long(
 ) -> Failure {
     // The socket is `run/engine.sock` inside the folder `A2M_HOME` names.
     let inside = "/run/engine.sock".len();
-    input(
-        SOCKET_PATH_TOO_LONG,
+    failure(
+        &row::SOCKET_PATH_TOO_LONG,
         format!(
             "The engine's socket would be `{}`, which is {length} bytes long, and this system takes the path of a socket of no more than {longest} bytes, so the local channel cannot be made there.",
             crate::connector::shown(socket)
@@ -207,8 +179,8 @@ pub(crate) fn socket_path_too_long(
 /// request was not handed to the kernel, so nothing of it was done.
 #[must_use]
 pub fn data_directory_gone() -> Failure {
-    busy(
-        DATA_DIRECTORY_GONE,
+    failure(
+        &row::DATA_DIRECTORY_GONE,
         "The engine's data directory was removed or replaced while it ran, so the engine took no request and is stopping. Nothing of this request was done.",
         "Run the command again: a new engine starts on the data directory as it is now. Runs and published targets that were in the removed directory are not in a new one.",
     )
@@ -218,7 +190,7 @@ pub fn data_directory_gone() -> Failure {
 mod tests {
     use a2m_core::FailureClass;
 
-    use super::{ANSWER_LOST, CHANNEL_UNAVAILABLE, answer_lost, unavailable};
+    use super::{ANSWER_LOST, CHANNEL_UNAVAILABLE, TABLE, answer_lost, failure, unavailable};
 
     #[test]
     fn a_refusal_of_the_system_is_told_by_its_number_and_never_as_uncategorized() {
@@ -296,6 +268,46 @@ mod tests {
                 design.lines().any(|line| line.starts_with(&row)),
                 "the design does not list `{code}` under `{class}`"
             );
+        }
+    }
+
+    /// No source of this crate gives a failure a class of its own: each is
+    /// made from a row of a table, which gives it its class. `start.rs`
+    /// remakes the failure an engine wrote as it stopped, in the class it
+    /// has.
+    #[test]
+    fn every_failure_takes_its_class_from_a_table() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        walk(&path, found);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" && name != "start.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = text.split("#[cfg(test)]").next().unwrap();
+                    for made in ["Failure::new(", "class: FailureClass::"] {
+                        if text.contains(made) {
+                            found.push(format!("{}: {made}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
+        for row in TABLE {
+            let made = failure(row, "A case.", row.next);
+            assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));
         }
     }
 }

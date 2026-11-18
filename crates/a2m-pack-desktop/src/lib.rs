@@ -217,7 +217,7 @@ mod tests {
                 } else if name.ends_with(".rs") && name != "tests.rs" {
                     let text = std::fs::read_to_string(&path).unwrap();
                     let text = text.split("#[cfg(test)]").next().unwrap();
-                    for made in ["Failure::new(", "FailsAs {"] {
+                    for made in ["Failure::new(", "class: FailureClass::"] {
                         if text.contains(made) {
                             found.push(format!("{}: {made}", path.display()));
                         }

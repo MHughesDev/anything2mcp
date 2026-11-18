@@ -13,8 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Failure, FailureClass, Finding, Hazard, OperationName, Redact, RunState, Step,
-    SurfaceIndex,
+    EffectClass, Failure, Finding, Hazard, OperationName, Redact, RunState, Step, SurfaceIndex,
 };
 use a2m_provider::{
     Access, BoxFuture, CheckedPaths, Deadline, DiscoveryScope, EntryKind, FindingSink, Posture,
@@ -48,8 +47,7 @@ impl SandboxPort for Sandbox {
         Box::pin(async move {
             if step.commits {
                 return Err(StepFailure::not_sent(codes::fail(
-                    FailureClass::Policy,
-                    codes::SANDBOX_READ_ONLY,
+                    &codes::row::SANDBOX_READ_ONLY,
                     "A discoverer asked for a step that commits, and discovery writes nothing.",
                     "Report this to the provider's author; a discoverer only reads.",
                 )));
@@ -211,8 +209,7 @@ impl Engine {
         // `Discovery` posture.
         let mut port = Sandbox {
             inner: Err(codes::fail(
-                FailureClass::Busy,
-                codes::NO_BINDING,
+                &codes::row::NO_BINDING,
                 "No driver is ready for the surface, so nothing on it can be observed.",
                 "Enable a provider that drives a mode of the surface.",
             )),
@@ -259,14 +256,12 @@ impl Engine {
             let report = match tokio::time::timeout_at(scope.deadline.at(), looking).await {
                 Ok(Some(report)) => report,
                 Ok(None) => Err(codes::fail(
-                    FailureClass::UnknownVariant,
-                    codes::DRIVER_PANICKED,
+                    &codes::row::DRIVER_PANICKED,
                     format!("The discoverer `{}` panicked.", declared.name),
                     "Report this to the provider's author; the findings made before stand.",
                 )),
                 Err(_) => Err(codes::fail(
-                    FailureClass::Busy,
-                    codes::RUN_TIME_EXCEEDED,
+                    &codes::row::RUN_TIME_EXCEEDED,
                     format!(
                         "The discoverer `{}` did not end within the time its manifest declares.",
                         declared.name
@@ -347,8 +342,7 @@ fn handed_files(
     }
     let refused = |path: &str, why: &str| {
         codes::fail(
-            FailureClass::Input,
-            a2m_provider::codes::PATH_NOT_ALLOWED,
+            &a2m_provider::codes::row::PATH_NOT_ALLOWED,
             format!(
                 "The file `{}` handed to the discovery is refused: {why}.",
                 shown(path)
@@ -427,8 +421,7 @@ fn surface_mode(
     match ready.as_slice() {
         [] => Err(refused.unwrap_or_else(|| {
             codes::fail(
-                FailureClass::Busy,
-                codes::NO_BINDING,
+                &codes::row::NO_BINDING,
                 format!(
                     "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its archetype, so nothing on the surface can be observed."
                 ),
@@ -436,8 +429,7 @@ fn surface_mode(
             )
         })),
         [(first, ..), (second, ..), ..] if first == second => Err(codes::fail(
-            FailureClass::Busy,
-            codes::NO_BINDING,
+            &codes::row::NO_BINDING,
             format!(
                 "The provider `{provider}` drives more than one mode of the surface kind `{kind}` at the same rank, and nothing says which one observes it."
             ),

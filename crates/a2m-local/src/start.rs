@@ -167,8 +167,8 @@ fn not_answering(failure: &Failure) -> bool {
 
 /// The engine did not answer within the deadline.
 fn too_long(log: &Path) -> Failure {
-    codes::busy(
-        codes::ENGINE_UNREACHABLE,
+    codes::failure(
+        &codes::row::ENGINE_UNREACHABLE,
         "An engine was started on demand, or is starting or closing for this data directory, and did not answer on the local channel in time.",
         format!(
             "Run the command again. If it stays so, read the engine's log, `{}`, or start the engine with `anything2mcp serve` and read what it says.",
@@ -239,8 +239,8 @@ fn ended_early(log: &Path, process: Option<u32>) -> Failure {
             ),
         );
     }
-    codes::busy(
-        codes::ENGINE_UNREACHABLE,
+    codes::failure(
+        &codes::row::ENGINE_UNREACHABLE,
         "The engine started on demand ended before it answered on the local channel.",
         format!(
             "Read the engine's log, `{}`, for why; or start the engine with `anything2mcp serve` and read what it says.",

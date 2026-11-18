@@ -176,8 +176,7 @@ fn writes(operation: &OperationPlan) -> bool {
 
 fn stale(what: &str) -> Failure {
     codes::fail(
-        FailureClass::Stale,
-        codes::CHANGED_SINCE_PREVIEW,
+        &codes::row::CHANGED_SINCE_PREVIEW,
         what,
         "Preview the run again and approve the new diff.",
     )
@@ -197,8 +196,7 @@ const SETTLES: [FailureClass; 3] = [
 /// written: nothing is sent, and a new preview and approval are needed.
 fn stale_approval(what: &str) -> Failure {
     codes::fail(
-        FailureClass::Policy,
-        codes::APPROVAL_STALE,
+        &codes::row::APPROVAL_STALE,
         what,
         "Preview the run again and approve the new diff.",
     )
@@ -213,8 +211,7 @@ fn settles(class: FailureClass) -> bool {
 /// and code it stands in for are named, and stay in the step trace.
 fn in_doubt(what: &str, replaced: &Failure) -> Failure {
     codes::fail(
-        FailureClass::PossibleCommit,
-        codes::NO_CONFIRMATION,
+        &codes::row::NO_CONFIRMATION,
         format!(
             "A write was sent, and {what} failed before the record was verified (`{}/{}`).",
             replaced.class(),
@@ -307,8 +304,7 @@ fn one_save(operation: &OperationPlan, binding: Option<&BindingPlan>) -> Result<
         return Ok(());
     }
     Err(codes::fail(
-        FailureClass::Busy,
-        codes::JOB_KIND_NOT_BUILT,
+        &codes::row::JOB_KIND_NOT_BUILT,
         format!(
             "The binding of `{}` saves {commits} times in one call, and this engine carries out one save per call.",
             operation.name
@@ -321,8 +317,7 @@ fn one_save(operation: &OperationPlan, binding: Option<&BindingPlan>) -> Result<
 /// declared test record.
 fn not_a_test_record() -> Failure {
     codes::fail(
-        FailureClass::Policy,
-        codes::SANDBOX_READ_ONLY,
+        &codes::row::SANDBOX_READ_ONLY,
         "The sandbox writes only to the test records the environment declares, and this record is not one.",
         "Declare the record under the environment's test records, or try a read.",
     )
@@ -342,8 +337,7 @@ fn key_of(
         })?;
         let value = inputs.get(&input.name).cloned().ok_or_else(|| {
             codes::fail(
-                FailureClass::Input,
-                codes::INPUT_INVALID,
+                &codes::row::INPUT_INVALID,
                 format!(
                     "`{}` is part of the record's key and has no value.",
                     input.name
@@ -406,8 +400,7 @@ fn outputs_of(
 
 fn output_unexpected(what: String) -> Failure {
     codes::fail(
-        FailureClass::UnknownVariant,
-        codes::OUTPUT_UNEXPECTED,
+        &codes::row::OUTPUT_UNEXPECTED,
         what,
         "Compare the operation's outputs in the target files with what the system returns.",
     )
@@ -618,8 +611,7 @@ impl Tool<'_> {
                 });
                 if !in_key {
                     return Err(codes::fail(
-                        FailureClass::Input,
-                        codes::INPUT_INVALID,
+                        &codes::row::INPUT_INVALID,
                         format!(
                             "The input `{name}` of the step `{}` comes from a record that is still to be written, and it is not part of the record's key, so its value cannot be shown for approval.",
                             step.id
@@ -676,16 +668,14 @@ async fn read_source(
     };
     if source.reader == OPERATION_READER {
         return Err(codes::fail(
-            FailureClass::Busy,
-            codes::JOB_KIND_NOT_BUILT,
+            &codes::row::JOB_KIND_NOT_BUILT,
             "The tool reads its rows from another operation's result, and this engine does not carry that out yet.",
             "Give the rows as a file, or call the operations one after the other.",
         ));
     }
     let Some(bytes) = run.job.source.as_ref() else {
         return Err(codes::fail(
-            FailureClass::Input,
-            codes::INPUT_INVALID,
+            &codes::row::INPUT_INVALID,
             "The tool reads a source and the job carries none.",
             "Call the tool with its source input.",
         ));
@@ -708,8 +698,7 @@ async fn read_source(
         Ok(read) => read.map_err(Failure::from)?,
         Err(_) => {
             return Err(codes::fail(
-                FailureClass::UnknownVariant,
-                codes::DRIVER_PANICKED,
+                &codes::row::DRIVER_PANICKED,
                 "The reader of the tool's source panicked.",
                 "Report this to the reader's author; nothing was sent to the system.",
             ));
@@ -774,8 +763,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         && rows > most
     {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::Policy,
-            codes::RECORD_LIMIT,
+            &codes::row::RECORD_LIMIT,
             format!("The source holds {rows} records and the tool allows {most} in one run."),
             "Split the source, or raise the pipeline's limit and publish again.",
         )));
@@ -859,8 +847,7 @@ async fn read_steps_of(
                 scope.result = Value::Record(outputs.clone());
                 if !loaded.holds(expect, &scope)? {
                     return Err(Stop::Fail(codes::fail(
-                        FailureClass::UnknownVariant,
-                        codes::EXPECT_FAILED,
+                        &codes::row::EXPECT_FAILED,
                         format!(
                             "What the step `{}` expects of its result does not hold.",
                             step.id
@@ -963,8 +950,7 @@ async fn read_operation(
         }
     }
     Err(Stop::Fail(codes::fail(
-        FailureClass::Busy,
-        codes::NO_BINDING,
+        &codes::row::NO_BINDING,
         format!(
             "The operation `{}` has no binding that may act.",
             found.name
@@ -997,8 +983,7 @@ async fn read_pass(
     match observe(run, held, binding, scope, fields).await {
         Ok(Some(seen)) => outputs_of(loaded, found, &seen, true).map_err(failed),
         Ok(None) => Err(failed(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::OUTPUT_UNEXPECTED,
+            &codes::row::OUTPUT_UNEXPECTED,
             format!("The operation `{}` found nothing to read.", found.name),
             "Check the inputs; the record they name does not exist.",
         ))),
@@ -1230,8 +1215,7 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
             }
             RecordState::Intent | RecordState::Acted | RecordState::Failed => {
                 return Err(Stop::Fail(codes::fail(
-                    FailureClass::PossibleCommit,
-                    codes::CANNOT_RECONCILE,
+                    &codes::row::CANNOT_RECONCILE,
                     "A record of the run is still in doubt.",
                     "Reconcile the run before it is resumed.",
                 )));
@@ -1326,8 +1310,7 @@ fn derive_step(
             // keeps secrets out of tool inputs; a write that carries one
             // is refused before anything is sent.
             return Err(Stop::Fail(codes::fail(
-                FailureClass::Input,
-                codes::INPUT_INVALID,
+                &codes::row::INPUT_INVALID,
                 format!(
                     "A value the operation `{}` would write holds a registered secret, and a write of one cannot be verified.",
                     found.name
@@ -1416,8 +1399,7 @@ fn resolve(loaded: &Loaded, tool: &Tool<'_>, record: &mut Planned) -> Result<(),
 /// written, and the ledger says why.
 async fn block_children(run: &Run<'_>, loaded: &Loaded, tool: &Tool<'_>, later: &[Planned]) {
     let blocked = codes::fail(
-        FailureClass::Busy,
-        codes::BLOCKED_BY_PARENT,
+        &codes::row::BLOCKED_BY_PARENT,
         "The record waits for a record that failed earlier in the run.",
         "Settle the earlier record, then resume the run.",
     );
@@ -1569,8 +1551,7 @@ async fn hold_for(
     };
     let Some(candidate) = candidate else {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::Busy,
-            codes::NO_BINDING,
+            &codes::row::NO_BINDING,
             format!(
                 "The binding that wrote a record of `{}` may not act now.",
                 found.name
@@ -1620,8 +1601,7 @@ async fn read_record(
     };
     if steps.is_empty() {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::NO_READ_BACK,
+            &codes::row::NO_READ_BACK,
             format!(
                 "The binding of `{}` has no steps that read its record, so nothing it writes can be verified.",
                 found.name
@@ -1727,8 +1707,7 @@ async fn store(run: &Run<'_>, kind: BlobKind, bytes: Vec<u8>) -> Result<BlobRef,
         .await
         .map_err(|failure| {
             codes::fail(
-                FailureClass::Busy,
-                codes::EVIDENCE_NOT_STORED,
+                &codes::row::EVIDENCE_NOT_STORED,
                 format!(
                     "Evidence could not be stored ({}), so nothing can be marked verified.",
                     failure.code()
@@ -1971,8 +1950,7 @@ async fn reconcile(
                     Settled::Planned => record.state = RecordState::Planned,
                     Settled::Verified | Settled::Stale => {
                         return Err(Stop::Fail(codes::fail(
-                            FailureClass::PossibleCommit,
-                            codes::CANNOT_RECONCILE,
+                            &codes::row::CANNOT_RECONCILE,
                             "A record that waited for an earlier record was not returned to `planned`.",
                             "Look at the run's records, then cancel the run or settle the record by hand.",
                         )));
@@ -2025,8 +2003,7 @@ async fn reconcile(
         {
             Err(Stop::Fail(failure)) if settles(failure.class()) => {
                 return Err(Stop::Fail(codes::fail(
-                    FailureClass::PossibleCommit,
-                    codes::CANNOT_RECONCILE,
+                    &codes::row::CANNOT_RECONCILE,
                     format!(
                         "A record of `{}` may have been written and could not be read (`{}/{}`).",
                         found.name,
@@ -2118,8 +2095,7 @@ fn keyless_in_doubt(
     seen: Option<&Values>,
 ) -> Stop {
     let mut failure = codes::fail(
-        FailureClass::PossibleCommit,
-        codes::CANNOT_RECONCILE,
+        &codes::row::CANNOT_RECONCILE,
         format!(
             "A record of `{}` may have been written, and {why}.",
             found.name
@@ -2362,8 +2338,7 @@ async fn keyless_found(
             compare::Comparison::Equal => String::new(),
         };
         return Err(Stop::Fail(codes::fail(
-            FailureClass::Mismatch,
-            codes::READ_BACK_DIFFERS,
+            &codes::row::READ_BACK_DIFFERS,
             format!(
                 "A record of `{}` that was in doubt was found, and differs from what was intended: {differing}.",
                 found.name
@@ -2437,8 +2412,7 @@ async fn read_in_doubt(
         // Reading without it could find nothing, and nothing found would
         // be taken for a write that did not land.
         return Err(Stop::Fail(codes::fail(
-            FailureClass::PossibleCommit,
-            codes::CANNOT_RECONCILE,
+            &codes::row::CANNOT_RECONCILE,
             format!(
                 "A record of `{}` may have been written, and what would find it again holds a registered secret and was not stored.",
                 found.name
@@ -2557,8 +2531,7 @@ async fn commit_point(
     one_save(found, Some(binding))?;
     if binding.evidence == WriteEvidence::ReadBack && binding.read_back.is_empty() {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::NO_READ_BACK,
+            &codes::row::NO_READ_BACK,
             format!(
                 "The binding of `{}` has no read-back, so nothing it writes can be verified.",
                 found.name
@@ -2569,8 +2542,7 @@ async fn commit_point(
     if binding.evidence == WriteEvidence::Acknowledged && found.effect != EffectClass::Irreversible
     {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::NO_READ_BACK,
+            &codes::row::NO_READ_BACK,
             format!(
                 "The binding of `{}` offers only the system's acknowledgement, and the operation is not irreversible.",
                 found.name
@@ -2586,8 +2558,7 @@ async fn commit_point(
         && !a2m_core::acknowledgement_may_stand(found.identity.strategy, &binding.read_back)
     {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::NO_READ_BACK,
+            &codes::row::NO_READ_BACK,
             format!(
                 "The binding of `{}` reads its record back by its key and offers the system's acknowledgement as its evidence; the read-back is what verifies it.",
                 found.name
@@ -2652,8 +2623,7 @@ async fn commit_point(
         .await?;
     let Some(token) = tokens.pop() else {
         return Err(Stop::Fail(codes::fail(
-            FailureClass::Policy,
-            codes::NO_TOKEN,
+            &codes::row::NO_TOKEN,
             "The ledger stored an intent and gave no token for it.",
             "Report this; nothing was sent.",
         )));
@@ -2738,8 +2708,7 @@ async fn commit_point(
         let observed = match outcome {
             Ok(None) if step.commits => {
                 let failure = codes::fail(
-                    FailureClass::UnknownVariant,
-                    codes::COMMIT_SKIPPED,
+                    &codes::row::COMMIT_SKIPPED,
                     "The step that saves the record was skipped by its condition, so nothing was written.",
                     "Correct the step's condition and publish the target again.",
                 );
@@ -2779,8 +2748,7 @@ async fn commit_point(
                 let failure = in_doubt(
                     "a second step that saves",
                     &codes::fail(
-                        FailureClass::Busy,
-                        codes::JOB_KIND_NOT_BUILT,
+                        &codes::row::JOB_KIND_NOT_BUILT,
                         "The binding saves more than once in one call.",
                         "Split the operation into one operation for each save.",
                     ),
@@ -2829,8 +2797,7 @@ async fn commit_point(
                 Err(failure) => {
                     // The write was sent and could not be recorded.
                     return Err(Stop::Fail(codes::fail(
-                        FailureClass::PossibleCommit,
-                        codes::NO_CONFIRMATION,
+                        &codes::row::NO_CONFIRMATION,
                         format!(
                             "A write was sent and could not be recorded ({}).",
                             failure.code()
@@ -2869,8 +2836,7 @@ async fn commit_point(
     scope.record = Scope::record_of(read_by.as_ref());
     let Some(acted) = acted else {
         let failure = codes::fail(
-            FailureClass::UnknownVariant,
-            codes::COMMIT_SKIPPED,
+            &codes::row::COMMIT_SKIPPED,
             "The binding ended without sending its write.",
             "Correct the binding and publish the target again.",
         );
@@ -2896,8 +2862,7 @@ async fn commit_point(
         }
         Ok(None) => {
             let failure = codes::fail(
-                FailureClass::PossibleCommit,
-                codes::NO_CONFIRMATION,
+                &codes::row::NO_CONFIRMATION,
                 "The system did not confirm the write.",
                 "Reconcile the run: read the record back before anything is written again.",
             );
@@ -2969,8 +2934,7 @@ async fn commit_point(
                 None => "the record is absent".to_owned(),
             };
             let failure = codes::fail(
-                FailureClass::Mismatch,
-                codes::READ_BACK_DIFFERS,
+                &codes::row::READ_BACK_DIFFERS,
                 format!("The record read back differs from what was intended: {differing}."),
                 "Compare the values in the evidence; the system changed what was written.",
             );

@@ -881,6 +881,16 @@ pub struct FailsAs {
     pub code: FailureCode,
 }
 
+impl FailsAs {
+    /// The failure of a step that cannot be done as written, in the class
+    /// and with the code the plan states, with `message` and `next` for
+    /// the case at hand.
+    #[must_use]
+    pub fn failure(&self, message: impl Into<String>, next: impl Into<String>) -> Failure {
+        Failure::new(self.class, self.code.clone(), message, next)
+    }
+}
+
 impl From<&crate::CodeEntry> for FailsAs {
     /// A step that fails as the code of `row`, in the row's class.
     fn from(row: &crate::CodeEntry) -> Self {

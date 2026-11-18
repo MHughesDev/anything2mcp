@@ -229,8 +229,8 @@ impl<'a> Registrar<'a> {
     }
 
     fn undeclared(&self, what: &str) -> Failure {
-        codes::policy(
-            codes::EFFECT_NOT_DECLARED,
+        codes::failure(
+            &codes::row::EFFECT_NOT_DECLARED,
             format!(
                 "The provider `{}` registers {what}, which its manifest does not declare.",
                 self.manifest.provider.name
@@ -243,8 +243,8 @@ impl<'a> Registrar<'a> {
         if self.seen.insert(what.clone()) {
             Ok(())
         } else {
-            Err(codes::policy(
-                codes::EFFECT_NOT_DECLARED,
+            Err(codes::failure(
+                &codes::row::EFFECT_NOT_DECLARED,
                 format!(
                     "The provider `{}` registers {what} twice.",
                     self.manifest.provider.name

@@ -11,9 +11,7 @@
 //! person answers it. No write is ever drafted, and no value of a row is
 //! kept: discovery reads no row, so a read by key has no example.
 
-use a2m_core::{
-    Failure, FailureClass, FailureCode, FileKindName, Finding, FindingKind, OperationName,
-};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::discover::{ColumnFound, TableFound};
@@ -163,9 +161,7 @@ fn exact_scale(declared: &str) -> Option<u32> {
 }
 
 fn unreadable() -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "A `table` finding does not hold a table as the data pack writes one.",
         "Run discovery again with the data pack that is enabled now.",
     )

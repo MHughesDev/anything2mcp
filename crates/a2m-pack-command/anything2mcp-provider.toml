@@ -29,16 +29,18 @@ discoverer = ["help"]
 # Runs only the help and version forms a target declares. Handed a fish
 # completion file under `completions` or a manual page under `manual`, as
 # files of the project's `sources` folder, it reads them as text and never
-# runs them (decision 0284).
+# runs them (decision 0284); handed a PowerShell XML help file under
+# `powershell_help` or a module manifest under `module_manifest`, it reads
+# them as data, imports no module, and starts nothing (decision 0290).
 [[discoverers]]
 name = "help"
 archetype = "command"
 surface_kinds = ["program"]
-kinds = ["command", "command_file"]
+kinds = ["command", "command_file", "powershell_command"]
 sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 1048576, depth = 2 }
-files = ["completions", "manual"]
+files = ["completions", "manual", "powershell_help", "module_manifest"]
 
 [[file_kinds]]
 name = "command"
@@ -53,6 +55,10 @@ surface_kinds = ["program"]
 name = "command_file"
 surface_kinds = ["program"]
 
+[[finding_kinds]]
+name = "powershell_command"
+surface_kinds = ["program"]
+
 [[lint_rules]]
 code = "command.shell_program"
 level = "error"
@@ -65,6 +71,10 @@ summary = "A write command declares the exit statuses that mean nothing changed.
 
 [[drafting_rules]]
 finding_kind = "command"
+file_kind = "command"
+
+[[drafting_rules]]
+finding_kind = "powershell_command"
 file_kind = "command"
 
 [[failure_codes]]
@@ -134,6 +144,10 @@ code = "unexpected_prompt"
 [[failure_codes]]
 class = "input"
 code = "command_file_unreadable"
+
+[[failure_codes]]
+class = "input"
+code = "powershell_file_unreadable"
 
 [[failure_codes]]
 class = "possible_commit"

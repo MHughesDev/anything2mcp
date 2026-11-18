@@ -172,8 +172,8 @@ struct DeclaredOnly<'a> {
 impl FindingSink for DeclaredOnly<'_> {
     fn found(&mut self, finding: Finding) -> Result<(), Failure> {
         if !self.kinds.contains(finding.kind()) || finding.level() > self.max_level {
-            return Err(codes::unknown_variant(
-                codes::FINDING_NOT_DECLARED,
+            return Err(codes::failure(
+                &codes::row::FINDING_NOT_DECLARED,
                 format!(
                     "A discoverer made a `{}` finding at the level `{}`, which its manifest does not allow.",
                     finding.kind().as_str(),

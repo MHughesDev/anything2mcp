@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, FailureCode, FileKindName, Finding,
-    FindingKind, PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
+    Coverage, EvidenceLevel, FailsAs, Failure, FileKindName, Finding, FindingKind, PackPayload,
+    ProducedBy, Source, Step, Subject, Value, Values,
 };
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
 use a2m_provider::{
@@ -38,8 +38,7 @@ pub(crate) type Reported = BTreeMap<String, String>;
 
 fn unreadable(what: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        FailureCode::FINDING_INVALID,
+        &a2m_core::codes::row::FINDING_INVALID,
         format!("A `device_identity` finding cannot be read: {what}."),
         "Run discovery on the device link again.",
     )
@@ -99,10 +98,7 @@ impl Discoverer for IdentityDiscoverer {
                 refers_to: None,
                 args: Vec::new(),
                 timeout_ms: IDENTIFY_MS,
-                fails_as: FailsAs {
-                    class: FailureClass::UnknownVariant,
-                    code: codes::UNEXPECTED_REPLY,
-                },
+                fails_as: FailsAs::from(&codes::row::UNEXPECTED_REPLY),
                 commits: false,
                 lookup: false,
                 idempotent: false,
@@ -126,8 +122,7 @@ impl Discoverer for IdentityDiscoverer {
                 (reported.get("model"), reported.get("firmware_version"))
             else {
                 return Err(codes::failure(
-                    FailureClass::UnknownVariant,
-                    codes::DEVICE_IDENTITY_MISMATCH,
+                    &codes::row::DEVICE_IDENTITY_MISMATCH,
                     "The device does not report its model and its firmware version, so it cannot be the subject of a finding.",
                     "Check that the surface names the protocol the device speaks.",
                 ));

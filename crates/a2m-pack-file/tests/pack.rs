@@ -52,14 +52,23 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
         let declared = manifest
             .failure_codes
             .iter()
-            .find(|declared| &declared.code == code)
+            .find(|declared| declared.code.as_str() == *code)
             .unwrap_or_else(|| panic!("`{code}` is not in the manifest"));
         assert_eq!(declared.class, *class, "{code}");
     }
-    // The manifest declares one more, which the expression library makes.
+    // And the codes of other crates the pack gives as they are.
+    for code in a2m_pack_file::codes::PASSED_ON {
+        assert!(
+            manifest
+                .failure_codes
+                .iter()
+                .any(|declared| &declared.code == code),
+            "`{code}` is not in the manifest"
+        );
+    }
     assert_eq!(
         manifest.failure_codes.len(),
-        a2m_pack_file::codes::ALL.len() + 1
+        a2m_pack_file::codes::ALL.len() + a2m_pack_file::codes::PASSED_ON.len()
     );
 }
 

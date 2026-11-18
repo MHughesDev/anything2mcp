@@ -33,8 +33,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Decimal, EvidenceLevel, Failure, FailureClass, FailureCode, FileKindName, Finding,
-    FindingKind, OperationName, ProducedBy, Source, Subject, Values,
+    Coverage, Decimal, EvidenceLevel, Failure, FileKindName, Finding, FindingKind, OperationName,
+    ProducedBy, Source, Subject, Values,
 };
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 use a2m_provider::{
@@ -129,8 +129,7 @@ pub(crate) struct PublishedMap {
 
 fn invalid(what: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        FailureCode::FINDING_INVALID,
+        &a2m_core::codes::row::FINDING_INVALID,
         format!("A `{PUBLISHED_MAP}` finding cannot be made or read: {what}."),
         "Run discovery on the device link again with the published map.",
     )

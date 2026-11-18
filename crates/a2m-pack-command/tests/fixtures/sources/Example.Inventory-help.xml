@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The help of the imaginary module Example.Inventory, written for the
+     command pack's tests. It describes no real product. -->
+<helpItems schema="maml" xmlns="http://msh">
+  <command:command xmlns:maml="http://schemas.microsoft.com/maml/2004/10" xmlns:command="http://schemas.microsoft.com/maml/dev/command/2004/10" xmlns:dev="http://schemas.microsoft.com/maml/dev/2004/10">
+    <command:details>
+      <command:name>Get-ExampleItem</command:name>
+      <command:verb>Get</command:verb>
+      <command:noun>ExampleItem</command:noun>
+      <maml:description>
+        <maml:para>Gets one item of the example inventory.</maml:para>
+      </maml:description>
+    </command:details>
+    <maml:description>
+      <maml:para>Reads the item with the code given &amp; prints it.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Get-ExampleItem</maml:name>
+        <command:parameter required="true" variableLength="true" globbing="false" pipelineInput="True (ByValue)" position="0" aliases="none">
+          <maml:name>Sku</maml:name>
+          <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+            <maml:uri />
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
+          <maml:name>Detailed</maml:name>
+        </command:parameter>
+        <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
+          <maml:name>Rows</maml:name>
+          <command:parameterValue required="true" variableLength="false">Int32</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="true" variableLength="true" globbing="false" pipelineInput="True (ByValue)" position="0" aliases="none">
+        <maml:name>Sku</maml:name>
+        <maml:description>
+          <maml:para>The item's code, two capital letters, a dash, and four digits.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String</maml:name>
+          <maml:uri />
+        </dev:type>
+        <dev:defaultValue>None</dev:defaultValue>
+      </command:parameter>
+      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
+        <maml:name>Detailed</maml:name>
+        <maml:description>
+          <maml:para>Prints the item's history too.</maml:para>
+        </maml:description>
+        <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          <maml:uri />
+        </dev:type>
+        <dev:defaultValue>False</dev:defaultValue>
+      </command:parameter>
+      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
+        <maml:name>Rows</maml:name>
+        <maml:description>
+          <maml:para>At most this many rows of history.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="false">Int32</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Int32</maml:name>
+          <maml:uri />
+        </dev:type>
+        <dev:defaultValue>10</dev:defaultValue>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type><maml:name>System.String</maml:name></dev:type>
+      </command:inputType>
+    </command:inputTypes>
+    <command:examples>
+      <command:example>
+        <maml:title>Example 1</maml:title>
+        <dev:code>Get-ExampleItem -Sku SK-1001</dev:code>
+      </command:example>
+    </command:examples>
+  </command:command>
+  <command:command xmlns:maml="http://schemas.microsoft.com/maml/2004/10" xmlns:command="http://schemas.microsoft.com/maml/dev/command/2004/10" xmlns:dev="http://schemas.microsoft.com/maml/dev/2004/10">
+    <command:details>
+      <command:name>Set-ExampleItem</command:name>
+      <maml:description>
+        <maml:para>Sets the quantity of one item.</maml:para>
+      </maml:description>
+    </command:details>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Set-ExampleItem</maml:name>
+        <command:parameter required="true" pipelineInput="False" position="0">
+          <maml:name>Sku</maml:name>
+          <command:parameterValue required="true">String</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" pipelineInput="False" position="named">
+          <maml:name>Quantity</maml:name>
+          <command:parameterValue required="true">Int32</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" pipelineInput="False" position="named">
+          <maml:name>Force</maml:name>
+        </command:parameter>
+        <command:parameter required="false" pipelineInput="False" position="named">
+          <maml:name>WhatIf</maml:name>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Set-ExampleItem</maml:name>
+        <command:parameter required="true" pipelineInput="True (ByValue)" position="0">
+          <maml:name>InputObject</maml:name>
+          <command:parameterValue required="true">ExampleItem</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" pipelineInput="False" position="named">
+          <maml:name>Quantity</maml:name>
+          <command:parameterValue required="true">Int32</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="false" pipelineInput="False" position="named">
+        <maml:name>Force</maml:name>
+        <maml:description><maml:para>Sets the quantity without asking.</maml:para></maml:description>
+        <dev:type><maml:name>System.Management.Automation.SwitchParameter</maml:name></dev:type>
+      </command:parameter>
+      <command:parameter required="false" pipelineInput="False" position="named">
+        <maml:name>WhatIf</maml:name>
+        <maml:description><maml:para>Shows what would happen.</maml:para></maml:description>
+        <dev:type><maml:name>System.Management.Automation.SwitchParameter</maml:name></dev:type>
+      </command:parameter>
+      <command:parameter required="true" pipelineInput="True (ByValue)" position="0">
+        <maml:name>InputObject</maml:name>
+        <maml:description><maml:para>An item, as Get-ExampleItem prints it.</maml:para></maml:description>
+        <dev:type><maml:name>Example.Inventory.ExampleItem</maml:name></dev:type>
+      </command:parameter>
+    </command:parameters>
+  </command:command>
+</helpItems>

@@ -43,7 +43,7 @@ mod settings;
 
 use std::sync::Arc;
 
-use a2m_core::{Failure, FailureClass, Mode};
+use a2m_core::{Failure, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar};
 
@@ -89,9 +89,7 @@ impl Pack for FilePack {
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         let mode = Mode::new(MODE).map_err(|_| {
-            Failure::new(
-                FailureClass::Input,
-                a2m_provider::codes::MANIFEST_INVALID,
+            a2m_provider::codes::row::MANIFEST_INVALID.failure(
                 "The file pack's mode is not a valid name.",
                 "Report this to the provider's author.",
             )

@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, Redact};
+use a2m_core::{Failure, FileKindName, Finding, FindingKind, Redact};
 use a2m_files::{Doc, DraftContext, DraftDoc, DraftValue, DraftingRule, Located, RelPath};
 
 use crate::codes;
@@ -54,8 +54,7 @@ pub(crate) fn described_operation() -> Result<FindingKind, Failure> {
 
 fn unreadable(why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::DESCRIPTION_UNREADABLE,
+        &codes::row::DESCRIPTION_UNREADABLE,
         format!("The description cannot be read as OpenAPI: {why}."),
         "Give an OpenAPI 3.0 or 3.1 document, as JSON or YAML, that holds its own schemas.",
     )
@@ -65,8 +64,7 @@ fn unreadable(why: &str) -> Failure {
 /// a part of it is never read as if it were all of it.
 pub(crate) fn too_large(why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::DESCRIPTION_TOO_LARGE,
+        &codes::row::DESCRIPTION_TOO_LARGE,
         format!("The description is larger than the import reads: {why}."),
         "Give a description of the part of the service the tools need, with fewer or smaller schemas.",
     )
@@ -772,9 +770,7 @@ impl DraftingRule for DescribedOperationRule {
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
         let Some(operation) = DescribedOperation::from_found(finding.found()) else {
-            return Err(Failure::new(
-                FailureClass::Input,
-                a2m_core::FailureCode::FINDING_INVALID,
+            return Err(a2m_core::codes::row::FINDING_INVALID.failure(
                 "A `described_operation` finding is not in the form the HTTP pack writes.",
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));

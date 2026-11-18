@@ -81,7 +81,7 @@ impl Position {
     fn parse(text: &str) -> Result<Self, StepFailure> {
         let refused = || {
             stop(
-                codes::VALUE_UNPARSABLE,
+                &codes::row::VALUE_UNPARSABLE,
                 "The position given is not one a read of this file gave.",
                 "Give the position the last read returned, or none to read from the start.",
             )
@@ -171,7 +171,7 @@ pub(crate) fn read(
     let Some(last_end) = bytes.iter().rposition(|byte| *byte == b'\n') else {
         if bytes.len() as u64 == bound && offset + bound < length {
             return Err(stop(
-                codes::FILE_TOO_LARGE,
+                &codes::row::FILE_TOO_LARGE,
                 "A line of the file is longer than the most bytes one read takes, so it can never be read whole.",
                 "Raise `max_bytes` in the log's declaration.",
             ));
