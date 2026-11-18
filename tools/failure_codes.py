@@ -360,11 +360,30 @@ def classes_of_uses(texts, name, helper_of):
     return found
 
 
-PREFER = lambda crate: (crate.startswith("a2m-pack-"), crate)
+def layers(root):
+    """Crate -> its layer, from the layering table of the reference; a crate the table does not
+    name is put above every layer."""
+    text = (root / REFERENCE).read_text(encoding="utf-8")
+    start = text.find("## Crate layering")
+    table = text[start:text.find("\n## ", start + 1)] if start >= 0 else ""
+    found = {}
+    for m in re.finditer(r"^\| (\d+)\. [^|]+\|([^|]+)\|", table, re.M):
+        for crate in re.findall(r"`([a-z0-9-]+)`", m.group(2)):
+            found[crate] = int(m.group(1))
+    return found
 
 
-def resolve(f):
+def preference(root):
+    """The order in which the crates that declare one code are shown, the first giving the row's
+    meaning: the core, then the provider contract, then by layer, lowest first, then by name."""
+    layer = layers(root)
+    first = {"a2m-core": 0, "a2m-provider": 1}
+    return lambda crate: (first.get(crate, 2), layer.get(crate, 99), crate)
+
+
+def resolve(f, root=repo):
     """(rows, faults): rows are (class, code, crates, meaning), sorted by class then code."""
+    prefer = preference(root)
     rows, faults = [], list(f.faults)
     for code, row in sorted(f.by_code.items()):
         strong = {c for c, ss in row["classes"].items() if any(how in ("macro", "table", "manifest", "doc") for _, how in ss)}
@@ -384,14 +403,14 @@ def resolve(f):
             faults.append(f"`{code}` is given two answers to whether it passes by itself: {where}")
         meaning, nxt, passes = "", "", ""
         if row["rows"]:
-            meaning, nxt, passes, _ = row["rows"][sorted(row["rows"], key=PREFER)[0]]
+            meaning, nxt, passes, _ = row["rows"][sorted(row["rows"], key=prefer)[0]]
             passes = PASSES[passes]
         else:
-            for crate in sorted(row["meanings"], key=PREFER):
+            for crate in sorted(row["meanings"], key=prefer):
                 meaning = row["meanings"][crate]
                 break
         meaning = meaning[:1].upper() + meaning[1:]
-        rows.append((cls, code, sorted(row["crates"], key=PREFER), meaning, nxt, passes))
+        rows.append((cls, code, sorted(row["crates"], key=prefer), meaning, nxt, passes))
     rows.sort(key=lambda r: (CLASS_ORDER.index(r[0]), r[1]))
     return rows, faults
 
@@ -428,7 +447,7 @@ def current_block(text):
 def check(root):
     """Every way the reference's table differs from what the crates say, as sentences."""
     f = scan(root)
-    rows, faults = resolve(f)
+    rows, faults = resolve(f, root)
     text = (root / REFERENCE).read_text(encoding="utf-8")
     block = current_block(text)
     if block is None:
