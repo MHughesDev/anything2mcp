@@ -1,0 +1,5 @@
+test: example_order_xml_get
+kind: offline
+fixture: order_xml_get
+inputs: {order_id: "A-900"}
+expect: {status: draft, customer: "Synthetic Customer", item_codes: ["L-901"], quantities: [2]}

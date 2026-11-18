@@ -221,3 +221,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0217 | [The HTTP pack reads answers that are not JSON](0217-the-http-pack-reads-answers-that-are-not-json.md) | Accepted (design decision) |
 | 0222 | [The product is aware of the network its machine is on](0222-the-product-is-aware-of-the-network-its-machine-is-on.md) | Accepted (owner decision) |
 | 0230 | [The scope is written down on both sides, and it describes without ruling](0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md) | Accepted (owner decision) |
+| 0218 | [The desktop pack writes on Linux through a second closed list, and reads back what is stored](0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md) | Accepted (design decision) |
+| 0231 | [The owner's direction is written in exact words of the agent's own](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md) | Accepted (owner decision) |

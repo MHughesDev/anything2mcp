@@ -1,6 +1,6 @@
 # 0208. The first release reaches what the person's machine reaches, and serves on that machine only
 
-**Status:** Accepted. Owner decision, given in conversation on 2026-11-18 and written down by the lead agent. Only the owner changes it.
+**Status:** Accepted. Owner decision of 2026-11-18. The direction is the owner's; the wording is the lead agent's, as the owner asked ([decision 0231](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)). Only the owner changes it.
 
 **Date:** 2026-11-18
 
@@ -12,7 +12,11 @@ Decision 0169 said the first release is for one machine and that the server foll
 
 ## Decision
 
-The owner's words: "Whenever I said I want this to run on the user's machine, that means should be able to access anything that the person's computer is able to access and keep the MCP, a local host, only on their local machine, not over a network or for a server. So we're just imagining people using operating systems like Windows, Mac OS, Linux, etc., then being able to wrap an MCP either, say, around an application installed on their operating system or something like a website or literally just any website or public endpoint that their computer can reach."
+The owner settled what "on the person's machine" means, and it has two halves that point in opposite directions.
+
+Outward, the machine is the measure of reach. Whatever a person's own computer can get to, the product can be set around: an application installed on it, a website, any endpoint it can reach. The product is not limited to things that live on the machine; it is limited to things the machine can reach.
+
+Inward, the machine is the boundary of service. The tools the product serves are offered on that machine and nowhere else. It is not a server, and it does not offer itself over a network.
 
 Two rules follow.
 
@@ -29,4 +33,4 @@ Two rules follow.
 
 ## Alternatives weighed
 
-None by the agents: this is the owner's statement of what the product is. The lead had recommended that the desktop pack's Windows and macOS halves follow the first release; the owner's words put applications installed on the person's operating system at the centre of it.
+None by the agents: this is the owner's statement of what the product is. The lead had recommended that the desktop pack's Windows and macOS halves follow the first release; the owner's direction puts the applications installed on a person's own operating system at the centre of it.

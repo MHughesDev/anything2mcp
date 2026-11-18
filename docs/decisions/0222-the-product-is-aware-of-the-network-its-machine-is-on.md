@@ -1,6 +1,6 @@
 # 0222. The product is aware of the network its machine is on
 
-**Status:** Accepted. Owner decision, given in conversation on 2026-11-18 and written down by the lead agent. Only the owner changes it. The design that carries it out is not written yet: research and design rounds are under way, and what they propose will be Proposed records the owner has not read.
+**Status:** Accepted. Owner decision of 2026-11-18. The direction is the owner's; the wording is the lead agent's, as the owner asked ([decision 0231](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)). Only the owner changes it. The design that carries it out is not written yet: research and design rounds are under way, and what they propose will be Proposed records the owner has not read.
 
 **Date:** 2026-11-18
 
@@ -12,13 +12,15 @@ Decision 0208 set what the product may reach: an application on the person's mac
 
 ## Decision
 
-The owner's words: "let's start some waves that essentially go through, do research, and think and brainstorm upon areas that need imagination, invention, and better engineering, so that we can make the system network aware, so that essentially you could have the system run from one device where, say, like the scouting software should be able to scout across the network as well. However, the software that will be available in this software suite, on this platform essentially, will be some more tools that coding agents would be able to use, so that they can also inspect the network they are on as well. So not just the machine, but also the network that it has access to. So not just, you know, a website. A website should be part of that. Like a website, you're going from one network to another. We should have that same capability where it's just network aware in general. Generalize that in the system. The system should be generalized to being network aware, is what I mean to say in the end of all this."
+The product becomes aware of the network. Until now it has known a machine and the addresses a person hands it. From now on it also knows where its machine stands: which networks the machine is on, what else is on them, and how the machine gets from where it is to anything it reaches. A website was always a thing reached across networks; the design treated it as a special case with an address. It becomes one instance of a general idea.
 
 Three things follow.
 
-1. **The scout can look across the network.** Run from one device, it can find what is on the networks that device can reach, and not only examine an address a person already knows.
-2. **Agents get tools to inspect the network.** The product carries tools, beside the tools a developer builds, with which a coding agent can see the network its machine is on: the machine, and the network the machine has access to.
-3. **The network is a general idea in the system, not a special case.** A website reached across networks is one instance of it. The design is to be generalized so that where a thing is on a network, and how the machine reaches it, is something the system knows about everywhere.
+1. **The scout looks across the network.** Run from one machine, it finds what is on the networks that machine can reach. It no longer needs a person to know an address first.
+2. **Agents can see the network.** Beside the tools a developer builds, the product carries tools of its own with which a coding agent can inspect where it is: the machine, and the networks the machine is on.
+3. **The network is a general idea, held everywhere.** Where a thing is, and by what path the machine reaches it, is something every part of the system knows and checks, in one way. Nothing is a special case of it: not a website, not a device, not a service on the machine itself.
+
+The owner also asked that this be approached with invention and good engineering, not as a feature bolted on: research first, then design, in rounds.
 
 ## What this does not change
 

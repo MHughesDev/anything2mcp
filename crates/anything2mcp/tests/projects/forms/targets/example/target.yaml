@@ -1,0 +1,18 @@
+# The imaginary order-entry system `example`, reached through the answers
+# it gives in forms other than JSON: XML views, a plain-text status line,
+# and a binary label (decision 0217). It describes no real product. A test
+# gives the surface the address of the application it started.
+schema_version: 1
+target: example
+title: Example order entry, other answer forms
+surfaces:
+  api:
+    kind: http
+    base: "http://127.0.0.1:4010"
+environments:
+  test:
+    kind: test
+    test_records: [["A-102", "L-900"]]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

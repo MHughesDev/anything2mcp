@@ -1,0 +1,54 @@
+# The reads of the `forms` fixture of the HTTP pack that the product test
+# calls; each has an offline test, as a publish needs.
+operation: example_order_xml_get
+title: Get an order from its XML view
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  status: {type: identifier}
+  customer: {type: text}
+  item_codes: {type: identifier, list: true}
+  quantities: {type: integer, list: true}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_xml_get
+    extract: {item_codes: "items.*.item_code", quantities: "items.*.quantity"}
+description: >
+  Reads an order's status, customer, and lines from its XML view.
+---
+operation: example_declared_get
+title: Get an order from an answer that declares a document type
+effect: read
+inputs: {}
+outputs:
+  customer: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: declared_xml_get
+description: >
+  Reads an answer that is refused before anything is read from it.
+---
+operation: example_status_get
+title: Get the status line
+effect: read
+inputs: {}
+outputs:
+  orders: {type: integer}
+  draft: {type: integer}
+  submitted: {type: integer}
+  newest: {type: identifier}
+  customer: {type: text}
+  text: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: status_get
+description: >
+  Reads the counts of orders from the plain-text status line.

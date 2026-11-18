@@ -325,9 +325,7 @@ pub fn system_prompt() -> Arc<dyn PresencePrompt> {
 pub fn system_prompt_for(paths: &a2m_actions::Paths) -> Arc<dyn PresencePrompt> {
     #[cfg(target_os = "linux")]
     {
-        Arc::new(
-            polkit::PolkitPrompt::system().copying_into(paths.data.join(polkit::COPY_FOLDER)),
-        )
+        Arc::new(polkit::PolkitPrompt::system().copying_into(paths.data.join(polkit::COPY_FOLDER)))
     }
     #[cfg(not(target_os = "linux"))]
     {

@@ -51,7 +51,7 @@ The documentation audit checks links, counts, names, and the rule that kernel cr
 The ten rules in [AGENTS.md](AGENTS.md) bind every change. The ones contributors meet most often:
 
 - **Nothing in a run calls a model or improvises.** If a step cannot be done as written, it stops with a named failure.
-- **Every write is verified:** recorded before it is attempted, read back, and compared.
+- **Every write is recorded first and proven after:** recorded before it is attempted, read back, and compared. A write that leaves nothing to read back is declared `irreversible`, approved by a person as that, and never called verified.
 - **Secrets never reach a caller,** a log, a trace, a fixture, or an error message.
 - **Name no real application.** Examples, tests, fixtures, file names, and commit messages use the imaginary `example` target or the test stands in `targets/`.
 - **Fixtures are synthetic.** Never commit recorded data from a real system.

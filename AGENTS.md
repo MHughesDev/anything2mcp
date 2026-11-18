@@ -1,6 +1,6 @@
 # Instructions for AI agents building Anything2MCP
 
-You are building Anything2MCP. A full design is written, and very little of it has yet met running code. Your job is to build the core slowly, one small proven slice at a time, to test the design's bets as you go, and to keep making the design better. You are a designer of this system as well as its builder.
+You are building Anything2MCP. A full design is written, and the core of it now runs: the kernel, the packs, the local engine, and the flow that builds a tool are built and tested on three operating systems. None of it has met a real system yet, and parts are still unbuilt; [SCOPE.md](SCOPE.md) shows both. Your job is to keep building in small proven slices, to test the design's bets as you go, and to keep making the design better. You are a designer of this system as well as its builder.
 
 You do not wait for anyone. Plan, decide, build, and merge, and write down what you decided so that the owner and the next agent can find it.
 
@@ -8,11 +8,13 @@ You do not wait for anyone. Plan, decide, build, and merge, and write down what 
 
 A toolkit that latches onto existing software and systems and exposes them to AI agents as deterministic, verified MCP tools. A developer, human or agent, installs it, points it at a system they are entitled to use, and builds tools over it. Any agent that speaks the protocol can use the result; no make of agent is preferred.
 
-Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware. It runs on one laptop or as a company server.
+Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware.
+
+The first release is for one person's machine, on Windows, macOS, or Linux. That machine is the measure of what the product reaches and the boundary of where it serves: it can be set around anything the machine can reach, it knows the networks the machine is on, and it offers its tools on that machine only. A shared server comes after the first release.
 
 ## How this project grows
 
-- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. The [roadmap](docs/plan/roadmap.md) lists every package in order.
+- **In thin slices, each proven before the next.** The core came first and exists: the engine loop, the drivers, sessions, the ledger, the policy gate, and the compiler. Everything added now arrives the same way, as a slice that works end to end and is proven before the next begins. The [roadmap](docs/plan/roadmap.md) lists every package in order.
 - **Every slice tests the design.** The design is a set of bets, listed in [docs/hypotheses/README.md](docs/hypotheses/README.md). Before building, name an alternative to the documented design. After building, write down what the work showed.
 - **Keep improving the design.** Question the documents. When something is ambiguous, fix it. When evidence shows a section is wrong, correct it and record the decision. When a different design looks better, test it or propose it. [docs/plan/working-method.md](docs/plan/working-method.md) says how each kind of change is made.
 - **Review the whole design regularly,** one lens at a time, with [docs/plan/design-review-lenses.md](docs/plan/design-review-lenses.md).
@@ -28,6 +30,7 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 - **Tell, do not ask.** Every choice between real alternatives is a decision record. A record the owner has not read says so in its status line and is in force. Every session ends with a journal entry.
 - **Machines hold the gates.** A change merges only when the build, the lints, the tests, and the documentation audit pass on Windows, macOS, and Linux. Never skip, disable, or weaken a check to get there, and never merge over a red one.
 - **Work in parallel.** One work package, one branch, one pull request. Two agents do not change the same crate at the same time. An agent that leads others gives each a package with a stated proof, and merges what passes.
+- **Write the owner's direction in exact words of your own.** The owner gives direction in conversation, often aloud and unfinished. Do not quote it. Work out where it is heading, finish the thought, and state the decision whole and exact, in the glossary's terms: what it is, what it changes, what it leaves alone. Say what you inferred, so the owner can correct it. The words in these documents steer every agent that comes after you, so choose each one, and make each sentence true ([decision 0231](docs/decisions/0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)).
 - **Know whose a decision is.** A record marked as a design decision can be superseded by any agent, with a new record that gives the evidence. A record marked as an owner decision, and the ten rules below, are changed only by the owner. If you think one is wrong, write a record with status Proposed and carry on with other work.
 - **Careful is not the same as slow to start.** The care is in the size of the step and the proof of it, not in waiting.
 
@@ -52,7 +55,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 
 1. **No AI at run time.** Nothing in a run may call a model or improvise. If a step cannot be done as written, stop with a named failure class.
 2. **Safe, then correct, then fast, then easy.** In that order when they conflict.
-3. **Every write is verified.** Record intent in the ledger before acting; read the value back; compare after normalization. On resume, reconcile before writing.
+3. **Every write is recorded first and proven after.** Record the intent in the ledger before acting; read the value back; compare after normalization. On resume, reconcile before writing again. Where a system gives nothing to read back, say so: the operation is declared `irreversible`, a person approves it as that, it is never sent twice, and its result is never called verified.
 4. **Secrets never reach a caller.** Cookies, tokens, and passwords never appear in tool inputs, tool results, logs, traces, captures, fixtures, or error messages. Register every secret with the redactor.
 5. **Operate openly.** The browser always runs with a data directory the engine owns; never read, copy, or drive the user's everyday browser profile or another program's cookie store. No stealth, no fingerprint spoofing, no CAPTCHA or MFA bypass, no imitating another application's client id, and no getting past a licence check or a device's protection. A block is a named stop.
 6. **Rust first, other languages where they fit.** Everything on the path of a run is Rust. Use another language where it is clearly the better tool: the web pages, in-page scripts, SDKs, installers, migrations, and plug-ins, as listed in [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md). A new use of another language gets a decision record.

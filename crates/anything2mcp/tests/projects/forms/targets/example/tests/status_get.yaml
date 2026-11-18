@@ -1,0 +1,5 @@
+test: example_status_get
+kind: offline
+fixture: status_get
+inputs: {}
+expect: {orders: 2, draft: 1, submitted: 1, newest: "A-901"}

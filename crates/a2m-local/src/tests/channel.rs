@@ -520,13 +520,16 @@ async fn an_engine_started_on_demand_that_stops_by_name_is_answered_by_that_name
         "Another engine's words.",
         "Not for this client.",
     );
-    let forged = crate::stopped_line(&other).replacen(
-        &format!(" {} ", std::process::id()),
-        " 1 ",
-        1,
-    );
-    std::fs::write(&log, format!("{forged}
-")).unwrap();
+    let forged =
+        crate::stopped_line(&other).replacen(&format!(" {} ", std::process::id()), " 1 ", 1);
+    std::fs::write(
+        &log,
+        format!(
+            "{forged}
+"
+        ),
+    )
+    .unwrap();
     let stops = || crate::Launch {
         program: std::env::current_exe().unwrap(),
         args: vec![

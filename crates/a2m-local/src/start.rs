@@ -7,7 +7,11 @@
 //! standard input is empty or carries the vault's passphrase once, and it
 //! inherits no other handle of the client, because every handle this
 //! program opens is closed on exec or not inheritable. The client then
-//! waits for the channel to answer, up to a deadline, and connects.
+//! waits for the channel to answer, up to a deadline, and connects. An
+//! engine that stops before it serves, as one that cannot open its vault
+//! does, writes why on one line ([`stopped_line`]), and the client answers
+//! with that failure; nothing stays up to answer later commands
+//! (decision 0220).
 //!
 //! Two clients that start at once end with one engine: the start lock
 //! lets one start it while the other waits and then connects; and if two

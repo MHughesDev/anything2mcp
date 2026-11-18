@@ -1,6 +1,6 @@
 # 0230. The scope is written down on both sides, and it describes without ruling
 
-**Status:** Accepted. Owner decision, given in conversation on 2026-11-18 and written down by the lead agent. Only the owner changes it. The lead agent first drafted this record as a list of things the product "does not answer for", each to be changed only by a superseding record. The owner read that and turned it down in that form; this is the record as the owner decided it. The earlier draft was never in force and was never merged.
+**Status:** Accepted. Owner decision of 2026-11-18. The direction is the owner's; the wording is the lead agent's, as the owner asked ([decision 0231](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)). Only the owner changes it. The lead agent first drafted this record as a list of things the product "does not answer for", each to be changed only by a superseding record. The owner read that and turned it down in that form; this is the record as the owner decided it. The earlier draft was never in force and was never merged.
 
 **Date:** 2026-11-18
 
@@ -10,7 +10,9 @@ The specification says in several places what the product refuses to do ([sectio
 
 ## Decision
 
-The owner's words: "Let's make sure we just have that documented so that I can see what is the scope. I want to see what we're claiming responsibility over and what we're not, and or what the system does and what it does not. Just being transparent about both sides of the coin when we're documenting things. However, I don't want that to build up as some kind of pseudo rule that we can't break of something already documented. So like if we're saying we're one thing and we can't be another, then I don't want to restrict ourselves entirely to just always saying a bunch of things we aren't, then constricting the system down eventually after I haven't read through some of the documentation and said, oh wait, we should have included this or that."
+The scope is to be visible, whole, and honest in both directions: what the product does and takes responsibility for, and what it does not. A reader, the owner first of all, should be able to see the edge of the product on one page.
+
+And that page must never harden into a fence. Saying what the product is not, today, is a description of today. It is not a promise to stay that way, and it must not be read as one. The owner does not read every document as it is written; a product that narrows a little with each sentence of the form "this is not that" would end up smaller than the owner ever chose, and the owner would find out only on wanting the thing that had been written away.
 
 Three things follow.
 

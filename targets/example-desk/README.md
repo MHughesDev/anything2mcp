@@ -21,12 +21,18 @@ application "example-desk"
       label "Reference"    -> entry "R-2"
       label "Access code"  -> password text (holds a made-up secret, and answers it to anyone who asks)
       table "Line items": a row of column headers, then one row for each line
-      push button "Save"   (a press is counted as a write)
+      push button "Save"   (a press is counted as a write; it stores the edit fields' values when the application takes them)
+      label "New customer" -> editable entry (holds at most 24 characters, and cuts the rest)
+      label "New status"   -> editable entry
+      label "Message"      -> entry "Saved." once Save stored
+      label "Problem"      -> entry, shown only while the application refuses a value
 ```
+
+What is typed into an edit field is not stored until Save, and the labelled values `Customer` and `Status` show what is stored, so they differ from the edit fields until then. Save stores only a customer that is not empty and a status of `open`, `held`, or `closed`; otherwise it shows why under `Problem` and stores nothing ([decision 0218](../../docs/decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)).
 
 ## The control interface
 
-`Desk::truth()` gives every method and property the application was asked, by name, with counts; how many times the password field's text was asked for; how many times Save was pressed; and what the `Tracking` field holds. `Truth::acted()` says whether any member that changes an application was asked. `Desk::show_late(after)` makes the `Tracking` field show its value once `after` has passed, and signals the change as a toolkit does.
+`Desk::truth()` gives every method and property the application was asked, by name, with counts; how many times the password field's text was asked for; how many times Save was pressed; and what the `Tracking` field holds. `Truth::acted()` says whether any member that changes an application was asked. `Desk::show_late(after)` makes the `Tracking` field show its value once `after` has passed, and signals the change as a toolkit does. For a write, `Truth` also reports what is stored, how many times Save stored, and every value set into each field with its window; `Desk::fault` switches on, for the next press of Save, a Save that stores nothing and says nothing, a Save that stores and then leaves the bus before it confirms, or a confirmation that arrives late, and, until the stand ends, a read-only field; `Desk::open_window(title)` opens a second window with a `New customer` field of its own; `Desk::restart()` starts the application again with what it stored. The write half is built for Linux only; on Windows these return an error.
 
 ## On Windows
 

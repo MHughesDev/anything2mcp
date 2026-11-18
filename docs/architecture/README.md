@@ -178,7 +178,7 @@ A rule that depends on every author remembering it will be broken. Each of these
 | Rule | How the arrangement enforces it | Proof |
 | --- | --- | --- |
 | No AI at run time | No crate on the path of a run may depend on a model client; the engine executes only a compiled plan | A ban list in `deny.toml` once a model client could be depended on by accident; engine tests |
-| Every write is verified | Only the engine reaches a driver, through a handle that refuses a committing step without the token the ledger gives for a recorded intent | The nine ledger rules of spec section 208, each a test |
+| Every write is recorded first and proven after | Only the engine reaches a driver, through a handle that refuses a committing step without the token the ledger gives for a recorded intent | The nine ledger rules of spec section 208, each a test |
 | Secrets never reach a caller | `Secret` cannot be printed or serialized; credentials reach a driver only through `inject`; everything leaving a front door passes `Redact` | The compile-time test in `a2m-core`; a fault test that plants a secret in a system's answer |
 | The kernel is neutral | The layering table | The audit, with planted mistakes |
 | One decider | Only `a2m-policy` exports `decide`; no other crate holds a grant | Review; a test that every action's dispatch records a decision |

@@ -25,7 +25,7 @@ Every "does not" carries its kind:
 | Command-line programs, as declared commands with typed arguments | Offer a shell, or run text an agent wrote | Rule 7, and [section 213](docs/spec/2-kernel/213-effects-hazards-and-consent.md) |
 | Runs a script the developer keeps in the target, as a fixed pair with a declared interpreter, checked by digest at every start (proven on Linux; written for Windows and macOS, not yet run there) | Start a program with administrator rights | Not yet |
 | Databases (an embedded database file; PostgreSQL in a build with that feature), files (delimited text, JSON, workbooks), streams (NATS), devices (against a simulator) | Folders, growing logs, property lists; other brokers; other databases; firmware updates | Not yet |
-| Desktop applications through the accessibility interface: reads, on Linux | Desktop reads on Windows (written, not yet run) and macOS; desktop writes (being built on Linux) | Not yet |
+| Desktop applications through the accessibility interface, on Linux: reads, and verified writes that set fields, press the save action, and read back what the window shows is stored | Desktop reads on Windows (written, not yet run) and on macOS; desktop writes on Windows and macOS; number fields; creating and deleting records; starting an application | Not yet |
 | | Click by position on a picture of the screen | Rules 1 and 7. Question open for the owner: [0212](docs/decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) |
 | | Applications' own scripting interfaces (Apple events, COM, D-Bus); mobile devices | Not yet |
 | | Get past a sign-in, a bot defence, a licence check, or a device's protection | Rule 5 |

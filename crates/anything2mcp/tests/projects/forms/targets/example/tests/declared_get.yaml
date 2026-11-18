@@ -1,0 +1,5 @@
+test: example_declared_get
+kind: offline
+fixture: declared_xml_get
+inputs: {}
+expect: {customer: "Synthetic Customer"}

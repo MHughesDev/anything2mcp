@@ -133,9 +133,12 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | --- | --- | --- |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `locator_ambiguous` | As for `ui` |
 | `unknown_variant` | `unexpected_dialog`, `unexpected_page` | A modal window, or a different window than the screen declares |
-| `rejected` | `app_validation_error` | A declared variant showing a validation message |
-| `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited |
-| `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it |
+| `rejected` | `app_validation_error` | A declared variant showing a validation message, carried as the application's own words |
+| `unknown_variant` | `field_read_only`, `unexpected_control`, `value_not_held` | A field takes no value today; an element offers no editable text or no action of the declared name; a field holds, after `set`, another value than the one set: stopped before anything is saved |
+| `policy` | `password_set_refused` | A step would set a control that holds a secret |
+| `busy` | `writes_not_built` | A write on a system whose acting half is not built: Windows and macOS in this version. Nothing is sent |
+| `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited. A resume reads the stored value before it writes again |
+| `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it; or another write of the engine held the desktop past the step's deadline |
 | `busy` | `runner_unavailable` | No interactive desktop session, or the operating system's accessibility permission is not granted |
 | `busy` | `application_not_running`, `accessibility_off`, `system_not_built` | The application the surface names is not running; it runs and publishes nothing while the session's accessibility switch is off; the pack has no back end for this system (decision 0198) |
 | `busy` | `target_elevated` | On Windows, the application runs at a higher level than the engine, as administrator ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) |
@@ -162,7 +165,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | # | Item | The desktop pack's answer |
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `desktop` driver |
-| 2 | Read-back for every write | The element's value after the screen is reached again. A control that exposes no value cannot be written except as `irreversible` |
+| 2 | Read-back for every write | The element's value after the screen is reached again, where the window shows what is stored, never the field typed into. A field written that no output reads back compiles only as `irreversible` (`desktop.unreadable_write`, decision 0218) |
 | 3 | Each identity strategy | As for `ui`: `natural` and `composite` through a screen reached by key; `stamped` and `find` through a list or search window; `none` as `irreversible` |
 | 4 | A test stand | Case 28 |
 | 5 | A discoverer | `desktop_probe` and `desktop_snapshot` |
@@ -174,7 +177,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 1. Slice 8.1, in `spikes/`, with brief 19: on each operating system, read a simple program's tree, find a text field by name, set it, and read it back. A decision record on the library ([research note 09](../../research/09-rust-building-blocks.md) lists candidates, none verified by use).
 2. Case 28, with its control interface.
-3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198, and on Windows, [decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md), where it is proven only once CI's Windows runner has run it); then writes with read-back; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
+3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198, and on Windows, [decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md), where it is proven only once CI's Windows runner has run it); then writes with read-back, `update` and `upsert`, built on Linux ([decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)), stopping as `writes_not_built` on Windows and macOS; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
 
 ## Open points
 

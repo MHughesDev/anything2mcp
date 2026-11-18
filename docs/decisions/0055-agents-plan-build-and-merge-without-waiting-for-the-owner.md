@@ -8,7 +8,7 @@
 
 ## Context
 
-The repository's rules were written for an owner who read every plan and every change. The owner does not work that way and has said so three times: that agents merge their own pull requests; that agents "shouldn't wait for any human approval when we're in this repo" and should "work along in parallel" planning, designing, and building; and that the rule files may be changed as needed to say so. An agent was stopped by its own safety check from making this change without those words. It now has them.
+The repository's rules were written for an owner who read every plan and every change. The owner does not work that way and has said so three times: that agents merge their own pull requests; that inside this repository no agent waits for a person's approval, and agents plan, design, and build side by side; and that the rule files may be changed as needed to say so. An agent was stopped by its own safety check from making this change until the owner had said so plainly. The owner has.
 
 ## Decision
 

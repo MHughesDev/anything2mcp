@@ -145,9 +145,9 @@ fn installing() -> String {
 /// what an administrator runs.
 fn plain_for_a_shell(path: &str) -> bool {
     path.starts_with('/')
-        && path
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+' | b',' | b'@'))
+        && path.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+' | b',' | b'@')
+        })
 }
 
 /// The script an administrator runs, as root, to install the copy at
@@ -232,12 +232,12 @@ pub(crate) fn unavailable(fault: &Fault) -> Availability {
         Fault::NoSystemBus => Availability::not_available(
             PresenceReason::NoSystemBus,
             "No system bus answers on this machine, so polkit cannot be asked for a presence prompt.",
-            "Nothing on this machine can approve: it is a container, or it has no desktop. Approve at a desktop, with the engine started inside your own session.",
+            "Nothing on this machine can approve, and that is by design: a write needs a person at the machine, and a container or a machine with no desktop has none. Approve from a desktop session at the machine, with the engine started inside it.",
         ),
         Fault::NoPolkit => Availability::not_available(
             PresenceReason::NoPolkit,
             "The system bus of this machine has no polkit on it, so there is no presence prompt.",
-            "Install polkit, and use a desktop session that runs a polkit authentication agent.",
+            "A person with administrator rights installs polkit from the system's packages; then approve from a desktop session at the machine, which runs a polkit authentication agent.",
         ),
         Fault::NotRegistered => Availability::not_available(
             PresenceReason::PolicyNotInstalled,
@@ -276,13 +276,13 @@ pub(crate) fn standing(answer: Result<Verdict, Fault>) -> Result<(), Availabilit
                 "polkit would allow the engine's action `{ACTION_ID}` without asking anybody, so its answer proves that nobody is present."
             ),
             format!(
-                "An administrator removes the rule or the kept authorization that allows the action, and installs `{POLICY_FILE}` as it ships. The engine is never run as the administrator account."
+                "If the engine runs as the administrator account, stop it with `anything2mcp engine stop` and run it as your own: the administrator is allowed everything without being asked. Otherwise a person with administrator rights removes the rule under `/etc/polkit-1/rules.d` or the kept authorization that allows the action, and installs `{POLICY_FILE}` as it ships."
             ),
         )),
         (false, false) => Err(Availability::not_available(
             PresenceReason::SessionNotActive,
             "The engine does not run inside a local, active session of a person, so polkit asks nobody.",
-            "Start the engine from your own desktop session at the machine itself. Over a remote shell, in a container, and on a machine with no screen, nothing can approve.",
+            "Stop the engine with `anything2mcp engine stop`, and run the next command from a terminal of your own desktop session at the machine, so that the engine starts inside it. Over a remote shell, in a container, and on a machine with no screen nothing can approve, by design: a write needs a person at the machine.",
         )),
     }
 }

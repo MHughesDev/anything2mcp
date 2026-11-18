@@ -1,6 +1,6 @@
 [package]
 name = "example-desk"
-description = "Test stand: a desktop program's accessibility tree, published on an accessibility bus of the test's own, with labelled values, a table, a nameless control, two controls of one name, a password field, a late value, and a save button nobody may press."
+description = "Test stand: a desktop program's accessibility tree, published on an accessibility bus of the test's own, with labelled values, a table, a nameless control, two controls of one name, a password field, a late value, edit fields, and a Save that stores them, with faults a test switches on."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

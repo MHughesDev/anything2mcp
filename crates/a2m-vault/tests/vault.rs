@@ -750,7 +750,12 @@ async fn where_the_build_has_no_key_store_the_passphrase_route_is_the_default_an
         !has_store
     );
     // Only the passphrase route's own word chooses it.
-    for other in [None, Some(BACKEND_OS_KEY_STORE), Some("Passphrase"), Some("")] {
+    for other in [
+        None,
+        Some(BACKEND_OS_KEY_STORE),
+        Some("Passphrase"),
+        Some(""),
+    ] {
         assert_eq!(
             PassphraseRoute::of_backend(other),
             PassphraseRoute::NotEnabled

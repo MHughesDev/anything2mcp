@@ -36,8 +36,9 @@ pub use records::{KeyRecord, KeyRecords, MemoryKeyRecords, key_record_conflict};
 pub use redactor::{RedactStream, Redactor, RedactorHealth};
 pub use sealed::Sealed;
 pub use store::{
-    BACKEND_OS_KEY_STORE, BACKEND_PASSPHRASE, BoxFuture, DEFAULT_BACKEND, KeyStore, MemoryKeyStore, OsKeyStore, PassphraseKeyStore, PassphraseRoute,
-    PassphraseSalt, StoreDescription, StoreHealth, StoreStrength,
+    BACKEND_OS_KEY_STORE, BACKEND_PASSPHRASE, BoxFuture, DEFAULT_BACKEND, KeyStore, MemoryKeyStore,
+    OsKeyStore, PassphraseKeyStore, PassphraseRoute, PassphraseSalt, StoreDescription, StoreHealth,
+    StoreStrength,
 };
 pub use vault::{Vault, VaultHealth};
 

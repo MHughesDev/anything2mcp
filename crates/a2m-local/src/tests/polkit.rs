@@ -18,8 +18,8 @@ use tokio::time::Instant;
 
 use super::world::within;
 use crate::presence::polkit::{
-    ACTION_ID, Authority, Bus, Fault, POLICY_FILE, PolkitPrompt, SystemBus, Verdict, answered,
-    fault_named, standing, unavailable,
+    ACTION_ID, Authority, Bus, Fault, POLICY_DIR, POLICY_FILE, PolkitPrompt, SystemBus, Verdict,
+    answered, fault_named, install_script, installing_from, standing, unavailable, write_copy,
 };
 use crate::{
     Availability, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
@@ -457,6 +457,223 @@ fn the_policy_file_declares_the_action_the_engine_asks_for_with_its_defaults() {
     assert!(POLICY.contains("read the page first"));
 }
 
+/// A folder of the test's own under the system's temporary folder, removed
+/// when it is dropped.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let folder = std::env::temp_dir().join(format!(
+            "a2m-polkit-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        Self(folder)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+/// What the remedy for a policy file that is not installed must hold, for
+/// the copy at `copy`: the copy, which holds the file this build carries
+/// with mode 0644; the place it is installed into; and one command that
+/// names both, for a person with administrator rights.
+fn assert_names_the_copy(remedy: &str, copy: &std::path::Path) {
+    assert_eq!(std::fs::read(copy).unwrap(), POLICY.as_bytes());
+    assert_eq!(mode(copy), 0o644);
+    let copy = copy.display().to_string();
+    assert!(remedy.contains(&format!("`{copy}`")), "{remedy}");
+    assert!(remedy.contains("administrator rights"), "{remedy}");
+    assert!(remedy.contains("never runs it"), "{remedy}");
+    let command = remedy
+        .split_once("`sudo sh -c '")
+        .and_then(|(_, rest)| rest.split_once("'`"))
+        .map(|(script, _)| script)
+        .unwrap_or_else(|| panic!("no command in {remedy}"));
+    assert!(command.contains(&copy), "{command}");
+    assert!(
+        command.contains(&format!("{POLICY_DIR}/{POLICY_FILE}")),
+        "{command}"
+    );
+    assert!(
+        command.contains(&a2m_core::Digest::of(POLICY.as_bytes()).to_string()),
+        "{command}"
+    );
+}
+
+/// Decision 0220. The engine writes a copy of the policy file into its own
+/// folder, mode 0644: never through a link planted at its name or at the
+/// name it is written under, and again when the copy there was changed.
+#[test]
+fn the_copy_of_the_policy_file_is_written_whole_in_the_engines_folder_and_through_no_link() {
+    let scratch = Scratch::new("copy");
+    let folder = scratch.0.join("data").join("polkit");
+    let copy = write_copy(&folder).unwrap();
+    assert_eq!(copy, folder.join(POLICY_FILE));
+    assert_eq!(std::fs::read(&copy).unwrap(), POLICY.as_bytes());
+    assert_eq!(mode(&copy), 0o644);
+    // The folder is the user's alone.
+    assert_eq!(mode(&folder), 0o700);
+
+    // A changed copy is written again.
+    std::fs::write(&copy, b"<policyconfig>changed</policyconfig>").unwrap();
+    assert_eq!(
+        std::fs::read(write_copy(&folder).unwrap()).unwrap(),
+        POLICY.as_bytes()
+    );
+
+    // Links planted at its name and at the name it is written under are
+    // replaced, and what they lead to is left as it was.
+    let elsewhere = scratch.0.join("elsewhere");
+    std::fs::write(&elsewhere, b"kept").unwrap();
+    std::fs::remove_file(&copy).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &copy).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, folder.join(format!("{POLICY_FILE}.new"))).unwrap();
+    let copy = write_copy(&folder).unwrap();
+    assert!(std::fs::symlink_metadata(&copy).unwrap().is_file());
+    assert_eq!(std::fs::read(&copy).unwrap(), POLICY.as_bytes());
+    assert_eq!(std::fs::read(&elsewhere).unwrap(), b"kept");
+}
+
+/// Decision 0220. The command the remedy gives installs the copy only
+/// when its bytes are the policy this build carries: run here as the test's
+/// own user into a folder of the test's, in the place of the system's.
+#[test]
+fn the_install_command_installs_the_copy_only_when_it_is_the_file_this_build_carries() {
+    let scratch = Scratch::new("install");
+    let copy = write_copy(&scratch.0.join("polkit")).unwrap();
+    let into = scratch.0.join("actions");
+    std::fs::create_dir_all(&into).unwrap();
+    let into_text = into.to_str().unwrap();
+    let script = install_script(&copy, into_text).unwrap();
+    let run = || {
+        Command::new("sh")
+            .args(["-c", &script])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+    };
+    let installed = into.join(POLICY_FILE);
+
+    // A copy changed in the user's folder is refused, and nothing is
+    // installed.
+    std::fs::write(&copy, b"<policyconfig>changed</policyconfig>").unwrap();
+    assert!(!run().success());
+    assert!(!installed.exists());
+
+    // The file this build carries is installed, mode 0644.
+    let copy = write_copy(&scratch.0.join("polkit")).unwrap();
+    assert!(run().success());
+    assert_eq!(std::fs::read(&installed).unwrap(), POLICY.as_bytes());
+    assert_eq!(mode(&installed), 0o644);
+
+    // A path that is not plain enough to stand in a command gives none.
+    assert!(install_script(&scratch.0.join("a folder").join(POLICY_FILE), into_text).is_none());
+    assert!(install_script(&scratch.0.join("it's").join(POLICY_FILE), into_text).is_none());
+    assert!(install_script(&copy, "/tmp/$(id)").is_none());
+    let fallback = installing_from(&scratch.0.join("a folder").join(POLICY_FILE));
+    assert!(!fallback.contains("sudo"), "{fallback}");
+    assert!(fallback.contains(POLICY_DIR), "{fallback}");
+    assert!(
+        fallback.contains(&a2m_core::Digest::of(POLICY.as_bytes()).to_string()),
+        "{fallback}"
+    );
+}
+
+/// Decision 0220. Where polkit does not know the engine's action, the
+/// availability writes the copy and its remedy gives the one command, and
+/// nothing is raised. With no folder for a copy, the remedy names the file
+/// in the product's source.
+#[tokio::test]
+async fn a_policy_file_that_is_not_installed_is_answered_with_a_copy_and_the_command() {
+    let refused = || {
+        Arc::new(Fake {
+            bus: Ok(()),
+            before: Err(Fault::Refused),
+            after: None,
+            registered: Ok(false),
+            calls: Mutex::new(Vec::new()),
+        })
+    };
+    let scratch = Scratch::new("remedy");
+    let folder = scratch.0.join("polkit");
+    let fake = refused();
+    let prompt = prompt_over(&fake).copying_into(folder.clone());
+    let available = within("the availability", prompt.available()).await;
+    assert_eq!(available.reason, PresenceReason::PolicyNotInstalled);
+    assert!(!available.proves_presence());
+    assert_names_the_copy(&available.remedy, &folder.join(POLICY_FILE));
+    let got = within("the ask", prompt.ask(text(), Instant::now() + FAR)).await;
+    assert_eq!(got, PromptAnswer::NotAvailable(available));
+    assert!(!fake.raised(), "{:?}", fake.calls());
+
+    let without = within("the availability", prompt_over(&refused()).available()).await;
+    assert_eq!(without.reason, PresenceReason::PolicyNotInstalled);
+    assert!(
+        without.remedy.contains("crates/a2m-local/polkit"),
+        "{without:?}"
+    );
+    assert!(!without.remedy.contains("sudo"), "{without:?}");
+}
+
+/// Every reason an availability gives says what a person can do, in a
+/// sentence or two; where nothing can be done on this machine it says so,
+/// and that this is by design.
+#[test]
+fn every_remedy_says_what_a_person_can_do() {
+    let mut said = Vec::new();
+    for fault in every_fault() {
+        said.push(unavailable(&fault));
+    }
+    for answer in every_answer() {
+        if let Err(why) = standing(answer.clone()) {
+            said.push(why);
+        }
+        if let PromptAnswer::NotAvailable(why) = answered(answer) {
+            said.push(why);
+        }
+    }
+    for why in &said {
+        assert!(!why.remedy.is_empty(), "{why:?}");
+        let sentences = why.remedy.matches(". ").count() + 1;
+        assert!(sentences <= 3, "{why:?}");
+        if matches!(
+            why.reason,
+            PresenceReason::NoSystemBus | PresenceReason::SessionNotActive
+        ) {
+            assert!(why.remedy.contains("by design"), "{why:?}");
+            assert!(why.remedy.contains("a person at the machine"), "{why:?}");
+        }
+    }
+    for reason in [
+        PresenceReason::NoSystemBus,
+        PresenceReason::NoPolkit,
+        PresenceReason::PolicyNotInstalled,
+        PresenceReason::SessionNotActive,
+        PresenceReason::NoAgent,
+        PresenceReason::GrantedWithoutAsking,
+    ] {
+        assert!(said.iter().any(|why| why.reason == reason), "{reason:?}");
+    }
+}
+
 /// The real bus code, on any Linux machine: an address where nothing
 /// listens is "no system bus", and nothing is raised.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -632,7 +849,11 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
         eprintln!("skipped: {REAL_VARIABLE} is not set, so this machine is not prepared");
         return;
     };
-    let prompt = Arc::new(PolkitPrompt::system());
+    // The engine's own folder for the copy of the policy file: one of the
+    // test's, which the test account can write.
+    let scratch = Scratch::new("real");
+    let copy_folder = scratch.0.join("polkit");
+    let prompt = Arc::new(PolkitPrompt::system().copying_into(copy_folder.clone()));
     let available = within("the availability", prompt.available()).await;
     let far = Instant::now() + FAR;
     let expected = match prepared.as_str() {
@@ -650,6 +871,16 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
         other => panic!("{REAL_VARIABLE}={other} is not a preparation this test knows"),
     };
     assert_eq!(available.reason, expected, "{available:?}");
+    if expected == PresenceReason::PolicyNotInstalled {
+        // The copy is written into the engine's folder, and the remedy
+        // gives the one command that installs it.
+        assert_names_the_copy(&available.remedy, &copy_folder.join(POLICY_FILE));
+        eprintln!("the remedy: {}", available.remedy);
+    } else {
+        // With the policy installed, or no polkit to know it, no copy is
+        // written.
+        assert!(!copy_folder.exists(), "{available:?}");
+    }
     if expected != PresenceReason::Ready {
         // Nothing can be raised, and an ask says the same.
         let got = within("the ask", prompt.ask(text(), far)).await;

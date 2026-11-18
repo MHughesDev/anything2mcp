@@ -22,7 +22,7 @@ An operation's hazard can raise the approval its effect class asks for, and neve
 4. **Preview.** The read steps run and produce a diff of current against proposed values, record by record ([section 208](208-runs-the-ledger-and-resume.md)).
 5. **Approval.** A person approves that exact diff, unless policy pre-approved it (below).
 6. **Limits.** Maximum records per run, rate budgets per surface, quotas per caller, and kill switches.
-7. **Read-back.** Every write is verified.
+7. **Read-back.** Every write is read back and compared, or is declared `irreversible` and approved as that.
 
 The policy engine's order of evaluation makes this exact. For a call that writes:
 

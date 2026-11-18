@@ -763,6 +763,41 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// Decision 0220. A remedy that holds a path and a command, as the one for
+/// a policy file that is not installed does, reaches the approval page and
+/// the answer to a press escaped as any text is: a folder's name cannot
+/// become markup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_remedy_that_holds_a_path_and_a_command_reaches_the_page_escaped() {
+    let copy = "/home/example/<b>x</b>&y/polkit/example.policy";
+    let remedy = format!(
+        "A person with administrator rights installs the policy file with this one command: `sudo sh -c 'cat {copy} > \"$f\"'`. The engine never runs it."
+    );
+    let why = Availability::not_available(
+        PresenceReason::PolicyNotInstalled,
+        "The policy file is not installed.",
+        remedy.clone(),
+    );
+    let prompt = TestPrompt::answering(PromptAnswer::NotAvailable(why));
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let rested = rest(&world).await;
+    let escaped = "/home/example/&lt;b&gt;x&lt;/b&gt;&amp;y/polkit/example.policy";
+    let (text, once) = open(&http, &rested.link).await;
+    assert!(text.contains(escaped), "{text}");
+    assert!(text.contains("sudo sh -c &#39;cat"), "{text}");
+    assert!(text.contains("&quot;$f&quot;"), "{text}");
+    assert!(!text.contains("<b>x</b>"), "{text}");
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::FORBIDDEN);
+    assert!(said.contains(escaped), "{said}");
+    assert!(!said.contains("<b>x</b>"), "{said}");
+    // `doctor` is given the text as it is, to escape at its own door.
+    let report = a2m_actions::PersonSurface::presence(&world.surface).await;
+    assert_eq!(report.fix, remedy);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proof_of_presence_comes_only_from_a_passed_prompt() {
     let prompt = TestPrompt::answering(PASSED);
