@@ -44,7 +44,7 @@ One input may name an entry inside a folder the target declares, as a row's key 
 The agent that builds a target reads the system more than anyone. If it is steered, the thing it can do is write target files that do something other than they claim. Four barriers stand in the way.
 
 1. **Exploration cannot write, and drafts can touch only test records.** Enforced in the engine's sandbox, as section 401 describes, with what "cannot write" means stated per archetype by each pack ([section 218](../2-kernel/218-discovery-and-findings.md)).
-2. **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside the origins a person registered for the target needs that person's confirmation.
+2. **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside the origins a person registered for the target needs that person's confirmation. A sign-in is held to the same rule: one that only the drafts declare sends no stored credential, and no token, until the person has been shown every address it sends to and has carried it out on its page; a credential belongs to the target it was stored for ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)).
 3. **Publishing needs a person, and the person is shown what matters first.** The compiler produces a review summary ordered by risk, above the ordinary file differences:
 
 | Shown first | Why |

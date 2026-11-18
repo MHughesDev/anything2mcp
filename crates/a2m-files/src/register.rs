@@ -19,6 +19,7 @@ use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
 use crate::doc::{Doc, Located, Place};
 use crate::draft::{DraftContext, DraftDoc};
 use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FOLDERS, KERNEL_OWNER, OPERATION, SOURCE};
+use crate::review::Statement;
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
 
@@ -117,6 +118,28 @@ pub trait FileKind: Send + Sync {
     fn writes(&self, _doc: &Located<Doc>) -> bool {
         false
     }
+    /// The places a document declares that are each exactly one record: a
+    /// place the target's files fix, such as a value of a settings file or
+    /// a named cell, which always exists or a read says it does not, and
+    /// which no input chooses. An operation may declare its record one
+    /// fixed place (`identity: {strategy: natural, place: fixed}`) only
+    /// where every binding names a place listed here, on its own surface
+    /// (decision 0252). A kind whose places are chosen by an input, such as
+    /// an entry of a folder by its name, lists none, which is the default.
+    fn fixed_places(&self, _doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
+        Vec::new()
+    }
+}
+
+/// The one fixed place a binding reads or writes, by the file kind that
+/// declares it and its name there (decision 0252).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedPlace {
+    /// The file kind whose document declares the place. It is the
+    /// lowering's own, or one it declared in `reads`.
+    pub kind: FileKindName,
+    /// The place's name, as [`FileKind::fixed_places`] gives it.
+    pub name: String,
 }
 
 /// Whether a step of one kind saves in the system. A pack states it once
@@ -218,6 +241,28 @@ pub trait Lowering: Send + Sync {
     fn binding_schema(&self) -> &JsonSchema;
     /// Whether `strategy` is possible for this binding.
     fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible;
+    /// The one fixed place the binding reads or writes, where it names one
+    /// in the target's files and no input chooses it. The compiler holds
+    /// the answer to the file kind's [`FileKind::fixed_places`]. A lowering
+    /// that does not answer names none, and an operation of its mode cannot
+    /// declare its record one fixed place.
+    fn fixed_place(&self, _binding: &ResolvedBinding<'_>) -> Option<FixedPlace> {
+        None
+    }
+    /// What the binding starts, sets in a program's environment, and sends
+    /// requests to, for the publish review summary, from the target's files
+    /// alone. Asked after `lower`, with the same binding and context. A
+    /// lowering that does not answer says nothing, and the summary says
+    /// plainly that this kind of tool does not state what it runs
+    /// (decision 0252).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::NotStated
+    }
     /// Lowers the binding into steps.
     ///
     /// # Errors

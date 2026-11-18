@@ -6,7 +6,7 @@
 
 ## Context
 
-A safety audit of the sign-in built by [decision 0205](0205-an-agent-asks-for-a-sign-in-and-its-person-carries-it-out-on-a-page.md) found a chain (audit 5, findings F1, F2, F3, F4, and F6). Each was checked in the code before it was fixed.
+A safety audit of the sign-in built by [decision 0205](0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md) found a chain (audit 5, findings F1, F2, F3, F4, and F6). Each was checked in the code before it was fixed.
 
 - **F1, critical, confirmed.** `session.login` built the keeper's entry from the plan `plan_in` gave: the drafts', in a project that holds the target. For a provider that needs no person, `oauth_client_credentials`, with the client secret already stored, nothing was missing, so the handler skipped the person and called `Keeper::sign_in`. The worker called the provider with no check of where it sends, and the provider posted the stored secret to the drafted `token_endpoint` with its own HTTP client; the only check was that the address be `https` or a loopback IP address. An agent that may write drafts could choose where a stored secret went, with no publish and no person.
 - **F2, serious, confirmed.** A credential's seal context was the workspace, the owner, the kind, and the reference: no target. A reference was checked for its shape only, so target A's `auth.yaml` could name target B's `vault://b/...` and use B's secret. The publish review did not name any reference.

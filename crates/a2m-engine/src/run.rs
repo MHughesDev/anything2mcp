@@ -804,7 +804,7 @@ impl<'a> Run<'a> {
             if !self.control.shadow_rate(&surface.name, wanted).await? {
                 return Err(codes::fail(
                     FailureClass::Busy,
-                    codes::SHADOW_NO_RATE_BUDGET,
+                    codes::NO_RATE_BUDGET,
                     format!(
                         "A binding in shadow was not given its requests on the surface `{}` without taking what callers' own reads need.",
                         surface.name

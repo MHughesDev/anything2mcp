@@ -111,7 +111,9 @@ The keeper is one component with two halves. Its decisions are made in the contr
 | `expired` | Ended and could not be renewed | Return `needs_login` |
 | `revoked` | Ended on purpose | Return `needs_login`; nothing is retried |
 
-No transition outside this table is allowed; a table-driven test over every pair of states holds it. The legal moves between the states are listed in the [crate design](../../architecture/crates/a2m-auth.md). A session whose provider works from a stored credential alone is signed in by the first call that asks, within the attempt limit; a provider that needs a person is never started by a call ([decision 0085](../../decisions/0085-the-session-keepers-interface-as-building-it-settled-it.md)).
+No transition outside this table is allowed; a table-driven test over every pair of states holds it. The legal moves between the states are listed in the [crate design](../../architecture/crates/a2m-auth.md). A session whose provider works from a stored credential alone is signed in by the first call that asks, within the attempt limit, when a published version declares its sign-in; a provider that needs a person is never started by a call ([decision 0085](../../decisions/0085-the-session-keepers-interface-as-building-it-settled-it.md)).
+
+**A sign-in goes only where a published version says** ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)). Every address a provider sends a credential, a token, or the person to is checked by the keeper before any request against the addresses the target declares for its surfaces in the session's environment, and a redirect is not followed. A sign-in that only the target's drafts declare uses no stored credential and renews nothing without the person: `session.login` shows the person every address first, marked as not published, and their act allows that one sign-in. A credential belongs to the target it was stored for: its reference starts `vault://<target>/`, and the vault seals it with the target in its context.
 
 ## Three clocks, only two of which can be extended
 

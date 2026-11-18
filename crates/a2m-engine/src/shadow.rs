@@ -158,8 +158,7 @@ pub(crate) async fn beside(
                 let aside = run.set_aside();
                 run.shadow_reading = true;
                 let observed =
-                    tokio::time::timeout_at(reads_until, read(run, found, &candidate, scope))
-                        .await;
+                    tokio::time::timeout_at(reads_until, read(run, found, &candidate, scope)).await;
                 run.shadow_reading = false;
                 run.restore(aside);
                 match observed {
@@ -225,12 +224,11 @@ async fn read(
     scope: &Scope,
 ) -> Result<Option<Values>, a2m_core::Failure> {
     let binding = &found.bindings[candidate.binding];
-    if run.loaded.plan.auth_of(binding.surface).is_some()
-        && !run.holds_session_on(binding.surface)
+    if run.loaded.plan.auth_of(binding.surface).is_some() && !run.holds_session_on(binding.surface)
     {
         return Err(codes::fail(
             FailureClass::Busy,
-            codes::SHADOW_NO_SESSION,
+            codes::NO_BINDING,
             format!(
                 "The binding in shadow through the mode `{}` reads through a surface whose session the call does not hold.",
                 binding.mode

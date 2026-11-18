@@ -830,8 +830,8 @@ async fn a_credential_opens_only_for_the_target_it_was_stored_for() {
         .unwrap();
     assert_eq!(own.kind, SealedKind::Credential);
     let sealed = vault.seal(&own, b"secret-for-tests-target").await.unwrap();
-    let other = SealContext::credential(workspace(1), person("ana"), &target("other"), reference)
-        .unwrap();
+    let other =
+        SealContext::credential(workspace(1), person("ana"), &target("other"), reference).unwrap();
     let before = SealContext {
         workspace: workspace(1),
         owner: person("ana"),

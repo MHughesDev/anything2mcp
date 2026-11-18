@@ -226,7 +226,8 @@ fn operation() -> JsonSchema {
             "identity",
             JsonSchema::object()
                 .required("strategy", JsonSchema::words(IdentityStrategy::NAMES))
-                .optional("inputs", JsonSchema::list(JsonSchema::name())),
+                .optional("inputs", JsonSchema::list(JsonSchema::name()))
+                .optional("place", JsonSchema::words(&["fixed"])),
         )
         .optional(
             "key",

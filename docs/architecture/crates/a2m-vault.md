@@ -93,6 +93,10 @@ pub struct SealContext {
     pub kind: SealedKind,                // SessionState, Credential, Blob, LedgerValue, RunnerKey
     pub item: ItemId,                    // the blob's content reference, the session's id, the vault entry's name
 }
+impl SealContext {
+    /// A stored credential's context: kind Credential, item `credential:<target>:<reference>` (decision 0248).
+    pub fn credential(workspace: WorkspaceId, owner: OwnerRef, target: &TargetName, reference: &str) -> Result<SealContext, Failure>;
+}
 
 /// The envelope: format, cipher, the owner's key and its generation, the wrapped data key, the
 /// nonce, and the ciphertext with its tag. Holds nothing in the clear.

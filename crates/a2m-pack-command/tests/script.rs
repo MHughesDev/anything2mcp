@@ -517,11 +517,16 @@ fn a_variable_that_makes_the_program_load_other_code_does_not_compile() {
         ("env: {set: {", "env: {set: {LD_PRELOAD: '/x.so', "),
         ("env: {set: {", "env: {set: {BASH_ENV: '/x.sh', "),
         ("env: {set: {", "env: {pass: [PYTHONPATH], set: {"),
-        ("env: {set: {", "env: {pass: [DYLD_INSERT_LIBRARIES], set: {"),
+        (
+            "env: {set: {",
+            "env: {pass: [DYLD_INSERT_LIBRARIES], set: {",
+        ),
     ] {
         let problems = problems_with(&shell, from, to);
         assert!(
-            problems.iter().any(|code| code == "command.loader_variable"),
+            problems
+                .iter()
+                .any(|code| code == "command.loader_variable"),
             "{to}: {problems:?}"
         );
     }

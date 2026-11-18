@@ -29,6 +29,7 @@ use crate::load::{SourceFile, Sources};
 use crate::register::{
     CompileMode, CompilerSet, Lowered, Lowering, Possible, StepCommits, SurfaceKindSpec,
 };
+use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -47,36 +48,6 @@ pub const COMPILER_VERSION: Version = Version::new(0, 0, 1);
 pub const MINIMUM_ENGINE: Version = Version::new(0, 0, 1);
 /// The version a draft is compiled as.
 pub const DRAFT_VERSION: Version = Version::new(0, 0, 0);
-
-/// What one tool may do, for the person who reviews a version before it is
-/// published.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReviewItem {
-    /// The tool.
-    pub tool: OperationName,
-    /// Its effect class.
-    pub effect: EffectClass,
-    /// What it could damage beyond the record it names.
-    pub hazard: Hazard,
-    /// How many times the system saves in one call; none for a pipeline.
-    pub commit_points: u32,
-    /// The surfaces it may reach.
-    pub surfaces: Vec<SurfaceName>,
-    /// Addresses beyond its surfaces that it may reach.
-    pub destinations: Vec<String>,
-    /// What it may send as a file.
-    pub uploads: Vec<String>,
-    /// What it may receive as a file.
-    pub downloads: Vec<String>,
-}
-
-/// Every tool of a version, the most dangerous first: by hazard, then by
-/// effect class, then by name.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
-pub struct ReviewSummary {
-    /// The tools, ordered by risk.
-    pub items: Vec<ReviewItem>,
-}
 
 /// A compiled target.
 #[derive(Debug, Clone)]
@@ -131,6 +102,7 @@ pub fn compile(
         tests: Vec::new(),
         test_bindings: Vec::new(),
         tool_names: BTreeMap::new(),
+        reviews: BTreeMap::new(),
     };
     compiler.run(version)
 }
@@ -183,6 +155,9 @@ struct Compiler<'a> {
     tests: Vec<TestPlan>,
     test_bindings: Vec<Option<usize>>,
     tool_names: BTreeMap<String, Place>,
+    /// For the review summary: what each operation's packs stated, and its
+    /// fixed place.
+    reviews: BTreeMap<OperationName, OpReview>,
 }
 
 fn index(position: usize) -> u32 {
@@ -510,7 +485,7 @@ impl<'a> Compiler<'a> {
             packs: std::mem::take(&mut self.model.sections),
             tests: std::mem::take(&mut self.tests),
         };
-        let review = review_of(&plan);
+        let review = review_of(&plan, &self.reviews);
         match plan.encode() {
             Ok(encoded) => Ok(Compiled {
                 plan,
@@ -1805,7 +1780,7 @@ impl<'a> Compiler<'a> {
         doc: &Located<Doc>,
         effect: EffectClass,
         inputs: &[InputInfo],
-    ) -> (IdentityStrategy, Vec<String>) {
+    ) -> (IdentityStrategy, Vec<String>, Option<Place>) {
         let names = |list: &Located<Doc>| -> Vec<Located<String>> {
             match &list.value {
                 Doc::Text(text) => vec![Located::new(text.clone(), list.at.clone())],
@@ -1828,6 +1803,7 @@ impl<'a> Compiler<'a> {
                 fix.to_owned(),
             );
         };
+        let mut fixed = None;
         let (strategy, key, at) = match (doc.get("key"), doc.get("identity")) {
             (Some(key), Some(_)) => {
                 invalid(
@@ -1836,7 +1812,7 @@ impl<'a> Compiler<'a> {
                     "The operation states both `key` and `identity`.".to_owned(),
                     "Keep one: `key` is the short form of `identity` for `natural` and `composite`.",
                 );
-                return (IdentityStrategy::None, Vec::new());
+                return (IdentityStrategy::None, Vec::new(), None);
             }
             (Some(key), None) => {
                 let strategy = if matches!(key.value, Doc::Text(_)) {
@@ -1852,6 +1828,7 @@ impl<'a> Compiler<'a> {
                     .and_then(|strategy| strategy.parse::<IdentityStrategy>().ok())
                     .unwrap_or(IdentityStrategy::None);
                 let key = identity.get("inputs").map(names).unwrap_or_default();
+                fixed = identity.get("place").map(|place| place.at.clone());
                 (strategy, key, identity.at.clone())
             }
             (None, None) => {
@@ -1864,7 +1841,7 @@ impl<'a> Compiler<'a> {
                         "Add `key:` with the input, or the inputs, that identify the record; or `identity:` with a strategy; or declare the effect `irreversible`.".to_owned(),
                     );
                 }
-                return (IdentityStrategy::None, Vec::new());
+                return (IdentityStrategy::None, Vec::new(), None);
             }
         };
         let mut fine = true;
@@ -1902,6 +1879,31 @@ impl<'a> Compiler<'a> {
                 Some(_) => {}
             }
         }
+        if let Some(place) = &fixed {
+            // The record is the one place every binding names: no input
+            // chooses it, and nothing but `natural` finds a record by its
+            // own key in the system (decision 0252).
+            let why = if strategy != IdentityStrategy::Natural {
+                Some(format!(
+                    "`place: fixed` says the record is found by its own key, the place, and the strategy is `{strategy}`."
+                ))
+            } else if !key.is_empty() {
+                Some("`place: fixed` says no input chooses the record, and the identity names inputs.".to_owned())
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.error(
+                    codes::PLACE_NOT_FIXED,
+                    Stage::Analyze,
+                    place,
+                    why,
+                    "Write `identity: {strategy: natural, place: fixed}` with no `inputs`, or name the inputs that are the record's key and leave out `place`.".to_owned(),
+                );
+                return (IdentityStrategy::None, Vec::new(), None);
+            }
+            return (strategy, Vec::new(), fixed);
+        }
         let count_fits = match strategy {
             IdentityStrategy::Natural => key.len() == 1,
             IdentityStrategy::Composite => !key.is_empty(),
@@ -1930,9 +1932,13 @@ impl<'a> Compiler<'a> {
             fine = false;
         }
         if fine {
-            (strategy, key.into_iter().map(|name| name.value).collect())
+            (
+                strategy,
+                key.into_iter().map(|name| name.value).collect(),
+                None,
+            )
         } else {
-            (IdentityStrategy::None, Vec::new())
+            (IdentityStrategy::None, Vec::new(), None)
         }
     }
 
@@ -2021,7 +2027,7 @@ impl<'a> Compiler<'a> {
                     field_type: Some(field_type),
                 });
             }
-            let (strategy, key) = self.identity(doc, effect, &inputs);
+            let (strategy, key, fixed) = self.identity(doc, effect, &inputs);
             let info = OpInfo {
                 name,
                 doc: doc.clone(),
@@ -2031,6 +2037,7 @@ impl<'a> Compiler<'a> {
                 outputs,
                 strategy,
                 key,
+                fixed,
                 commit_points: doc
                     .get("commit_points")
                     .and_then(Located::as_int)
@@ -4344,60 +4351,6 @@ fn destination_problem(text: &str) -> Option<&'static str> {
         return Some("it is the address that stands for every address");
     }
     None
-}
-
-fn review_of(plan: &Plan) -> ReviewSummary {
-    let surface_names = |indices: &[SurfaceIndex]| -> Vec<SurfaceName> {
-        indices
-            .iter()
-            .filter_map(|index| plan.surface(*index).map(|surface| surface.name.clone()))
-            .collect()
-    };
-    let mut items: Vec<ReviewItem> = plan
-        .operations
-        .iter()
-        .map(|operation| ReviewItem {
-            tool: operation.name.clone(),
-            effect: operation.effect,
-            hazard: operation.hazard,
-            commit_points: operation.commit_points,
-            surfaces: surface_names(&operation.manifest.surfaces),
-            destinations: operation.manifest.destinations.clone(),
-            uploads: operation.manifest.uploads.clone(),
-            downloads: operation.manifest.downloads.clone(),
-        })
-        .collect();
-    for pipeline in &plan.pipelines {
-        let mut surfaces = BTreeSet::new();
-        let mut destinations = BTreeSet::new();
-        let mut uploads = BTreeSet::new();
-        let mut downloads = BTreeSet::new();
-        for step in &pipeline.steps {
-            if let Some(operation) = plan.operation(step.operation) {
-                surfaces.extend(operation.manifest.surfaces.iter().copied());
-                destinations.extend(operation.manifest.destinations.iter().cloned());
-                uploads.extend(operation.manifest.uploads.iter().cloned());
-                downloads.extend(operation.manifest.downloads.iter().cloned());
-            }
-        }
-        let surfaces: Vec<SurfaceIndex> = surfaces.into_iter().collect();
-        items.push(ReviewItem {
-            tool: pipeline.name.clone(),
-            effect: pipeline.effect,
-            hazard: pipeline.hazard,
-            commit_points: 0,
-            surfaces: surface_names(&surfaces),
-            destinations: destinations.into_iter().collect(),
-            uploads: uploads.into_iter().collect(),
-            downloads: downloads.into_iter().collect(),
-        });
-    }
-    items.sort_by(|a, b| {
-        (b.hazard, b.effect)
-            .cmp(&(a.hazard, a.effect))
-            .then_with(|| a.tool.cmp(&b.tool))
-    });
-    ReviewSummary { items }
 }
 
 /// The level a registered rule's finding has, for a caller that shows it.

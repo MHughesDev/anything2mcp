@@ -60,7 +60,7 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
 | `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know is refused by the provider's own check when the version is published, because the compiler holds no list of providers. Never a credential |
-| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`. References only |
+| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`, whose first part is the target's own name: a reference of another target is refused ([decision 0248](../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)). References only |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
 | `movable` | `auto` or `false`; `false` pins the session to its runner |
 

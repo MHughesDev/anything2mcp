@@ -735,4 +735,35 @@ mod tests {
             Err(ProgramRefused::Elsewhere)
         );
     }
+
+    /// A folder the engine keeps private is closed to other users by its
+    /// own access list, whatever its folder passes down; one that lets
+    /// everyone add a file is refused, and so is a file in it everyone may
+    /// write (decision 0250).
+    #[test]
+    fn a_private_folder_passes_and_one_others_can_add_to_is_refused() {
+        let place = Place::new("private");
+        let runs = place.0.join("runs");
+        std::fs::create_dir_all(&runs).unwrap();
+        super::keep_private(&runs).unwrap();
+        let folder =
+            |path: &Path| check_program(path, &ProgramTrust::default(), ProgramRole::Folder);
+        let script =
+            |path: &Path| check_program(path, &ProgramTrust::default(), ProgramRole::Script);
+        assert_eq!(folder(&runs), Ok(()));
+        let copy = runs.join("example-copy.ps1");
+        std::fs::write(&copy, b"Write-Output 1").unwrap();
+        // A script is not refused for its name when it is a copy the engine
+        // wrote.
+        assert_eq!(script(&copy), Ok(()));
+        grant(&copy, "(A;;FW;;;WD)");
+        assert_eq!(script(&copy), Err(ProgramRefused::Writable(copy.clone())));
+        let open = place.0.join("open");
+        std::fs::create_dir_all(&open).unwrap();
+        grant(&open, "(A;;0x2;;;WD)");
+        assert_eq!(folder(&open), Err(ProgramRefused::Writable(open.clone())));
+        // The private list replaces what was inherited, the open entry too.
+        super::keep_private(&open).unwrap();
+        assert_eq!(folder(&open), Ok(()));
+    }
 }

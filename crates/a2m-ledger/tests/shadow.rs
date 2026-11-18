@@ -122,10 +122,7 @@ async fn keep(store: &Store, comparison: ShadowComparison) -> Result<u64, a2m_co
 
 async fn answer(store: &Store, subject: ShadowSubject) -> Promotable {
     store
-        .read(move |tx| {
-            tx.shadow()
-                .promotable(&subject, ShadowThreshold::default())
-        })
+        .read(move |tx| tx.shadow().promotable(&subject, ShadowThreshold::default()))
         .await
         .unwrap()
 }
@@ -432,10 +429,7 @@ async fn the_report_shows_counts_and_cost_and_never_an_input_or_its_digest() {
     );
     let test = &standing.environments[0];
     assert_eq!(test.environment, env("test"));
-    assert_eq!(
-        (test.reads, test.requests, test.distinct_inputs),
-        (6, 6, 1)
-    );
+    assert_eq!((test.reads, test.requests, test.distinct_inputs), (6, 6, 1));
     let last = standing.last_mismatch.as_ref().unwrap();
     assert_eq!((last.run, &last.environment), (fence.run, &env("test")));
     assert_eq!(standing.first_at, Timestamp::from_unix_millis(START));

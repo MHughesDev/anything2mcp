@@ -900,7 +900,9 @@ impl Shadows<'_, '_> {
             .filter(|held| subject.environments.contains(&held.environment))
             .filter_map(|held| held.through_seq)
             .max();
-        if evidence.iter().all(|held| held.distinct_inputs >= threshold)
+        if evidence
+            .iter()
+            .all(|held| held.distinct_inputs >= threshold)
             && let Some(through_seq) = through_seq
         {
             return Ok(Promotable::Yes {
@@ -938,22 +940,23 @@ impl Shadows<'_, '_> {
     /// no, with the reason in the message; as [`Shadows::promotable`].
     pub fn promote(&mut self, promotion: &ShadowPromotion) -> Result<PromotionRow, Failure> {
         let subject = &promotion.subject;
-        let (evidence, threshold, through_seq) =
-            match self.promotable(subject, promotion.threshold)? {
-                Promotable::Yes {
-                    evidence,
-                    threshold,
-                    through_seq,
-                } => (evidence, threshold, through_seq),
-                Promotable::No(why) => {
-                    return Err(Failure::new(
-                        FailureClass::Policy,
-                        SHADOW_NOT_PROMOTABLE,
-                        why.sentence(),
-                        "See `anything2mcp shadow report` for how the binding compared, and promote it when it has earned it.",
-                    ));
-                }
-            };
+        let (evidence, threshold, through_seq) = match self
+            .promotable(subject, promotion.threshold)?
+        {
+            Promotable::Yes {
+                evidence,
+                threshold,
+                through_seq,
+            } => (evidence, threshold, through_seq),
+            Promotable::No(why) => {
+                return Err(Failure::new(
+                    FailureClass::Policy,
+                    SHADOW_NOT_PROMOTABLE,
+                    why.sentence(),
+                    "See `anything2mcp shadow report` for how the binding compared, and promote it when it has earned it.",
+                ));
+            }
+        };
         let fewest = evidence
             .iter()
             .map(|held| held.distinct_inputs)

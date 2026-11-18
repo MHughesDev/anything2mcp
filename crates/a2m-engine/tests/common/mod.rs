@@ -2145,6 +2145,15 @@ pub struct StoreControl {
     /// engine handed it, in order.
     pub keeps_shadow: AtomicBool,
     pub shadows: Mutex<Vec<a2m_engine::ShadowCompared>>,
+    /// The shadow's rate budget is refused, as a surface whose callers'
+    /// share is all that is left refuses it.
+    pub shadow_rate_refused: AtomicBool,
+    /// The requests granted to shadows through `shadow_rate`.
+    pub shadow_requests: AtomicU32,
+    /// Keeping a comparison fails.
+    pub shadow_write_fails: AtomicBool,
+    /// Keeping a comparison never ends.
+    pub shadow_write_hangs: AtomicBool,
 }
 
 /// Starts the clock of the runtime again when a call that hangs is given
@@ -2649,6 +2658,20 @@ impl Control for StoreControl {
         self.keeps_shadow.load(Ordering::SeqCst)
     }
 
+    fn shadow_rate<'a>(
+        &'a self,
+        _surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<bool, Failure>> {
+        Box::pin(async move {
+            if self.shadow_rate_refused.load(Ordering::SeqCst) {
+                return Ok(false);
+            }
+            self.shadow_requests.fetch_add(want, Ordering::SeqCst);
+            Ok(true)
+        })
+    }
+
     fn shadow<'a>(
         &'a self,
         compared: a2m_engine::ShadowCompared,
@@ -2667,7 +2690,20 @@ impl Control for StoreControl {
                 against: compared.verified.digest,
                 writes: compared.writes,
                 outcome: compared.outcome,
+                input: compared.input,
+                requests: compared.requests,
             };
+            if self.shadow_write_fails.load(Ordering::SeqCst) {
+                return Err(Failure::new(
+                    a2m_core::FailureClass::Busy,
+                    a2m_core::FailureCode::fixed("store_unavailable"),
+                    "The test's store refuses the comparison.",
+                    "Nothing to do.",
+                ));
+            }
+            if self.shadow_write_hangs.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             self.store
                 .write(Durability::Synced, move |tx| {
                     tx.shadow().record(&comparison).map(|_| ())
@@ -2840,6 +2876,10 @@ impl Scene {
             others: Mutex::new(None),
             others_asked: Mutex::new(Vec::new()),
             keeps_shadow: AtomicBool::new(false),
+            shadow_rate_refused: AtomicBool::new(false),
+            shadow_requests: AtomicU32::new(0),
+            shadow_write_fails: AtomicBool::new(false),
+            shadow_write_hangs: AtomicBool::new(false),
             shadows: Mutex::new(Vec::new()),
         });
         Self {

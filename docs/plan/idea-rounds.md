@@ -100,3 +100,15 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: ruled out.** Nothing to change. What the test did not cover: the saved OpenAPI copy was compared by action name only, so an action whose inputs changed today without its name changing would not show; the whole-tree validation regenerates the copy and compares it exactly.
 
 **Next.** Nothing from this round.
+
+## Round 18 (2026-11-18, 04:07 UTC)
+
+**Idea.** A script or an agent that gets a failure can tell, from the exit code or from the error itself, whether calling again could help and how long to wait first.
+
+**Test.** Read the one place where a failure becomes an answer (the dispatcher's exit class and error body in the action registry), the place where a failed run is reported, and section 220's rules for failures, and searched every crate's source for any field that says when to try again. Reading only: no failure was provoked in a running engine.
+
+**Result.** It cannot be told. Every failure of an action ends with exit code 1, whether the system was busy for a moment or the policy will refuse the call for ever. The error carries `retry_safe`, which answers a different question: whether the same call could do harm if sent again. It is true for every class except a write that may have gone through, and a refused or mismatched write. So a policy refusal, a bad input, a drifted page, and a busy surface all say `retry_safe: true`, and an agent that reads that as "try again" loops on a refusal that will never change. Nothing anywhere says how long to wait: no failure carries a time, although the scheduler knows when a busy surface's lease ends and a system that limits its callers often states a wait. Only the class name tells `transient` and `busy` from the rest, and section 220 says the answer must be stated and never implied by the class name.
+
+**Verdict: taken up.** An error is to say two more things beside `retry_safe`: whether the same call with the same input could end differently with nothing else changed (true for `transient`, `busy`, and a session the keeper can renew; false for `policy`, `input`, `drift`, `unknown_variant`, and the rest), and, where the engine knows it, the earliest moment worth trying. Whether the command line also gets an exit code of its own for "try again later" is a change to a public face and is decided in the same package, with a record.
+
+**Next.** Joins the package for what a person and an agent meet at the command line, beside the refusals that carry their next step as data.
