@@ -548,7 +548,8 @@ async fn a_runs_folder_others_can_write_is_refused_before_the_script_starts() {
     // A folder this pack makes is the engine's user's alone.
     std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::remove_dir_all(&runs).unwrap();
-    each_value_arrives_as_it_was(&pair).await;
+    scene.run(&pair).await.unwrap();
+    assert!(scene.out.exists(), "the script ran");
     assert_eq!(
         std::fs::metadata(&runs).unwrap().permissions().mode() & 0o777,
         0o700
