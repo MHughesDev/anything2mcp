@@ -109,7 +109,9 @@ pub(crate) fn refused_variable(name: &str) -> Option<&'static str> {
     if a2m_provider::is_engine_variable(name) {
         Some("belongs to the engine, whose own variables are never handed to a program")
     } else if a2m_provider::redirects_loading(name) {
-        Some("makes a program load code other than its own, which no target chooses through a program's environment")
+        Some(
+            "makes a program load code other than its own, which no target chooses through a program's environment",
+        )
     } else if names_a_credential(name) {
         Some("is named for a credential, which never goes through a program's environment")
     } else {

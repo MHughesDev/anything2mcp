@@ -214,6 +214,86 @@ impl Drop for StdioStand {
     }
 }
 
+/// Whether the process `id` still runs, as the system's own listing of
+/// processes says: `ps` on Linux and macOS, where a process that has ended
+/// and is waiting to be reaped counts as gone, and `tasklist` on Windows.
+/// Both are programs started by their path, never through a shell.
+///
+/// # Errors
+///
+/// Returns an error if the listing could not be read.
+pub fn process_runs(id: u32) -> Result<bool, HarnessError> {
+    #[cfg(windows)]
+    {
+        let system = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        let output = Command::new(system.join("System32").join("tasklist.exe"))
+            .args(["/FI", &format!("PID eq {id}"), "/FO", "CSV", "/NH"])
+            .output()
+            .map_err(|e| HarnessError::Program(format!("tasklist could not be run: {e}")))?;
+        // A listed process is one line of quoted fields, the second its
+        // identifier; no process is a line of another kind.
+        let wanted = format!("\"{id}\"");
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.split(',').nth(1) == Some(wanted.as_str())))
+    }
+    #[cfg(not(windows))]
+    {
+        let ps = ["/bin/ps", "/usr/bin/ps"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+            .ok_or_else(|| HarnessError::Program("no ps in /bin or /usr/bin".to_owned()))?;
+        let output = Command::new(ps)
+            .args(["-o", "stat=", "-p", &id.to_string()])
+            .output()
+            .map_err(|e| HarnessError::Program(format!("ps could not be run: {e}")))?;
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Ok(output.status.success() && !state.is_empty() && !state.starts_with('Z'))
+    }
+}
+
+/// Ends the process `id` at once, from outside, as a person or the system
+/// would end a program in the middle of its work: `kill -KILL` on Linux
+/// and macOS, `taskkill /F` on Windows, each started by its path.
+///
+/// # Errors
+///
+/// Returns an error if the program could not be run or did not end it.
+pub fn kill_process(id: u32) -> Result<(), HarnessError> {
+    #[cfg(windows)]
+    let mut command = {
+        let system = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        let mut command = Command::new(system.join("System32").join("taskkill.exe"));
+        command.args(["/F", "/PID", &id.to_string()]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let kill = ["/bin/kill", "/usr/bin/kill"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+            .ok_or_else(|| HarnessError::Program("no kill in /bin or /usr/bin".to_owned()))?;
+        let mut command = Command::new(kill);
+        command.args(["-KILL", &id.to_string()]);
+        command
+    };
+    let output = command
+        .output()
+        .map_err(|e| HarnessError::Program(format!("the process could not be ended: {e}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(HarnessError::Program(format!(
+            "the process {id} was not ended: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+}
+
 static PROGRAM: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 /// The path of the stdio program, `example-mcp`, built if it is not.

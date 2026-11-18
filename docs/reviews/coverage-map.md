@@ -1,6 +1,6 @@
 # Coverage map
 
-Every way a program on a person's own computer can read or change another piece of software, or the system itself, and where each falls in this design today. It answers the owner's direction of [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md): "literally anything their machine can read", on Windows, macOS, and Linux, with the MCP served on that machine only.
+Every way a program on a person's own computer can read or change another piece of software, or the system itself, and where each falls in this design today. It answers the scope of [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md): anything the person's machine can reach, on Windows, macOS, and Linux, with the MCP served on that machine only.
 
 It is a map, not a design. A row says where a mechanism would go and what closing its gap takes; the design of each is written when it is built, by the [working method](../plan/working-method.md). The findings drawn from it, and the records it raised, are in the [coverage review of 2026-11-18](coverage-review-2026-11-18.md). What other projects already reach, and how popular each is, is in [research note 27](../research/27-the-public-landscape-of-agent-tools.md); the review says where this map and that note differ (on the scripting interfaces' archetype and on the size of gRPC). Update a row in the pull request that changes its place.
 
@@ -52,17 +52,17 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 
 | Mechanism | Read · change | Describes itself | OS | Place today | Gap | To close it | Rules |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Accessibility tree, AT-SPI | Element by role and name · value pattern, invoke | The tree; no reads stated | L | B for reads: desktop pack, `desktop`, interface ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) | Writes | Roadmap 8.3, M | 5, 7 |
-| Accessibility tree, UI Automation | As above | As above | W | D | Back end | Roadmap 8.3, L; owed before the first release (decision 0208) | 5, 7 |
-| Accessibility tree, macOS | As above | As above | M | D | Back end; the person grants the permission | Roadmap 8.3, L; owed (decision 0208) | 5, 7 |
+| Accessibility tree, AT-SPI | Element by role and name · value pattern, invoke | The tree; no reads stated | L | B: desktop pack, `desktop`, interface; reads ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) and writes ([decision 0218](../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)) | Keys and clicks, starting an application | Roadmap 8.3 | 5, 7 |
+| Accessibility tree, UI Automation | As above | As above | W | B for reads, written and not yet run: desktop pack, `desktop`, interface ([decision 0209](../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) | Writes; the first run is CI's | Roadmap 8.3; owed before the first release (decision 0208) | 5, 7 |
+| Accessibility tree, macOS | As above | As above | M | B for reads, written and not yet run: desktop pack, `desktop`, interface ([decision 0244](../decisions/0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md)) | Writes; the person grants the permission; the first run is CI's | Roadmap 8.3; owed (decision 0208) | 5, 7 |
 | Synthetic keys and clicks | — · a key to the focused window | No | WML | R until a key can be bound to its window (decision 0198) | Applications that save on Enter or leaving a field | Research, then the desktop pack, M | 5, 7 |
-| Scripting dictionary and Apple events, JXA | Property get · set, command | Scripting dictionary; **reads stated** for properties (`access`) | M | C: section 106 puts it under bridge | No mode | A fixed script run by a fixed interpreter, S ([decision 0214](../decisions/0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md)); a mode, L | 5 (the person grants Automation), 6 |
-| COM automation and type libraries | Property get · property put, method | Type library; **reads stated** (`propget`) | W | C, as above | No mode | Fixed script, S (decision 0214); a mode, L | 6 |
+| Scripting dictionary and Apple events, JXA | Property get · set, command | Scripting dictionary; **reads stated** for properties (`access`) | M | C: section 106 puts it under bridge | No mode | A fixed script run by a fixed interpreter: built as a fixed pair ([decision 0216](../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)), proven on Linux for the shell and Python, not yet run with `osascript`; a mode, L | 5 (the person grants Automation), 6 |
+| COM automation and type libraries | Property get · property put, method | Type library; **reads stated** (`propget`) | W | C, as above | No mode | Fixed script: built as a fixed pair (decision 0216), not yet run with PowerShell on Windows; a mode, L | 6 |
 | D-Bus services | Property get · property set, method | Introspection; **reads stated** (`access="read"`) | L | N: D-Bus is used only under AT-SPI and polkit | No mode | Request mode, M; the D-Bus crate is in the workspace | 7 |
 | An embedded scripting host (macro language, an application's own script console, add-ins) | Function · function | Sometimes, by documentation | WML | C: bridge, modes for planning | Our code would live inside the host, changing it | Leave out | 1, 7 |
 | URL schemes and deep links | — · open a link | Partly: the scheme is registered, its parameters are not | WML | N: the openers start what their argument names, which the command pack refuses | No result comes back | Leave out | 7 |
 | The system's action runners (Shortcuts and the like) | — · run a named shortcut | Partly: a list of names, untyped input | M (W, L less) | T: command pack, unproven | A shortcut's content is not pinned by digest | `irreversible` through the command pack, S | 3, 7 |
-| The application's files and settings | A named place · replace the file | The format | WML | B for delimited text, JSON, workbooks (reads); D for YAML, TOML, XML (read only) | Property lists and INI have no place | Formats in the file pack, S each | 3 (writes beneath an application) |
+| The application's files and settings | A named place · replace the file | The format | WML | B for delimited text, JSON, workbooks (reads); INI files and property lists in XML form, read and updated one value at a time, on Linux ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)); D for YAML, TOML, XML (read only) | Binary property lists | Formats in the file pack, S each | 3 (writes beneath an application) |
 | Its local database | A declared statement · keyed write | The store's catalog; reads stated by the read-only transaction | WML | B: data pack, `sql`, request | A write beneath the application needs its owner's word | None | 3 |
 | Its local network port | As its protocol | As its protocol | WML | T: the request packs, on a loopback address | `localhost` refused as a name for plain links | Decision 0214, S | 4 |
 | Window handles and messages | — · a message to a window | No | W | N | — | Leave out | 7 |
@@ -72,9 +72,9 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 
 | Mechanism | Read · change | Describes itself | OS | Place today | Gap | To close it | Rules |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| A program's arguments and output | Declared read command · declared write with read-back | Help and version; no reads stated | WML | B: command pack, `cli`, command, on Linux; Windows and macOS not run | The path check passes everything on Windows; on macOS, application folders are group-writable (believed) | Decision 0214, research brief 35, M | 7 |
+| A program's arguments and output | Declared read command · declared write with read-back | Help and version; no reads stated | WML | B: command pack, `cli`, command, on Linux; Windows and macOS not run | The Windows check of who can replace a program and the macOS rule for the administrators' group are written and not yet run (decision 0216) | Their first run on CI | 7 |
 | Completions and manual pages | — | Partly: commands and flags | ML (W less) | D: discovery may read completion data; not built | — | Discoverer, S | 7 |
-| Shell built-ins and PowerShell cmdlets | — | Cmdlets self-describe; reads by verb convention (`Get-`) only | W mostly | R: no shell | Most of Windows administration | A fixed script run by a fixed interpreter, S (decision 0214) | 6, 7 |
+| Shell built-ins and PowerShell cmdlets | — | Cmdlets self-describe; reads by verb convention (`Get-`) only | W mostly | R: no shell | Most of Windows administration | A fixed script run by a fixed interpreter: built as a fixed pair (decision 0216), not yet run on Windows | 6, 7 |
 | A long-running program with a prompt | — | No | WML | R in the command pack (no terminal); the terminal kind is C | — | An interface mode over a pseudo-terminal, L; leave out | 7 |
 | A terminal application's screen | Field on a text screen · keys | No | WML | C | — | As above; leave out | 7 |
 | A program on another machine by a remote shell | — | — | WML | R; through a runner on that machine after the first release ([section 306](../spec/3-packs/306-the-command-pack.md)) | The machine reaches it; the design does not | Leave out; remote subsystems that take no shell are research | 5, 7 |
@@ -87,13 +87,14 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 
 | Mechanism | Read · change | Describes itself | OS | Place today | Gap | To close it | Rules |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Folders as collections of entries | List · create, rename, move, delete an entry | Names and metadata | WML | N: the file pack reads a file's content, never a folder's entries | — | A mode in the file pack, entries of a declared folder as records, M | 3, 7 |
+| Folders as collections of entries | List · create, rename, move, delete an entry | Names and metadata | WML | B: file pack, `file`, artifact; a folder's entries listed and read by name, and an entry created, replaced, renamed, or removed, on Linux ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | A restore for a delete; proof on Windows and macOS | CI on the other two systems | 3, 7 |
 | Processes | List · start, signal, end | No | WML | T: command pack; attaching is refused | — | None | 7 |
 | Services | Status · start, stop, enable | systemd over D-Bus does; others no | WML | T: command pack | An action is a write of the state it leaves (H-42) | Drafting guidance, S | 3 |
-| Scheduled tasks | List · add, remove | No | WML | T: command pack; launchd's files need property lists | Property lists | File format, S | 3 |
+| Scheduled tasks | List · add, remove | No | WML | T: command pack; launchd's files are property lists, now read and updated one value at a time in the file pack ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | Binary property lists | File format, S | 3 |
 | The registry, the defaults database, dconf | Query · set | Typed values | WML | T: command pack (`reg`, `defaults`, `gsettings`) | — | None | 3 |
 | Installed software | List · — | Partly | WML | T: command pack | — | None | — |
 | Network settings | Query · set | NetworkManager over D-Bus | WML | T: command pack | Never the link the engine stands on ([section 310](../spec/3-packs/310-the-device-pack.md), rule 8 there) | None | 2 |
+| The machine's own network state (interfaces, routes, name servers, neighbours, listening sockets) | Read · — | The system's own tables | WML | B: `a2m-netstate` reads it and sends nothing; Linux proven, Windows and macOS await their first CI run ([decision 0243](../decisions/0243-the-machine-reads-its-own-network-state-and-sends-nothing.md)) | Not yet served as actions | Actions over the reads | 4 |
 | Notifications | Others': protected · send one | Linux has a D-Bus specification | WML | T for sending, `irreversible`; reading others' is R | A person approves every one | Decision 0215, H-42 | 3, 4, 5 |
 | Windows on the screen | List, title · move, focus | Partly, through accessibility | WML | B for reading a window in the desktop pack; no window operation | — | Verbs in the desktop pack, S | 5 |
 | The clipboard | Read · write | No | WML | N; the desktop pack never touches it | It often holds a password | Leave out reads; a write as `irreversible`, S | 4 |
@@ -111,10 +112,10 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | JSON | Key path · replace | Structure | WML | B: file pack | — | None | 3 |
 | YAML, TOML | Key path · — | Structure | WML | D: read only until a format-preserving editor passes | Writes | S to M | 3 |
 | XML | Element · — | XSD, sometimes | WML | D: read only at first | Writes | M | 3 |
-| INI files and property lists | Key · key | Structure | WM (L) | N | — | Formats in the file pack, S each | 3 |
+| INI files and property lists | Key · key | Structure | WM (L) | B: file pack, `file`, artifact, formats `ini` and `property_list` (XML form), on Linux ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | A value added or removed; binary property lists | Formats in the file pack, S each | 3 |
 | Documents (PDF, word-processor, presentation) | Form field, content control · — | Named fields, where the author made them | WML | N | — | A read-only reader in the file pack, M; writes left out | 3 |
 | Media files' metadata | Tag · tag | Tag names | WML | N | — | Formats in the file pack, M | 3 |
-| Archives | List of entries · — | Entry names | WML | N; the zip container is read only inside workbooks | — | With the folder mode, M | 7 |
+| Archives | List of entries · — | Entry names | WML | N; the zip container is read only inside workbooks | The folder mode is built ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)); archives are not read as folders | Archives as folders, M | 7 |
 | Embedded databases | Statement · keyed write | Catalog | WML | B: data pack, `sql` | — | None | 3 |
 | Database servers | As above | Catalog | WML | B for Postgres behind a feature, on a loopback IP; MySQL and SQL Server researched ([note 23](../research/23-server-database-clients.md)) | Other makes | M each | 3, 4 |
 | A universal bridge (ODBC) | — | Through the driver | W mostly | N by design: one client per protocol ([section 307](../spec/3-packs/307-the-data-pack.md)) | — | Leave out | 7 |
@@ -133,8 +134,9 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | Mail, sending | — · submit | — | WML | C, `irreversible` | — | S after reading | 3 |
 | Calendars and contacts | Entry · entry | DAV properties | WML | N: XML answers and DAV methods; the systems' own stores are protected | — | After answer formats, M | 4, 5 |
 | Feeds | Entry · — | Structure | WML | N: XML | — | After answer formats, S | — |
-| Logs and files that grow | Lines after a recorded place · — | No | WML | N: the stream pack reads brokers only | — | A stream mode over a declared file, S to M | 3, 4 |
+| Logs and files that grow | Lines after a recorded place · — | No | WML | B: file pack, `file`, artifact, `logs/`; the complete lines after a recorded position, read only, on Linux ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | The caller hands the position back; the engine keeps none between runs | A cursor a read returns and a later run is handed, a kernel change | 3, 4 |
 | Change notifications of the file system | Wait for a change · — | — | WML | N; runs started by an event are not designed | — | After triggers | — |
+| A watch: any read, repeated on a schedule | A read, each time compared with the last · — | — | WML | B in part: the ledger's and the scheduler's halves ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)); an agent cannot reach it yet | The actions, the engine's check job, the settings, and the MCP resource | Roadmap W2 | 3 |
 | Webhooks arriving | — | — | WML | N: nothing listens for another machine (decision 0208) | An outside service cannot deliver | Read from a relay the person already uses, as a stream; or poll. Leave out | 0208 |
 
 ## Devices
@@ -161,7 +163,7 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | A library with a C interface | Function · function | Headers: types, not effects | WML | C: bridge, `library` for planning | Memory faults in a helper process | Leave out | 7 |
 | A managed assembly or class archive | Method · method | Reflection; no reads stated | WML | C | A runtime to host it | Leave out | 6 |
-| A script module in a dynamic language | Function · function | Type stubs, sometimes | WML | T only as a fixed interpreter and script ([section 306](../spec/3-packs/306-the-command-pack.md)) | Whether a script the developer keeps counts | Decision 0214, S | 6 |
+| A script module in a dynamic language | Function · function | Type stubs, sometimes | WML | T as a fixed interpreter and a script the target keeps, pinned by its digest ([section 306](../spec/3-packs/306-the-command-pack.md)); B on Linux, as a fixed pair (decision 0216) | What the script does is the developer's declaration, not proven by the pack | None | 6 |
 | A WebAssembly component | Function · function | WIT; no reads stated | WML | N | — | Leave out; the best-fitting form of a library later | 6 |
 | A language server | Symbols, diagnostics · edits it returns | Capabilities; reads stated by method | WML | N | — | JSON-RPC mode over standard streams, M | 7 |
 | A debugger adapter | — | Capabilities | WML | R: it attaches to a running program | — | None | 5 |
@@ -180,5 +182,5 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 
 - Of about a hundred mechanisms, fewer than twenty are built on any system, and nearly all of those on Linux only.
 - More than twenty describe themselves, and about a dozen of those state which calls only read. That is the property that lets a scout draft and try reads with no person writing them. The design imports four kinds of description today (OpenAPI, an MCP server's tool list, a published register map, a database's catalog), each through its own finding kind and drafting rule.
-- The largest families with no place are the operating systems' scripting interfaces, answers that are not JSON, and files that are not tables: folders, documents, property lists, logs.
+- Answers that are not JSON, folders, INI files and property lists, and growing logs have a place since this map was first written (decisions 0217 and 0246). The largest families still with no place are documents (PDF, word-processor, presentation), media metadata, archives, and a mode for the operating systems' scripting interfaces, which are reached through a fixed script (decision 0216).
 - Every refusal in the map rests on one of the ten rules or on a design limit. The design limits with a way through are in decision 0214; the questions for the owner are decisions 0211, 0212, 0213, and 0215.

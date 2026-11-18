@@ -146,6 +146,13 @@ pub struct ShadowCompared {
     /// How it compared: the names of the outputs that differed and how,
     /// never a value.
     pub outcome: ShadowOutcome,
+    /// The inputs of the call it was made beside. The ledger keeps only
+    /// the workspace's keyed digest of them, which is never shown: what
+    /// lets it count distinct inputs (decision 0251).
+    pub input: Values,
+    /// What the shadow read cost the system, in the rate budget's units:
+    /// one per step it was granted (decision 0251).
+    pub requests: u32,
 }
 
 /// Something the engine tells the control plane while it runs a job.
@@ -435,9 +442,29 @@ pub trait Control: Send + Sync {
         false
     }
 
+    /// A rate budget of `want` requests on the surface for a binding in
+    /// shadow: all of them at once, or none. It never waits, and it never
+    /// takes a budget below the share it leaves for callers' own reads, as
+    /// a watch's check does not (decisions 0247 and 0251): a shadow is a
+    /// second read of a person's system, and never takes what a caller's
+    /// read needs. Answers whether it was granted.
+    ///
+    /// By default nothing is granted, so a binding in shadow on a surface
+    /// that declares a rate is not compared.
+    fn shadow_rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<bool, Failure>> {
+        let _ = (surface, want);
+        Box::pin(async { Ok(false) })
+    }
+
     /// Keeps how a binding in shadow compared, in the ledger, under the
     /// job's run and lease. A failure is the engine's to ignore: a shadow
-    /// never changes what the caller is given.
+    /// never changes what the caller is given. The engine calls it only
+    /// after the call's result was sent, and within what is left of the
+    /// job's shadow budget (decision 0251).
     ///
     /// By default the control plane keeps none, and says so with `busy`,
     /// `shadow_not_kept`.

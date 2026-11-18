@@ -365,6 +365,33 @@ async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
     assert_eq!(world.person.notices(), 1);
 }
 
+/// A sign-in a person asked for whose stored credential is refused counts
+/// the attempt, so the next run's lease does not try the same credential
+/// again by itself: a lockout would count that as a second failure.
+#[tokio::test]
+async fn a_refused_sign_in_a_person_asked_for_is_not_tried_again_by_a_lease() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = fake_entry();
+    *world.fake.on_sign_in.lock().unwrap() = Step::Refused;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+    assert_eq!(world.state(&key).await, SessionState::Absent);
+    let stopped = world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap_err();
+    assert_eq!(stopped.code(), &codes::CREDENTIAL_REFUSED);
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+}
+
 #[tokio::test]
 async fn a_refused_stored_credential_is_not_tried_again() {
     // At sign-in.

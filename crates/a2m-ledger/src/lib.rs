@@ -52,9 +52,9 @@ pub use listing::{
 };
 pub use migrate::{Migration, migrations, table_owner};
 pub use shadow::{
-    Difference, DifferingOutput, LastMismatch, NotPromotable, Promotable, PromotionRow,
-    ShadowComparison, ShadowOutcome, ShadowPromotion, ShadowStanding, ShadowSubject,
-    ShadowThreshold, Shadows,
+    Difference, DifferingOutput, EnvironmentEvidence, EnvironmentStanding, LastMismatch,
+    NotPromotable, Promotable, PromotionRow, ShadowComparison, ShadowOutcome, ShadowPromotion,
+    ShadowStanding, ShadowSubject, ShadowThreshold, Shadows,
 };
 pub use store::{
     BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, Store, StoreConfig, StoreHealth,

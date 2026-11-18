@@ -116,6 +116,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - The bar: what being the best of its kind means, as twelve things that can be measured, with a scorecard.
 - The architecture: which crate defines, implements, and joins every interface, with a design for each of the 29 crates, the command, data, file, stream, and device packs among them.
 - A roadmap of every work package to version 1.0.
+- A web application that signs in through its own sign-in page can now be used: `form_login` fills the page with the username and password you stored, asks you for a one-time code when the page asks, tries a refused password only once, and signs in again by itself when the session expires. The browser keeps the session's cookies in memory only; they are sealed for you in the vault. Signing in yourself in a visible window, and single sign-on through an identity provider's pages, are not built (decision 0245).
 
 ### Changed
 
@@ -138,6 +139,10 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - A browser that starts slowly is `transient`, `timeout`, and the start may take 120 seconds by default ([decision 0134](docs/decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md)). One browser starts at a time.
 - The device pack sends at most four frames a second by default, where it sent twenty, and at most 100 frames in a run.
 - The presets `cautious` and `ci`, and a setting file that tightens a policy limit, stop the engine with the setting's name until the policy engine is opened with the installation's settings ([decision 0152](docs/decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)).
+- A setting whose part is not built (retention, the form and place of logs, the store's place, the server's keys, and 52 others) is refused by name with what happens instead; `config show` marks each `built` (decision 0241).
+- The `ci` preset no longer sets the log format, the log place, or `authoring.capture.enabled`: none of the three is built.
+- A request whose project file differs from the one the engine applies gets the warning `project_settings_differ`.
+- Every setting takes effect at the next start of the engine, and the documents no longer say otherwise.
 
 ### Safety fixes
 
@@ -178,6 +183,10 @@ A safety review read each crate against its design and the ten rules, and every 
 - A web read never runs in a tab that can write, in any posture. A `page_http` read is drafted only from a request that can be made again exactly. A token in a page's address or query is never kept. A key that holds an action word is refused, so a key such as `PAY-100` cannot be read by key; this is a limit, and may be stricter than it needs to be ([decision 0195](docs/decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)).
 - No client takes a proxy from the environment, and no proxy is built: a `network.proxy` that is set is refused when the engine starts. A broker over plain TCP must be written as a loopback IP address (`127.0.0.1` or `[::1]`), not `localhost`. No build of the product, the workspace build included, offers the test broker's protocol ([decision 0197](docs/decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)).
 - A person's resume is never lost while a reconcile of the same run is ending. The engine's browser is started so that it takes no proxy and runs no extension; a machine-wide browser policy set by an administrator still applies ([decision 0201](docs/decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md)).
+- A protected setting is loosened only by an installation settings file that no account but an administrator can change. Under `A2M_HOME`, or on Windows for now, such a loosening or lock is refused by name (decision 0241).
+- `policy.two_person_irreversible` is protected: once on, no user file, variable, or flag turns it off.
+- The engine makes its data, configuration, and cache folders its user's alone; `doctor` names one that others can enter.
+- An answer to a page write that quotes the page's anti-forgery token is withheld whole, and the write is treated as in doubt. A page's refusal of the values of a write is no longer settled as not written. The tab that writes passes the page's service worker by (decision 0245).
 
 ## [0.0.1]
 

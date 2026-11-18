@@ -1122,7 +1122,20 @@ impl Inner {
                     row.id,
                     failure::credential_refused("the side that checks it"),
                 );
-                abandon("credential_refused").await.map(|_| ())
+                // The refused credential is counted as `refused` counts it,
+                // so that no lease tries it again by itself: a lockout
+                // would count that as a second failure.
+                let attempts = row.stored_attempts.saturating_add(1);
+                self.advance(
+                    row,
+                    SessionState::Absent,
+                    EventKind::Abandoned,
+                    "credential_refused",
+                    |next| next.stored_attempts = attempts,
+                    Saved::Delete,
+                )
+                .await
+                .map(|_| ())
             }
             WorkOutcome::NeedsPerson(reason) if automatic => {
                 self.want_person(row, reason, row.stored_attempts).await

@@ -207,6 +207,14 @@ impl Control for Timed<'_> {
         self.inner.keeps_shadow()
     }
 
+    fn shadow_rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<bool, Failure>> {
+        Box::pin(self.within("shadow_rate", self.inner.shadow_rate(surface, want)))
+    }
+
     fn shadow<'a>(
         &'a self,
         compared: crate::control::ShadowCompared,

@@ -234,14 +234,21 @@ pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) ->
     use a2m_provider::ProgramRefused;
     let at = shown(path);
     let unsafe_path = |what: String, next: &str| {
-        Failure::new(FailureClass::Policy, PROGRAM_PATH_UNSAFE, what, next.to_owned())
+        Failure::new(
+            FailureClass::Policy,
+            PROGRAM_PATH_UNSAFE,
+            what,
+            next.to_owned(),
+        )
     };
     let place = |path: &std::path::Path| shown(&path.display().to_string());
     match why {
         ProgramRefused::Missing => Failure::new(
             FailureClass::Input,
             a2m_provider::codes::PROGRAM_NOT_FOUND,
-            format!("The local server program `{at}` is not there, is not a file, or cannot be run."),
+            format!(
+                "The local server program `{at}` is not there, is not a file, or cannot be run."
+            ),
             "Install the program at the path its surface declares, or correct the path in `target.yaml`.",
         ),
         ProgramRefused::NotAbsolute => unsafe_path(

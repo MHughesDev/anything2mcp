@@ -1,8 +1,9 @@
 //! The driver against the stdio form of the test stand: the server is a
 //! local program, started through the supervisor from what the plan
-//! declares. Every write is proven by asking the stand what it stored.
+//! declares, on Linux, macOS, and Windows alike (decision 0250). Every write
+//! is proven by asking the stand what it stored, and what a program was
+//! given, its arguments and its environment, by asking the program.
 
-#![cfg(unix)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -33,17 +34,33 @@ struct Scene {
     stand: StdioStand,
 }
 
+/// A text as a YAML scalar in single quotes, in which nothing is an
+/// escape: a Windows path's backslashes stay as they are.
+fn quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
 /// The fixture target with the surface `orders_local` pointed at the
 /// stand's program, pinned by `digest`, or by the program's own digest,
 /// and compiled. The local mapping gains the update tool, so that a write
 /// can be proven, and the report tool, a second read.
 fn local_plan(registry: &Registry, root: &Path, stand: &StdioStand, digest: Option<&str>) -> Plan {
-    let program = stand.program().to_string_lossy().into_owned();
+    local_plan_with(registry, root, stand, stand.program(), digest, &[])
+}
+
+/// As [`local_plan`], with the program at `program` and these arguments.
+fn local_plan_with(
+    registry: &Registry,
+    root: &Path,
+    stand: &StdioStand,
+    program: &Path,
+    digest: Option<&str>,
+    args: &[&str],
+) -> Plan {
     let state = stand.state_folder().to_string_lossy().into_owned();
-    let own = format!(
-        "sha256:{}",
-        Digest::of(&std::fs::read(stand.program()).unwrap())
-    );
+    let own = format!("sha256:{}", Digest::of(&std::fs::read(program).unwrap()));
+    let program = program.to_string_lossy().into_owned();
+    let args: Vec<String> = args.iter().map(|arg| quoted(arg)).collect();
     let digest = digest.map_or(own, ToOwned::to_owned);
     let local = |text: String, tool: &str| {
         text.replace(
@@ -53,9 +70,9 @@ fn local_plan(registry: &Registry, root: &Path, stand: &StdioStand, digest: Opti
     };
     write_target(root, &|path, text| match path {
         "target.yaml" => text
-            .replace("/opt/example/bin/example-mcp", &program)
+            .replace("\"/opt/example/bin/example-mcp\"", &quoted(&program))
             .replace(PLACEHOLDER_DIGEST, &digest)
-            .replace("/var/lib/example-mcp", &state),
+            .replace("\"/var/lib/example-mcp\"}", &format!("{}}}\n    args: [{}]", quoted(&state), args.join(", "))),
         "operations/order_note_update.yaml" => local(text, "orders_update"),
         "operations/order_get.yaml" => local(text, "orders_get"),
         "operations/order_report.yaml" => local(text, "orders_report"),

@@ -3353,3 +3353,177 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     assert_eq!(odd.error.unwrap().code, "schema_invalid");
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// The target's files with a sign-in through the identity service at
+/// `identity`, declared as the surface `idp` and named as the token
+/// endpoint: what an agent may write with `draft.write`.
+fn drafted_sign_in(project: &Path, identity: &str) {
+    let target = project.join("targets").join("example");
+    let fixture = std::fs::read_to_string(target.join("target.yaml")).unwrap();
+    let declared = fixture.replacen(
+        "surfaces:\n",
+        &format!("surfaces:\n  idp:\n    kind: stand\n    address: \"{identity}\"\n"),
+        1,
+    );
+    if !fixture.contains("  idp:\n") {
+        std::fs::write(target.join("target.yaml"), declared).unwrap();
+    } else {
+        let start = fixture.find("  idp:\n").unwrap();
+        let end = start + fixture[start..].find("\"\n").unwrap() + 2;
+        let mut moved = fixture.clone();
+        moved.replace_range(
+            start..end,
+            &format!("  idp:\n    kind: stand\n    address: \"{identity}\"\n"),
+        );
+        std::fs::write(target.join("target.yaml"), moved).unwrap();
+    }
+    std::fs::write(
+        target.join("auth.yaml"),
+        format!(
+            "auth:\n  - surfaces: [desk]\n    mode: custom\n    provider: oauth_client_credentials\n    probe: example_order_get\n    probe_inputs: {{order_id: \"SO-1001\"}}\n    settings: {{token_endpoint: \"{identity}/traps/write/token\", client_id: \"client-1\"}}\n    credentials:\n      client_secret: \"vault://example/service/client_secret\"\n    attempt_limit: 1\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// Audit finding F1 and decision 0248. An agent that can write drafts names
+/// an identity service of its choosing in a drafted sign-in, with the
+/// client secret already stored. Before the fix, `session.login` sent the
+/// stored secret there with no publish and no person. Now nothing is sent:
+/// the answer is the person's page, which names every address the sign-in
+/// sends to and says the declaration is not published.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_drafted_sign_in_sends_no_stored_credential_until_its_person_sees_every_address() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let (identity, elsewhere) = (
+        example_app::harness::TestApp::start().await.unwrap(),
+        example_app::harness::TestApp::start().await.unwrap(),
+    );
+    let project = world.project.path();
+    let login = json!({"target": "example", "surface": "desk"});
+
+    // The person signs in once through the identity service the drafts
+    // name, and types the client secret on the page: it is stored.
+    drafted_sign_in(project, &identity.url(""));
+    let asked = world.call(&agent, "session.login", login.clone()).await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let page = ask.details.join("\n");
+    assert!(page.contains("nobody has published it"), "{page}");
+    assert!(
+        page.contains(&format!("{}/traps/write/token", identity.url("")))
+            && page.contains("not published"),
+        "{page}"
+    );
+    let given = a2m_auth::Returned::new().with(
+        "client_secret",
+        a2m_core::Secret::new("secret-for-tests-client-f1"),
+    );
+    let desk = world.surface.desk();
+    let _ = desk
+        .carry_out_with(ask.act, proof_for(&world, ask.act), given)
+        .await
+        .unwrap();
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+
+    // The agent moves the identity service elsewhere in the drafts, and
+    // asks again. The secret is stored, and the provider needs no person.
+    drafted_sign_in(project, &elsewhere.url(""));
+    let asked = world.call(&agent, "session.login", login.clone()).await;
+    // Nothing was sent anywhere: elsewhere heard nothing, and neither did
+    // the service of before.
+    assert!(
+        elsewhere.trap_writes().await.unwrap().is_empty(),
+        "the stored secret was sent where the drafts said: {:?}",
+        asked.result
+    );
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+    // The answer is the person's page, which names the new address and
+    // says it is not published.
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    assert_eq!(asked.result.as_ref().unwrap()["state"], "needs_person");
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let page = ask.details.join("\n");
+    assert!(
+        page.contains(&format!("{}/traps/write/token", elsewhere.url("")))
+            && page.contains("the setting `token_endpoint`")
+            && page.contains("as the drafts declare it, not published"),
+        "{page}"
+    );
+    assert!(page.contains("vault://example/service/client_secret"), "{page}");
+    assert!(!page.contains("secret-for-tests-client-f1"), "{page}");
+
+    // The drafts change again before the person presses: the press is
+    // refused, and nothing is sent.
+    drafted_sign_in(project, &identity.url(""));
+    let pressed = desk
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await
+        .unwrap();
+    assert!(!pressed.ok);
+    assert_eq!(pressed.error.as_ref().unwrap().code, "drafts_changed");
+    assert!(elsewhere.trap_writes().await.unwrap().is_empty());
+    assert_eq!(identity.trap_writes().await.unwrap().get("token"), Some(&1));
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Decision 0248: the publish review names, for each sign-in, the provider,
+/// each credential by its reference and never a value, and every address a
+/// credential or a token goes to; a sign-in that would send to an address
+/// the target does not declare is refused before the person is asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_shows_where_each_sign_in_sends_and_refuses_an_undeclared_address() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let project = world.project.path();
+    drafted_sign_in(project, "https://id.example.test");
+    let auth = project.join("targets").join("example").join("auth.yaml");
+    let text = std::fs::read_to_string(&auth).unwrap();
+
+    // The token endpoint at an address no surface declares: refused by
+    // name, and no page is shown.
+    std::fs::write(
+        &auth,
+        text.replace(
+            "https://id.example.test/traps/write/token",
+            "https://elsewhere.example.test/token",
+        ),
+    )
+    .unwrap();
+    let refused = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(
+        refused.error.as_ref().map(|error| error.code.as_str()),
+        Some("destination_not_declared"),
+        "{refused:?}"
+    );
+    assert!(world.surface.acts.lock().unwrap().is_empty());
+
+    // Declared, the page names it.
+    std::fs::write(&auth, &text).unwrap();
+    let asked = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let line = ask
+        .details
+        .iter()
+        .find(|line| line.starts_with("Sign-in of desk in the environment test"))
+        .unwrap_or_else(|| panic!("{:?}", ask.details));
+    assert!(line.contains("oauth_client_credentials"), "{line}");
+    assert!(
+        line.contains("client_secret vault://example/service/client_secret"),
+        "{line}"
+    );
+    assert!(
+        line.contains("https://id.example.test/traps/write/token (the setting `token_endpoint`)"),
+        "{line}"
+    );
+    assert!(line.contains("(the surface `desk`)"), "{line}");
+    world.kernel.close(CloseReason::Asked).await;
+}
