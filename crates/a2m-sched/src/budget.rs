@@ -137,13 +137,20 @@ fn load(tx: &mut Tx<'_>, key: &BudgetKey, now: Timestamp) -> Result<Option<Bucke
 /// Takes up to `want` requests from every one of `keys` at once: the same
 /// number from each, never more than the emptiest holds. With `whole`, it is
 /// `want` or nothing. A budget nobody set is made with `default`, full.
+///
+/// `reserve_percent` of each bucket's capacity is left for others: a watch's
+/// check takes nothing that would bring a bucket below it, so a caller's own
+/// reads always find that share of the burst (decision 0247). It is 0 for
+/// every other job, and never more than 90.
 pub(crate) fn take(
     tx: &mut Tx<'_>,
     default: &RateLimit,
     keys: &[BudgetKey],
     want: u32,
     whole: bool,
+    reserve_percent: u32,
 ) -> Result<Take, Failure> {
+    let reserve = i64::from(reserve_percent.min(90));
     if want == 0 {
         return Err(failure::invalid("a grant of no requests"));
     }
@@ -161,9 +168,10 @@ pub(crate) fn take(
         buckets.push((key, bucket));
     }
     let want = i64::from(want);
+    let keep = |bucket: &Bucket| bucket.capacity * reserve / 100;
     let available = buckets
         .iter()
-        .map(|(_, bucket)| bucket.level / bucket.per_ms)
+        .map(|(_, bucket)| (bucket.level / bucket.per_ms - keep(bucket)).max(0))
         .min()
         .unwrap_or(want);
     let granted = if whole && available < want {
@@ -177,7 +185,8 @@ pub(crate) fn take(
         let wait_ms = buckets
             .iter()
             .map(|(_, bucket)| {
-                let needed = if whole { want.min(bucket.capacity) } else { 1 };
+                let room = (bucket.capacity - keep(bucket)).max(1);
+                let needed = keep(bucket) + if whole { want.min(room) } else { 1 };
                 // A bucket counted to a later moment refills from there.
                 (bucket.counted_to - now.as_unix_millis())
                     .max(0)

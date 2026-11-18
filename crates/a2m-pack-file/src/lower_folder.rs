@@ -48,7 +48,10 @@ fn only<'a>(
         if entry.key.value != name {
             problems.push(problem(
                 &entry.value,
-                format!("A folder's entry has no `{}` under `{map}`.", entry.key.value),
+                format!(
+                    "A folder's entry has no `{}` under `{map}`.",
+                    entry.key.value
+                ),
                 &format!("Name only `{name}` under `{map}`."),
             ));
         }
@@ -98,7 +101,11 @@ pub(crate) fn lower_folder(
     };
     let spec: FolderSpec = spec;
     let Ok(surface) = SurfaceName::new(&spec.surface) else {
-        return fail(problem(named, "The folder is on no surface.", "Name its surface."));
+        return fail(problem(
+            named,
+            "The folder is on no surface.",
+            "Name its surface.",
+        ));
     };
     let steps = Steps {
         section,
@@ -112,7 +119,12 @@ pub(crate) fn lower_folder(
     let verb = binding.verb;
     let mut problems = Diagnostics::new();
     let what = format!("A `{verb}` binding of a folder");
-    refuse_keys(binding, &["record", "read_back", "from"], &what, &mut problems);
+    refuse_keys(
+        binding,
+        &["record", "read_back", "from"],
+        &what,
+        &mut problems,
+    );
     let mut lowered = Lowered {
         surface,
         act: Vec::new(),
@@ -208,7 +220,11 @@ pub(crate) fn lower_folder(
             lowered.act = vec![
                 open(false)?,
                 locate(Expect::Present, key, true)?,
-                read(flag(binding, "digest"), flag(binding, "content"), Vec::new())?,
+                read(
+                    flag(binding, "digest"),
+                    flag(binding, "content"),
+                    Vec::new(),
+                )?,
             ];
             return Ok(());
         }
@@ -334,10 +350,12 @@ pub(crate) fn lower_log(
     let fail = |found: Diagnostic| Err(Diagnostics::from(found));
     let named = binding.field("log").unwrap_or(binding.doc);
     let name = named.as_text().unwrap_or_default();
-    let found = cx.section(&LOG_KIND, &SURFACE_KIND).and_then(|(index, section)| {
-        let mut decoded: LogSection = section.payload.decode().ok()?;
-        decoded.remove(name).map(|spec| (index, spec))
-    });
+    let found = cx
+        .section(&LOG_KIND, &SURFACE_KIND)
+        .and_then(|(index, section)| {
+            let mut decoded: LogSection = section.payload.decode().ok()?;
+            decoded.remove(name).map(|spec| (index, spec))
+        });
     let Some((section, spec)) = found else {
         return fail(problem(
             named,
@@ -353,12 +371,24 @@ pub(crate) fn lower_log(
         ));
     }
     let Ok(surface) = SurfaceName::new(&spec.surface) else {
-        return fail(problem(named, "The growing file is on no surface.", "Name its surface."));
+        return fail(problem(
+            named,
+            "The growing file is on no surface.",
+            "Name its surface.",
+        ));
     };
     let mut problems = Diagnostics::new();
     refuse_keys(
         binding,
-        &["record", "key", "fields", "limit", "digest", "content", "read_back"],
+        &[
+            "record",
+            "key",
+            "fields",
+            "limit",
+            "digest",
+            "content",
+            "read_back",
+        ],
         "A binding of a growing file",
         &mut problems,
     );

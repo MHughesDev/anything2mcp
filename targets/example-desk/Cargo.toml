@@ -7,10 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The stand publishes its tree over AT-SPI, which is Linux's interface. On
-# macOS it builds and says it is not built there. `service` is the part of
-# the bus crate that exports objects; the workspace's other user of the
-# crate only calls.
+# On Linux the stand publishes its tree over AT-SPI, which is Linux's
+# interface. `service` is the part of the bus crate that exports objects;
+# the workspace's other user of the crate only calls.
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio.workspace = true
 zbus = { workspace = true, features = ["service"] }
@@ -22,8 +21,25 @@ zbus = { workspace = true, features = ["service"] }
 tokio.workspace = true
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_StationsAndDesktops", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
+# On macOS the stand is a window of AppKit's own controls, made through the
+# workspace's objc2 crates with the classes it needs and no more, and the
+# permission check that says whether a client in this process can read it
+# (decision 0244). Tokio for the one blocking start, off the test's thread.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSApplication", "NSButton", "NSControl", "NSGraphics", "NSResponder", "NSRunningApplication", "NSScrollView", "NSSecureTextField", "NSTableColumn", "NSTableView", "NSTextField", "NSUserInterfaceItemIdentification", "NSView", "NSWindow"] }
+objc2-application-services = { workspace = true, features = ["AXUIElement"] }
+objc2-foundation = { workspace = true, features = ["NSGeometry", "NSObject", "NSString"] }
+tokio.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+# The stand's own test reads its window as a client of the accessibility
+# interface.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-application-services = { workspace = true, features = ["AXError", "AXUIElement", "libc"] }
+objc2-core-foundation = { workspace = true, features = ["CFArray", "CFString"] }
 
 # The stand's own test sends its controls messages as another process.
 [target.'cfg(windows)'.dev-dependencies]

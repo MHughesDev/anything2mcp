@@ -279,6 +279,35 @@ def current_block(text):
     return text[a + len(BEGIN):b].strip("\n")
 
 
+def check(root):
+    """Every way the reference's table differs from what the crates say, as sentences."""
+    f = scan(root)
+    rows, faults = resolve(f)
+    text = (root / REFERENCE).read_text(encoding="utf-8")
+    block = current_block(text)
+    if block is None:
+        return faults + [f"{REFERENCE}: the failure-codes markers are missing"]
+    want = render(rows)
+    have = {}
+    for line in block.splitlines():
+        m = re.match(r"\| `(\w+)` \| `(\w+)` \|", line)
+        if m:
+            have[m.group(2)] = line
+    wanted = {r[1]: line for r, line in zip(rows, want.splitlines()[2:])}
+    problems = list(faults)
+    for code in sorted(set(wanted) - set(have)):
+        problems.append(f"`{code}` is declared in {', '.join(next(r[2] for r in rows if r[1] == code))} "
+                        "and has no row in the reference's table")
+    for code in sorted(set(have) - set(wanted)):
+        problems.append(f"the reference's table has a row for `{code}` and no crate declares it")
+    for code in sorted(set(have) & set(wanted)):
+        if have[code] != wanted[code]:
+            problems.append(f"the row for `{code}` is not what the crates say; run `python3 tools/failure_codes.py`")
+    if not problems and block != want:
+        problems.append("the table differs from what the generator writes; run `python3 tools/failure_codes.py`")
+    return problems
+
+
 def main():
     f = scan()
     rows, faults = resolve(f)
@@ -297,23 +326,7 @@ def main():
         return 1
     want = render(rows)
     if "--check" in sys.argv:
-        have = {}
-        for line in block.splitlines():
-            m = re.match(r"\| `(\w+)` \| `(\w+)` \|", line)
-            if m:
-                have[m.group(2)] = line
-        wanted = {r[1]: line for r, line in zip(rows, want.splitlines()[2:])}
-        problems = list(faults)
-        for code in sorted(set(wanted) - set(have)):
-            problems.append(f"`{code}` is declared in {', '.join(next(r[2] for r in rows if r[1] == code))} "
-                            f"and has no row in the reference's table")
-        for code in sorted(set(have) - set(wanted)):
-            problems.append(f"the reference's table has a row for `{code}` and no crate declares it")
-        for code in sorted(set(have) & set(wanted)):
-            if have[code] != wanted[code]:
-                problems.append(f"the row for `{code}` is not what the crates say; run `python3 tools/failure_codes.py`")
-        if not problems and block != want:
-            problems.append("the table differs from what the generator writes; run `python3 tools/failure_codes.py`")
+        problems = check(repo)
         for p in problems:
             print("-", p)
         print(f"{len(rows)} codes; {len(problems)} problem(s)")

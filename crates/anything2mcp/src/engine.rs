@@ -501,6 +501,22 @@ impl Engine {
         // What every HTTP client trusts is set before any pack registers
         // and before anything makes a client (decision 0166).
         crate::trust::install(&settings, options.project.as_deref())?;
+        // The engine's own folders are this user's alone, as the runtime
+        // folder is: what the store, the vault's salt, the traces, and the
+        // profiles hold is sealed, and is not left in folders other
+        // accounts may enter (decision 0241). A folder that cannot be
+        // closed does not stop the engine; `doctor.run` names it.
+        let own = [
+            options.paths.data.clone(),
+            options.paths.config.clone(),
+            options.paths.cache.clone(),
+        ];
+        let _ = tokio::task::spawn_blocking(move || {
+            for folder in &own {
+                let _ = a2m_local::keep_folder_private(folder);
+            }
+        })
+        .await;
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,

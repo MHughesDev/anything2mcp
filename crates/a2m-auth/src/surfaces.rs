@@ -22,6 +22,12 @@ pub struct EntrySurfaces {
     /// The plan's pack sections registered for the kinds of those surfaces,
     /// in the plan's order.
     pub sections: Vec<PackSection>,
+    /// Whether the plan is a published version's. A drafts' plan is not:
+    /// anyone who can write a draft could name the addresses in it, so a
+    /// provider sends no stored credential on a drafts' word (decision
+    /// 0245, after the audit that decision 0248 answers). False unless the
+    /// caller that built the entry says so with [`EntrySurfaces::published`].
+    pub from_published: bool,
 }
 
 impl EntrySurfaces {
@@ -56,7 +62,19 @@ impl EntrySurfaces {
             })
             .cloned()
             .collect();
-        Self { surfaces, sections }
+        Self {
+            surfaces,
+            sections,
+            from_published: false,
+        }
+    }
+
+    /// The same, marked as taken from a published version's plan. Only the
+    /// caller that loaded the plan from the version store says so.
+    #[must_use]
+    pub fn published(mut self) -> Self {
+        self.from_published = true;
+        self
     }
 
     /// Whether the entry was given nothing of its surfaces.

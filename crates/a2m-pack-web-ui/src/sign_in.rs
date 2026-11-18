@@ -379,6 +379,30 @@ impl FormLogin {
     async fn sign_in_now(&self, cx: &SignInContext<'_>) -> Result<Material, Failure> {
         let entry = cx.entry();
         let pages = Pages::of(entry)?;
+        // A stored credential is sent only where a published version of the
+        // target says: anyone who can write a draft could name an address
+        // of their own in it (decision 0245, with decision 0248).
+        if !entry.surfaces.from_published {
+            return Err(Failure::new(
+                FailureClass::SessionExpired,
+                a2m_auth::codes::NEEDS_LOGIN,
+                "This sign-in is declared by drafts, and a stored password is filled in only on a page a published version of the target declares. Nothing was opened, filled, or sent.",
+                "Publish the target, then sign in with `anything2mcp session login`.",
+            ));
+        }
+        // A credential belongs to the target it was stored for.
+        let own = format!("vault://{}/", cx.session().key.target);
+        for role in [USER, PASSWORD] {
+            if entry
+                .credentials
+                .get(role)
+                .is_some_and(|reference| !reference.as_str().starts_with(&own))
+            {
+                return Err(invalid(&format!(
+                    "the credential of the role `{role}` is not one stored for this target"
+                )));
+            }
+        }
         let name = profile_name(cx.session().session);
         let profile = ProfileKey {
             target: cx.session().key.target.clone(),

@@ -252,6 +252,43 @@ impl Paths {
     }
 }
 
+/// Which of the engine's own folders other accounts may enter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OpenFolders {
+    /// Each that exists is closed to every other account.
+    Closed,
+    /// These may be entered, or listed, by another account.
+    Open(Vec<PathBuf>),
+    /// This build does not read who may on this operating system.
+    NotChecked,
+}
+
+/// Which of the data, configuration, cache, and runtime folders another
+/// account may enter or list: on Unix, any of the group's or others' bits
+/// on the folder. Touches the disk. On Windows the access list is not read
+/// here: the engine sets it when it starts.
+pub(crate) fn open_to_others(paths: &Paths) -> OpenFolders {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let open: Vec<PathBuf> = [&paths.data, &paths.config, &paths.cache, &paths.runtime]
+            .into_iter()
+            .filter(|folder| std::fs::metadata(folder).is_ok_and(|found| found.mode() & 0o077 != 0))
+            .cloned()
+            .collect();
+        if open.is_empty() {
+            OpenFolders::Closed
+        } else {
+            OpenFolders::Open(open)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = paths;
+        OpenFolders::NotChecked
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};

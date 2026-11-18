@@ -20,9 +20,9 @@ use a2m_files::{
 use crate::codes;
 use crate::kind::document_name;
 use crate::model::{
-    Change, DOCUMENT_KIND, FOLDER_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, PlaceSpec, READ,
-    RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST,
-    VERB_READ, VERB_RENAME, VERB_UPDATE, field_arg, key_arg,
+    Change, DOCUMENT_KIND, DocumentSpec, Expect, FOLDER_KIND, Format, LOCATE, MODE, OPEN,
+    PlaceSpec, READ, RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE,
+    VERB_DELETE, VERB_LIST, VERB_READ, VERB_RENAME, VERB_UPDATE, field_arg, key_arg,
 };
 
 /// A binding that names a document, a record kind, or a field the target
@@ -636,7 +636,8 @@ fn write_bindings<'a>(view: &ResolvedView<'a>) -> Vec<WriteBinding<'a>> {
                     .text(key)
                     .and_then(|name| docs.iter().find(|doc| document_name(doc) == name))
             };
-            let (document, folder) = match (named("document", documents), named("folder", folders)) {
+            let (document, folder) = match (named("document", documents), named("folder", folders))
+            {
                 (Some(document), _) => (document, false),
                 (None, Some(folder)) => (folder, true),
                 (None, None) => continue,

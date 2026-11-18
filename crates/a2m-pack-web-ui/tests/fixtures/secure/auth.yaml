@@ -1,0 +1,24 @@
+# A sign-in through the application's own sign-in page (decision 0245).
+# Every part of the page is named from its screen model; no locator is here.
+auth:
+  - surfaces: [app]
+    mode: custom
+    provider: form_login
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: sign_in
+      user_field: username
+      password_field: password
+      submit: sign_in
+      refused: refused
+      blocked: locked
+      code_screen: one_time_code
+      code_field: code
+      code_submit: continue
+      code_refused: refused
+    credentials:
+      user: "vault://example/app/user"
+      password: "vault://example/app/password"
+    attempt_limit: 1

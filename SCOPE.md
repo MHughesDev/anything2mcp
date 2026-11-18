@@ -90,6 +90,7 @@ The full catalog, kind by kind, is the [coverage map](docs/reviews/coverage-map.
 | Runs inside one command for a build server or a scheduled job | Approve a write where no person is present, or keep a Linux engine's sessions without a person giving the passphrase | By design for the first; not yet for the second |
 | Reaches another machine through what that machine already serves | Receive an outside service's webhook; reach the engine on the person's other machine | Owner decisions [0208](docs/decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md) and 0242 ([0233](docs/decisions/0233-whether-being-told-by-another-machine-is-serving-it.md)): not in the first release |
 | Reaches the system's own programs one declared command at a time | Treat the machine itself as a target the scout starts from; list, move, or copy a folder's files | Not yet |
+| Judges in one way, everywhere, whether a plain link stays on this machine: only a loopback address written as an IP address, read from the address alone ([decision 0240](docs/decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)) | Resolve a name to decide where an address is; decide anything yet from the kind of place a destination's address is | Choice (decisions 0188 and 0192), for the first; not yet, for the second |
 
 ## Building tools
 

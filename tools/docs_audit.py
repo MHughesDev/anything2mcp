@@ -426,6 +426,14 @@ def main():
                 note("designs", f"docs/architecture/crates/{c}.md must state layer {layer[c]} in its Facts table, "
                                 f"as the layering table does")
 
+    # 17. The reference's table of failure codes is the one the crates' own tables give
+    #     (tools/failure_codes.py writes it; this holds the two together).
+    if (repo / "crates").is_dir() and "failure-codes:begin" in ref:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import failure_codes
+        for problem in failure_codes.check(repo):
+            note("codes", problem)
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
           f"{len(actions)} actions, {len(briefs)} open research briefs, {len(on_disk)} crates")

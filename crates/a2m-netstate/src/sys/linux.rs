@@ -477,7 +477,7 @@ pub(crate) fn listeners() -> Result<Listeners, NetError> {
             &table
         };
         sockets.extend(
-            text::proc_sockets(table, transport, v6).map_err(|()| NetError::Unreadable {
+            text::proc_sockets(table, transport, v6).ok_or(NetError::Unreadable {
                 fact,
                 what: "a socket table line without the documented columns",
             })?,

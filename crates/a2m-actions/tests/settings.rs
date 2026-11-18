@@ -618,7 +618,7 @@ fn readers(key: &str, sources: &[(PathBuf, String)]) -> Vec<String> {
             text.match_indices(needle).any(|(at, _)| {
                 text[..at]
                     .trim_end()
-                    .ends_with(|c: char| c == '(' || c == ',')
+                    .ends_with(['(', ','])
             })
         };
         let reads = if let Some((prefix, last)) = key.split_once('*') {

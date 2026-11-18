@@ -252,8 +252,13 @@ pub(crate) fn parse_ini(
             return Err(not_read("continues a line with a backslash"));
         }
         if let Some(header) = trimmed.strip_prefix('[') {
-            let Some(name) = header.strip_suffix(']').map(|name| name.trim_matches(BLANKS)) else {
-                return Err(not_read("holds a section header that does not end with `]`"));
+            let Some(name) = header
+                .strip_suffix(']')
+                .map(|name| name.trim_matches(BLANKS))
+            else {
+                return Err(not_read(
+                    "holds a section header that does not end with `]`",
+                ));
             };
             if name.is_empty() || name.contains(['[', ']']) {
                 return Err(not_read("holds a section header with no plain name"));
@@ -267,7 +272,10 @@ pub(crate) fn parse_ini(
                 "holds a line that is not a section, a key with a value, or a comment",
             ));
         };
-        let key = content.get(..split).unwrap_or_default().trim_matches(BLANKS);
+        let key = content
+            .get(..split)
+            .unwrap_or_default()
+            .trim_matches(BLANKS);
         if key.is_empty() {
             return Err(not_read("holds a value with no key"));
         }
@@ -287,7 +295,9 @@ pub(crate) fn parse_ini(
         if key.contains(other) {
             unread = Some("its key holds the other separator, which some programs split at");
         } else if holds_inline_comment(value) {
-            unread = Some("its value holds `;` or `#` after a blank, which some programs read as a comment");
+            unread = Some(
+                "its value holds `;` or `#` after a blank, which some programs read as a comment",
+            );
         } else if let Some(first) = value.chars().next().filter(|c| matches!(c, '"' | '\'')) {
             match quotes {
                 Quotes::Unsaid => {
@@ -400,7 +410,11 @@ impl<'a> Plist<'a> {
                 .rest()
                 .find("?>")
                 .ok_or_else(|| unreadable("the declaration does not close"))?;
-            let declaration = self.rest().get(..end).unwrap_or_default().to_ascii_lowercase();
+            let declaration = self
+                .rest()
+                .get(..end)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if let Some(at) = declaration.find("encoding") {
                 let named = declaration.get(at..).unwrap_or_default();
                 if !(named.contains("\"utf-8\"") || named.contains("'utf-8'")) {
@@ -443,12 +457,16 @@ impl<'a> Plist<'a> {
             return Err(not_read("holds a literal section"));
         }
         if rest.starts_with("<?") || rest.starts_with("<!") {
-            return Err(not_read("holds a processing instruction or a declaration inside its values"));
+            return Err(not_read(
+                "holds a processing instruction or a declaration inside its values",
+            ));
         }
         let Some(after) = rest.strip_prefix('<') else {
             return Err(unreadable("text stands where an element is expected"));
         };
-        let name_len = after.find(|c: char| !is_name_char(c)).unwrap_or(after.len());
+        let name_len = after
+            .find(|c: char| !is_name_char(c))
+            .unwrap_or(after.len());
         let name = after.get(..name_len).unwrap_or_default();
         if name.is_empty() {
             return Err(unreadable("an element has no name"));
@@ -532,7 +550,11 @@ impl<'a> Plist<'a> {
             "date" => Some(Kind::Date),
             "data" => Some(Kind::Data),
             "true" | "false" => Some(Kind::Bool),
-            _ => return Err(unreadable("an element stands where a property list has none")),
+            _ => {
+                return Err(unreadable(
+                    "an element stands where a property list has none",
+                ));
+            }
         };
         if let Some(kind) = scalar {
             let (text, value_span, whole) = if kind == Kind::Bool {
@@ -587,7 +609,9 @@ impl<'a> Plist<'a> {
             if tag.name == "dict" {
                 let key = self.tag()?;
                 if key.name != "key" || key.closed {
-                    return Err(unreadable("a dictionary holds a value with no key before it"));
+                    return Err(unreadable(
+                        "a dictionary holds a value with no key before it",
+                    ));
                 }
                 let (name, _, _) = self.text()?;
                 self.close("key")?;
@@ -691,11 +715,15 @@ impl Settings {
     pub(crate) fn find(&self, path: &[String]) -> Result<Option<&Setting>, StepFailure> {
         let is = |setting: &Setting, fold: bool| {
             setting.path.len() == path.len()
-                && setting.path.iter().zip(path).all(|(part, wanted)| match part {
-                    Part::Key(key) if fold => key.eq_ignore_ascii_case(wanted),
-                    Part::Key(key) => key == wanted,
-                    Part::Index(_) => false,
-                })
+                && setting
+                    .path
+                    .iter()
+                    .zip(path)
+                    .all(|(part, wanted)| match part {
+                        Part::Key(key) if fold => key.eq_ignore_ascii_case(wanted),
+                        Part::Key(key) => key == wanted,
+                        Part::Index(_) => false,
+                    })
         };
         if self.which == Which::PropertyList {
             return Ok(self.entries.iter().find(|setting| is(setting, false)));
@@ -767,7 +795,9 @@ pub(crate) fn literal(
     match which {
         Which::Ini => {
             if text.starts_with(BLANKS) || text.ends_with(BLANKS) {
-                return Err(refused("begins or ends with a blank, which the file would lose"));
+                return Err(refused(
+                    "begins or ends with a blank, which the file would lose",
+                ));
             }
             if holds_inline_comment(&text) {
                 return Err(refused(
@@ -800,7 +830,8 @@ pub(crate) fn literal(
                     let fraction = parts.next();
                     !whole.is_empty()
                         && whole.bytes().all(|b| b.is_ascii_digit())
-                        && fraction.is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
+                        && fraction
+                            .is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
                 }
                 _ => true,
             };
@@ -810,10 +841,7 @@ pub(crate) fn literal(
                     setting.kind.element()
                 )));
             }
-            if text
-                .chars()
-                .any(|c| c.is_control() && !matches!(c, '\t'))
-            {
+            if text.chars().any(|c| c.is_control() && !matches!(c, '\t')) {
                 return Err(refused("holds a character the XML form cannot hold"));
             }
             let escaped = text
@@ -946,7 +974,10 @@ mod tests {
     #[test]
     fn a_property_list_gives_each_value_by_its_keys() {
         let file = parse_plist(PLIST.as_bytes(), &limits()).unwrap();
-        assert_eq!(file.root_keys, ["Name", "Count", "Open", "Empty", "Inner", "List"]);
+        assert_eq!(
+            file.root_keys,
+            ["Name", "Count", "Open", "Empty", "Inner", "List"]
+        );
         let name = file.find(&keys(&["Name"])).unwrap().unwrap();
         assert_eq!(name.text, "Rails & brackets");
         assert_eq!(
@@ -976,7 +1007,11 @@ mod tests {
         }
         let binary = parse_plist(b"bplist00\x01\x02", &limits()).unwrap_err();
         assert_eq!(binary.failure.code(), &codes::SHAPE_UNSUPPORTED);
-        let deep = format!("<plist>{}{}</plist>", "<array>".repeat(40), "</array>".repeat(40));
+        let deep = format!(
+            "<plist>{}{}</plist>",
+            "<array>".repeat(40),
+            "</array>".repeat(40)
+        );
         let failure = parse_plist(deep.as_bytes(), &limits()).unwrap_err();
         assert_eq!(failure.failure.code(), &codes::FILE_TOO_LARGE);
         let cdata = "<plist><string><![CDATA[x]]></string></plist>";
@@ -988,20 +1023,39 @@ mod tests {
         let text = text_type();
         let ini = parse_ini(b"a = x\n", '=', Quotes::Unsaid, &limits()).unwrap();
         let a = &ini.entries[0];
-        let write = |value: &str| literal(a, Which::Ini, Quotes::Unsaid, &Value::from(value), &text);
+        let write =
+            |value: &str| literal(a, Which::Ini, Quotes::Unsaid, &Value::from(value), &text);
         assert_eq!(write("y z").unwrap(), b"y z");
         for refused in [" y", "y ", "y ; z", "#y", "\"y\"", "two\nlines"] {
             assert!(write(refused).is_err(), "{refused:?}");
         }
         let plist = parse_plist(PLIST.as_bytes(), &limits()).unwrap();
         let empty = plist.find(&keys(&["Empty"])).unwrap().unwrap();
-        let out = literal(empty, Which::PropertyList, Quotes::Unsaid, &Value::from("a<b"), &text);
+        let out = literal(
+            empty,
+            Which::PropertyList,
+            Quotes::Unsaid,
+            &Value::from("a<b"),
+            &text,
+        );
         assert_eq!(out.unwrap(), b"<string>a&lt;b</string>");
         let count = plist.find(&keys(&["Count"])).unwrap().unwrap();
-        let out = literal(count, Which::PropertyList, Quotes::Unsaid, &Value::from("x"), &text);
+        let out = literal(
+            count,
+            Which::PropertyList,
+            Quotes::Unsaid,
+            &Value::from("x"),
+            &text,
+        );
         assert!(out.is_err());
         let open = plist.find(&keys(&["Open"])).unwrap().unwrap();
-        let out = literal(open, Which::PropertyList, Quotes::Unsaid, &Value::Bool(false), &text);
+        let out = literal(
+            open,
+            Which::PropertyList,
+            Quotes::Unsaid,
+            &Value::Bool(false),
+            &text,
+        );
         assert_eq!(out.unwrap(), b"<false/>");
     }
 }

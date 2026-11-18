@@ -35,6 +35,21 @@ pub use channel::{
 pub use connector::{Connector, HELLO_PATIENCE, Link};
 pub use lock::{ENGINE_LOCK_NAME, EngineLock, LockPlace};
 pub use os::{Kept, kept_by};
+
+/// Makes one of the engine's own folders this user's alone, as the
+/// runtime folder is: made if it is not there, refused if it is not a
+/// folder of this user's, and closed to every other account (on Unix the
+/// mode 0700; on Windows an access list that names only this user, which
+/// what is made inside it inherits). What is inside it is then out of
+/// other accounts' reach, whatever its own mode (decision 0241).
+///
+/// # Errors
+///
+/// What the operating system answers, or `PermissionDenied` for a folder
+/// that is not this user's.
+pub fn keep_folder_private(dir: &std::path::Path) -> std::io::Result<()> {
+    os::prepare_dir(dir)
+}
 pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
     PromptText, presence_available, system_prompt, system_prompt_for,

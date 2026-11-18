@@ -261,6 +261,31 @@ class AuditCatches(unittest.TestCase):
         page.write_text(page.read_text(encoding="utf-8") + "\nRuns are marked interrupted.\n", encoding="utf-8")
         self.assert_finding("replaced", "207-the-engine-loop.md")
 
+    def test_a_code_missing_from_the_failure_code_table_is_refused(self):
+        page = self.root / "docs" / "reference" / "technical-reference.md"
+        text = page.read_text(encoding="utf-8")
+        lines = [l for l in text.splitlines(keepends=True) if "| `not_granted` |" not in l]
+        self.assertNotEqual(len(lines), len(text.splitlines()))
+        page.write_text("".join(lines), encoding="utf-8")
+        self.assert_finding("codes", "`not_granted` is declared in a2m-policy and has no row")
+
+    def test_a_row_with_no_code_behind_it_is_refused(self):
+        page = self.root / "docs" / "reference" / "technical-reference.md"
+        text = page.read_text(encoding="utf-8")
+        row = "| `busy` | `no_such_code_anywhere` | `a2m-policy` | Planted. |\n"
+        marker = "| `busy` | `acknowledgement_not_kept` |"
+        self.assertIn(marker, text)
+        page.write_text(text.replace(marker, row + marker, 1), encoding="utf-8")
+        self.assert_finding("codes", "a row for `no_such_code_anywhere` and no crate declares it")
+
+    def test_a_code_declared_with_two_classes_is_refused(self):
+        table = self.root / "crates" / "a2m-engine" / "src" / "codes.rs"
+        text = table.read_text(encoding="utf-8")
+        planted = text.replace('(FailureClass::Busy, "no_binding")', '(FailureClass::Input, "no_binding")', 1)
+        self.assertNotEqual(text, planted)
+        table.write_text(planted, encoding="utf-8")
+        self.assert_finding("codes", "`no_binding` is declared with more than one class")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

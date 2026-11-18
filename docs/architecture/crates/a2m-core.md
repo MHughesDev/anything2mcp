@@ -405,7 +405,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 
 | Must always hold | Proven by |
 | --- | --- |
-| Code and documents agree on every vocabulary, in content and order | `tests/documents.rs`, 32 cases |
+| Code and documents agree on every vocabulary, in content and order | `tests/documents.rs`, 34 cases |
 | A secret is never shown by any formatter, alone or inside another structure | `secret::tests` |
 | `Secret` is neither serializable nor copyable | A test that fails to compile otherwise |
 | A badly formed name is refused with a failure of class `input`, and the refusal never echoes more than 64 characters of input | `name::tests`, `ident::tests` over every checked name |

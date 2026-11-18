@@ -151,8 +151,18 @@ impl Scheduler {
         &self.inner.settings
     }
 
-    fn now(&self) -> Timestamp {
+    pub(crate) fn now(&self) -> Timestamp {
         self.inner.clock.now()
+    }
+
+    /// The store, for the scheduler's other modules.
+    pub(crate) fn store(&self) -> &Store {
+        &self.inner.store
+    }
+
+    /// Tells a waiting claim and the sweeping task that something changed.
+    pub(crate) fn wake(&self) {
+        self.changed();
     }
 
     /// Something changed that a waiting claim or the sweeping task may care
@@ -215,7 +225,7 @@ impl Scheduler {
             .inner
             .store
             .write(durability, move |tx| {
-                tables::admit(tx, &settings, submission)
+                tables::admit(tx, &settings, submission, 0)
             })
             .await;
         match &admitted {
@@ -741,6 +751,7 @@ impl Scheduler {
             return Err(failure::invalid("a grant against no budget"));
         }
         let default = self.inner.settings.default_rate;
+        let reserve = self.inner.settings.watch.reserve_percent;
         let lease = *lease;
         loop {
             let keys = budgets.to_vec();
@@ -749,7 +760,14 @@ impl Scheduler {
                 .store
                 .write(Durability::Relaxed, move |tx| {
                     let lease_until = tables::lease_until(tx, &lease)?;
-                    let take = budget::take(tx, &default, &keys, want, false)?;
+                    // A watch's check leaves its share of every budget to
+                    // the caller's own reads (decision 0247).
+                    let run = tables::job_row(tx, lease.job)?.run;
+                    let reserve = match run {
+                        Some(run) if tx.watches().check_of_run(run)?.is_some() => reserve,
+                        _ => 0,
+                    };
+                    let take = budget::take(tx, &default, &keys, want, false, reserve)?;
                     Ok((take, lease_until))
                 })
                 .await?;

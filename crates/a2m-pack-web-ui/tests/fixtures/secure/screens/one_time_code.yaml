@@ -1,0 +1,22 @@
+# The page that asks for a one-time code, when the application asks.
+screen: one_time_code
+surface: app
+reach: {url: "/secure/sign-in/code"}
+ready: {visible: {role: heading, name: "One-time code"}}
+fields:
+  code:
+    type: text
+    control: text
+    locate:
+      - {label: Code}
+    fingerprint: {section: {role: form, name: ""}}
+actions:
+  continue:
+    locate:
+      - {role: button, name: Continue}
+    fingerprint: {section: {role: form, name: ""}}
+    confirm: {visible: {role: heading, name: "Orders"}}
+variants:
+  refused:
+    when: {text: "The code is not right.", contains: false}
+    handling: stop

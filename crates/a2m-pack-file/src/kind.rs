@@ -278,9 +278,7 @@ fn record_of(
             "Remove `key`, and name the values by their paths.",
         ));
     }
-    if format == Format::Ini
-        && matches!(&place, PlaceSpec::Path { keys } if keys.len() > 1)
-    {
+    if format == Format::Ini && matches!(&place, PlaceSpec::Path { keys } if keys.len() > 1) {
         problems.push(invalid(
             record,
             "A record of an INI file is the keys before the first section, `path: []`, or one section, `path: [<section>]`.",

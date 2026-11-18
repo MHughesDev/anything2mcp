@@ -731,10 +731,13 @@ fn place(
 
 /// Admits a run with its first job, or returns the unfinished run the same
 /// call already made, or refuses. One transaction: a refusal leaves nothing.
+/// `reserve` is the share of each budget the submission leaves for others:
+/// 0, except for a watch's check.
 pub(crate) fn admit(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
     submission: Submission,
+    reserve: u32,
 ) -> Result<Admitted, Failure> {
     let Submission {
         run,
@@ -777,7 +780,7 @@ pub(crate) fn admit(
         queue_wait.unwrap_or(settings.queue_wait),
     )?;
     if !budgets.is_empty()
-        && let Take::Wait { until } = budget::take(tx, &settings.default_rate, &budgets, 1, true)?
+        && let Take::Wait { until } = budget::take(tx, &settings.default_rate, &budgets, 1, true, reserve)?
     {
         return Err(failure::rate_limited(between(now, until)));
     }

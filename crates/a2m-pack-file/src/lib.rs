@@ -21,12 +21,17 @@
 //! `RegistryBuilder::add_pack(&a2m_pack_file::pack())`.
 
 pub mod codes;
+mod declare;
 mod discover;
 mod draft;
+mod drive_folder;
 mod driver;
 mod edit;
+mod folder;
 mod kind;
+mod log;
 mod lower;
+mod lower_folder;
 mod model;
 mod open;
 mod place;
@@ -39,10 +44,12 @@ use a2m_core::{Failure, FailureClass, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar};
 
+pub use declare::{FOLDER_INVALID, FolderKind, LogKind, folder_schema, log_schema};
 pub use discover::{
     CellKind, ColumnFound, FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound,
     TableFound,
 };
+pub use drive_folder::SKIPPED;
 pub use driver::{FileDriver, FileLimits};
 pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
@@ -50,8 +57,9 @@ pub use lower::{
     STANDS_UNDECLARED,
 };
 pub use model::{
-    BEFORE_DIGEST, DEFAULT_ROOT, DOCUMENT_KIND, FILE_DIGEST, Format, INTENDED_DIGEST, MODE, PACK,
-    ROWS, SURFACE_KIND, TRUNCATED,
+    BEFORE_DIGEST, DEFAULT_ROOT, DOCUMENT_KIND, ENTRY_CONTENT, ENTRY_NAME, FILE_DIGEST,
+    FOLDER_KIND, Format, INTENDED_DIGEST, LOG_FROM, LOG_KIND, LOG_LINES, LOG_MORE, LOG_OUTCOME,
+    LOG_POSITION, MODE, PACK, ROWS, SURFACE_KIND, TRUNCATED,
 };
 
 /// The pack's manifest, as the registry reads it.
@@ -95,6 +103,8 @@ impl Pack for FilePack {
                     .optional("root", JsonSchema::name()),
             ))
             .file_kind(Arc::new(kind::DocumentKind::new()))
+            .file_kind(Arc::new(declare::FolderKind::new()))
+            .file_kind(Arc::new(declare::LogKind::new()))
             .lowering(Arc::new(lower::FileLowering::new(mode)))
             .drafting_rule(Arc::new(draft::DocumentFromLayout::new()?))
             .drafting_rule(Arc::new(draft::ReadsFromLayout::new()?));

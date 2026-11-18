@@ -40,6 +40,9 @@ pub(crate) struct SaveJob {
     pub intended: Digest,
     /// The most bytes read when the file is digested again.
     pub max_bytes: u64,
+    /// The identity the file had when it was read, when the save is held to
+    /// it: the file at the name must still be that file (decision 0246).
+    pub expected: Option<a2m_provider::FileIdentity>,
 }
 
 fn storage_full() -> StepFailure {
@@ -275,6 +278,9 @@ fn save_with(job: &SaveJob, before_last_look: impl FnOnce()) -> Result<(), StepF
         .checked()
         .identity()
         .map_err(gone_is_changed_contract)?;
+    if job.expected.is_some_and(|expected| expected != identity) {
+        return Err(changed());
+    }
 
     // Dropped on any way out below before the replace, the temporary file
     // is removed, while its name still holds the file it made.
@@ -505,6 +511,7 @@ mod tests {
             before: Digest::of(b"the old bytes"),
             intended: Digest::of(b"the new bytes"),
             max_bytes: 1024,
+            expected: None,
         };
         let moved = scratch.path.join("moved");
         let stopped = save_with(&job, || {

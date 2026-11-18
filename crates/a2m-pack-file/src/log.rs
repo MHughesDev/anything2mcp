@@ -126,9 +126,7 @@ pub(crate) fn read(
     let (mut file, metadata) = named.open()?;
     let identity = lasting_identity(&metadata)
         .map(|text| short(Digest::of(text.as_bytes())))
-        .ok_or_else(|| {
-            StepFailure::not_sent(unavailable("has no identity the system gives"))
-        })?;
+        .ok_or_else(|| StepFailure::not_sent(unavailable("has no identity the system gives")))?;
     let length = metadata.len();
     let offset = given.as_ref().map_or(0, |position| position.offset);
     let outcome = match &given {
@@ -185,7 +183,11 @@ pub(crate) fn read(
     let mut lines = Vec::new();
     let mut consumed = 0_usize;
     let mut cut = false;
-    for raw in bytes.get(..=last_end).unwrap_or_default().split_inclusive(|b| *b == b'\n') {
+    for raw in bytes
+        .get(..=last_end)
+        .unwrap_or_default()
+        .split_inclusive(|b| *b == b'\n')
+    {
         if lines.len() >= spec.max_lines as usize {
             cut = true;
             break;
@@ -233,7 +235,13 @@ mod tests {
             head: "fedcba9876543210".to_owned(),
         };
         assert_eq!(Position::parse(&position.text()).unwrap(), position);
-        for text in ["", "v1.42", "v2.42.0123456789abcdef.fedcba9876543210", "v1.x.0123456789abcdef.fedcba9876543210", "v1.1.short.fedcba9876543210"] {
+        for text in [
+            "",
+            "v1.42",
+            "v2.42.0123456789abcdef.fedcba9876543210",
+            "v1.x.0123456789abcdef.fedcba9876543210",
+            "v1.1.short.fedcba9876543210",
+        ] {
             let failure = Position::parse(text).unwrap_err();
             assert_eq!(failure.failure.code(), &codes::VALUE_UNPARSABLE, "{text}");
         }

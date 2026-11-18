@@ -122,12 +122,7 @@ fn too_many() -> StepFailure {
 
 /// The moment, in UTC, to the second, as `YYYY-MM-DDTHH:MM:SS`.
 fn moment(time: std::time::SystemTime) -> Option<String> {
-    let seconds = i64::try_from(
-        time.duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_secs(),
-    )
-    .ok()?;
+    let seconds = i64::try_from(time.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()).ok()?;
     let days = i32::try_from(seconds.div_euclid(86_400)).ok()?;
     let rest = seconds.rem_euclid(86_400);
     let date = Date::from_days(days).ok()?;
@@ -227,11 +222,7 @@ pub(crate) fn list(folder: &Folder, depth: u8, ceiling: usize) -> Result<Listing
 /// The folder an entry is in, and its own last name. A name with folders
 /// in it is read only a declared depth down; a write names an entry
 /// directly in the folder.
-fn split<'a>(
-    folder: &Folder,
-    name: &'a str,
-    depth: u8,
-) -> Result<(Folder, &'a str), StepFailure> {
+fn split<'a>(folder: &Folder, name: &'a str, depth: u8) -> Result<(Folder, &'a str), StepFailure> {
     let parts = name.split('/').count();
     if name.is_empty() || parts > usize::from(depth) + 1 {
         return Err(StepFailure::not_sent(not_allowed(
@@ -294,6 +285,17 @@ pub(crate) fn find(
         Held::OtherCase => Err(other_case()),
         Held::No => Ok(None),
     }
+}
+
+/// The identity of the regular file at an entry's name, with no link
+/// followed; nothing for anything else.
+pub(crate) fn identity(
+    folder: &Folder,
+    name: &str,
+    depth: u8,
+) -> Result<Option<Identity>, StepFailure> {
+    let (inner, last) = split(folder, name, depth)?;
+    Ok(identity_at(&inner.beside(last)?))
 }
 
 /// The file an entry is, by its own name, for reading its bytes.
@@ -472,7 +474,10 @@ pub(crate) fn create(
             StepFailure::not_sent(unavailable("cannot have its temporary file made"))
         })
     })?;
-    let made_identity = file.metadata().ok().and_then(|metadata| Identity::of(&metadata));
+    let made_identity = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| Identity::of(&metadata));
     let made = Made {
         path: temporary,
         identity: made_identity,

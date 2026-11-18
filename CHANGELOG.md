@@ -102,6 +102,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - `test` exits 1 when the publish gates do not pass, and the next-step hints of `lint` and `target status` name a step that can succeed.
 - `draft delete` takes several files in one call and removes all or none.
 - At a terminal, moments print as dates and `scout run` prints its summary.
+- Every check of whether a plain link stays on this machine (OAuth endpoints, the HTTP, MCP, and stream packs, the database server) now asks one question over one reading of the address. A broker address with a zone (`[::1%1]:4222`) and an MCP address that cannot be parsed are now refused ([decision 0240](docs/decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 - [SCOPE.md](SCOPE.md) shows what the product does and answers for, and what it does not, with each limit marked as a rule, a design choice, or not built yet ([decision 0230](docs/decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)).
 - A command whose settings variables differ from those the running engine was started with is warned (`settings_differ`), by name and never by value. The engine is not restarted ([decision 0192](docs/decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md)).
 - The Python and Node clients start the engine when none runs, unless told not to ([decision 0192](docs/decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md)).

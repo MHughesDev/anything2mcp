@@ -24,11 +24,12 @@ use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
+use crate::drive_folder::Entries;
 use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
     BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST,
-    FieldSpec, Format, INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec,
-    TRUNCATED, field_arg, key_arg,
+    FOLDER_KIND, FieldSpec, FolderSection, Format, INTENDED_DIGEST, LOG_KIND, LogSection, PACK,
+    ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec, TRUNCATED, field_arg, key_arg,
 };
 use crate::open::{self, Content, OpenFile, RowAt, Table};
 use crate::place::{Folder, Named};
@@ -123,6 +124,9 @@ struct Current {
 struct State {
     folder: Folder,
     documents: BTreeMap<String, Loaded>,
+    /// The surface's folders and growing files, and the entry being worked
+    /// on (decision 0246).
+    entries: Entries,
     /// What the run may do: a save is refused where nothing may be written.
     posture: Posture,
     current: Option<Current>,
@@ -157,6 +161,16 @@ fn means_of(spec: &StepSpec, format: Option<Format>) -> Vec<Detail> {
         StepSpec::Confirm => ("confirm", "digest"),
         StepSpec::One { .. } => ("read", "one"),
         StepSpec::List { .. } => ("read", "list"),
+        StepSpec::FolderOpen { for_write } => {
+            ("folder_open_for", if *for_write { "write" } else { "read" })
+        }
+        StepSpec::FolderLocate { .. } => ("folder", "locate"),
+        StepSpec::FolderList { .. } => ("folder", "list"),
+        StepSpec::FolderRead { .. } => ("folder", "read"),
+        StepSpec::FolderSet { change } => ("folder_change", change.verb()),
+        StepSpec::FolderSave => ("folder", "save"),
+        StepSpec::FolderConfirm => ("folder", "confirm"),
+        StepSpec::LogRead => ("log", "read_from_position"),
     };
     means.push(Detail::new(name, value));
     means
@@ -945,6 +959,7 @@ impl FileDriver {
             before: current.open.digest,
             intended,
             max_bytes: self.limits.max_bytes,
+            expected: None,
         };
         // The replace is never left half asked: the work runs to its end on
         // its own thread, and a lost answer is a write whose fate is unknown.
@@ -1012,9 +1027,39 @@ impl Driver for FileDriver {
                     }
                 }
             }
+            let mut entries = Entries::default();
+            let surface_name = cx.surface.surface.name.as_str();
+            for section in cx
+                .plan
+                .packs
+                .iter()
+                .filter(|section| section.pack == PACK && section.surface_kind == SURFACE_KIND)
+            {
+                if section.kind == FOLDER_KIND {
+                    let decoded: FolderSection = section
+                        .payload
+                        .decode()
+                        .map_err(|_| plan_unreadable("its section of folders does not decode"))?;
+                    entries.folders.extend(
+                        decoded
+                            .into_iter()
+                            .filter(|(_, spec)| spec.surface == surface_name),
+                    );
+                } else if section.kind == LOG_KIND {
+                    let decoded: LogSection = section.payload.decode().map_err(|_| {
+                        plan_unreadable("its section of growing files does not decode")
+                    })?;
+                    entries.logs.extend(
+                        decoded
+                            .into_iter()
+                            .filter(|(_, spec)| spec.surface == surface_name),
+                    );
+                }
+            }
             Ok(Prepared::new(State {
                 folder,
                 documents,
+                entries,
                 posture: cx.posture,
                 current: None,
             }))
@@ -1052,6 +1097,27 @@ impl Driver for FileDriver {
             );
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
             let result = match spec {
+                StepSpec::FolderOpen { .. }
+                | StepSpec::FolderLocate { .. }
+                | StepSpec::FolderList { .. }
+                | StepSpec::FolderRead { .. }
+                | StepSpec::FolderSet { .. }
+                | StepSpec::FolderSave
+                | StepSpec::FolderConfirm
+                | StepSpec::LogRead => {
+                    state
+                        .entries
+                        .act(
+                            &state.folder,
+                            self.limits,
+                            state.posture,
+                            step,
+                            spec,
+                            document,
+                            input,
+                        )
+                        .await
+                }
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
                 StepSpec::Save => done(self.save(state, document, step).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
@@ -1075,9 +1141,7 @@ impl Driver for FileDriver {
                         StepSpec::Set { record, change } => {
                             done(set(loaded, current, &record, change, input, &self.limits)?)
                         }
-                        StepSpec::Open { .. } | StepSpec::Save | StepSpec::Confirm => {
-                            Err(out_of_order("a step of no kind"))
-                        }
+                        _ => Err(out_of_order("a step of no kind")),
                     }
                 }
             };

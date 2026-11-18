@@ -42,6 +42,7 @@ pub struct Cut {
 
 /// The cut of a table the system gave that was read only up to
 /// [`MOST_TABLE_BYTES`]; `seen` entries were in the part read.
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn table_cut(list: &'static str, seen: usize) -> Cut {
     Cut {
         list,

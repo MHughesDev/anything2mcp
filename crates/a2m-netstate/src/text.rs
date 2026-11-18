@@ -101,12 +101,9 @@ pub struct ProcSocket {
 /// `tcp6`, `udp`, `udp6`). For TCP, a socket in the listening state (`0A`).
 /// For UDP, a socket with no peer (remote port 0), which is one that
 /// receives datagrams. A line in another shape is a stop for the whole
-/// table, never skipped by a guess.
-///
-/// # Errors
-///
-/// A line that does not have the columns the kernel documents.
-pub fn proc_sockets(text: &str, transport: Transport, v6: bool) -> Result<Vec<ProcSocket>, ()> {
+/// table, never skipped by a guess: `None`.
+#[must_use]
+pub fn proc_sockets(text: &str, transport: Transport, v6: bool) -> Option<Vec<ProcSocket>> {
     let mut sockets = Vec::new();
     for line in text.lines().skip(1) {
         let columns: Vec<&str> = line.split_whitespace().collect();
@@ -119,18 +116,18 @@ pub fn proc_sockets(text: &str, transport: Transport, v6: bool) -> Result<Vec<Pr
             columns.get(3),
             columns.get(9),
         ) else {
-            return Err(());
+            return None;
         };
-        let (address, port) = local.split_once(':').ok_or(())?;
-        let (_, remote_port) = remote.split_once(':').ok_or(())?;
+        let (address, port) = local.split_once(':')?;
+        let (_, remote_port) = remote.split_once(':')?;
         let address = if v6 {
-            IpAddr::V6(proc_ipv6_words(address).ok_or(())?)
+            IpAddr::V6(proc_ipv6_words(address)?)
         } else {
-            IpAddr::V4(proc_ipv4(address).ok_or(())?)
+            IpAddr::V4(proc_ipv4(address)?)
         };
-        let port = u16::from_str_radix(port, 16).map_err(|_| ())?;
-        let remote_port = u16::from_str_radix(remote_port, 16).map_err(|_| ())?;
-        let inode = inode.parse::<u64>().map_err(|_| ())?;
+        let port = u16::from_str_radix(port, 16).ok()?;
+        let remote_port = u16::from_str_radix(remote_port, 16).ok()?;
+        let inode = inode.parse::<u64>().ok()?;
         let listening = match transport {
             Transport::Tcp => *state == "0A",
             Transport::Udp => remote_port == 0,
@@ -144,7 +141,7 @@ pub fn proc_sockets(text: &str, transport: Transport, v6: bool) -> Result<Vec<Pr
             });
         }
     }
-    Ok(sockets)
+    Some(sockets)
 }
 
 /// The prefix length a network mask's bytes state; `None` when the mask's
@@ -317,7 +314,7 @@ mod tests {
                 inode: 4242
             }]
         );
-        assert!(proc_sockets("header\n 0: short\n", Transport::Tcp, false).is_err());
+        assert!(proc_sockets("header\n 0: short\n", Transport::Tcp, false).is_none());
     }
 
     #[test]

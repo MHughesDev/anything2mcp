@@ -199,12 +199,13 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
     };
     match &open.content {
         Content::Settings(file) => {
-            if differs(&layout.keys, file.root_keys.iter().map(String::as_str).collect())
-                || differs(
-                    &layout.sections,
-                    file.sections.iter().map(String::as_str).collect(),
-                )
-            {
+            if differs(
+                &layout.keys,
+                file.root_keys.iter().map(String::as_str).collect(),
+            ) || differs(
+                &layout.sections,
+                file.sections.iter().map(String::as_str).collect(),
+            ) {
                 return Err(layout_differs("keys or sections"));
             }
             if layout.sheets.is_some()
@@ -259,7 +260,9 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
                 || layout.headers.is_some()
                 || layout.sections.is_some()
             {
-                return Err(layout_differs("sheets, tables, names, headers, or sections"));
+                return Err(layout_differs(
+                    "sheets, tables, names, headers, or sections",
+                ));
             }
         }
     }

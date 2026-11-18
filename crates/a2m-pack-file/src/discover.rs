@@ -187,6 +187,9 @@ fn layout_of(
         signed: false,
     };
     match &open.content {
+        // Settings files are not discovered yet: `format_of` names none
+        // (decision 0246).
+        Content::Settings(_) => {}
         Content::Cells(parsed) if format == Format::Delimited => {
             if let Some(sheet) = parsed.structure.sheets.first() {
                 found.headers.clone_from(&sheet.headers);
@@ -339,6 +342,8 @@ impl LayoutDiscoverer {
             format,
             delimiter: delimiter.map(str::to_owned),
             line_ending: None,
+            separator: None,
+            quotes: None,
             layout: Layout::default(),
             may_be_open: None,
             lock_sibling: None,

@@ -181,6 +181,8 @@ impl LayoutDraft {
         let mut kinds = Vec::new();
         let mut fingerprint = Vec::new();
         match found.format {
+            // Not discovered, so never drafted yet (decision 0246).
+            Format::Ini | Format::PropertyList => {}
             Format::Delimited => {
                 fingerprint.push(("headers", texts(&found.headers)));
                 kinds.push(kind(
