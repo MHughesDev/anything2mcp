@@ -816,3 +816,34 @@ async fn where_the_build_has_no_key_store_the_passphrase_route_is_the_default_an
     );
     assert!(missing.next_step().contains("16 bytes"), "{missing:?}");
 }
+
+/// Decision 0248: a stored credential's context names the target it was
+/// stored for, so the same reference under another target does not open,
+/// and neither does one sealed before the target was part of the context.
+#[tokio::test]
+async fn a_credential_opens_only_for_the_target_it_was_stored_for() {
+    let (store, records) = durable();
+    let vault = vault(&store, &records);
+    let target = |name: &str| a2m_core::TargetName::new(name).unwrap();
+    let reference = "vault://example/service/token";
+    let own = SealContext::credential(workspace(1), person("ana"), &target("example"), reference)
+        .unwrap();
+    assert_eq!(own.kind, SealedKind::Credential);
+    let sealed = vault.seal(&own, b"secret-for-tests-target").await.unwrap();
+    let other = SealContext::credential(workspace(1), person("ana"), &target("other"), reference)
+        .unwrap();
+    let before = SealContext {
+        workspace: workspace(1),
+        owner: person("ana"),
+        kind: SealedKind::Credential,
+        item: item(reference),
+    };
+    for wrong in [&other, &before] {
+        let failure = vault.open(wrong, &sealed).await.unwrap_err();
+        assert_eq!(failure.code(), &codes::SEALED_ITEM_MISMATCH, "{wrong:?}");
+    }
+    assert_eq!(
+        vault.open(&own, &sealed).await.unwrap().expose(),
+        b"secret-for-tests-target"
+    );
+}

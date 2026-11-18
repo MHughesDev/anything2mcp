@@ -122,12 +122,21 @@ pub(crate) fn lower_folder(
     let verb = binding.verb;
     let mut problems = Diagnostics::new();
     let what = format!("A `{verb}` binding of a folder");
-    refuse_keys(
-        binding,
-        &["record", "read_back", "from"],
-        &what,
-        &mut problems,
-    );
+    refuse_keys(binding, &["record", "from"], &what, &mut problems);
+    let writes = [VERB_CREATE, VERB_UPDATE, VERB_RENAME, VERB_DELETE].contains(verb);
+    match binding.field("read_back") {
+        Some(found) if !writes => problems.push(problem(
+            found,
+            "A binding that only reads has no read-back.",
+            "Remove `read_back`.",
+        )),
+        Some(found) if found.text("record") != Some(FOLDER_RECORD) => problems.push(problem(
+            found,
+            "A folder's write is read back from the entry it wrote.",
+            "Write `read_back: {record: entry}`.",
+        )),
+        _ => {}
+    }
     let mut lowered = Lowered {
         surface,
         act: Vec::new(),
