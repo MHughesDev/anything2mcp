@@ -31,6 +31,7 @@ mod model;
 mod open;
 mod place;
 mod save;
+mod settings;
 
 use std::sync::Arc;
 

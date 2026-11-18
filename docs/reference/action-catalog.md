@@ -7,7 +7,7 @@ The single list of everything a person, an agent, or a program can ask Anything2
 | Command | `anything2mcp <noun> <verb>` | `anything2mcp target probe` |
 | MCP tool | `a2m_<noun>_<verb>` | `a2m_target_probe` |
 | REST | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` |
-| SDK | `client.<noun>.<verb>()` | `client.target.probe()` |
+| SDK | One method for each action, named from its noun and verb: `client.<noun>_<verb>()` in Python, `client.<noun><Verb>()` in Node | `client.target_probe()`, `client.targetProbe()` |
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record.
 

@@ -21,8 +21,14 @@
 //! acting tab writes from inside its page with the page's own anti-forgery
 //! token, which never leaves the page ([`ActTab::write_from_page`]).
 //!
-//! Not built yet: a visible window, exporting and importing a session's
-//! state, the watching tab, frames, the stream of every network exchange,
+//! Every tab is opened in a browser context of the browser's own making,
+//! which keeps cookies and page storage in memory, so that nothing a page
+//! stores is written to the data directory; a session's cookies are taken
+//! out with [`Browser::export_state`] and placed back with
+//! [`Browser::import_state`] (decision 0245).
+//!
+//! Not built yet: a visible window, page storage in a session's state, the
+//! watching tab, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
 //! reported), uploads, recycling, and the platform profiles.
 
@@ -47,8 +53,9 @@ mod tests;
 pub use a2m_provider::Deadline;
 
 pub use browsers::{
-    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, DIGESTS_SETTING,
-    Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
+    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
+    DIGESTS_SETTING, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, StateCookie,
+    Visibility,
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};

@@ -319,6 +319,56 @@ fn check_plain(
     a2m_provider::resolved_path(&folder).map_err(|_| "there is no such folder")
 }
 
+/// The code that opens the warning a request is given when its project's
+/// file says something other than the project file the engine applies.
+pub const PROJECT_SETTINGS_DIFFER: &str = "project_settings_differ";
+
+/// The warning for a request from the checked project folder `folder`,
+/// when its project file sets other values than the project file the
+/// engine applies to every request (decision 0241, the smaller step of
+/// decision 0237's point 3): the keys that differ and both files. `None`
+/// when they say the same, which two empty files do. Touches the disk.
+pub(crate) fn settings_differ(folder: &Path, settings: &Settings) -> Option<String> {
+    let file = folder.join(PROJECT_FILE_NAME);
+    let in_force = settings.project_file();
+    if in_force.is_some_and(|start| real(start) == real(&file)) {
+        return None;
+    }
+    let text = std::fs::read_to_string(&file).ok()?;
+    let alone = Settings::load_all(&Sources {
+        project: Some(SourceFile::new(file.clone(), text)),
+        packs: settings.packs().to_vec(),
+        ..Sources::none()
+    })
+    .0;
+    let (this, applied) = (alone.project_values(), settings.project_values());
+    let differing: Vec<String> = this
+        .keys()
+        .chain(applied.keys())
+        .filter(|key| this.get(*key) != applied.get(*key))
+        .map(|key| format!("`{key}`"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if differing.is_empty() {
+        return None;
+    }
+    let applied = in_force.map_or_else(
+        || "none, since the engine was started outside any project".to_owned(),
+        |start| {
+            format!(
+                "`{}`, of the folder the engine was started in",
+                start.display()
+            )
+        },
+    );
+    Some(format!(
+        "{PROJECT_SETTINGS_DIFFER}: This call's project file `{}` sets {} otherwise than the project file the engine applies to every request, which is {applied}; this call runs with the engine's, and this file's settings are not used. To use them, stop the engine with `anything2mcp engine stop` once no run is in hand, and run the command again in this project.",
+        file.display(),
+        differing.join(", ")
+    ))
+}
+
 /// Why an account other than this process's user may change the file or
 /// folder at `path`, or `None` when only that user or the administrator
 /// may. The rule is the client's own (`kept_by` of `a2m-local`), kept here

@@ -17,6 +17,7 @@ use a2m_sources::{
 use crate::codes::{self, stop, unsupported};
 use crate::model::{DocumentSpec, FieldSpec, Format, Layout, PlaceSpec, RecordSpec};
 use crate::place::Named;
+use crate::settings::{self, Quotes, Settings};
 
 /// The byte-order mark of UTF-8.
 const UTF8_MARK: &[u8] = &[0xEF, 0xBB, 0xBF];
@@ -90,6 +91,9 @@ pub(crate) enum Content {
     Cells(Parsed),
     /// A JSON document. Spans count from `offset`, after a byte-order mark.
     Json { root: JsonNode, offset: u64 },
+    /// A settings file: an INI file or a property list. Spans count from
+    /// the file's first byte.
+    Settings(Settings),
 }
 
 /// One file, read and parsed.
@@ -133,7 +137,17 @@ pub(crate) fn parse(
     limits: &Limits,
 ) -> Result<OpenFile, StepFailure> {
     let digest = Digest::of(&bytes);
-    let content = if document.format == Format::Json {
+    let content = if document.format == Format::Ini {
+        let separator = document
+            .separator
+            .as_deref()
+            .and_then(|text| text.chars().next())
+            .unwrap_or('=');
+        let quotes = Quotes::from_name(document.quotes.as_deref());
+        Content::Settings(settings::parse_ini(&bytes, separator, quotes, limits)?)
+    } else if document.format == Format::PropertyList {
+        Content::Settings(settings::parse_plist(&bytes, limits)?)
+    } else if document.format == Format::Json {
         let offset = if bytes.starts_with(UTF8_MARK) {
             UTF8_MARK.len()
         } else {
@@ -184,6 +198,23 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
             .is_some_and(|declared| declared.iter().map(String::as_str).ne(found))
     };
     match &open.content {
+        Content::Settings(file) => {
+            if differs(&layout.keys, file.root_keys.iter().map(String::as_str).collect())
+                || differs(
+                    &layout.sections,
+                    file.sections.iter().map(String::as_str).collect(),
+                )
+            {
+                return Err(layout_differs("keys or sections"));
+            }
+            if layout.sheets.is_some()
+                || layout.tables.is_some()
+                || layout.names.is_some()
+                || layout.headers.is_some()
+            {
+                return Err(layout_differs("sheets, tables, names, or headers"));
+            }
+        }
         Content::Cells(parsed) => {
             let structure = &parsed.structure;
             let sheets = structure.sheets.iter().map(|s| s.name.as_str()).collect();
@@ -210,8 +241,8 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
             if differs(&layout.headers, headers) {
                 return Err(layout_differs("headers"));
             }
-            if layout.keys.is_some() {
-                return Err(layout_differs("keys"));
+            if layout.keys.is_some() || layout.sections.is_some() {
+                return Err(layout_differs("keys or sections"));
             }
         }
         Content::Json { root, .. } => {
@@ -226,8 +257,9 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
                 || layout.tables.is_some()
                 || layout.names.is_some()
                 || layout.headers.is_some()
+                || layout.sections.is_some()
             {
-                return Err(layout_differs("sheets, tables, names, or headers"));
+                return Err(layout_differs("sheets, tables, names, headers, or sections"));
             }
         }
     }
@@ -240,6 +272,9 @@ pub(crate) fn check_layout(open: &OpenFile, layout: &Layout) -> Result<(), StepF
 pub(crate) struct Slot {
     pub cell: Cell,
     pub span: Option<ByteSpan>,
+    /// Why the value is not read: a settings file's form that means
+    /// different things to different programs (decision 0246).
+    pub unread: Option<&'static str>,
 }
 
 /// Where one record is.
@@ -340,6 +375,7 @@ fn rows_of_text(parsed: &Parsed, record: &RecordSpec) -> Result<Table, StepFailu
                 part.cell(row, column).map(|placed| Slot {
                     cell: placed.cell.clone(),
                     span: placed.value_span,
+                    unread: None,
                 })
             })
             .collect();
@@ -367,6 +403,7 @@ fn sheet_rows(part: &ParsedPart, header_row: u32, columns: &[u32], last_row: u32
                         .map(|placed| Slot {
                             cell: placed.cell.clone(),
                             span: None,
+                            unread: None,
                         })
                 })
                 .collect();
@@ -476,6 +513,7 @@ fn rows_of_workbook(parsed: &Parsed, record: &RecordSpec) -> Result<Table, StepF
             let slot = part.cell(row, column).map(|placed| Slot {
                 cell: placed.cell.clone(),
                 span: None,
+                unread: None,
             });
             Ok(of_sheet(vec![Row {
                 at: RowAt::Other,
@@ -523,6 +561,7 @@ fn json_slot(node: &JsonNode, offset: u64, row: u32, column: u32) -> Slot {
             merged: None,
         },
         span: Some(shifted(node.span, offset)),
+        unread: None,
     }
 }
 
@@ -594,9 +633,50 @@ fn rows_of_json(root: &JsonNode, offset: u64, record: &RecordSpec) -> Result<Tab
     })
 }
 
+/// The one record of a settings file: each field's value, at the record's
+/// path and then the field's own.
+fn record_of_settings(file: &Settings, record: &RecordSpec) -> Result<Table, StepFailure> {
+    let PlaceSpec::Path { keys } = &record.place else {
+        return Err(unsupported("a place of another format in a settings file"));
+    };
+    let mut slots = Vec::new();
+    for (field, column) in record.fields.iter().zip(1_u32..) {
+        let path: Vec<String> = keys.iter().chain(&field.path).cloned().collect();
+        slots.push(file.find(&path)?.map(|setting| Slot {
+            cell: Cell {
+                raw: setting.raw(),
+                at: CellRef::new(0, 1, column),
+                format: None,
+                hidden: false,
+                merged: None,
+            },
+            span: Some(setting.span),
+            unread: setting.unread,
+        }));
+    }
+    Ok(Table {
+        rows: vec![Row {
+            at: RowAt::Other,
+            slots,
+        }],
+        columns: Vec::new(),
+        width: 0,
+        list: None,
+    })
+}
+
+/// The setting at a slot's span, for its editor.
+pub(crate) fn setting_at(open: &OpenFile, span: ByteSpan) -> Option<&settings::Setting> {
+    match &open.content {
+        Content::Settings(file) => file.entries.iter().find(|setting| setting.span == span),
+        _ => None,
+    }
+}
+
 /// Finds the records of one kind in the parsed file.
 pub(crate) fn table(open: &OpenFile, record: &RecordSpec) -> Result<Table, StepFailure> {
     match &open.content {
+        Content::Settings(file) => record_of_settings(file, record),
         Content::Json { root, offset } => rows_of_json(root, *offset, record),
         Content::Cells(parsed) if record.place == PlaceSpec::Rows => rows_of_text(parsed, record),
         Content::Cells(parsed) => rows_of_workbook(parsed, record),
@@ -613,6 +693,12 @@ pub(crate) fn value_at(
     let Some(slot) = slot else {
         return Ok(Value::Null);
     };
+    if let Some(why) = slot.unread {
+        return Err(unsupported(&format!(
+            "the value of the field `{}`, because {why}",
+            field.name
+        )));
+    }
     if matches!(slot.cell.raw, RawCell::Formula { .. }) && !field.formula {
         return Err(stop(
             codes::FORMULA_AT_PLACE,
@@ -626,7 +712,7 @@ pub(crate) fn value_at(
     let context = CellContext {
         date_system: match &open.content {
             Content::Cells(parsed) => parsed.date_system(),
-            Content::Json { .. } => None,
+            Content::Json { .. } | Content::Settings(_) => None,
         },
         missing: &[],
     };

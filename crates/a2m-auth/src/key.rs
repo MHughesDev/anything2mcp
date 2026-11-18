@@ -59,6 +59,10 @@ pub struct AuthEntry {
     pub attempt_limit: u32,
     /// Whether the session's state may be saved and restored.
     pub movable: bool,
+    /// What the plan holds about the surfaces the entry covers, for a
+    /// provider that reaches a surface itself. Empty for the providers that
+    /// only hold or exchange a credential (decision 0245).
+    pub surfaces: crate::surfaces::EntrySurfaces,
 }
 
 impl AuthEntry {
@@ -75,6 +79,7 @@ impl AuthEntry {
             absolute: None,
             attempt_limit: 1,
             movable: true,
+            surfaces: crate::surfaces::EntrySurfaces::default(),
         }
     }
 

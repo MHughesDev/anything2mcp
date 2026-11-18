@@ -2923,7 +2923,14 @@ pub(crate) async fn open_page(
         }
     };
     let created = client
-        .call(None, &CreateTarget { url: "about:blank" }, deadline)
+        .call(
+            None,
+            &CreateTarget {
+                url: "about:blank",
+                browser_context_id: Some(&browser.context),
+            },
+            deadline,
+        )
         .await
         .map_err(lost)?;
     // The browser holds every new page before it runs. This one is the

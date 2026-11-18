@@ -33,6 +33,7 @@ use crate::model::{
 use crate::open::{self, Content, OpenFile, RowAt, Table};
 use crate::place::{Folder, Named};
 use crate::save::{self, SaveJob};
+use crate::settings::{self, Quotes, Which};
 
 /// What the pack may read: the limits of `packs.file`.
 #[derive(Debug, Clone, Copy)]
@@ -671,8 +672,13 @@ fn set(
     let delimiter = delimiter_of(spec);
     let part = match &old.content {
         Content::Cells(parsed) => parsed.part(0),
-        Content::Json { .. } => None,
+        Content::Json { .. } | Content::Settings(_) => None,
     };
+    if spec.format.is_settings() && change != Change::Update {
+        return Err(unsupported(
+            "adding or removing a value of a settings file, whose editor sets one value in place",
+        ));
+    }
     let values = intended_values(
         loaded,
         record,
@@ -711,7 +717,23 @@ fn set(
                     ));
                 };
                 let existing = span.of(&old.bytes).unwrap_or_default();
-                let literal = if spec.format == Format::Json {
+                let literal = if spec.format.is_settings() {
+                    nodes.push(span);
+                    let setting = open::setting_at(old, span)
+                        .ok_or_else(|| round_trip("a value's place cannot be found again"))?;
+                    let which = if spec.format == Format::Ini {
+                        Which::Ini
+                    } else {
+                        Which::PropertyList
+                    };
+                    settings::literal(
+                        setting,
+                        which,
+                        Quotes::from_name(spec.quotes.as_deref()),
+                        intended,
+                        &typing.plan,
+                    )?
+                } else if spec.format == Format::Json {
                     nodes.push(span);
                     edit::json_literal(intended, &typing.plan, Some(existing))?
                 } else {
@@ -726,7 +748,9 @@ fn set(
                 };
                 patches.push(Patch::over(span, literal));
             }
-            if spec.format == Format::Json {
+            if spec.format.is_settings() {
+                Meant::Values(nodes)
+            } else if spec.format == Format::Json {
                 Meant::Nodes(nodes)
             } else {
                 Meant::Cells(cells)
@@ -1112,6 +1136,8 @@ mod tests {
             format: Format::Delimited,
             delimiter: None,
             line_ending: None,
+            separator: None,
+            quotes: None,
             layout: Layout::default(),
             may_be_open,
             lock_sibling: lock_sibling.map(str::to_owned),

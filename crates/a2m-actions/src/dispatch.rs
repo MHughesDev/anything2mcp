@@ -819,6 +819,20 @@ impl Kernel {
             },
             None => (None, None),
         };
+        // A project file the engine does not apply is said, never passed
+        // over in silence (decision 0241).
+        let project_warning = match &project {
+            Some(folder) => {
+                let (folder, kernel) = (folder.clone(), self.clone());
+                tokio::task::spawn_blocking(move || {
+                    crate::project::settings_differ(&folder, kernel.settings())
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+            None => None,
+        };
         let call = Call {
             input,
             caller: request.caller,
@@ -834,6 +848,9 @@ impl Kernel {
             .run_handler(&def, call)
             .await
             .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+        if let Some(warning) = project_warning {
+            output = output.warn(warning);
+        }
         if idempotency_key.is_some() && !READS_KEY.contains(&def.name.as_str()) {
             output = output.warn(format!(
                 "`{}` starts no run, so the idempotency key was not used.",

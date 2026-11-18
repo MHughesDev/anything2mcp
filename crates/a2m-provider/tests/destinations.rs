@@ -33,21 +33,27 @@ fn each_destination_carries_the_scope_its_address_gives_and_nothing_else() {
             "{address}"
         );
     }
-    assert!(destinations.iter().eq({
-        let mut sorted = addresses.clone();
-        sorted.sort();
-        sorted.dedup();
-        sorted
-    }
-    .iter()
-    .map(String::as_str)));
+    assert!(
+        destinations.iter().eq({
+            let mut sorted = addresses.clone();
+            sorted.sort();
+            sorted.dedup();
+            sorted
+        }
+        .iter()
+        .map(String::as_str))
+    );
 }
 
 #[test]
 fn the_allow_list_still_compares_addresses_as_written_whatever_their_scope() {
     let destinations = Destinations::new(["http://127.0.0.1:8080".to_owned()]);
     // The same scope, written another way, is not a destination.
-    for other in ["http://127.0.0.1:8080/", "http://127.1:8080", "127.0.0.1:8080"] {
+    for other in [
+        "http://127.0.0.1:8080/",
+        "http://127.1:8080",
+        "127.0.0.1:8080",
+    ] {
         assert!(!destinations.contains(other), "{other}");
         assert_eq!(destinations.scope_of(other), None, "{other}");
     }

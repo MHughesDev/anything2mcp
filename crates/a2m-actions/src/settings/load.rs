@@ -375,6 +375,7 @@ pub struct Settings {
     refused: Vec<Failure>,
     packs: Vec<Arc<Manifest>>,
     digest: Digest,
+    project_file: Option<PathBuf>,
 }
 
 impl Settings {
@@ -418,7 +419,7 @@ impl Settings {
     pub fn load_all(sources: &Sources) -> (Self, Vec<Failure>) {
         let mut loader = Loader::new(sources);
         loader.run(sources);
-        loader.finish()
+        loader.finish(sources.project.as_ref().map(|file| file.path.clone()))
     }
 
     /// The settings of the empty configuration: every default, the Solo
@@ -496,6 +497,34 @@ impl Settings {
     #[must_use]
     pub fn refused(&self) -> &[Failure] {
         &self.refused
+    }
+
+    /// The project file whose values are layer 6, as the sources named it:
+    /// for an engine, the project file of the folder it was started in.
+    #[must_use]
+    pub fn project_file(&self) -> Option<&Path> {
+        self.project_file.as_deref()
+    }
+
+    /// What the project file wrote, key by key, as the loader took it:
+    /// every value of layer 6, whether or not a higher layer overrode it.
+    #[must_use]
+    pub fn project_values(&self) -> BTreeMap<String, Value> {
+        self.entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                let value = if entry.layer == Layer::Project {
+                    Some(&entry.value)
+                } else {
+                    entry
+                        .overridden
+                        .iter()
+                        .find(|lower| lower.layer == Layer::Project)
+                        .map(|lower| &lower.value)
+                }?;
+                Some((key.clone(), value.clone()))
+            })
+            .collect()
     }
 
     /// The digest of the effective settings: every key and value, in order.
@@ -629,6 +658,9 @@ impl Settings {
                 }
             }).collect::<Vec<_>>(),
             "locks": self.locks,
+            // The one project file the engine applies, to every request
+            // (decision 0241): the folder it started in.
+            "project_file": self.project_file.as_ref().map(|path| path.display().to_string()),
             "refused": self.refused.iter().map(|failure| json!({
                 "class": failure.class().to_string(),
                 "code": failure.code().to_string(),
@@ -1187,7 +1219,7 @@ impl Loader {
         );
     }
 
-    fn finish(mut self) -> (Settings, Vec<Failure>) {
+    fn finish(mut self, project_file: Option<PathBuf>) -> (Settings, Vec<Failure>) {
         let locked: Vec<String> = self
             .entries
             .keys()
@@ -1210,6 +1242,7 @@ impl Loader {
             refused: self.problems.clone(),
             packs: self.packs,
             digest: hasher.finish(),
+            project_file,
         };
         (settings, self.problems)
     }

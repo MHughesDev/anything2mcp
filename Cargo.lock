@@ -204,6 +204,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2m-netstate"
+version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "libc",
+ "rustix",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "a2m-pack-command"
 version = "0.0.1"
 dependencies = [
@@ -260,6 +272,9 @@ dependencies = [
  "a2m-vault",
  "example-desk",
  "futures-core",
+ "libc",
+ "objc2-application-services",
+ "objc2-core-foundation",
  "serde",
  "serde_json",
  "sha2",
@@ -300,6 +315,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-files",
+ "getrandom 0.4.3",
  "serde",
  "serde_json",
  "tokio",
@@ -1734,6 +1750,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
 dependencies = [
  "objc2-encode",
+]
+
+[[package]]
+name = "objc2-application-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69282c2b5bc58fba07cb9de2113619532eb551e98efe3d8d695509ef45fbd53b"
+dependencies = [
+ "bitflags",
+ "libc",
+ "objc2-core-foundation",
 ]
 
 [[package]]

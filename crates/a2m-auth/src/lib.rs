@@ -33,6 +33,7 @@ pub mod providers;
 mod sink;
 mod state;
 mod store;
+mod surfaces;
 mod tables;
 #[cfg(test)]
 mod tests;
@@ -55,6 +56,7 @@ pub use provider::{
 pub use sink::{ChallengeScheme, CredentialSink};
 pub use state::{CallRule, call_rule, legal_move};
 pub use store::{EventKind, SessionEvent, SessionRow, SessionStore};
+pub use surfaces::EntrySurfaces;
 pub use work::{
     InProcessWork, KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, RunProbe, Work, WorkOutcome,
 };

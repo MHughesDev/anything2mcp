@@ -74,6 +74,7 @@ pub use person::{
     PresenceAsk, PresenceProof, PresenceReport, PreviewBinding, PreviewField, PreviewNotice,
     PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
+pub use project::PROJECT_SETTINGS_DIFFER;
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;
 pub use settings::{Settings, Sources};

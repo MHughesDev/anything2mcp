@@ -208,6 +208,14 @@ impl Default for Options {
 }
 
 impl Options {
+    /// The defaults, with these settings.
+    pub(super) fn with_settings(settings: Settings) -> Self {
+        Self {
+            settings,
+            ..Self::default()
+        }
+    }
+
     /// The defaults, with a user's settings file holding `text`.
     pub(super) fn with_user_settings(text: &str) -> Self {
         Self {

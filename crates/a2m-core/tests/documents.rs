@@ -65,6 +65,15 @@ fn code_words(text: &str) -> Vec<String> {
 }
 
 #[test]
+fn address_scopes_are_the_ones_in_the_technical_reference() {
+    let reference = document("reference/technical-reference.md");
+    assert_eq!(
+        column(&reference, "| Scope |", 0),
+        a2m_core::AddressScope::NAMES
+    );
+}
+
+#[test]
 fn write_evidence_is_the_list_in_the_ledger_section() {
     let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
     assert_eq!(column(&spec, "| Evidence |", 0), WriteEvidence::NAMES);

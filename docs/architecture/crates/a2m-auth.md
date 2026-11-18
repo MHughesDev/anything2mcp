@@ -242,7 +242,7 @@ Each is checked by `AuthProvider::check`, which refuses a setting or a credentia
 | `oauth_client_credentials` | `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` (`basic` or `body`) | `client_secret` | `Authorization: Bearer` and the access token |
 | `oauth_authorization_code` | `authorization_endpoint`, `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` | `client_secret`, optional | The same |
 
-A token endpoint must be an `https` address, or `http` to a loopback address written as an IP address in `127.0.0.0/8` or `::1`; a name, `localhost` included, is not one, as in the packs (decision 0192). The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
+A token endpoint must be an `https` address, or `http` to a loopback address written as an IP address in `127.0.0.0/8` or `::1`; a name, `localhost` included, is not one, as in the packs (decision 0192). The one function that judges it, `link::loopback`, asks `ScopedHost::may_leave_this_machine` of `a2m-core` of the host as the URL parser writes it, the question every check of a plain link asks; `::ffff:127.0.0.1` and an address with a zone are not loopback either ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
 
 ## Used by, and uses
 
@@ -318,6 +318,8 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 7. Partly done: saved state sealed in the vault and restored after a restart. Not built: moving a session to another runner, and a home runner other than the local engine. Phases 2 and 7.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: ends remembered by epoch on the home runner, a restore and a lease ordered by the store, and provider failures redacted.
 9. Done, behind the feature `tls`: the module `tls` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). `Trust` (the named roots, checked first by the same rules on every system, then the platform's verifier, or the bundled roots on a machine with none; TLS 1.2 and 1.3), `install` and `installed` (one trust for the process, set when the engine starts), `client_builder` (the one way an HTTP client is made), and `refusal` (the named failure of a request that failed in its handshake). Not built: reading `network.trust_roots` in the product crate, mutual TLS, a server listener.
+
+10. Done: `link::loopback` asks the one question of a plain link, and is pinned over the shared corpus of address spellings with its old form kept beside it ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 
 ## Open points
 

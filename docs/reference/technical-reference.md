@@ -59,6 +59,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `ApproveWrites` | Three, ordered from least to most strict | [Spec section 226](../spec/2-kernel/226-configuration.md) |
 | `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
 | `DigestPurpose` | Four: `blob_name`, `restricted_value`, `record_key`, `caller_key` | [Decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
+| `AddressScope` | Twelve; what kind of place an address is, read from its literal alone | "Where an address is" below, and [decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md) |
 
 Some words are checked names and not enums, because their values arrive with packs, crates, and target files ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md), [decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)):
 
@@ -84,6 +85,25 @@ These complete the crate ([decision 0068](../decisions/0068-values-names-and-ide
 - **`Plan`** is the compiled plan as data, with `encode`, `decode`, `check`, and `show`. It carries everything the run time needs from a target's files: beside the surfaces, field types, operations, pipelines, tools, and tests, the target's own facts, each environment's test records and approval rule, and how each group of surfaces is signed in to, with credentials as references only ([decision 0121](../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)). It is encoded as canonical JSON after one line that names the format; the hash is the digest of all the bytes, and `decode` checks it before it reads anything. A pack's own data is a `PackPayload`, held as canonical JSON text that the kernel never parses.
 - **`Redact`** and **`KeyedDigest`** are the two interfaces the vault implements. `Redact` turns text into text with every registered secret removed, and redacts a whole failure or a set of values in one call. A keyed digest is separate for each workspace and each purpose, and has one construction, HMAC-SHA-256.
 
+### Where an address is
+
+**`ScopedHost`** reads a host from its literal alone, with no name lookup and no system call, and keeps its **`AddressScope`**, its IP address, its name as written, whether it was written as IPv4 inside IPv6, and whether it carried a zone. It reads an IP address, a socket address, a URL's host, or a destination's address (a URL, `host:port`, `[v6]:port`, or a bare host). An IPv4 address inside IPv6 is read as the IPv4 address it means. **`ScopedHost::may_leave_this_machine`** is the one question every check of a plain link asks: it is false only for a loopback address written plainly as an IP address, so a name (`localhost` included), IPv4 inside IPv6, and an address with a zone may all leave. `a2m-auth`'s OAuth endpoints, the HTTP and MCP packs' plain `http` links, the stream pack's plain TCP, and the data pack's server store ask it after their own parsers ([decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). The ranges are those the Rust core library classifies, with the standards it cites.
+
+| Scope | Meaning |
+| --- | --- |
+| `this_machine` | A loopback address: `127.0.0.0/8` or `::1`. Never a name |
+| `unspecified` | `0.0.0.0` or `::` |
+| `link_local` | `169.254.0.0/16` or `fe80::/10` |
+| `private_use` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` |
+| `carrier_grade_nat` | The shared address space, `100.64.0.0/10` |
+| `unique_local` | `fc00::/7` |
+| `multicast` | `224.0.0.0/4` or `ff00::/8` |
+| `documentation` | `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`, `3fff::/20` |
+| `reserved` | Another special-purpose range that is not globally reachable |
+| `public` | In no special-purpose range the reading holds |
+| `name` | A host name, kept as written and never resolved here |
+| `unreadable` | Malformed, a spelling only a lenient parser widens (`127.1`), or not a network address at all |
+
 ## Driver interface
 
 The driver interface, the manifest, the registry, and the supervisor are built in `a2m-provider`. The [crate's design](../architecture/crates/a2m-provider.md) gives the interface in full, and decisions [0088](../decisions/0088-the-provider-contracts-outside-crates.md), [0089](../decisions/0089-the-provider-contract-as-building-it-settled-it.md), and [0090](../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) record how building it settled it. The main types:
@@ -91,6 +111,7 @@ The driver interface, the manifest, the registry, and the supervisor are built i
 - **`Driver`** is what a pack implements for its modes, with the four calls below.
 - **`DriverHandle`** is the only way the engine reaches a driver. The registry gives one for a mode, and it checks every step on the way in and every outcome on the way out.
 - **`Authority`** is what a step is run under: the right to read, or the intent token for one write.
+- **`Destinations`** are the addresses a run may reach: the plan's surfaces and the operation's manifest, compared as written. Each carries the scope read from its own address when the set is made (`Destinations::scope_of`); nothing else sets it, and it decides nothing yet ([decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 - **`StepInput`** is what one step is given, with its values already evaluated. **`StepOutcome`** is how a step ended when it did not fail.
 - **`StepFailure`** is a failure together with **`Sent`**, which says whether the request was not sent, was answered, or is unknown. What the system itself said travels on the failure, apart from its sentence (`StepFailure::with_said`).
 - What a record's earlier steps recorded reaches a driver while it acts, as **`Prepared::recorded`**; how a step was done is the capture **`Capture::acting`**; the run's project folder is **`CheckedPaths::project_folder`**; a verified save in steps is **`CheckedPath::create_temporary`** and **`Temporary`** ([decision 0162](../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).

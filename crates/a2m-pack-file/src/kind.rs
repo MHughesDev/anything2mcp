@@ -68,7 +68,9 @@ pub fn document_schema() -> JsonSchema {
                 .optional("delimiter", JsonSchema::text())
                 .optional("header", JsonSchema::bool())
                 .optional("encoding", JsonSchema::words(&["utf-8"]))
-                .optional("line_ending", JsonSchema::words(&["lf", "crlf"])),
+                .optional("line_ending", JsonSchema::words(&["lf", "crlf"]))
+                .optional("separator", JsonSchema::words(&["=", ":"]))
+                .optional("quotes", JsonSchema::words(&["literal", "strip"])),
         )
         .optional(
             "fingerprint",
@@ -77,7 +79,8 @@ pub fn document_schema() -> JsonSchema {
                 .optional("tables", names())
                 .optional("names", names())
                 .optional("headers", names())
-                .optional("keys", names()),
+                .optional("keys", names())
+                .optional("sections", names()),
         )
         .optional("may_be_open", JsonSchema::bool())
         .optional(
@@ -142,7 +145,7 @@ fn place_of(
     };
     let fits = match *one {
         "rows" => format == Format::Delimited,
-        "path" => format == Format::Json,
+        "path" => format == Format::Json || format.is_settings(),
         _ => format == Format::Workbook,
     };
     if !fits {
@@ -152,7 +155,7 @@ fn place_of(
                 "A `{one}` is not a place in a file of the format `{}`.",
                 format.as_str()
             ),
-            "Use `rows` for delimited text, `path` for JSON, and `table`, `sheet`, or `cell` for a workbook.",
+            "Use `rows` for delimited text, `path` for JSON and settings files, and `table`, `sheet`, or `cell` for a workbook.",
         ));
         return None;
     }
@@ -217,10 +220,17 @@ fn record_of(
                 "Write `header:` with the column's header text, and no `path`.",
             ));
         }
+        if format == Format::Ini && path.len() != 1 {
+            problems.push(invalid(
+                field,
+                "A field of an INI file is one key of its record's section.",
+                "Write `path:` with the one key, such as `[prefix]`.",
+            ));
+        }
         if matches!(place, PlaceSpec::Path { .. }) && (path.is_empty() || header.is_some()) {
             problems.push(invalid(
                 field,
-                "A field of a record in a JSON document is found by its `path` inside the record.",
+                "A field of a record in a JSON document or a settings file is found by its `path` inside the record.",
                 "Write `path:` with the list of keys that lead to the value, and no `header`.",
             ));
         }
@@ -259,6 +269,22 @@ fn record_of(
             record,
             "A record kind declares at least one field.",
             "Add a field under `fields`.",
+        ));
+    }
+    if format.is_settings() && !key.is_empty() {
+        problems.push(invalid(
+            record,
+            "A record of a settings file is one place of values by their keys, and has no key of its own: a list of records in a settings file is not built.",
+            "Remove `key`, and name the values by their paths.",
+        ));
+    }
+    if format == Format::Ini
+        && matches!(&place, PlaceSpec::Path { keys } if keys.len() > 1)
+    {
+        problems.push(invalid(
+            record,
+            "A record of an INI file is the keys before the first section, `path: []`, or one section, `path: [<section>]`.",
+            "Name no more than one section under `path`.",
         ));
     }
     if matches!(place, PlaceSpec::Cell { .. }) && (fields.len() != 1 || !key.is_empty()) {
@@ -337,7 +363,7 @@ fn document_of(
             Stage::Lower,
             &format_doc.at,
             format!("The file pack does not read the format `{format_name}` yet."),
-            "Use `delimited`, `json`, or `workbook`, or leave the file out until the format is built.",
+            "Use `delimited`, `json`, `workbook`, `ini`, or `property_list`, or leave the file out until the format is built.",
         ));
         return None;
     };
@@ -348,11 +374,17 @@ fn document_of(
     let one_ascii = |text: &String| {
         text.len() == 1 && text.is_ascii() && !matches!(text.as_str(), "\"" | "\r" | "\n")
     };
-    if dialect.is_some() && format != Format::Delimited {
+    let stated = |key: &str| dialect.and_then(|dialect| dialect.get(key)).is_some();
+    let ini_only = stated("separator") || stated("quotes");
+    let delimited_only = stated("delimiter") || stated("header") || stated("line_ending");
+    if (dialect.is_some() && !matches!(format, Format::Delimited | Format::Ini))
+        || (ini_only && format != Format::Ini)
+        || (delimited_only && format != Format::Delimited)
+    {
         problems.push(invalid(
             doc,
-            "Only delimited text has a dialect.",
-            "Remove `dialect`.",
+            "Only delimited text and INI files have a dialect: `delimiter`, `header`, and `line_ending` for delimited text, `separator` and `quotes` for an INI file, and `encoding` for both.",
+            "Remove what the format does not have from `dialect`.",
         ));
     }
     if delimiter.as_ref().is_some_and(|text| !one_ascii(text)) {
@@ -405,12 +437,19 @@ fn document_of(
         line_ending: dialect
             .and_then(|dialect| dialect.text("line_ending"))
             .map(str::to_owned),
+        separator: dialect
+            .and_then(|dialect| dialect.text("separator"))
+            .map(str::to_owned),
+        quotes: dialect
+            .and_then(|dialect| dialect.text("quotes"))
+            .map(str::to_owned),
         layout: Layout {
             sheets: list("sheets"),
             tables: list("tables"),
             names: list("names"),
             headers: list("headers"),
             keys: list("keys"),
+            sections: list("sections"),
         },
         may_be_open: doc.get("may_be_open").and_then(Located::as_bool),
         lock_sibling,

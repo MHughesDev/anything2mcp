@@ -719,9 +719,16 @@ pub fn lint_rules() -> Vec<WriteRule> {
         },
         WriteRule {
             code: FORMAT_READ_ONLY,
-            summary: "A binding writes only a format the pack has a patch editor for: delimited text or JSON.",
+            summary: "A binding writes only a format the pack has a patch editor for: delimited text or JSON, and a value of an INI file or a property list.",
             check: |write, _| {
                 let format = write.document.text("format").and_then(Format::from_name);
+                let adds = matches!(write.binding.text("verb"), Some("create" | "delete"));
+                if format.is_some_and(Format::is_settings) && adds {
+                    return Some((
+                        "This binding adds or removes a value of a settings file, whose editor only sets a value that is there.".to_owned(),
+                        "Bind `update` to set a value, or `read` to read one.",
+                    ));
+                }
                 (!format.is_some_and(Format::writable)).then(|| {
                     (
                         "This binding writes a file whose format the pack can read and cannot write back without loss.".to_owned(),

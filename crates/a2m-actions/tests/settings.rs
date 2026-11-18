@@ -56,21 +56,15 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
     let sources = Sources {
         installation: file(
             "installation.toml",
-            "[logging]\nlevel = \"warn\"\n\n[evidence]\ntrace_retention_days = 90\n",
+            "[logging]\nlevel = \"warn\"\n\n[sessions]\nkeep_alive_hours = 90\n",
         ),
-        user: file(
-            "user.toml",
-            "[logging]\nlevel = \"debug\"\nformat = \"json\"\n",
-        ),
+        user: file("user.toml", "[logging]\nlevel = \"debug\"\n"),
         project: file(
             "anything2mcp.toml",
             "[authoring.scout]\nrun = \"on_request\"\n",
         ),
         environment: BTreeMap::from([
-            (
-                "A2M_EVIDENCE__TRACE_RETENTION_DAYS".to_owned(),
-                "7".to_owned(),
-            ),
+            ("A2M_SESSIONS__KEEP_ALIVE_HOURS".to_owned(), "7".to_owned()),
             ("A2M_HOME".to_owned(), "not a setting".to_owned()),
             ("PATH".to_owned(), "not ours".to_owned()),
         ]),
@@ -79,7 +73,7 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
     .with_flag("logging.level", "error");
     let settings = Settings::load(&sources).unwrap();
     assert_eq!(settings.text("logging.level"), Some("error"));
-    assert_eq!(settings.int("evidence.trace_retention_days"), Some(7));
+    assert_eq!(settings.int("sessions.keep_alive_hours"), Some(7));
 
     let level = settings.entry("logging.level").unwrap();
     assert_eq!(level.layer, Layer::Flag);
@@ -98,11 +92,8 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
         ]
     );
     assert_eq!(
-        settings
-            .entry("evidence.trace_retention_days")
-            .unwrap()
-            .origin,
-        "the variable `A2M_EVIDENCE__TRACE_RETENTION_DAYS`"
+        settings.entry("sessions.keep_alive_hours").unwrap().origin,
+        "the variable `A2M_SESSIONS__KEEP_ALIVE_HOURS`"
     );
 
     // `config.show` prints every key with its value and its layer.
@@ -288,7 +279,7 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
     // word further down its rank.
     for loosening in [
         "[files]\nallowed_roots = [\"<project>\", \"elsewhere\"]\n",
-        "[authoring.capture]\nvalues = true\n",
+        "[policy]\npreview_freshness_seconds = 120\n",
         "[policy]\napprove_writes = \"caller_confirms\"\n",
         "[evidence]\ncapture_on_writes = \"standard\"\n[policy]\npre_approval = true\n",
     ] {
@@ -317,7 +308,7 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
 #[test]
 fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     let failure = Settings::load(&Sources {
-        user: file("user.toml", "[store]\ndatabase = \"elsewhere.db\"\n"),
+        user: file("user.toml", "[mcp]\nrevisions = [\"2026-07-28\"]\n"),
         ..Sources::none()
     })
     .unwrap_err();
@@ -332,14 +323,17 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
         .is_err()
     );
     // The flags of `serve` may set an installation-only key; other flags not.
-    let flags = Sources::none().with_flag("server.listen", "127.0.0.1:0");
+    let flags = Sources::none().with_flag("providers.disabled", "web");
     assert!(Settings::load(&flags).is_err());
     let serve = Settings::load(&Sources {
         serve: true,
         ..flags
     })
     .unwrap();
-    assert_eq!(serve.entry("server.listen").unwrap().layer, Layer::Flag);
+    assert_eq!(
+        serve.entry("providers.disabled").unwrap().layer,
+        Layer::Flag
+    );
 
     // A lock: no higher layer changes the key in either direction.
     let locked = "[locks]\nkeys = [\"policy.*\", \"logging.level\"]\n";
@@ -526,32 +520,380 @@ fn a_packs_group_is_checked_by_the_schema_its_manifest_declares() {
     }
 }
 
-#[test]
-fn every_key_the_crate_reads_is_one_the_schema_declares() {
-    // A key read anywhere that the schema does not declare fails here.
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut stack = vec![src];
-    let mut read = 0;
+/// Every Rust file of a product crate under `crates/`, with its tests cut
+/// off: a file under a `tests` folder is left out, and a file's text ends
+/// where its first `#[cfg(test)]` or `#[cfg(all(test, ...))]` begins.
+fn product_sources() -> Vec<(PathBuf, String)> {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut found = Vec::new();
+    let mut stack: Vec<PathBuf> = std::fs::read_dir(&crates)
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("src"))
+        .filter(|src| src.is_dir())
+        .collect();
     while let Some(folder) = stack.pop() {
         for entry in std::fs::read_dir(folder).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
-                stack.push(path);
+                if path.file_name().is_some_and(|name| name != "tests") {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|ext| ext != "rs") {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();
-            for accessor in [".int(\"", ".text(\"", ".flag(\"", ".list(\""] {
-                for rest in text.split(accessor).skip(1) {
-                    let key = rest.split('"').next().unwrap();
-                    if key.contains('.') {
-                        read += 1;
-                        assert!(find(key).is_some(), "{} reads `{key}`", path.display());
-                    }
+            let end = text
+                .lines()
+                .scan(0, |at, line| {
+                    let start = *at;
+                    *at += line.len() + 1;
+                    Some((start, line.trim_start()))
+                })
+                .find(|(_, line)| {
+                    line.starts_with("#[cfg(test)]") || line.starts_with("#[cfg(all(test")
+                })
+                .map_or(text.len(), |(start, _)| start);
+            found.push((path, text[..end].to_owned()));
+        }
+    }
+    found.sort();
+    found
+}
+
+fn named(path: &std::path::Path, tail: &str) -> bool {
+    path.ends_with(tail)
+}
+
+/// The groups of the kernel's keys, and `packs`.
+fn is_setting_group(key: &str) -> bool {
+    let group = key.split('.').next().unwrap_or_default();
+    group == "packs"
+        || SCHEMA
+            .iter()
+            .any(|setting| setting.key.split('.').next() == Some(group))
+}
+
+#[test]
+fn every_key_read_anywhere_is_one_the_schema_declares() {
+    // A key read in any product crate that the schema does not declare
+    // fails here (decision 0236): through the loader's accessors.
+    let mut read = 0;
+    for (path, text) in product_sources() {
+        for accessor in [
+            ".int(\"",
+            ".text(\"",
+            ".flag(\"",
+            ".list(\"",
+            ".entry(\"",
+            ".get(\"",
+        ] {
+            for rest in text.split(accessor).skip(1) {
+                let key = rest.split('"').next().unwrap();
+                if key.contains('.') && is_setting_group(key) && !key.starts_with("packs.") {
+                    read += 1;
+                    assert!(find(key).is_some(), "{} reads `{key}`", path.display());
                 }
             }
         }
     }
-    assert!(read > 5, "the scan found the reads: {read}");
+    assert!(read > 30, "the scan found the reads: {read}");
+}
+
+/// Where code reads `key`: its text as an argument of a call, directly or
+/// through a constant that holds it; a key with a `*` part, by the prefix
+/// before it given to `strip_prefix` and its last part named. The schema's
+/// own file is not a reader.
+fn readers(key: &str, sources: &[(PathBuf, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in sources {
+        if named(path, "settings/schema.rs") {
+            continue;
+        }
+        let as_argument = |needle: &str| {
+            text.match_indices(needle).any(|(at, _)| {
+                text[..at]
+                    .trim_end()
+                    .ends_with(|c: char| c == '(' || c == ',')
+            })
+        };
+        let reads = if let Some((prefix, last)) = key.split_once('*') {
+            text.contains(&format!("strip_prefix(\"{prefix}\")"))
+                && (last.is_empty() || text.contains(&format!("\"{}\"", &last[1..])))
+        } else {
+            let quoted = format!("\"{key}\"");
+            as_argument(&quoted)
+                || text.lines().any(|line| {
+                    line.trim_start().contains("const ")
+                        && line.contains(&format!("&str = {quoted};"))
+                        && line
+                            .split("const ")
+                            .nth(1)
+                            .and_then(|rest| rest.split(':').next())
+                            .is_some_and(|name| {
+                                as_argument(name.trim())
+                                    || text.contains(&format!("({}", name.trim()))
+                            })
+                })
+        };
+        if reads {
+            found.push(path.display().to_string());
+        }
+    }
+    found
+}
+
+#[test]
+fn every_key_marked_built_has_a_reader_and_no_key_marked_not_built_has_one() {
+    // Decision 0236: the mark is held to the code in both directions. A key
+    // marked built that nothing reads fails, and so does a key marked not
+    // built that has gained a reader without its mark changing.
+    let sources = product_sources();
+    let mut built = 0;
+    for setting in SCHEMA {
+        let found = readers(setting.key, &sources);
+        if setting.built.is_built() {
+            built += 1;
+            assert!(
+                !found.is_empty(),
+                "`{}` is marked built, and no product code reads it",
+                setting.key
+            );
+        } else {
+            assert!(
+                found.is_empty(),
+                "`{}` is marked not built, and {found:?} read it: mark it built",
+                setting.key
+            );
+        }
+    }
+    assert!(built > 30, "{built}");
+}
+
+/// Decision 0236: a value for a key whose part is not built is refused by
+/// name, from every layer, a value equal to the default too, with what
+/// happens instead; the key stays declared and `config.show` marks it.
+#[test]
+fn a_key_whose_part_is_not_built_is_refused_by_name_from_every_layer() {
+    let retention = "[evidence]\ntrace_retention_days = 30\n";
+    let mut sources = vec![
+        (
+            "installation",
+            Sources {
+                installation: file("installation.toml", retention),
+                installation_keeper: InstallationKeeper::Administrator,
+                ..Sources::none()
+            },
+        ),
+        (
+            "user",
+            Sources {
+                user: file("user.toml", retention),
+                ..Sources::none()
+            },
+        ),
+        (
+            "project",
+            Sources {
+                project: file(
+                    "anything2mcp.toml",
+                    "[authoring.scout.budget]\nseconds = 60\n",
+                ),
+                ..Sources::none()
+            },
+        ),
+        (
+            "variable",
+            Sources {
+                environment: BTreeMap::from([(
+                    "A2M_EVIDENCE__TRACE_RETENTION_DAYS".to_owned(),
+                    "7".to_owned(),
+                )]),
+                ..Sources::none()
+            },
+        ),
+        (
+            "flag",
+            Sources::none().with_flag("evidence.trace_retention_days", "7"),
+        ),
+    ];
+    sources.push((
+        "a site's preset",
+        Sources {
+            presets: vec![SourceFile::new(
+                "quiet.toml",
+                "[logging]\nformat = \"json\"\n",
+            )],
+            user: file("user.toml", "[profile]\npreset = \"quiet\"\n"),
+            ..Sources::none()
+        },
+    ));
+    for (layer, sources) in sources {
+        let failure = Settings::load(&sources).unwrap_err();
+        assert_eq!(failure.code().as_str(), "settings_invalid", "{layer}");
+        assert!(
+            failure
+                .message()
+                .contains("is a setting whose part is not built yet"),
+            "{layer}: {failure}"
+        );
+        assert!(
+            failure.next_step().contains("It arrives with"),
+            "{layer}: {failure}"
+        );
+    }
+    let failure = Settings::load(&Sources {
+        user: file("user.toml", retention),
+        ..Sources::none()
+    })
+    .unwrap_err();
+    assert!(
+        failure
+            .message()
+            .contains("Traces and captures are kept; nothing is deleted yet."),
+        "{failure}"
+    );
+    // Declared, shown, and marked.
+    let shown = Settings::defaults()
+        .show(Some("evidence.trace_retention_days"))
+        .unwrap();
+    let entry = &shown["settings"][0];
+    assert_eq!(entry["built"], false, "{entry}");
+    assert!(
+        entry["instead"]
+            .as_str()
+            .unwrap()
+            .contains("nothing is deleted")
+    );
+    assert!(entry["arrives_with"].is_string());
+    let shown = Settings::defaults().show(Some("logging.level")).unwrap();
+    assert_eq!(shown["settings"][0]["built"], true);
+    assert!(shown["settings"][0].get("instead").is_none());
+}
+
+#[test]
+fn no_built_in_preset_sets_a_key_that_is_not_built() {
+    for preset in a2m_actions::settings::PRESETS {
+        let chosen = Settings::load(&Sources {
+            user: file(
+                "user.toml",
+                &format!("[profile]\npreset = \"{}\"\n", preset.name),
+            ),
+            ..Sources::none()
+        })
+        .unwrap_or_else(|failure| panic!("{}: {failure}", preset.name));
+        for (key, _) in &chosen
+            .presets()
+            .iter()
+            .find(|info| info.name == preset.name)
+            .unwrap()
+            .sets
+        {
+            assert!(
+                find(key).unwrap().built.is_built(),
+                "{}: {key}",
+                preset.name
+            );
+        }
+    }
+}
+
+/// Decision 0236, also decided: `policy.two_person_irreversible` is
+/// protected with on the safer side. Once an installation an administrator
+/// keeps turns it on, no lower layer turns it off; any layer turns it on.
+#[test]
+fn two_person_approval_once_on_is_never_turned_off_from_below() {
+    let on = "[policy]\ntwo_person_irreversible = true\n";
+    let off = "[policy]\ntwo_person_irreversible = false\n";
+    let installed = || Sources {
+        installation: file("installation.toml", on),
+        installation_keeper: InstallationKeeper::Administrator,
+        ..Sources::none()
+    };
+    for (name, sources) in [
+        (
+            "user.toml",
+            Sources {
+                user: file("user.toml", off),
+                ..installed()
+            },
+        ),
+        (
+            "A2M_POLICY__TWO_PERSON_IRREVERSIBLE",
+            Sources {
+                environment: BTreeMap::from([(
+                    "A2M_POLICY__TWO_PERSON_IRREVERSIBLE".to_owned(),
+                    "false".to_owned(),
+                )]),
+                ..installed()
+            },
+        ),
+        (
+            "--policy.two_person_irreversible",
+            installed().with_flag("policy.two_person_irreversible", "false"),
+        ),
+        (
+            "anything2mcp.toml",
+            Sources {
+                project: file("anything2mcp.toml", off),
+                ..installed()
+            },
+        ),
+    ] {
+        let failure = Settings::load(&sources).unwrap_err();
+        assert_eq!(failure.code().as_str(), "setting_protected", "{name}");
+        assert!(failure.message().contains(name), "{name}: {failure}");
+    }
+    // The person turns it on from their own file; an installation file
+    // that is not an administrator's may turn it on too, and not off.
+    let turned_on = Settings::load(&Sources {
+        user: file("user.toml", on),
+        ..Sources::none()
+    })
+    .unwrap();
+    assert_eq!(turned_on.flag("policy.two_person_irreversible"), Some(true));
+    assert!(
+        Settings::load(&Sources {
+            installation: file("installation.toml", on),
+            user: file("user.toml", off),
+            ..Sources::none()
+        })
+        .is_err()
+    );
+}
+
+/// Decision 0241: the only way to take an installation file as an
+/// administrator's without the check of the file on disk is the switch a
+/// test of the product turns, and no product source but the one that
+/// defines it names it; the only product sources that make the keeper an
+/// administrator are the check and that switch.
+#[test]
+fn no_product_source_takes_an_installation_file_as_an_administrators_but_the_check() {
+    let switch = "with_installation_kept_by_an_administrator_for_tests";
+    let mut defined = 0;
+    for (path, text) in product_sources() {
+        if text.contains(switch) {
+            assert!(
+                named(&path, "anything2mcp/src/engine.rs"),
+                "{} names the test's switch",
+                path.display()
+            );
+            defined += 1;
+        }
+        if text.contains("InstallationKeeper::Administrator") {
+            assert!(
+                named(&path, "a2m-actions/src/settings/keeper.rs")
+                    || named(&path, "anything2mcp/src/engine.rs"),
+                "{} makes the installation's keeper an administrator",
+                path.display()
+            );
+        }
+    }
+    assert_eq!(defined, 1);
 }
 
 /// No outbound proxy is built: a `network.proxy` that is set is refused by
@@ -572,7 +914,7 @@ fn a_proxy_setting_is_refused_while_no_proxy_is_supported() {
     assert!(
         failure
             .message()
-            .contains("no outbound proxy is supported yet"),
+            .contains("No outbound proxy is supported yet"),
         "{failure}"
     );
     let (kept, problems) = Settings::load_all(&sources);

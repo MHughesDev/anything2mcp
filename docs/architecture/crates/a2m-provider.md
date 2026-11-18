@@ -332,7 +332,7 @@ pub struct PrepareContext<'a> {
 pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: SurfacePlan }   // at this environment's address
 pub enum Posture { Live, Sandbox { test_records: bool }, Discovery }   // the driver applies its own kind's read-only guard outside Live
 pub struct Deadline(/* a Tokio instant */);                   // Deadline::after(duration), at(), remaining(), passed()
-pub struct Destinations { /* addresses, compared as written */ }      // Destinations::new(addresses), contains(address), iter()
+pub struct Destinations { /* addresses, compared as written, each with its scope */ }  // Destinations::new(addresses), contains(address), iter(), scope_of(address) -> Option<&ScopedHost>
 pub struct StepInput<'a> {
     pub args: &'a Values,                                     // the step's arguments, by name, already evaluated
     pub record: Option<RecordRef>,                            // the commit point the step belongs to (`a2m-ledger`)
@@ -729,6 +729,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 10. Done ([decision 0176](../../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)): a save's temporary file is made private (mode 0600 on Unix), `Temporary::keep_owner_and_mode`, `Temporary::identity`, `FileIdentity::of_open`, and a temporary file removed only while its name still holds it; `RefusedProvider` and `Registry::refused`, so a provider whose manifest was refused is named with its problem. On Windows the temporary file takes the access list its folder passes down, and `keep_owner_and_mode` keeps the read-only flag alone and answers `false`.
 11. Done ([decision 0177](../../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)): `Replay`, `RecordedAnswer`, `Recorded`, `answers_to`, and `Registry::replay_driver`, the replay every pack gets from the contract; the contract's code `unknown_variant`/`fixture_no_answer`. Then ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `RecordedAnswer::repeats`, an answer that answers every step of its name, and `Replay::sent`, what the engine sent to each committing step.
 9. Done (decision 0162): what earlier steps recorded (`Prepared::recorded`, `DriverHandle::act_recorded`); how a step was done (`Capture::acting`, `Observed::acting`); what the system said (`StepFailure::with_said`, kept by the handle through its redaction and through a write in doubt); the project folder (`CheckedPaths::with_project`, `project`, `project_folder`, `input`/`project_folder_missing`); the save in steps, a file's identity, and `may_write`; `StepInput::new`. Tests: `tests/handle.rs`, `tests/paths.rs`.
+12. Done ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)): each destination carries its scope, read by `ScopedHost::of_destination` from its own address when `Destinations::new` builds the set, and returned by `scope_of`. Nothing else sets it, and the allow-list still compares addresses as written. `tests/destinations.rs`; the engine's `a_destinations_scope_comes_from_its_address_and_never_from_an_input`. Not built: any check that decides by a scope.
 
 ## Open points
 

@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use a2m_core::{
-    Availability, Digest, Environment, Failure, FailureClass, Identity, Redact, TargetName, Values,
+    Availability, Digest, Environment, Failure, FailureClass, Identity, Redact, Secret, TargetName,
+    Values,
 };
 use a2m_provider::{
     Access, CheckedPath, Cleanup, Deadline, LaunchSpec, PackContext, ProgramRef, RootName,
@@ -22,7 +23,8 @@ use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
 use crate::launch;
 use crate::origin::Origins;
 use crate::protocol::{
-    CloseBrowser, GetVersion, GrantPermissions, SetAutoAttach, SetDownloadBehavior, TargetFilter,
+    CloseBrowser, CookieToSet, CreateBrowserContext, GetCookies, GetVersion, GrantPermissions,
+    SetAutoAttach, SetCookies, SetDownloadBehavior, TargetFilter,
 };
 use crate::tab::{
     ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
@@ -229,6 +231,14 @@ pub(crate) struct BrowserInner {
     held: Mutex<Held>,
     /// The windows pages have opened that are still there, by session.
     windows: Mutex<BTreeMap<String, Window>>,
+    /// The browser context every tab is opened in: one of the browser's
+    /// own making, which keeps cookies and storage in memory and writes
+    /// none of them to the data directory (decision 0245).
+    pub(crate) context: String,
+    /// The mark of the session state last placed into the context, so that
+    /// the same state is placed once and a newer cookie the application set
+    /// since is not overwritten by an older copy.
+    state_mark: Mutex<Option<String>>,
 }
 
 /// A window a page opened. It is kept locked, and closed once the first
@@ -441,20 +451,32 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
     // Listening starts before the browser is told to attach anything.
     let events = client.subscribe(None);
     tokio::spawn(watch_windows(Arc::downgrade(inner), events, call_deadline));
-    client
-        .call(None, &SetDownloadBehavior { behavior: "deny" }, deadline)
-        .await
-        .map_err(|_| "it did not take the refusal of downloads".to_owned())?;
-    client
-        .call(
-            None,
-            &GrantPermissions {
-                permissions: Vec::new(),
-            },
-            deadline,
-        )
-        .await
-        .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
+    // Both refusals hold for the browser's default context and for the
+    // context every tab is opened in.
+    for context in [None, Some(inner.context.as_str())] {
+        client
+            .call(
+                None,
+                &SetDownloadBehavior {
+                    behavior: "deny",
+                    browser_context_id: context,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|_| "it did not take the refusal of downloads".to_owned())?;
+        client
+            .call(
+                None,
+                &GrantPermissions {
+                    permissions: Vec::new(),
+                    browser_context_id: context,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
+    }
     client
         .call(
             None,
@@ -692,6 +714,26 @@ impl Browsers {
                 return Err(failed(reason));
             }
         };
+        // Every tab is opened in a context of the browser's own making,
+        // which keeps what pages store in memory: no cookie and no page
+        // storage is written to the data directory (decision 0245).
+        let context = match client
+            .call(
+                None,
+                &CreateBrowserContext {},
+                Deadline::after(shared.settings.call_deadline),
+            )
+            .await
+        {
+            Ok(made) => made.browser_context_id,
+            Err(_) => {
+                client.close();
+                shared.supervisor.stop(subsystem).await;
+                return Err(failed(LaunchReason::NotOwned(
+                    "it did not make a context that keeps its state in memory".to_owned(),
+                )));
+            }
+        };
         let inner = Arc::new(BrowserInner {
             profile: profile.clone(),
             subsystem,
@@ -704,6 +746,8 @@ impl Browsers {
             pages: Mutex::new(BTreeMap::new()),
             held: Mutex::new(Held::default()),
             windows: Mutex::new(BTreeMap::new()),
+            context,
+            state_mark: Mutex::new(None),
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine
@@ -840,6 +884,184 @@ impl Browser {
     #[must_use]
     pub fn subsystem(&self) -> SubsystemId {
         self.inner.subsystem
+    }
+
+    /// What the browser holds for `origins`: every cookie of its context
+    /// whose domain is the host of one of them, or a domain above it. This
+    /// is a session's state after a sign-in through the application's own
+    /// pages. Each value is a [`Secret`]; the caller registers it with the
+    /// redactor before it goes anywhere else.
+    ///
+    /// Page storage is not read: a session an application keeps in a page's
+    /// own storage is not exported (decision 0245).
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
+    /// browser is gone or does not answer.
+    pub async fn export_state(
+        &self,
+        origins: &Origins,
+        deadline: Deadline,
+    ) -> Result<BrowserState, BrowserError> {
+        let got = self
+            .inner
+            .client
+            .call(
+                None,
+                &GetCookies {
+                    browser_context_id: &self.inner.context,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|error| lost(&error, self.shared.redact.as_ref()))?;
+        let hosts: Vec<String> = origins.iter().filter_map(host_of).collect();
+        let cookies = got
+            .cookies
+            .into_iter()
+            .filter(|cookie| hosts.iter().any(|host| domain_covers(&cookie.domain, host)))
+            .map(|cookie| StateCookie {
+                name: cookie.name,
+                value: Secret::new(cookie.value),
+                domain: cookie.domain,
+                path: cookie.path,
+                expires: if cookie.session { None } else { cookie.expires },
+                http_only: cookie.http_only,
+                secure: cookie.secure,
+                same_site: cookie.same_site,
+            })
+            .collect();
+        Ok(BrowserState { cookies })
+    }
+
+    /// Places a session's state into the browser's context, unless the
+    /// state of the same `mark` was placed there already: a cookie the
+    /// application set since is newer than the copy, and is kept. True when
+    /// it was placed now.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
+    /// browser is gone or does not answer; [`BrowserError::Unexpected`] when
+    /// it refuses a cookie. Nothing is marked as placed then.
+    pub async fn import_state(
+        &self,
+        mark: &str,
+        state: &BrowserState,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
+        if lock(&self.inner.state_mark).as_deref() == Some(mark) {
+            return Ok(false);
+        }
+        let cookies = state
+            .cookies
+            .iter()
+            .map(|cookie| CookieToSet {
+                name: &cookie.name,
+                value: cookie.value.expose(),
+                domain: &cookie.domain,
+                path: &cookie.path,
+                expires: cookie.expires.as_ref(),
+                http_only: cookie.http_only,
+                secure: cookie.secure,
+                same_site: cookie.same_site.as_deref(),
+            })
+            .collect();
+        self.inner
+            .client
+            .call(
+                None,
+                &SetCookies {
+                    cookies,
+                    browser_context_id: &self.inner.context,
+                },
+                deadline,
+            )
+            .await
+            .map_err(|error| lost(&error, self.shared.redact.as_ref()))?;
+        *lock(&self.inner.state_mark) = Some(mark.to_owned());
+        Ok(true)
+    }
+}
+
+/// A session's state as a browser holds it: the cookies of an
+/// application's origins. It cannot be printed with its values, and is not
+/// serializable: the one way it is kept is sealed, by the session keeper,
+/// through the provider that made it.
+#[derive(Default)]
+pub struct BrowserState {
+    /// The cookies, in the order the browser gave them.
+    pub cookies: Vec<StateCookie>,
+}
+
+impl fmt::Debug for BrowserState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.cookies.iter().map(|cookie| &cookie.name))
+            .finish()
+    }
+}
+
+/// One cookie of a session's state.
+#[derive(Debug)]
+pub struct StateCookie {
+    /// Its name. Shown; never a credential.
+    pub name: String,
+    /// Its value: a credential.
+    pub value: Secret,
+    /// The domain the browser holds it for, with a leading dot when it is
+    /// sent to the hosts below it too.
+    pub domain: String,
+    /// The path it is sent under.
+    pub path: String,
+    /// When it ends, in seconds since the epoch, as the browser wrote it;
+    /// `None` for a cookie that ends with the browser. Carried, never
+    /// compared.
+    pub expires: Option<serde_json::Number>,
+    /// Whether the page's own script is kept from reading it.
+    pub http_only: bool,
+    /// Whether it is sent over an encrypted connection alone.
+    pub secure: bool,
+    /// The browser's same-site rule, as it names it.
+    pub same_site: Option<String>,
+}
+
+/// The host of an origin as `Origins` writes it: `https://host:port`.
+fn host_of(origin: &str) -> Option<String> {
+    let (_, rest) = origin.split_once("://")?;
+    let host = match rest.strip_prefix('[') {
+        Some(inner) => inner.split(']').next()?,
+        None => rest.split(':').next()?,
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// Whether a cookie held for `domain` is sent to `host`.
+fn domain_covers(domain: &str, host: &str) -> bool {
+    let domain = domain.to_ascii_lowercase();
+    let bare = domain.strip_prefix('.').unwrap_or(&domain);
+    bare == host || host.ends_with(&format!(".{bare}"))
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn lost(error: &ClientError, redact: &dyn Redact) -> BrowserError {
+    match error {
+        ClientError::Closed { dispatch, .. } => BrowserError::Disconnected {
+            dispatch: *dispatch,
+        },
+        ClientError::Timeout { dispatch } => BrowserError::Timeout {
+            dispatch: *dispatch,
+        },
+        ClientError::Protocol { message, .. } => {
+            BrowserError::Unexpected(crate::tab::shown(redact, message))
+        }
+        ClientError::Shape { method } => {
+            BrowserError::Unexpected(format!("the reply of {method} has another shape"))
+        }
     }
 }
 

@@ -33,20 +33,42 @@ pub struct Cut {
     pub list: &'static str,
     /// The entries kept.
     pub kept: usize,
-    /// The entries seen. Where the table itself was cut, more may exist.
+    /// The entries seen.
     pub seen: usize,
+    /// Whether the system's table itself was read only up to
+    /// [`MOST_TABLE_BYTES`], so that more entries than were seen may exist.
+    pub table_cut: bool,
+}
+
+/// The cut of a table the system gave that was read only up to
+/// [`MOST_TABLE_BYTES`]; `seen` entries were in the part read.
+pub(crate) fn table_cut(list: &'static str, seen: usize) -> Cut {
+    Cut {
+        list,
+        kept: seen,
+        seen,
+        table_cut: true,
+    }
 }
 
 /// Keeps the first `most` entries of an already ordered list, and records
-/// the cut when there is one.
+/// the cut when there is one, in the entry for that list if there is one.
 pub(crate) fn keep<T>(list: &mut Vec<T>, most: usize, name: &'static str, cuts: &mut Vec<Cut>) {
     if list.len() > most {
-        cuts.push(Cut {
-            list: name,
-            kept: most,
-            seen: list.len(),
-        });
+        let seen = list.len();
         list.truncate(most);
+        match cuts.iter_mut().find(|c| c.list == name) {
+            Some(cut) => {
+                cut.kept = most;
+                cut.seen = cut.seen.max(seen);
+            }
+            None => cuts.push(Cut {
+                list: name,
+                kept: most,
+                seen,
+                table_cut: false,
+            }),
+        }
     }
 }
 
@@ -78,12 +100,19 @@ mod tests {
             vec![Cut {
                 list: "routes",
                 kept: 4,
-                seen: 10
+                seen: 10,
+                table_cut: false
             }]
         );
         let mut short = vec![1];
         keep(&mut short, 4, "routes", &mut cuts);
         assert_eq!(cuts.len(), 1);
+        // A table the system gave in part, then cut again by the bound.
+        let mut cuts = vec![table_cut("neighbours", 9)];
+        let mut list: Vec<u32> = (0..9).collect();
+        keep(&mut list, 3, "neighbours", &mut cuts);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!((cuts[0].kept, cuts[0].seen, cuts[0].table_cut), (3, 9, true));
     }
 
     #[test]

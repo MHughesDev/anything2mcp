@@ -576,7 +576,8 @@ impl Control for InProcessControl {
         Box::pin(async move {
             // A step's capture is evidence of the run, of the short class:
             // a blob in the evidence space, sealed for the run's person,
-            // kept as long as traces are (`evidence.trace_retention_days`).
+            // kept, as traces are: nothing is deleted yet, and the setting
+            // `evidence.trace_retention_days` is not built (decision 0236).
             // Its bytes passed the redactor and the run's capture level in
             // the engine; the name is redacted again here, as everything
             // stored is.

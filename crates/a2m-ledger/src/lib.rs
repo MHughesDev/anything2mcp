@@ -1,6 +1,7 @@
 //! The store: runs, the ledger of commit points with its nine rules and
 //! record locks, run events, evidence blobs, findings and open questions,
-//! published versions, the audit chain, and the vault's wrapped keys.
+//! published versions, the audit chain, watches, and the vault's wrapped
+//! keys.
 //! Everything in the kernel that persists goes through this crate.
 //!
 //! The store is SQLite. The database crate blocks, so every database call
@@ -32,6 +33,8 @@ mod store;
 pub mod testing;
 mod tx;
 mod version;
+mod watch;
+mod watch_compare;
 
 pub use audit::{Audit, AuditEntry, AuditRow, AuditSeq, ChainCheck};
 pub use blob::{BlobKind, BlobRef, Blobs, NewBlob, RetentionClass};
@@ -58,6 +61,14 @@ pub use store::{
 };
 pub use tx::{Durability, Owner, PolicyKey, Row, SqlValue, Tables, Tx};
 pub use version::{PublishedVersion, VersionRow, Versions};
+pub use watch::{
+    ChangeCounts, ChangeKind, ChangeRow, CheckEnded, CheckOutcome, CheckRow, Due, Missed, NewWatch,
+    Observed, ObservedRecord, WatchId, WatchRow, WatchState, Watches, reasons,
+};
+pub use watch_compare::{
+    Baseline, ChangedRecord, CheckDigests, CheckFault, Comparison, Held, MissingRecord,
+    RecordDigests, VALUE_DOMAIN, WatchKey, compare, value_purpose,
+};
 
 /// The failure codes this crate produces. Each belongs to exactly one class.
 pub mod codes {
@@ -68,4 +79,10 @@ pub mod codes {
     };
     pub use crate::listing::IDEMPOTENCY_KEY_INVALID;
     pub use crate::shadow::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
+    pub use crate::watch::{
+        WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_DUE_MISSED, WATCH_ENDED,
+        WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ, WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS,
+        WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
+    };
+    pub use crate::watch_compare::{WATCH_KEY_REPEATED, WATCH_SHAPES_MIXED};
 }

@@ -74,7 +74,7 @@ summary = "A binding that writes a file an application may hold open declares th
 [[lint_rules]]
 code = "file.format_read_only"
 level = "error"
-summary = "A binding writes only a format the pack has a patch editor for: delimited text or JSON."
+summary = "A binding writes only a format the pack has a patch editor for: delimited text or JSON, and a value of an INI file or a property list."
 
 [[drafting_rules]]
 finding_kind = "file_layout"

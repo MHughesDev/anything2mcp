@@ -932,3 +932,74 @@ async fn a_sign_in_is_asked_for_by_name_and_a_session_is_ended_only_by_whose_it_
     assert_eq!(listed["complete"], true, "{listed}");
     assert_eq!(listed["sessions"], json!([]), "{listed}");
 }
+
+/// Decision 0241, the smaller step of decision 0237's point 3: the engine
+/// applies one project file to every request, the one of the folder it
+/// started in. A request from a project whose file says otherwise is told
+/// so in its warnings, with the keys and both files; one whose file says
+/// the same is told nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_project_file_the_engine_does_not_apply_is_named_in_the_warnings() {
+    let strict = "[authoring.scout]\ntry_reads = false\n";
+    let lint = |world: &World, folder: &std::path::Path| {
+        world.kernel.dispatch(
+            Request::new(
+                "draft.lint",
+                json!({"target": "example"}),
+                world.caller.clone(),
+            )
+            .in_project_folder(Some(&ProjectFolder::new(folder))),
+        )
+    };
+    let differ = |response: &Response| {
+        response
+            .warnings
+            .iter()
+            .find(|warning| warning.starts_with(a2m_actions::PROJECT_SETTINGS_DIFFER))
+            .cloned()
+    };
+
+    // Started outside any project: an empty project file says nothing
+    // other, and one that sets a key is named.
+    let world = World::ready().await;
+    let plain = world.project("plain");
+    let set = world.project("strict");
+    std::fs::write(set.join("anything2mcp.toml"), strict).unwrap();
+    let quiet = lint(&world, &plain).await;
+    assert!(quiet.ok, "{quiet:?}");
+    assert_eq!(differ(&quiet), None, "{quiet:?}");
+    let told = lint(&world, &set).await;
+    assert!(told.ok, "{told:?}");
+    let warning = differ(&told).expect("the warning");
+    assert!(
+        warning.contains("`authoring.scout.try_reads`")
+            && warning.contains("started outside any project")
+            && warning.contains("anything2mcp engine stop"),
+        "{warning}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+
+    // Started in a project whose file sets the key: a project whose file
+    // says the same is told nothing, and the empty one is named.
+    let start = std::env::temp_dir()
+        .join(format!("a2m-actions-start-{}", std::process::id()))
+        .join("anything2mcp.toml");
+    let settings = a2m_actions::Settings::load(&a2m_actions::Sources {
+        project: Some(a2m_actions::settings::SourceFile::new(&start, strict)),
+        ..a2m_actions::Sources::none()
+    })
+    .unwrap();
+    assert_eq!(settings.project_file(), Some(start.as_path()));
+    let world = World::ready_with(super::kernel::Options::with_settings(settings)).await;
+    let plain = world.project("plain");
+    let same = world.project("same");
+    std::fs::write(same.join("anything2mcp.toml"), strict).unwrap();
+    assert_eq!(differ(&lint(&world, &same).await), None);
+    let warning = differ(&lint(&world, &plain).await).expect("the warning");
+    assert!(
+        warning.contains("`authoring.scout.try_reads`")
+            && warning.contains(&start.display().to_string()),
+        "{warning}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
