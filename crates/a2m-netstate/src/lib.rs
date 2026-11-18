@@ -38,6 +38,7 @@
 //! it on a blocking thread.
 
 pub mod bound;
+pub mod codes;
 mod error;
 mod model;
 mod sys;

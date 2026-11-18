@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, Environment, Failure, FailureClass, FailureCode, Identity, PrincipalId, SessionId,
-    SessionState, TargetName, Timestamp, WorkspaceId,
+    Digest, Environment, Failure, FailureClass, Identity, PrincipalId, SessionId, SessionState,
+    TargetName, Timestamp, WorkspaceId,
 };
 use a2m_telemetry::{Clock, Telemetry};
 use a2m_vault::{OsRandom, RandomSource};
@@ -33,9 +33,7 @@ use crate::state::{CallRule, call_rule, legal_move};
 use crate::store::{EventKind, Saved, SessionEvent, SessionRow, SessionStore};
 use crate::work::{KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, Work, WorkOutcome};
 
-/// The keeper was asked for a move that is not in the table of states. It
-/// is a fault of the keeper itself, and the move is not made.
-pub const SESSION_MOVE_ILLEGAL: FailureCode = FailureCode::fixed("session_move_illegal");
+pub use crate::codes::SESSION_MOVE_ILLEGAL;
 
 /// Renewals that succeeded.
 pub const RENEWALS: &str = "a2m.session.renewals";

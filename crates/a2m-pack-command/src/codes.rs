@@ -1,6 +1,9 @@
 //! The failure codes this pack produces, each with its one class, and the
 //! names it registers under. The manifest declares the same codes; a test
 //! holds the two lists together.
+//!
+//! Whether a `busy` code passes by itself, and why: `program_busy` does,
+//! because the program, or the other start that holds the surface, ends.
 
 use a2m_core::{
     Failure, FailureClass, FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind,
@@ -11,53 +14,59 @@ use a2m_provider::StepFailure;
 /// The pack's name: the owner of its lint codes and of `packs.command`.
 pub const PACK: &str = "command";
 
-macro_rules! codes {
-    ($( $(#[$doc:meta])* $name:ident = $class:ident, $text:literal; )+) => {
-        $( $(#[$doc])* pub const $name: FailureCode = FailureCode::fixed($text); )+
-
-        /// Every code the pack's manifest declares, with its one class.
-        pub const ALL: &[(FailureClass, &str)] = &[ $( (FailureClass::$class, $text) ),+ ];
-    };
-}
-
-codes! {
-    /// The program's path is missing, is not a file, or cannot be run.
-    PROGRAM_MISSING = Drift, "program_missing";
-    /// The file's digest is not one listed for this platform.
-    PROGRAM_DIGEST_CHANGED = Drift, "program_digest_changed";
-    /// The version is absent, does not match, or is not a supported one.
-    PROGRAM_VERSION_UNSUPPORTED = Drift, "program_version_unsupported";
-    /// A read's output does not parse as its declared form.
-    OUTPUT_UNPARSED = Drift, "output_unparsed";
-    /// The path is not absolute, is a script, is a shell, or the file or a
-    /// folder above it can be written by another user.
-    PROGRAM_PATH_UNSAFE = Policy, "program_path_unsafe";
-    /// A stream passed its ceiling.
-    LIMIT_EXCEEDED = Policy, "limit_exceeded";
-    /// A value holds a NUL character, or would become an option.
-    ARGUMENT_UNSAFE = Input, "argument_unsafe";
-    /// A value breaks its declared pattern or kind, or an exit says so.
-    SCHEMA_INVALID = Input, "schema_invalid";
-    /// A step this driver cannot carry out as the plan wrote it: a command
-    /// that writes on a step that is no commit point, or a step whose
-    /// program was not started first.
-    STEP_NOT_USABLE = Input, "step_not_usable";
-    /// An exit declared `rejected`.
-    APP_VALIDATION_ERROR = Rejected, "app_validation_error";
-    /// An exit declared `stale`.
-    VERSION_CONFLICT = Stale, "version_conflict";
-    /// A write's exit says the record it names is not there.
-    RECORD_ABSENT = Stale, "record_absent";
-    /// An exit declared `busy`, or another start holds the surface.
-    PROGRAM_BUSY = Busy, "program_busy";
-    /// An exit declared `transient`.
-    UPSTREAM_UNAVAILABLE = Transient, "upstream_unavailable";
-    /// A read ended with a status nothing declares, or by a signal.
-    UNEXPECTED_EXIT_STATUS = UnknownVariant, "unexpected_exit_status";
-    /// A read's output holds a declared prompt.
-    UNEXPECTED_PROMPT = UnknownVariant, "unexpected_prompt";
-    /// A lookup that must match one record matched more than one.
-    AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match";
+a2m_core::failure_codes! {
+    PROGRAM_MISSING = Drift, "program_missing",
+        meaning "The program's path is missing, is not a file, or cannot be run.",
+        next "Install the program at the path its surface declares, or correct the path in the target's files.";
+    PROGRAM_DIGEST_CHANGED = Drift, "program_digest_changed",
+        meaning "The file's digest is not one listed for this platform.",
+        next "Review the program that is installed now, add its SHA-256 under `program.digests` for this platform, and publish.";
+    PROGRAM_VERSION_UNSUPPORTED = Drift, "program_version_unsupported",
+        meaning "The version is absent, does not match, or is not a supported one.",
+        next "Install a supported version, or check the target's files against this one and add it to `program.version.supported`.";
+    OUTPUT_UNPARSED = Drift, "output_unparsed",
+        meaning "A read's output does not parse as its declared form.",
+        next "Compare what the program prints now with the command's `output` in `commands/`, and correct the file if the program changed.";
+    PROGRAM_PATH_UNSAFE = Policy, "program_path_unsafe",
+        meaning "The path is not absolute, is a script, is a shell, or the file or a folder above it can be written by another user.",
+        next "Name the program by its absolute path, and give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.";
+    LIMIT_EXCEEDED = Policy, "limit_exceeded",
+        meaning "A stream passed its ceiling.",
+        next "Narrow what the command lists, or raise `limits` in its `commands/` file and the setting `packs.command.max_output_bytes`.";
+    ARGUMENT_UNSAFE = Input, "argument_unsafe",
+        meaning "A value holds a NUL character, or would become an option.",
+        next "Give a value that is plain data for this parameter.";
+    SCHEMA_INVALID = Input, "schema_invalid",
+        meaning "A value breaks its declared pattern or kind, or an exit says so.",
+        next "Correct the values and call again.";
+    STEP_NOT_USABLE = Input, "step_not_usable",
+        meaning "A step this driver cannot carry out as the plan wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first.",
+        next "Compile the target again with the version of the command pack that is enabled.";
+    APP_VALIDATION_ERROR = Rejected, "app_validation_error",
+        meaning "An exit declared `rejected`.",
+        next "Correct the values and call again.";
+    VERSION_CONFLICT = Stale, "version_conflict",
+        meaning "An exit declared `stale`.",
+        next "Read the record again and decide whether the change still applies.";
+    RECORD_ABSENT = Stale, "record_absent",
+        meaning "A write's exit says the record it names is not there.",
+        next "Read the record again; it may have been removed.";
+    PROGRAM_BUSY = Busy, "program_busy",
+        meaning "An exit declared `busy`, or another start holds the surface.",
+        next "Try again when the other start has ended.",
+        passes by_itself;
+    UPSTREAM_UNAVAILABLE = Transient, "upstream_unavailable",
+        meaning "An exit declared `transient`.",
+        next "Try again shortly.";
+    UNEXPECTED_EXIT_STATUS = UnknownVariant, "unexpected_exit_status",
+        meaning "A read ended with a status nothing declares, or by a signal.",
+        next "Compare how the program ends now with the exits its command file declares, and correct the file if the program changed.";
+    UNEXPECTED_PROMPT = UnknownVariant, "unexpected_prompt",
+        meaning "A read's output holds a declared prompt.",
+        next "Add the argument that makes the command not ask, such as `--yes`, to its `args` in `commands/`.";
+    AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match",
+        meaning "A lookup that must match one record matched more than one.",
+        next "Find the records by hand, and decide which is the one that was written.";
 }
 
 /// From the provider contract: a write was sent and nothing confirms it.

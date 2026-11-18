@@ -99,4 +99,5 @@ mod tests {
     mod pass_two;
     mod runs;
     mod second;
+    mod watches;
 }

@@ -3,48 +3,14 @@
 //! A failure from this crate is built from names and fixed phrases. It never
 //! carries a credential, a token, or text an identity service returned.
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{Failure, FailureClass};
 
-/// The session is absent, expired, or revoked, or a wait for it ran out.
-pub const NEEDS_LOGIN: FailureCode = FailureCode::fixed("needs_login");
-/// A second factor is demanded and no person answered in time.
-pub const NEEDS_MFA: FailureCode = FailureCode::fixed("needs_mfa");
-/// The session's credentials are held on a runner that is not this one.
-pub const DEVICE_REQUIRED: FailureCode = FailureCode::fixed("device_required");
-/// The session will end before the time a pipeline asked to have left.
-pub const HEADROOM_SHORT: FailureCode = FailureCode::fixed("headroom_short");
-/// The lease was granted for credentials that have since been replaced.
-pub const LEASE_STALE: FailureCode = FailureCode::fixed("lease_stale");
-/// A stored credential was refused by the side that checks it.
-pub const CREDENTIAL_REFUSED: FailureCode = FailureCode::fixed("credential_refused");
-/// The run does not act for the person the session belongs to.
-pub const IDENTITY_NOT_ALLOWED: FailureCode = FailureCode::fixed("identity_not_allowed");
-/// An auth entry names a provider that nobody registered.
-pub const AUTH_PROVIDER_UNKNOWN: FailureCode = FailureCode::fixed("auth_provider_unknown");
-/// An auth entry lacks a setting its provider needs, or holds a wrong one.
-pub const AUTH_SETTINGS_INVALID: FailureCode = FailureCode::fixed("auth_settings_invalid");
-/// A credential reference names nothing that is stored.
-pub const CREDENTIAL_MISSING: FailureCode = FailureCode::fixed("credential_missing");
-/// The identity service did not answer, or answered that it cannot serve.
-pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
-/// The identity service answered with something that is not a token response.
-pub const UNEXPECTED_RESPONSE: FailureCode = FailureCode::fixed("unexpected_response");
-
-/// A sign-in would send a credential, a token, or the person to an address
-/// the target does not declare for its surfaces in the session's
-/// environment. Nothing was sent (decision 0248).
-pub const DESTINATION_NOT_DECLARED: FailureCode = FailureCode::fixed("destination_not_declared");
-/// An auth entry names a credential reference that belongs to another
-/// target: its first part is not the target's name (decision 0248).
-pub const CREDENTIAL_OF_ANOTHER_TARGET: FailureCode =
-    FailureCode::fixed("credential_of_another_target");
-/// What is stored under a reference does not open for this target: it was
-/// stored for another target, or before a credential was bound to its
-/// target (decision 0248).
-pub const CREDENTIAL_UNREADABLE: FailureCode = FailureCode::fixed("credential_unreadable");
-
-/// This build cannot make HTTPS requests, and an identity service needs one.
-pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
+pub use crate::codes::{
+    AUTH_PROVIDER_UNKNOWN, AUTH_SETTINGS_INVALID, CREDENTIAL_MISSING, CREDENTIAL_OF_ANOTHER_TARGET,
+    CREDENTIAL_REFUSED, CREDENTIAL_UNREADABLE, DESTINATION_NOT_DECLARED, DEVICE_REQUIRED,
+    HEADROOM_SHORT, IDENTITY_NOT_ALLOWED, LEASE_STALE, NEEDS_LOGIN, NEEDS_MFA, UNEXPECTED_RESPONSE,
+    UPSTREAM_UNAVAILABLE,
+};
 
 /// The session cannot be used until someone signs in.
 pub(crate) fn needs_login(why: &'static str) -> Failure {
@@ -262,7 +228,7 @@ pub(crate) fn unexpected_response(what: &'static str) -> Failure {
 pub(crate) fn tls_not_enabled() -> Failure {
     Failure::new(
         FailureClass::Input,
-        TLS_NOT_ENABLED,
+        crate::codes::TLS_NOT_ENABLED,
         "The identity service is reached over HTTPS, and this build of the engine cannot make HTTPS requests.",
         "Use a build with the `tls` feature of the session keeper switched on.",
     )

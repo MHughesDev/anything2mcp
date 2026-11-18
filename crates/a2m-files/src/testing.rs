@@ -354,7 +354,7 @@ impl StandLowering {
             timeout_ms: 10_000,
             fails_as: FailsAs {
                 class: FailureClass::Drift,
-                code: FailureCode::fixed("reply_changed"),
+                code: crate::codes::REPLY_CHANGED,
             },
             // By the kind of step alone: what the call's file says of its
             // effect is data a target's author wrote, and never decides

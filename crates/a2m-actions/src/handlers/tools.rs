@@ -511,7 +511,7 @@ fn described(found: &FoundTool) -> Json {
     })
 }
 
-fn sched_health(kernel: &Kernel) -> SchedHealth {
+pub(crate) fn sched_health(kernel: &Kernel) -> SchedHealth {
     let health = kernel.health();
     let cause = || {
         health

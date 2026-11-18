@@ -10,6 +10,7 @@
 //! `docs/reference/technical-reference.md`: layers 1 to 3.
 
 mod approval;
+pub mod codes;
 mod failure;
 mod model;
 mod policy;

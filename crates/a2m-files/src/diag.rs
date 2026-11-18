@@ -4,21 +4,13 @@
 
 use std::fmt;
 
-use a2m_core::{Failure, FailureClass, FailureCode, LintCode};
+use a2m_core::{Failure, FailureClass, LintCode};
 
 use crate::doc::Place;
 
-/// Any error diagnostic: the files do not compile.
-pub const LINT_FAILED: FailureCode = FailureCode::fixed("lint_failed");
-/// A path or a link that leaves the target folder.
-pub const PATH_NOT_ALLOWED: FailureCode = FailureCode::fixed("path_not_allowed");
-/// The drafter would overwrite a file the developer changed.
-pub const DRAFT_CONFLICT: FailureCode = FailureCode::fixed("draft_conflict");
-/// Two registrations for the same key, or one that is not the registering
-/// pack's to make.
-pub const REGISTRATION_CONFLICT: FailureCode = FailureCode::fixed("registration_conflict");
-/// The target folder could not be read.
-pub const TARGET_UNREADABLE: FailureCode = FailureCode::fixed("target_unreadable");
+pub use crate::codes::{
+    DRAFT_CONFLICT, LINT_FAILED, PATH_NOT_ALLOWED, REGISTRATION_CONFLICT, TARGET_UNREADABLE,
+};
 
 /// How serious a diagnostic is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]

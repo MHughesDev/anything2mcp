@@ -120,6 +120,14 @@ ACTIONS = (
     "version.migrate",
     "version.publish",
     "version.rollback",
+    "watch.changes",
+    "watch.confirm",
+    "watch.create",
+    "watch.end",
+    "watch.get",
+    "watch.list",
+    "watch.pause",
+    "watch.resume",
 )
 
 
@@ -1719,3 +1727,139 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def watch_changes(
+        self,
+        *,
+        watch_id: str,
+        after: Optional[int] = None,
+        limit: Optional[int] = None,
+        wait_seconds: Optional[int] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The changes a watch recorded after a number: added, changed, unseen,
+        gaps, pauses, and its end, each with the runs of its checks. Waits up to
+        `wait_seconds` for the first. Holds no value; read a check's run with
+        run.get for that.
+
+        The engine action is ``watch.changes``.
+        """
+        return self._action(
+            "watch.changes",
+            {
+                "watch_id": watch_id,
+                "after": after,
+                "limit": limit,
+                "wait_seconds": wait_seconds,
+            },
+            idempotency_key,
+        )
+
+    def watch_confirm(
+        self,
+        *,
+        watch_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Confirm a watch the caller's person was asked for, so that its checks
+        begin. A person's act, carried out on the engine's page, never an
+        agent's.
+
+        The engine action is ``watch.confirm``.
+        """
+        return self._action("watch.confirm", {"watch_id": watch_id}, idempotency_key)
+
+    def watch_create(
+        self,
+        *,
+        ends_at: int,
+        interval_seconds: int,
+        tool: str,
+        environment: Optional[str] = None,
+        ignore: Optional[List[str]] = None,
+        input: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Ask for a watch: one published read, called with one fixed input at a
+        fixed interval until an end, that records what was added, changed, or
+        went out of view. Nothing runs until the caller's person confirms it on
+        the engine's page.
+
+        The engine action is ``watch.create``.
+        """
+        return self._action(
+            "watch.create",
+            {
+                "ends_at": ends_at,
+                "interval_seconds": interval_seconds,
+                "tool": tool,
+                "environment": environment,
+                "ignore": ignore,
+                "input": input,
+            },
+            idempotency_key,
+        )
+
+    def watch_end(
+        self,
+        *,
+        watch_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """End a watch, by its person or by the caller that asked for it. Its
+        checks and changes are kept.
+
+        The engine action is ``watch.end``.
+        """
+        return self._action("watch.end", {"watch_id": watch_id}, idempotency_key)
+
+    def watch_get(
+        self,
+        *,
+        watch_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """One watch of the caller's person: its read, interval, end, state, and
+        how many checks it made. Never a value the read returned.
+
+        The engine action is ``watch.get``.
+        """
+        return self._action("watch.get", {"watch_id": watch_id}, idempotency_key)
+
+    def watch_list(
+        self,
+        *,
+        open_only: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The watches of the caller's person, oldest first.
+
+        The engine action is ``watch.list``.
+        """
+        return self._action("watch.list", {"open_only": open_only}, idempotency_key)
+
+    def watch_pause(
+        self,
+        *,
+        watch_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Pause a confirmed watch of the caller's person: no check runs until it
+        is resumed.
+
+        The engine action is ``watch.pause``.
+        """
+        return self._action("watch.pause", {"watch_id": watch_id}, idempotency_key)
+
+    def watch_resume(
+        self,
+        *,
+        watch_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Let a paused watch of the caller's person go on. One paused because its
+        read changed or drifted never goes on.
+
+        The engine action is ``watch.resume``.
+        """
+        return self._action("watch.resume", {"watch_id": watch_id}, idempotency_key)

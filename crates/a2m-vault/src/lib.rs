@@ -15,6 +15,7 @@
 //! `docs/reference/technical-reference.md`: `a2m-core`.
 
 mod cipher;
+pub mod codes;
 mod digest;
 mod failure;
 mod hex;
@@ -41,13 +42,3 @@ pub use store::{
     StoreStrength,
 };
 pub use vault::{Vault, VaultHealth};
-
-/// The failure codes this crate produces. Each belongs to exactly one class.
-pub mod codes {
-    pub use crate::failure::{
-        KEY_RECORD_CONFLICT, KEY_STORE_ENTRY_MISSING, KEY_STORE_UNREACHABLE,
-        RANDOMNESS_UNAVAILABLE, SEALED_FORMAT_UNSUPPORTED, SEALED_ITEM_MISMATCH,
-        VAULT_PASSPHRASE_MISMATCH, VAULT_PASSPHRASE_MISSING, VAULT_PASSPHRASE_NOT_ENABLED,
-        VAULT_PASSPHRASE_TOO_SHORT,
-    };
-}

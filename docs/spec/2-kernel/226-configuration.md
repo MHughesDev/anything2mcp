@@ -107,6 +107,8 @@ A protected setting is never reported as in force when it is not. A policy setti
 | `server.local_http` | Opening a local port on a workstation | [Section 222](222-front-doors-and-the-local-engine.md) |
 | `telemetry.export`, `telemetry.crash_reports`, `updates.check`, `server.webhooks`, `alerts.destinations` | Sending anything off the machine | [Section 605](../6-running-it/605-packaging-and-release.md) |
 | `packs.command.admin_groups` | Naming a group whose write counts as the administrator's | [Section 306](../3-packs/306-the-command-pack.md) |
+| `watch.shortest_interval_seconds`, `watch.reserve_percent` | Lowering either | [Decision 0283](../../decisions/0283-watches-reach-an-agent-through-the-registry-and-their-person-confirms-each-on-the-page.md) |
+| `watch.longest_days`, `watch.most`, `watch.budget_share_percent` | Raising any of them | Decision 0283 |
 
 Of these, `evidence.audit_retention_days`, `authoring.capture.values`, `providers.enabled`, `plugins.allow_unsigned`, `providers.attach`, `network.allowed_hosts`, `network.proxy`, `server.local_http`, `telemetry.export`, `telemetry.crash_reports`, `updates.check`, `server.webhooks`, and `alerts.destinations` are not built, and a value for one is refused by name (principle 2).
 
@@ -200,6 +202,16 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 | `scheduler.queue_length_per_target` | Count | 100 | U | no |
 | `scheduler.priority` (not built) | `interactive_first`, `fifo` | `interactive_first` | I | no |
 | `runners.lease_seconds`, `runners.heartbeat_seconds`, `runners.quarantine_seconds`, `runners.certificate_hours` (`runners.certificate_hours` not built) | ([section 223](223-the-runner-protocol.md)). In one process a lease is at least 600 seconds, whatever `runners.lease_seconds` says | 30, 10, 60, 24 | I | no |
+
+**Watches** ([decision 0283](../../decisions/0283-watches-reach-an-agent-through-the-registry-and-their-person-confirms-each-on-the-page.md)). A watch acts while its person is away, so each key is protected: a lower layer may tighten it and never loosen it. The scheduler and the ledger hold their own bounds whatever a key says: no interval below 60 seconds and no watch longer than 366 days.
+
+| Key | Values | Default | Scope | Protected |
+| --- | --- | --- | --- | --- |
+| `watch.shortest_interval_seconds` | Seconds, 60 to 86400; higher is safer | 60 | U | yes |
+| `watch.longest_days` | Days from when a watch is asked for, 1 to 366; lower is safer | 7 | U | yes |
+| `watch.most` | The most watches one person may have that have not ended, 1 to 1000; lower is safer | 20 | U | yes |
+| `watch.budget_share_percent` | The share of a surface's sustained rate all watches on it may take together, 1 to 50; lower is safer | 10 | U | yes |
+| `watch.reserve_percent` | The share of each budget's capacity a check leaves for other work, 0 to 90; higher is safer | 50 | U | yes |
 
 **Authoring and the scout** ([section 402](../4-building-tools/402-the-scout-and-who-does-what.md)).
 

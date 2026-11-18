@@ -6,31 +6,11 @@
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// No permit applies to the caller, the tool, or the action.
-pub const NOT_GRANTED: FailureCode = FailureCode::fixed("not_granted");
-/// The run may not act as the identity, including every attempt to use
-/// another person's session.
-pub const IDENTITY_NOT_ALLOWED: FailureCode = FailureCode::fixed("identity_not_allowed");
-/// A grant exists, with a lower highest effect class.
-pub const EFFECT_TOO_HIGH: FailureCode = FailureCode::fixed("effect_too_high");
-/// A write reached the write phase with no usable approval.
-pub const APPROVAL_MISSING: FailureCode = FailureCode::fixed("approval_missing");
-/// The approval is expired, used, declined, revoked, or for another diff.
-pub const APPROVAL_STALE: FailureCode = FailureCode::fixed("approval_stale");
-/// The person or the caller may not approve this run.
-pub const APPROVAL_REFUSED: FailureCode = FailureCode::fixed("approval_refused");
-/// Records per run, or a quota.
-pub const LIMIT_EXCEEDED: FailureCode = FailureCode::fixed("limit_exceeded");
-/// A kill switch covers the request.
-pub const KILL_SWITCH_ON: FailureCode = FailureCode::fixed("kill_switch_on");
-/// An error while deciding, or no valid policy set is loaded.
-pub const POLICY_EVALUATION_FAILED: FailureCode = FailureCode::fixed("policy_evaluation_failed");
-/// A change to a protected setting that only a person, present, may make.
-pub const PRESENCE_REQUIRED: FailureCode = FailureCode::fixed("presence_required");
-/// A policy set whose own test table does not pass.
-pub const POLICY_TESTS_FAILED: FailureCode = FailureCode::fixed("policy_tests_failed");
-/// No decision with that identifier is recorded.
-pub const DECISION_NOT_FOUND: FailureCode = FailureCode::fixed("decision_not_found");
+pub use crate::codes::{
+    APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, DECISION_NOT_FOUND, EFFECT_TOO_HIGH,
+    IDENTITY_NOT_ALLOWED, KILL_SWITCH_ON, LIMIT_EXCEEDED, NOT_GRANTED, POLICY_EVALUATION_FAILED,
+    POLICY_TESTS_FAILED, PRESENCE_REQUIRED,
+};
 
 pub(crate) fn policy(
     code: FailureCode,

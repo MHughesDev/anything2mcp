@@ -607,6 +607,13 @@ impl Kernel {
                 crate::handlers::sessions::pinned(self, caller, input, project).await?;
             return Ok((input, details, PublishShown::default(), secrets));
         }
+        if def.name.as_str() == "watch.confirm" {
+            // What the person confirms is shown from the watch as the
+            // store holds it (decision 0283); the input stays its
+            // identifier alone.
+            let details = self.watch_confirmation_lines(caller, &input).await?;
+            return Ok((input, details, PublishShown::default(), Vec::new()));
+        }
         if def.name.as_str() != "version.publish" {
             return Ok((input, Vec::new(), PublishShown::default(), Vec::new()));
         }

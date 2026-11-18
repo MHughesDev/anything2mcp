@@ -273,3 +273,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0280 | [The `use` toolset lists at most twelve tools](0280-the-use-toolset-lists-at-most-twelve-tools.md) | Accepted (design decision) |
 | 0281 | [An MCP result is to carry its decision, so that a call at the MCP door can be explained](0281-an-mcp-result-is-to-carry-its-decision-so-that-a-call-at-the-mcp-door-can-be-explained.md) | Accepted (design decision) |
 | 0282 | [Whether the command pack may start programs that run what their arguments name](0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md) | Proposed (design decision) |
+| 0283 | [Watches reach an agent through the registry, and their person confirms each on the page](0283-watches-reach-an-agent-through-the-registry-and-their-person-confirms-each-on-the-page.md) | Accepted (design decision) |

@@ -20,37 +20,17 @@
 
 use std::sync::OnceLock;
 
-use a2m_core::{Failure, FailureClass, FailureCode};
+use a2m_core::{Failure, FailureClass};
 
-/// `input`: the TLS configuration of this machine could not be made.
-pub const TLS_SETUP_FAILED: FailureCode = FailureCode::fixed("tls_setup_failed");
-/// `input`: a file of further trust roots holds no certificate, or one that
-/// cannot be read.
-pub const TRUST_ROOTS_UNREADABLE: FailureCode = FailureCode::fixed("trust_roots_unreadable");
-/// `unknown_variant`: the certificate the system showed does not lead to an
-/// authority this machine trusts.
-pub const CERTIFICATE_UNTRUSTED: FailureCode = FailureCode::fixed("certificate_untrusted");
-/// `unknown_variant`: the certificate is for another name than the address.
-pub const CERTIFICATE_NAME_MISMATCH: FailureCode = FailureCode::fixed("certificate_name_mismatch");
-/// `unknown_variant`: the certificate's time has run out.
-pub const CERTIFICATE_EXPIRED: FailureCode = FailureCode::fixed("certificate_expired");
-/// `unknown_variant`: the certificate was refused for another reason, or the
-/// operating system's verifier refused it without saying which.
-pub const CERTIFICATE_NOT_VERIFIED: FailureCode = FailureCode::fixed("certificate_not_verified");
-/// `unknown_variant`: the TLS handshake failed for a reason that is not the
-/// certificate: no version or cipher in common, or the far end ended it.
-pub const TLS_HANDSHAKE_FAILED: FailureCode = FailureCode::fixed("tls_handshake_failed");
+pub use crate::codes::{
+    CERTIFICATE_EXPIRED, CERTIFICATE_NAME_MISMATCH, CERTIFICATE_NOT_VERIFIED,
+    CERTIFICATE_UNTRUSTED, TLS_HANDSHAKE_FAILED, TLS_SETUP_FAILED, TRUST_ROOTS_UNREADABLE,
+};
 
-/// Every code of this module with its one class.
-pub const CODES: &[(FailureClass, &str)] = &[
-    (FailureClass::Input, "tls_setup_failed"),
-    (FailureClass::Input, "trust_roots_unreadable"),
-    (FailureClass::UnknownVariant, "certificate_untrusted"),
-    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
-    (FailureClass::UnknownVariant, "certificate_expired"),
-    (FailureClass::UnknownVariant, "certificate_not_verified"),
-    (FailureClass::UnknownVariant, "tls_handshake_failed"),
-];
+/// Every code of this module with its one class: the last seven rows of the
+/// crate's table.
+pub const CODES: &[(FailureClass, &str)] =
+    crate::codes::ALL.split_at(crate::codes::ALL.len() - 7).1;
 
 /// Whether this build can make HTTPS requests.
 #[must_use]
@@ -478,7 +458,7 @@ mod tests {
     #[test]
     fn the_codes_are_as_declared() {
         for (class, code) in CODES {
-            assert!(FailureCode::new(code).is_ok(), "{code}");
+            assert!(a2m_core::FailureCode::new(code).is_ok(), "{code}");
             assert_eq!(
                 *class,
                 if code.starts_with("certificate_") || *code == "tls_handshake_failed" {
@@ -511,7 +491,7 @@ mod tests {
         if enabled() {
             assert_eq!(failure.code(), &TRUST_ROOTS_UNREADABLE);
         } else {
-            assert_eq!(failure.code(), &crate::failure::TLS_NOT_ENABLED);
+            assert_eq!(failure.code(), &crate::codes::TLS_NOT_ENABLED);
         }
         assert_eq!(failure.class(), FailureClass::Input);
     }

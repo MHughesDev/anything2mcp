@@ -46,6 +46,10 @@ pub(super) struct Surface {
     /// When set, the proof handed back is this person's and not the
     /// caller's.
     pub(super) proof_of: Mutex<Option<a2m_core::PrincipalId>>,
+    /// Whether it has a page for a person's act an agent asked for, and the
+    /// acts shown there.
+    pub(super) pages: Mutex<bool>,
+    pub(super) acts: Mutex<Vec<a2m_actions::PersonActAsk>>,
     clock: Arc<dyn Clock>,
 }
 
@@ -105,6 +109,24 @@ impl PersonSurface for Surface {
 
     fn ask_session(&self, _ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
         Box::pin(async move { PersonAnswer::NoAnswer })
+    }
+
+    fn shows_person_acts(&self) -> bool {
+        *self.pages.lock().unwrap()
+    }
+
+    fn ask_person_act(
+        &self,
+        ask: a2m_actions::PersonActAsk,
+    ) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            let link = format!("http://127.0.0.1/act/{}", ask.act);
+            self.acts.lock().unwrap().push(ask);
+            Ok(SurfaceLink {
+                url: Some(link),
+                text: "Open the page to carry it out.".to_owned(),
+            })
+        })
     }
 }
 
@@ -289,6 +311,8 @@ pub(super) async fn world(options: Options) -> World {
         person_present: Mutex::new(true),
         proof_age_ms: Mutex::new(0),
         proof_of: Mutex::new(None),
+        pages: Mutex::new(false),
+        acts: Mutex::new(Vec::new()),
         clock,
     });
     let kernel = Kernel::open(

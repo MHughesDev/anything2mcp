@@ -877,6 +877,9 @@ impl Kernel {
             // for one looks again.
             self.run_changed();
         }
+        // The watches: ends, due checks, checks whose run ended, and
+        // watches waiting for a sign-in (decision 0283).
+        self.tend_watches().await;
         if let Some(keeper) = &self.inner.keeper {
             keeper.tick().await;
         }
@@ -900,7 +903,15 @@ impl Kernel {
             loop {
                 // Wait for the scheduler's next deadline, for a deadline to
                 // be added or removed, or for the keeper's next round.
-                let wait = match sched.next_due().await {
+                // The earlier of the scheduler's next deadline and the
+                // watches' next due time or end (decision 0262).
+                let next = match (sched.next_due().await, sched.next_watch_due().await) {
+                    (Ok(Some(due)), Ok(Some(watch))) => Ok(Some(due.min(watch))),
+                    (Ok(None), Ok(watch)) => Ok(watch),
+                    (Ok(due), _) => Ok(due),
+                    (Err(failure), _) => Err(failure),
+                };
+                let wait = match next {
                     Ok(Some(at)) => {
                         let ahead = at
                             .as_unix_millis()
@@ -1001,6 +1012,29 @@ fn sched_settings(settings: &Settings) -> SchedSettings {
     }
     if let Some(quarantine) = settings.int("runners.quarantine_seconds") {
         out.quarantine = seconds(quarantine);
+    }
+    // The limits on watches (decision 0283). Each key is protected, and the
+    // scheduler and the ledger hold their own floor and ceiling whatever
+    // the setting says.
+    let count = |key: &str| {
+        settings
+            .int(key)
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    if let Some(shortest) = settings.int("watch.shortest_interval_seconds") {
+        out.watch.shortest_interval = seconds(shortest);
+    }
+    if let Some(days) = settings.int("watch.longest_days") {
+        out.watch.longest = seconds(days.saturating_mul(86_400));
+    }
+    if let Some(most) = count("watch.most") {
+        out.watch.most_per_person = most;
+    }
+    if let Some(share) = count("watch.budget_share_percent") {
+        out.watch.budget_share_percent = share;
+    }
+    if let Some(reserve) = count("watch.reserve_percent") {
+        out.watch.reserve_percent = reserve;
     }
     out
 }

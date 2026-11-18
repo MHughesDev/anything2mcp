@@ -6,8 +6,8 @@
 //! the store and guesses a key cannot confirm the guess.
 
 use a2m_core::{
-    Digest, DigestPurpose, Environment, Failure, FailureClass, FailureCode, OperationName,
-    PrincipalId, RunId, RunState, TargetName, Timestamp, WorkspaceId,
+    Digest, DigestPurpose, Environment, Failure, FailureClass, OperationName, PrincipalId, RunId,
+    RunState, TargetName, Timestamp, WorkspaceId,
 };
 
 use crate::codec::{moment, parse, parse_opt};
@@ -21,9 +21,7 @@ pub const RUN_PAGE_MOST: u32 = 200;
 /// The longest idempotency key, in characters.
 pub const CALLER_KEY_LONGEST: usize = 200;
 
-/// A key that is not 1 to [`CALLER_KEY_LONGEST`] printable characters.
-/// Class `input`.
-pub const IDEMPOTENCY_KEY_INVALID: FailureCode = FailureCode::fixed("idempotency_key_invalid");
+pub use crate::codes::IDEMPOTENCY_KEY_INVALID;
 
 /// A caller's idempotency key: 1 to [`CALLER_KEY_LONGEST`] characters, each
 /// a printable ASCII character other than a space. Its debug print shows

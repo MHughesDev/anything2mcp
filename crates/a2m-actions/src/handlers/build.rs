@@ -615,6 +615,9 @@ handler!(
                 stored_evidence,
             )
             .await?;
+        // A watch is tied to the version its person confirmed: every watch
+        // of another version pauses or ends now (decision 0262).
+        kernel.watches_after_publish(&target, hash).await;
         let mut output = Output::ok(json!({
             "target": target.as_str(),
             "version": version.to_string(),

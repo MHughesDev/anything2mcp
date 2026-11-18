@@ -688,7 +688,7 @@ Memory only: the registry snapshot; for each running subsystem its kind, place, 
 
 ## Failures
 
-The codes are constants in this crate's `codes` module, and `codes::ALL` lists each with its one class.
+The codes are declared in this crate's `failure_codes!` table, the module `codes`, each with its meaning, its next step, and, for a `busy` code, whether it passes by itself ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)); `codes::ALL` lists each with its one class.
 
 | Class | Code | When |
 | --- | --- | --- |

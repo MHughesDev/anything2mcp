@@ -32,16 +32,7 @@ use crate::failure;
 use crate::ledger::{EventKind, Fence};
 use crate::tx::{Row, SqlValue, Tx};
 
-/// A comparison is not counted: the store is an offline test's, or the run
-/// it was made beside is not a live read under way. Class `policy`.
-pub const SHADOW_NOT_COUNTED: FailureCode = FailureCode::fixed("shadow_not_counted");
-/// A person asked to promote a binding the evidence does not let them
-/// promote. Class `policy`.
-pub const SHADOW_NOT_PROMOTABLE: FailureCode = FailureCode::fixed("shadow_not_promotable");
-/// The shadow of a binding of an operation that writes is not built: its
-/// comparison cannot be stored, and it is never promotable through shadow.
-/// Class `busy`.
-pub const SHADOW_WRITE_NOT_BUILT: FailureCode = FailureCode::fixed("shadow_write_not_built");
+pub use crate::codes::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
 
 /// How one output of the shadow binding differed from the verified one's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,5 +1,8 @@
 //! The kernel's lint codes: every code this crate can report, with the rule
 //! in one line. A pack's codes carry the pack's name in place of `kernel`.
+//!
+//! Below them, the failure codes this crate produces, each with its one
+//! class, in the table form every crate uses.
 
 use a2m_core::LintCode;
 
@@ -97,6 +100,27 @@ kernel_codes! {
 #[must_use]
 pub(crate) const fn kernel(code: &'static str) -> LintCode {
     LintCode::fixed(code)
+}
+
+a2m_core::failure_codes! {
+    LINT_FAILED = Input, "lint_failed",
+        meaning "A target's files have an error diagnostic, so they do not compile.",
+        next "Correct the file at the place the first diagnostic names, as its fix says, and compile again.";
+    PATH_NOT_ALLOWED = Input, "path_not_allowed",
+        meaning "A path or a link leaves the folder it must stay inside.",
+        next "Name the file by its path inside the target folder: names joined by `/`, with no `..`, no drive, and no leading `/`.";
+    DRAFT_CONFLICT = Input, "draft_conflict",
+        meaning "The drafter would overwrite a file the developer changed.",
+        next "Keep the file as it is, or remove it and draft again.";
+    REGISTRATION_CONFLICT = Input, "registration_conflict",
+        meaning "Two registrations for the same key, or one that is not the registering pack's to make.",
+        next "Disable one of the two providers, or correct the provider that registers a name that is not its own.";
+    TARGET_UNREADABLE = Input, "target_unreadable",
+        meaning "The target folder could not be read, or a draft could not be written into it.",
+        next "Make the target folder exist and be readable and writable by this user, then try again.";
+    REPLY_CHANGED = Drift, "reply_changed",
+        meaning "A call's reply no longer has the shape the target's files describe.",
+        next "Explore the call again, update its file to the reply the system now gives, and run the tests again.";
 }
 
 #[cfg(test)]

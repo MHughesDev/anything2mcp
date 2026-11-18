@@ -37,26 +37,9 @@ use crate::types::{Admitted, BudgetKey, Priority, RateLimit, Submission};
 /// asks.
 pub const SHORTEST_INTERVAL_FLOOR: Duration = WATCH_INTERVAL_FLOOR;
 
-/// A watch's interval is below the floor. Class `input`.
-pub const WATCH_INTERVAL_TOO_SHORT: FailureCode = FailureCode::fixed("watch_interval_too_short");
-/// A watch's end is further away than the longest a watch may last. Class
-/// `input`.
-pub const WATCH_TOO_LONG: FailureCode = FailureCode::fixed("watch_too_long");
-/// The person has as many watches as they may have. Class `busy`.
-pub const WATCH_TOO_MANY: FailureCode = FailureCode::fixed("watch_too_many");
-/// The watches on one surface would take more of its budget than their
-/// share. Class `busy`.
-pub const WATCH_OVER_BUDGET_SHARE: FailureCode = FailureCode::fixed("watch_over_budget_share");
-
-/// Every failure code of a watch the scheduler produces, with its one class.
-/// The ledger's codes of a watch are in `a2m_ledger::codes::WATCH_CODES`;
-/// no code is in both.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Input, "watch_interval_too_short"),
-    (FailureClass::Input, "watch_too_long"),
-    (FailureClass::Busy, "watch_too_many"),
-    (FailureClass::Busy, "watch_over_budget_share"),
-];
+pub use crate::codes::{
+    WATCH_INTERVAL_TOO_SHORT, WATCH_OVER_BUDGET_SHARE, WATCH_TOO_LONG, WATCH_TOO_MANY,
+};
 
 const DAY_MS: u128 = 86_400_000;
 

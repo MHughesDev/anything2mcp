@@ -17,8 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    Digest, DigestPurpose, Failure, FailureClass, FailureCode, KeyedDigest, RecordKey, Values,
-    WorkspaceId,
+    Digest, DigestPurpose, Failure, FailureClass, KeyedDigest, RecordKey, Values, WorkspaceId,
 };
 
 use crate::watch::WatchId;
@@ -37,17 +36,7 @@ pub const VALUE_DOMAIN: &[u8] = b"anything2mcp watch value 2";
 /// What every digest of a watch's whole record begins with.
 const RECORD_DOMAIN: &[u8] = b"anything2mcp watch record 2";
 
-/// A record's key appears twice in one check: a named fault of that check,
-/// never a merge. Class `unknown_variant`.
-pub const WATCH_KEY_REPEATED: FailureCode = FailureCode::fixed("watch_key_repeated");
-/// A check holds keyed records and a whole result at once, or more than one
-/// whole result. Class `unknown_variant`.
-pub const WATCH_SHAPES_MIXED: FailureCode = FailureCode::fixed("watch_shapes_mixed");
-/// A check's result is not of the shape the watch was asked with: its list
-/// output is missing or not a list of records, or a record lacks a field of
-/// its key. Class `unknown_variant`.
-pub const WATCH_RESULT_NOT_ITS_SHAPE: FailureCode =
-    FailureCode::fixed("watch_result_not_its_shape");
+pub use crate::codes::{WATCH_KEY_REPEATED, WATCH_RESULT_NOT_ITS_SHAPE, WATCH_SHAPES_MIXED};
 
 /// How a watch names one record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

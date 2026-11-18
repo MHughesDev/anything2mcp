@@ -20,6 +20,7 @@
 //! engine.
 
 mod budget;
+pub mod codes;
 mod failure;
 mod scheduler;
 mod tables;
@@ -41,16 +42,3 @@ pub use watch::{
     CheckAdmission, CheckStarted, DueCheck, DuePlan, DueWatches, SHORTEST_INTERVAL_FLOOR,
     WatchLimits, due_at, plan,
 };
-
-/// The failure codes this crate produces. Each belongs to exactly one class.
-pub mod codes {
-    pub use crate::failure::{
-        CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, ON_HOLD, QUEUE_FULL,
-        RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
-        RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SESSION_IN_USE,
-    };
-    pub use crate::watch::{
-        ALL as WATCH_CODES, WATCH_INTERVAL_TOO_SHORT, WATCH_OVER_BUDGET_SHARE, WATCH_TOO_LONG,
-        WATCH_TOO_MANY,
-    };
-}

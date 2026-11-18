@@ -28,36 +28,11 @@ use crate::watch_compare::{
     Baseline, CheckDigests, CheckFault, Comparison, Held, RecordDigests, WatchKey, compare,
 };
 
-/// A watch was asked for an operation that is not a read. Class `policy`.
-pub const WATCH_NOT_A_READ: FailureCode = FailureCode::fixed("watch_not_a_read");
-/// A check was asked of a watch its person has not confirmed. Class
-/// `policy`.
-pub const WATCH_NOT_CONFIRMED: FailureCode = FailureCode::fixed("watch_not_confirmed");
-/// Someone other than the person a watch acts for tried to confirm it.
-/// Class `policy`.
-pub const WATCH_NOT_YOURS: FailureCode = FailureCode::fixed("watch_not_yours");
-/// A check of the watch is under way already. Class `busy`.
-pub const WATCH_CHECK_RUNNING: FailureCode = FailureCode::fixed("watch_check_running");
-/// The watch is paused. Class `busy`.
-pub const WATCH_PAUSED: FailureCode = FailureCode::fixed("watch_paused");
-/// The watch has ended. Class `policy`.
-pub const WATCH_ENDED: FailureCode = FailureCode::fixed("watch_ended");
-/// A run that is not the watch's own read was offered as its check. Class
-/// `policy`.
-pub const WATCH_RUN_NOT_ITS_OWN: FailureCode = FailureCode::fixed("watch_run_not_its_own");
-/// A paused watch cannot go on without a person confirming a new one: its
-/// version changed or its read drifted. Class `policy`.
-pub const WATCH_NEEDS_CONFIRMATION: FailureCode = FailureCode::fixed("watch_needs_confirmation");
-/// A check's run has not reached an end the watch can take. Class `busy`.
-pub const WATCH_CHECK_UNFINISHED: FailureCode = FailureCode::fixed("watch_check_unfinished");
-/// Due times passed with no check: the engine was not running, the watch
-/// was paused or held, or a check could not be admitted in time. A `gap`
-/// carries it. Class `busy`.
-pub const WATCH_DUE_MISSED: FailureCode = FailureCode::fixed("watch_due_missed");
-
-/// A check's run ended without completing and gave no failure: it was
-/// cancelled, or it expired. Class `busy`.
-pub const WATCH_CHECK_NOT_COMPLETED: FailureCode = FailureCode::fixed("watch_check_not_completed");
+pub use crate::codes::{
+    WATCH_CHECK_NOT_COMPLETED, WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_DUE_MISSED,
+    WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ, WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS,
+    WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
+};
 
 /// The shortest interval the ledger takes for a watch, whatever asks: the
 /// floor no setting lowers. The scheduler's setting may only raise it.
@@ -70,24 +45,6 @@ pub const WATCH_LONGEST: Duration = Duration::from_secs(366 * 86_400);
 /// not yet: until it does, no check is complete, and no removal is ever
 /// reported, only `unseen` (decision 0262).
 const COMPLETENESS_RECORDED: bool = false;
-
-/// Every failure code of a watch the ledger produces, with its one class.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Policy, "watch_not_a_read"),
-    (FailureClass::Policy, "watch_not_confirmed"),
-    (FailureClass::Policy, "watch_not_yours"),
-    (FailureClass::Busy, "watch_check_running"),
-    (FailureClass::Busy, "watch_paused"),
-    (FailureClass::Policy, "watch_ended"),
-    (FailureClass::Policy, "watch_run_not_its_own"),
-    (FailureClass::Policy, "watch_needs_confirmation"),
-    (FailureClass::Busy, "watch_check_unfinished"),
-    (FailureClass::Busy, "watch_due_missed"),
-    (FailureClass::Busy, "watch_check_not_completed"),
-    (FailureClass::UnknownVariant, "watch_key_repeated"),
-    (FailureClass::UnknownVariant, "watch_shapes_mixed"),
-    (FailureClass::UnknownVariant, "watch_result_not_its_shape"),
-];
 
 words! {
     /// Why a watch paused or ended: a state of the watch, not a failure.
@@ -2121,9 +2078,10 @@ mod tests {
                 FailureClass::UnknownVariant,
             ),
         ];
-        assert_eq!(constants.len(), ALL.len());
+        let all = crate::codes::WATCH_CODES;
+        assert_eq!(constants.len(), all.len());
         for (code, class) in constants {
-            assert!(ALL.contains(&(class, code.as_str())), "{code:?}");
+            assert!(all.contains(&(class, code.as_str())), "{code:?}");
         }
         for (class, code) in [
             state_refusal(WatchState::Asked),
@@ -2134,7 +2092,7 @@ mod tests {
         .iter()
         .map(|failure| (failure.class(), failure.code().as_str()))
         {
-            assert!(ALL.contains(&(class, code)));
+            assert!(all.contains(&(class, code)));
         }
     }
 }

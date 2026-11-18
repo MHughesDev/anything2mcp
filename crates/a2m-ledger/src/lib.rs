@@ -20,6 +20,7 @@
 mod audit;
 mod blob;
 mod codec;
+pub mod codes;
 mod failure;
 mod finding;
 mod keys;
@@ -70,22 +71,3 @@ pub use watch_compare::{
     Baseline, ChangedRecord, CheckDigests, CheckFault, Comparison, Held, MissingRecord,
     RecordDigests, VALUE_DOMAIN, WatchKey, compare, value_purpose,
 };
-
-/// The failure codes this crate produces. Each belongs to exactly one class.
-pub mod codes {
-    pub use crate::failure::{
-        APPROVAL_MISSING, APPROVAL_STALE, CHANGED_SINCE_PREVIEW, LEDGER_STATE_UNEXPECTED,
-        NOT_FOUND, READ_BACK_DIFFERS, RECONCILE_REQUIRED, RECORD_LOCKED, RUNNER_LOST, STORAGE_FULL,
-        STORE_CORRUPT, STORE_UNAVAILABLE, STORE_VERSION_UNSUPPORTED, TABLE_NOT_OWNED,
-    };
-    pub use crate::listing::IDEMPOTENCY_KEY_INVALID;
-    pub use crate::shadow::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
-    pub use crate::watch::{
-        ALL as WATCH_CODES, WATCH_CHECK_NOT_COMPLETED, WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED,
-        WATCH_DUE_MISSED, WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ,
-        WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS, WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
-    };
-    pub use crate::watch_compare::{
-        WATCH_KEY_REPEATED, WATCH_RESULT_NOT_ITS_SHAPE, WATCH_SHAPES_MIXED,
-    };
-}

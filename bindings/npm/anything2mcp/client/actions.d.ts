@@ -744,6 +744,70 @@ export interface VersionRollbackInput {
   version: string;
 }
 
+/**
+ * The input of `watch.changes`.
+ */
+export interface WatchChangesInput {
+  watch_id: string;
+  after?: number;
+  limit?: number;
+  wait_seconds?: number;
+}
+
+/**
+ * The input of `watch.confirm`.
+ */
+export interface WatchConfirmInput {
+  watch_id: string;
+}
+
+/**
+ * The input of `watch.create`.
+ */
+export interface WatchCreateInput {
+  ends_at: number;
+  interval_seconds: number;
+  tool: string;
+  environment?: string;
+  ignore?: string[];
+  input?: Record<string, unknown>;
+}
+
+/**
+ * The input of `watch.end`.
+ */
+export interface WatchEndInput {
+  watch_id: string;
+}
+
+/**
+ * The input of `watch.get`.
+ */
+export interface WatchGetInput {
+  watch_id: string;
+}
+
+/**
+ * The input of `watch.list`.
+ */
+export interface WatchListInput {
+  open_only?: boolean;
+}
+
+/**
+ * The input of `watch.pause`.
+ */
+export interface WatchPauseInput {
+  watch_id: string;
+}
+
+/**
+ * The input of `watch.resume`.
+ */
+export interface WatchResumeInput {
+  watch_id: string;
+}
+
 /** Every action this module has a method for, in the order of the document. */
 export declare const ACTIONS: readonly string[];
 
@@ -1349,4 +1413,57 @@ export declare abstract class Actions {
    * `version.rollback`.
    */
   versionRollback(input: VersionRollbackInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The changes a watch recorded after a number: added, changed, unseen, gaps, pauses,
+   * and its end, each with the runs of its checks. Waits up to `wait_seconds` for the
+   * first. Holds no value; read a check's run with run.get for that. The engine action
+   * is `watch.changes`.
+   */
+  watchChanges(input: WatchChangesInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Confirm a watch the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `watch.confirm`.
+   */
+  watchConfirm(input: WatchConfirmInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Ask for a watch: one published read, called with one fixed input at a fixed
+   * interval until an end, that records what was added, changed, or went out of view.
+   * Nothing runs until the caller's person confirms it on the engine's page. The engine
+   * action is `watch.create`.
+   */
+  watchCreate(input: WatchCreateInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * End a watch, by its person or by the caller that asked for it. Its checks and
+   * changes are kept. The engine action is `watch.end`.
+   */
+  watchEnd(input: WatchEndInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * One watch of the caller's person: its read, interval, end, state, and how many
+   * checks it made. Never a value the read returned. The engine action is `watch.get`.
+   */
+  watchGet(input: WatchGetInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The watches of the caller's person, oldest first. The engine action is
+   * `watch.list`.
+   */
+  watchList(input?: WatchListInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Pause a confirmed watch of the caller's person: no check runs until it is resumed.
+   * The engine action is `watch.pause`.
+   */
+  watchPause(input: WatchPauseInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Let a paused watch of the caller's person go on. One paused because its read
+   * changed or drifted never goes on. The engine action is `watch.resume`.
+   */
+  watchResume(input: WatchResumeInput, options?: CallOptions): Promise<Response>;
 }
