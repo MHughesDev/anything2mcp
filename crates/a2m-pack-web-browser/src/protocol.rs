@@ -494,6 +494,28 @@ pub(crate) struct CloseTarget<'a> {
 command!(CloseTarget<'_>, "Target.closeTarget" => Nothing);
 
 #[derive(Debug, Serialize)]
+pub(crate) struct GetTargets {}
+command!(GetTargets, "Target.getTargets" => TargetInfos);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TargetInfos {
+    pub target_infos: Vec<TargetInfo>,
+}
+
+/// One target as the browser lists it. Only what tells the engine's own
+/// pages from the browser's first window is read.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TargetInfo {
+    pub target_id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub browser_context_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetAutoAttach {
     pub auto_attach: bool,
@@ -532,6 +554,15 @@ pub(crate) struct Navigate<'a> {
     pub url: &'a str,
 }
 command!(Navigate<'_>, "Page.navigate" => Navigated);
+
+/// Puts a document the engine wrote into a frame, with no request.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetDocumentContent<'a> {
+    pub frame_id: &'a str,
+    pub html: &'a str,
+}
+command!(SetDocumentContent<'_>, "Page.setDocumentContent" => Nothing);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

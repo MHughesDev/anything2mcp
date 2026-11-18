@@ -89,6 +89,10 @@ impl fmt::Display for Reason {
 pub enum LaunchReason {
     /// No browser program was found in settings or in the known places.
     NotInstalled,
+    /// A window was asked for, and the engine's environment names no screen
+    /// to show it on (decision 0254). Nothing was started. The crate above
+    /// classes it.
+    NoScreen,
     /// The supervisor did not start the program; this is its failure, kept
     /// whole: an undeclared program, a limit, a place that is taken.
     Supervisor(Failure),
@@ -338,6 +342,9 @@ impl fmt::Display for BrowserError {
             }
             Self::LaunchFailed(reason) => match reason {
                 LaunchReason::NotInstalled => f.write_str("no browser is installed"),
+                LaunchReason::NoScreen => {
+                    f.write_str("a window was asked for, and there is no screen to show it on")
+                }
                 LaunchReason::Supervisor(failure) | LaunchReason::DataDirectory(failure) => {
                     write!(f, "the browser was not started: {failure}")
                 }
