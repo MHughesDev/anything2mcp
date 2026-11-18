@@ -4,7 +4,7 @@ The plan for getting Anything2MCP into the hands of software engineers, written 
 
 ## 1. What the survey shows
 
-Note 27, section 3.2, read from the pages of about 45 projects:
+Note 27's findings under "What makes the popular ones popular", read from the pages of about 45 projects:
 
 1. **A first result in one line, with no authoring.** The most-used browser and reference servers start with one command from a package runner (`npx …`, `uvx …`), and the first command gives a result.
 2. **The package manager a person already has.** Most use `npx`, several `uvx`, `uv`, or `pip`; one each `cargo` and `brew`.
@@ -15,7 +15,7 @@ Note 27, section 3.2, read from the pages of about 45 projects:
 7. **A place for the community to add.** Plug-ins, pieces, and components that other people contribute.
 8. **Candour about limits.** The more trusted READMEs say plainly that their own safety switch is "not a security boundary".
 
-Section 3.3 adds what this project has that the pages read do not show: no model at run time as a rule, a write recorded before it is made and read back after, a person who approves and an agent who cannot, secrets kept from the caller by a wrapper type, and nothing that phones home. Its caution governs this whole plan: the headline sentence "should not be said before it is true".
+Its findings under "What this product has that they do not" add what this project has that the pages read do not show: no model at run time as a rule, a write recorded before it is made and read back after, a person who approves and an agent who cannot, secrets kept from the caller by a wrapper type, and nothing that phones home. Its caution governs this whole plan: the headline sentence "should not be said before it is true".
 
 ## 2. Where this project stands against each
 
@@ -61,7 +61,7 @@ Each package is one branch and one pull request, unless it is the owner's act. "
 
 | | |
 | --- | --- |
-| What | A new action `demo.run`, with its command `anything2mcp demo`, generated from the registry like every command. It starts the built-in test application on a free loopback port, writes a project with the `example` target into a folder it names, publishes a read through the same page a person uses, calls it, then asks for one write to a declared test record, which rests at `needs_approval`, is approved by the person on the page, and is read back. Once AD1 is done, `npx anything2mcp demo`, `uvx anything2mcp demo`, and `pipx run anything2mcp demo` reach it with nothing else installed |
+| What | A new action `demo.run`, with its command `demo`, generated from the registry like every command. It starts the built-in test application on a free loopback port, writes a project with the `example` target into a folder it names, publishes a read through the same page a person uses, calls it, then asks for one write to a declared test record, which rests at `needs_approval`, is approved by the person on the page, and is read back. Once AD1 is done, `npx anything2mcp demo`, `uvx anything2mcp demo`, and `pipx run anything2mcp demo` reach it with nothing else installed |
 | Needs a decision | Shipping a test stand inside the product binary is new: the test application today is a crate under `targets/` that only tests use. The record must say how its control interface is kept to loopback and to the demo's run, and why its seed data is synthetic |
 | Crates | `a2m-actions` (the action), `anything2mcp` (joining the test application and the demo's target files), `example-app` (served from a library call, as the harness already does) |
 | What it cannot hide | The approval still needs the presence prompt. On a machine with none, the demo shows the page, says why nothing can be approved, and ends after the read. It must never pass the prompt for the person |
@@ -144,7 +144,7 @@ Proof: the page exists and the audit passes. Anything beyond this waits for the 
 
 ### AD10. The write-up
 
-An article the owner may publish, under the owner's name, arguing for "no model at run time, every write verified". An agent drafts it in the repository; the owner decides whether and where it appears. It may make only the claims in the table in section 4 that are marked "May be said now", each with its test named in a footnote, and it says what is not yet true as plainly as the README does.
+An article the owner may publish, under the owner's name, arguing for "no model at run time, every write verified". An agent drafts it in the repository; the owner decides whether and where it appears. It may make only the claims in the table under "What may be said, and when" that are marked "May be said now", each with its test named in a footnote, and it says what is not yet true as plainly as the README does.
 
 ## 4. What may be said, and when
 
