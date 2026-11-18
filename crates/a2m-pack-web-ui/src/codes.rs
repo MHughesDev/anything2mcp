@@ -58,6 +58,9 @@ a2m_core::failure_codes! {
     PAGE_WRITE_REFUSED = Policy, "page_write_refused",
         meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195).",
         next "Look at what the page does when it loads; a page that writes by itself is not read by the web pack, so read the record another way.";
+    ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
+        meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",
+        next "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.";
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it.",
         next "Compile the target again with the version of the web pack that is enabled.";

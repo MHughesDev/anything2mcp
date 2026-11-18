@@ -768,6 +768,7 @@ export interface WatchCreateInput {
   ends_at: number;
   interval_seconds: number;
   tool: string;
+  condition?: string;
   environment?: string;
   ignore?: string[];
   input?: Record<string, unknown>;

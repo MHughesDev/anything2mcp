@@ -241,7 +241,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `bindings` (required) | One or more bindings (below) |
 | `description` (required) | What it does, when to prefer something else, side effects, limits |
 | `examples` | One to three example inputs, each a map from an input's name to a value of its type |
-| `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use. A destination is one exact address: a host name or an address, with a port or a scheme where needed, and no wildcard, range, path, or user information. An upload or a download is one name |
+| `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use. A destination is one exact address: a host name or an address, with a port or a scheme where needed, and no wildcard, range, path, or user information. For a web tool it is an origin its pages may load from or send to, and needs its scheme, such as `https://assets.example.com`; one without a scheme gives the tool's tab nothing ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)). An upload or a download is one name |
 | `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
 
 **Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`.

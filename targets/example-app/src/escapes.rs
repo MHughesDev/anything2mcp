@@ -287,7 +287,8 @@ fn percent_decoded(text: &str) -> Option<String> {
 }
 
 async fn loads(RawQuery(query): RawQuery) -> Html<String> {
-    let quoted = |origin: Option<String>| origin.map_or_else(|| "\"\"".to_owned(), |o| format!("\"{o}\""));
+    let quoted =
+        |origin: Option<String>| origin.map_or_else(|| "\"\"".to_owned(), |o| format!("\"{o}\""));
     let from = quoted(origin_in(query.as_deref(), "from"));
     let frame = quoted(origin_in(query.as_deref(), "frame"));
     page(

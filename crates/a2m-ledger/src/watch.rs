@@ -1436,12 +1436,7 @@ impl Watches<'_, '_> {
         self.ended(id, seq, comparison)
     }
 
-    fn faulted(
-        &mut self,
-        id: WatchId,
-        seq: u64,
-        failure: &Failure,
-    ) -> Result<CheckEnded, Failure> {
+    fn faulted(&mut self, id: WatchId, seq: u64, failure: &Failure) -> Result<CheckEnded, Failure> {
         self.close_check(
             id,
             seq,
@@ -2139,7 +2134,12 @@ mod tests {
 
     #[test]
     fn every_word_of_a_watch_is_in_its_migration_and_the_ledger_schema() {
-        let migration = include_str!("../migrations/0021-ledger-watches-checks-and-changes.sql");
+        // Migration 0026 built the tables again with every word of 0021
+        // and `condition_met`.
+        let migration = concat!(
+            include_str!("../migrations/0021-ledger-watches-checks-and-changes.sql"),
+            include_str!("../migrations/0026-ledger-a-watch-ends-when-its-condition-holds.sql"),
+        );
         let schema = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
@@ -2245,6 +2245,10 @@ mod tests {
             ),
             (
                 crate::codes::WATCH_RESULT_NOT_ITS_SHAPE,
+                FailureClass::UnknownVariant,
+            ),
+            (
+                crate::codes::WATCH_CONDITION_UNANSWERED,
                 FailureClass::UnknownVariant,
             ),
         ];

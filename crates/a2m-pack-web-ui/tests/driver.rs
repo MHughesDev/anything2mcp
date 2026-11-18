@@ -836,3 +836,55 @@ async fn a_state_the_page_showed_before_the_click_is_never_taken_for_its_answer(
         scene.stand.end().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_sends_nothing_there()
+{
+    // The line item's form, on a page that loads an image and sends a
+    // `fetch` to the application's other name while it loads.
+    let (app, mut scene) = scene("loads").await;
+    the_other_name_is_reachable(&app).await;
+    let plan = changed(&scene, "screens/line_item.yaml", |text| {
+        text.replace(
+            "reach: {url: \"/orders/",
+            "reach: {url: \"/leaving/loads/orders/",
+        )
+    });
+    let failure = read_with(&mut scene, plan.clone()).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "origin_not_declared"),
+        "{failure}"
+    );
+    let other = app.url("").replace("127.0.0.1", "localhost");
+    let other = other.trim_end_matches('/');
+    assert!(failure.failure.message().contains(other), "{failure}");
+    assert_eq!(failure.sent, Sent::NotSent);
+    // Nothing reached the other name.
+    assert!(app.trap_writes().await.unwrap().is_empty());
+
+    // Declared as one of the operation's destinations, with its scheme,
+    // the other name receives what the page loads, and the read is made.
+    // A destination written without a scheme names no origin, and gives
+    // the tab nothing.
+    let surface = app.url("");
+    let surface = surface.trim_end_matches('/');
+    scene.destinations = Destinations::new([surface.to_owned(), other.replacen("http://", "", 1)]);
+    let failure = read_with(&mut scene, plan.clone()).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "origin_not_declared"),
+        "{failure}"
+    );
+    assert!(app.trap_writes().await.unwrap().is_empty());
+    scene.destinations = Destinations::new([surface.to_owned(), other.to_owned()]);
+    let read = read_with(&mut scene, plan).await.unwrap();
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    assert_eq!(
+        read.values.get("description"),
+        Some(&Value::from(stored.description.as_str()))
+    );
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.contains_key("leaving/loads-image"), "{arrived:?}");
+    scene.stand.end().await;
+}

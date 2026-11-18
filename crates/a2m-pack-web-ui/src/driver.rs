@@ -673,7 +673,15 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
     let first = refused.first()?;
     let address = Address::new(&first.address).ok();
     let place = shown(&address.as_ref().map(Address::origin).unwrap_or_default());
-    Some(if first.method == NAVIGATION {
+    Some(if first.method == a2m_pack_web_browser::OUTSIDE {
+        fail(
+            &codes::row::ORIGIN_NOT_DECLARED,
+            format!(
+                "The page sent a request to `{place}`, at {what}, which is neither the surface's origin nor a destination the operation declares. The browser failed it before it left, and the run stops: what the page does without it is not known."
+            ),
+            "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.",
+        )
+    } else if first.method == NAVIGATION {
         fail(
             &codes::row::SURFACE_NOT_DECLARED,
             format!(
@@ -1514,6 +1522,20 @@ impl TabSetup {
     }
 }
 
+/// Every address of a surface of the plan, in every environment.
+fn surface_addresses(plan: &a2m_core::Plan) -> BTreeSet<&str> {
+    plan.surfaces
+        .iter()
+        .map(|surface| surface.address.as_str())
+        .chain(
+            plan.environments
+                .iter()
+                .flat_map(|environment| environment.addresses.iter())
+                .map(|address| address.address.as_str()),
+        )
+        .collect()
+}
+
 /// The tab's setup, from the run's context and its session.
 pub(crate) fn tab_setup(
     cx: &PrepareContext<'_>,
@@ -1627,10 +1649,19 @@ pub(crate) fn tab_setup(
     };
     // The tab may be on the surface's own origin and on no other. The
     // surface's address is one of the run's destinations, checked
-    // above; another destination is another surface, whose screens
-    // this run does not hold, and a page of it is not acted on.
+    // above; another surface's address is not this run's to load from or
+    // act on. Its page may send requests also to each destination the
+    // operation declares that reads as an origin (decision 0292); one
+    // written without a scheme names none, and gives the tab nothing.
     let own = Address::new(&surface.address).map_err(unsent)?;
-    let origins = Origins::of([&own]);
+    let declared: Vec<Address> = cx
+        .destinations
+        .iter()
+        .filter(|address| !surface_addresses(cx.plan).contains(*address))
+        .filter(|address| address.starts_with("https://") || address.starts_with("http://"))
+        .filter_map(|address| Address::new(address).ok())
+        .collect();
+    let origins = Origins::of([&own]).and_requests_to(declared.iter());
     Ok(TabSetup {
         origin,
         profile,

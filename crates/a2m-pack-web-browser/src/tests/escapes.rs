@@ -411,7 +411,8 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
     // cannot register a worker (decision 0292); the one tab whose page
     // still can is a sign-in tab, which installs it here. Then a page of a
     // tab that may act wakes it, and the worker writes to its own origin,
-    // which the tab may reach.
+    // which the tab may reach; its socket is refused, since a service
+    // worker is held to the strictest lock in every tab.
     let browser = stand.open(&clerk).await;
     let register = "navigator.serviceWorker.register('/escapes/service-worker.js', {scope: '/escapes/'})\
         .then(() => navigator.serviceWorker.ready).then(() => 'ready', () => 'refused')";
@@ -435,10 +436,10 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
     drop(installing);
     assert_eq!(
         must(acting.page.as_the_page(poke, soon()).await),
-        "post sent, socket made"
+        "post sent, socket refused"
     );
-    let both = ["escapes/service-post", "escapes/service-socket"];
-    assert_eq!(arrived_all(&app, &both).await, both);
+    let post = ["escapes/service-post"];
+    assert_eq!(arrived_all(&app, &post).await, post);
     // The tab that may act passes the worker by: a request of its page
     // reaches the application, which serves no such page, and is not
     // answered by the worker (decision 0245, audit finding M6).

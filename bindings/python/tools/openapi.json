@@ -24824,7 +24824,8 @@
                  "gap",
                  "paused",
                  "resumed",
-                 "ended"
+                 "ended",
+                 "condition_met"
                 ]
                },
                "missed": {
@@ -24987,7 +24988,8 @@
                  "gap",
                  "paused",
                  "resumed",
-                 "ended"
+                 "ended",
+                 "condition_met"
                 ]
                },
                "missed": {
@@ -25185,6 +25187,9 @@
                 "whole",
                 "records"
                ]
+              },
+              "condition": {
+               "type": "string"
               },
               "confirmed_at": {
                "type": "integer"
@@ -25405,6 +25410,9 @@
                 "whole",
                 "records"
                ]
+              },
+              "condition": {
+               "type": "string"
               },
               "confirmed_at": {
                "type": "integer"
@@ -25626,6 +25634,9 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "condition": {
+          "type": "string"
+         },
          "ends_at": {
           "maximum": 99999999999999,
           "minimum": 0,
@@ -25704,6 +25715,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"
@@ -25872,6 +25886,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"
@@ -26089,6 +26106,9 @@
               "records"
              ]
             },
+            "condition": {
+             "type": "string"
+            },
             "confirmed_at": {
              "type": "integer"
             },
@@ -26244,6 +26264,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"
@@ -26452,6 +26475,9 @@
               "records"
              ]
             },
+            "condition": {
+             "type": "string"
+            },
             "confirmed_at": {
              "type": "integer"
             },
@@ -26607,6 +26633,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"
@@ -26847,6 +26876,9 @@
                  "records"
                 ]
                },
+               "condition": {
+                "type": "string"
+               },
                "confirmed_at": {
                 "type": "integer"
                },
@@ -27018,6 +27050,9 @@
                  "whole",
                  "records"
                 ]
+               },
+               "condition": {
+                "type": "string"
                },
                "confirmed_at": {
                 "type": "integer"
@@ -27208,6 +27243,9 @@
               "records"
              ]
             },
+            "condition": {
+             "type": "string"
+            },
             "confirmed_at": {
              "type": "integer"
             },
@@ -27363,6 +27401,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"
@@ -27571,6 +27612,9 @@
               "records"
              ]
             },
+            "condition": {
+             "type": "string"
+            },
             "confirmed_at": {
              "type": "integer"
             },
@@ -27726,6 +27770,9 @@
               "whole",
               "records"
              ]
+            },
+            "condition": {
+             "type": "string"
             },
             "confirmed_at": {
              "type": "integer"

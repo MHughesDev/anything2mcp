@@ -96,6 +96,7 @@ The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the
 - **A driver never signs in or renews.** It reports a sign of expiry through the lease and stops; the session keeper decides.
 - **The fixed environment never varies:** viewport, locale, time zone, color scheme, and reduced motion are set per target.
 - **A tab stays on its surface.** A `ui` tab is opened for its surface's origin, and the browser engine holds it there. A move the page tries to another origin, a window, and a download stop the run; after a committing click each leaves the write in doubt.
+- **A tab's page sends only where its tool says.** Every request of a tool's tab, from the page, its frames, and its workers, with any method, an image, a script, and a font included, goes only to the surface's origin and to the origins the operation declares in `permissions.destinations`, written with their scheme. The browser fails any other before it leaves and the run stops with `policy`, `origin_not_declared`, so the publish page can state where a web tool sends ([decision 0292](../../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)).
 - **An answer is what changed after the click.** A committing action is not clicked while the page already shows one of the screen's variants or the action's confirmation, since its answer could not be told from them ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)).
 
 A `ui` step costs under 50 ms of overhead and a `page_http` step under 20 ms, on a warm tab. These are budgets until measured ([section 225](../2-kernel/225-performance.md)).
@@ -294,6 +295,7 @@ In an observing tab:
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
 | A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child, a frame in another process or a service worker, takes its own before it runs or is not let run ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
+| A request to an origin the tab was not opened for | Failed before it leaves the browser, whatever its method, and reported as a limitation (decision 0292) |
 | A beacon, a form submitted with POST | Failed by the same interception |
 | A download, a window the page opens | Refused in the browser: no file is written, and the window is closed before it fetches anything. Each is reported as a limitation |
 | A permission, a file chooser | Every permission refused in the browser, for every origin, with no prompt; a file chooser opens nothing |
@@ -395,6 +397,7 @@ The pack masks restricted and password values in every snapshot and screenshot i
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The edge answered instead of the application. Never retried; a person is told ([section 302](302-the-web-pack-browser-engine.md)) |
 | `session_expired` | `needs_login` | Reported through the lease, after the keeper has the signal |
 | `policy` | `surface_not_declared`, `effect_not_declared` | A navigation or in-page request to an origin the target did not declare; a browser program the pack's manifest does not declare, which the scoped supervisor refuses |
+| `policy` | `origin_not_declared` | A request of a tool's page, a frame, or a worker to an origin that is neither its surface's nor one its operation declares, failed in the browser (decision 0292) |
 | `busy` | `browser_unavailable` | The browser is not installed |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent. Also a browser that was started and did not answer before the launch deadline: it is closed, and a slow start on a cold machine passes ([decision 0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md)) |
 

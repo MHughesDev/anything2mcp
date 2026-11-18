@@ -1136,3 +1136,225 @@ async fn two_watches_of_one_read_share_a_run_and_only_the_opener_is_marked() {
         .unwrap_err();
     assert!(changed.to_string().contains("never changes"), "{changed}");
 }
+
+/// A condition over the read's `total`, in the plan's form, as the registry
+/// compiles it against the read's outputs.
+fn total_reaches(at_least: i64) -> a2m_core::PlanExpr {
+    let mut env = a2m_expr::TypeEnv::new(a2m_expr::LibraryVersion::CURRENT);
+    env.declare(
+        a2m_expr::names::RESULT,
+        a2m_core::ValueType::Record(vec![a2m_core::FieldOf::required(
+            "total",
+            a2m_core::ValueType::Int,
+        )]),
+    )
+    .unwrap();
+    a2m_expr::compile(
+        &format!("result.total >= {at_least}"),
+        &env,
+        Some(&a2m_core::ValueType::Bool),
+    )
+    .unwrap()
+    .to_plan_expr()
+    .unwrap()
+}
+
+async fn confirmed_until(store: &Store, condition: a2m_core::PlanExpr) -> WatchId {
+    let watch = ask(
+        store,
+        NewWatch {
+            condition: Some(condition),
+            ..new_watch(EffectClass::Read)
+        },
+    )
+    .await
+    .unwrap();
+    store
+        .write(Durability::Synced, move |tx| {
+            tx.watches()
+                .confirm(watch.id, principal(1), Duration::from_secs(7), &plan())
+        })
+        .await
+        .unwrap();
+    watch.id
+}
+
+#[tokio::test]
+async fn a_condition_that_holds_on_a_checks_own_result_ends_the_watch() {
+    let folder = Folder::new("watch-condition");
+    let store = on_disk(&folder).await;
+    let watch = confirmed_until(&store, total_reaches(2)).await;
+    let first = check(&store, watch, 0, vec![order("A-1", "open", 1)]).await;
+    assert_eq!(
+        first.state,
+        WatchState::Confirmed,
+        "one order: it does not hold"
+    );
+    // A second order: the check records what it found, then that the
+    // condition held, and the watch ends, in the transaction that ended the
+    // check.
+    let second = check(
+        &store,
+        watch,
+        1,
+        vec![order("A-1", "open", 1), order("A-2", "open", 1)],
+    )
+    .await;
+    assert_eq!(second.state, WatchState::Ended);
+    assert_eq!(second.check.outcome, CheckOutcome::CutShort);
+    let told = changes(&store, watch).await;
+    let kinds: Vec<ChangeKind> = told.iter().map(|change| change.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            ChangeKind::Confirmed,
+            ChangeKind::Added,
+            ChangeKind::ConditionMet,
+            ChangeKind::Ended
+        ]
+    );
+    assert_eq!(told[2].check, Some(1));
+    assert_eq!(told[3].reason, Some(WatchReason::ConditionMet));
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    assert_eq!(row.reason, Some(WatchReason::ConditionMet));
+    assert_eq!(row.condition, Some(total_reaches(2)));
+    // The store holds the end, and no digest of the ended watch.
+    let raw = folder.raw();
+    let stored: (String, String) = raw
+        .query_row(
+            "SELECT state, reason FROM watches WHERE id = ?1",
+            [watch.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(stored, ("ended".to_owned(), "condition_met".to_owned()));
+    let baseline: i64 = raw
+        .query_row("SELECT COUNT(*) FROM watch_baseline", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(baseline, 0);
+    // Whoever sends the statement: a watch's condition never changes, and
+    // a condition is met only on a check of its watch.
+    raw_refused(
+        &folder,
+        &format!("UPDATE watches SET condition = NULL WHERE id = '{watch}'"),
+    );
+    raw_refused(
+        &folder,
+        &format!(
+            "INSERT INTO watch_changes (watch_id, kind, check_seq, at)
+             VALUES ('{watch}', 'condition_met', 9, 1)"
+        ),
+    );
+}
+
+#[tokio::test]
+async fn a_condition_that_cannot_be_answered_is_a_gap_and_the_baseline_stays() {
+    let folder = Folder::new("watch-condition-unanswered");
+    let store = on_disk(&folder).await;
+    let watch = confirmed_until(&store, total_reaches(1)).await;
+    let _ = check(&store, watch, 0, Vec::new()).await;
+    // The next result holds its orders and no `total`: the condition reads
+    // a value that is not there, and is never taken as false.
+    let run = begin(&store, watch, 1, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    let values: Values = [("orders", Value::List(vec![order("A-1", "open", 1)]))]
+        .into_iter()
+        .collect();
+    let result = CanonicalJson::encode(&values).unwrap().as_bytes().to_vec();
+    complete_with(&store, run, Some(result.clone())).await;
+    let seq = running_check(&store, watch).await;
+    let ended = end_with(&store, watch, seq, Some(result)).await.unwrap();
+    assert_eq!(ended.state, WatchState::Confirmed);
+    assert_eq!(ended.check.outcome, CheckOutcome::Faulted);
+    assert_eq!(
+        ended.check.why.as_ref().map(|(_, code)| code),
+        Some(&codes::WATCH_CONDITION_UNANSWERED)
+    );
+    let told = changes(&store, watch).await;
+    let kinds: Vec<ChangeKind> = told.iter().map(|change| change.kind).collect();
+    assert_eq!(kinds, [ChangeKind::Confirmed, ChangeKind::Gap]);
+    // The baseline is the first check's still: the one order is not taken
+    // in from a check that was not compared.
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    assert_eq!(row.baseline_through, Some(0));
+}
+
+#[tokio::test]
+async fn ask_refuses_a_condition_that_does_not_load_or_give_true_or_false() {
+    let store = memory().await;
+    let mut not_a_test = total_reaches(2);
+    not_a_test.result = a2m_core::ValueType::Int;
+    let mut not_canonical = total_reaches(2);
+    not_canonical.source = "result.total   >=2".to_owned();
+    for condition in [not_a_test, not_canonical] {
+        let failure = ask(
+            &store,
+            NewWatch {
+                condition: Some(condition),
+                ..new_watch(EffectClass::Read)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::SCHEMA_INVALID, "{failure:?}");
+    }
+}
+
+/// Migration 0026 builds `watches` and `watch_changes` again. Run once
+/// more on a store that holds a watch with checks, changes, and a baseline,
+/// it copies every row across, keeps every reference of the other tables
+/// whole, and gives back tables the store goes on using.
+#[tokio::test]
+async fn building_the_watch_tables_again_keeps_every_row_and_reference() {
+    let folder = Folder::new("watch-rebuild");
+    let store = on_disk(&folder).await;
+    let watch = confirmed(&store).await;
+    let _ = check(&store, watch, 0, vec![order("A-1", "open", 1)]).await;
+    let _ = check(&store, watch, 1, vec![order("A-2", "open", 1)]).await;
+    let counted = |raw: &rusqlite::Connection| -> Vec<i64> {
+        ["watches", "watch_checks", "watch_changes", "watch_baseline"]
+            .iter()
+            .map(|table| {
+                raw.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+            })
+            .collect()
+    };
+    let raw = folder.raw();
+    let before = counted(&raw);
+    assert!(before.iter().all(|count| *count > 0), "{before:?}");
+    raw.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    let text = include_str!("../migrations/0026-ledger-a-watch-ends-when-its-condition-holds.sql");
+    raw.execute_batch(&format!("BEGIN IMMEDIATE;\n{text}\nCOMMIT;"))
+        .unwrap();
+    assert_eq!(counted(&raw), before);
+    let broken: i64 = raw
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(broken, 0);
+    drop(raw);
+    // The rules hold on the tables built again, and the store goes on.
+    raw_refused(
+        &folder,
+        &format!("DELETE FROM watch_changes WHERE watch_id = '{watch}'"),
+    );
+    let _ = check(&store, watch, 2, vec![order("A-2", "shipped", 1)]).await;
+    let ended = store
+        .write(Durability::Synced, move |tx| {
+            tx.watches().end(watch, WatchReason::EndedByPerson)
+        })
+        .await
+        .unwrap();
+    assert_eq!(ended.state, WatchState::Ended);
+    let kinds: Vec<ChangeKind> = changes(&store, watch)
+        .await
+        .iter()
+        .map(|change| change.kind)
+        .collect();
+    assert_eq!(kinds.last(), Some(&ChangeKind::Ended), "{kinds:?}");
+}

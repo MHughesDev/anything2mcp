@@ -85,25 +85,35 @@ const REFUSED_BINDING: &str = "__anything2mcpRefused";
 /// script in the page, so a page that sets out to defeat it can; the
 /// interception of requests is in the browser, and cannot be reached from
 /// the page.
+///
+/// A service worker outlives the page that woke it, and any page of its
+/// origin may wake it again, so it is held to this script in both postures
+/// (decision 0292). A name already refused by it is passed over, so the
+/// script can be placed again in a worker an earlier tab locked.
 const REFUSE_SOCKETS: &str = r#"(() => {
   const report = (what, address) => {
     try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
   };
+  const mark = Symbol.for("anything2mcp.refused");
   const refusal = () => new DOMException("Refused while the page is only observed.", "SecurityError");
   for (const name of ["WebSocket", "WebTransport", "SharedWorker", "RTCPeerConnection"]) {
     if (!(name in globalThis)) continue;
+    if (globalThis[name] && globalThis[name][mark]) continue;
     const refused = function (address) {
       report(name, address);
       throw refusal();
     };
+    refused[mark] = true;
     Object.defineProperty(globalThis, name, { value: refused, writable: false, configurable: false });
   }
-  if (globalThis.ServiceWorkerContainer) {
+  if (globalThis.ServiceWorkerContainer && !ServiceWorkerContainer.prototype.register[mark]) {
+    const refused = function (address) {
+      report("ServiceWorker", address);
+      return Promise.reject(refusal());
+    };
+    refused[mark] = true;
     Object.defineProperty(ServiceWorkerContainer.prototype, "register", {
-      value: function (address) {
-        report("ServiceWorker", address);
-        return Promise.reject(refusal());
-      },
+      value: refused,
       writable: false,
       configurable: false,
     });
@@ -2288,8 +2298,15 @@ impl Page {
                 deadline,
             )
             .await;
+        // A service worker is held to the strictest script whatever the
+        // tab: it outlives the page and serves every page of its origin.
+        let sockets = if kind == "service_worker" {
+            REFUSE_SOCKETS
+        } else {
+            self.sockets.as_str()
+        };
         let now = Evaluate {
-            expression: &self.sockets,
+            expression: sockets,
             context_id: None,
             return_by_value: true,
             await_promise: false,
@@ -2300,7 +2317,7 @@ impl Page {
                     .call(
                         Some(session),
                         &AddScriptOnNewDocument {
-                            source: &self.sockets,
+                            source: sockets,
                             world_name: None,
                         },
                         deadline,
