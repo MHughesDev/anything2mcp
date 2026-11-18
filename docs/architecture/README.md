@@ -214,7 +214,7 @@ Test stands, the pip and npm packages, the pages, profiles, plug-in examples, be
 
 ## Pack designs
 
-A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). Every pack crate has a full design in [crates/](crates), next to the kernel's: the web pack's three crates and those of the HTTP, MCP, desktop, command, data, file, stream, and device packs. Every pack is designed in the specification, and listed in its [index](../spec/README.md).
+A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). Every pack crate has a full design in [crates/](crates), next to the kernel's: the web pack's three crates and those of the HTTP, MCP, desktop, command, data, file, stream, and device packs. Every pack is designed in the specification, and listed in its [index](../spec/README.md). To add a pack, read [writing a pack](writing-a-pack.md): the parts of a pack as they are in the code, the entry bar with where the file pack clears each item, and what is not yet possible.
 
 ## Using this folder
 

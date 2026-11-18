@@ -46,6 +46,10 @@ The documentation audit checks links, counts, names, and the rule that kernel cr
 - **Noted.** Anything a user would notice gets a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md).
 - **In the project's words.** Use the terms in the [glossary](docs/reference/glossary.md) and no synonyms for them.
 
+## Adding a pack
+
+A pack teaches the product one kind of system, and today it is a crate in this repository. [Writing a pack](docs/architecture/writing-a-pack.md) lists its parts as they are in the code, the eight-item entry bar of [spec section 202](docs/spec/2-kernel/202-kernel-and-packs.md) with the place the file pack clears each, and the proofs a pack owes. Open an issue naming the kind of system and its test stand before writing code. A pack outside this repository is not yet possible, because the plug-in protocol is not built.
+
 ## Rules that are never traded away
 
 The ten rules in [AGENTS.md](AGENTS.md) bind every change. The ones contributors meet most often:

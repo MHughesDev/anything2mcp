@@ -113,7 +113,7 @@ Each package is one branch and one pull request, unless it is the owner's act. "
 
 Rule 9 says the project publishes no catalog of target files for real applications, and they live outside this repository. That is the owner's rule.
 
-**The open question, as note 27 states it:** "Rule 9: may the project list or link target files that other people publish and host, without hosting them or naming a real application in this repository?" [Decision 0213](../decisions/0213-whether-a-target-someone-else-wrote-may-be-loaded-and-found.md) (Proposed, owner decision) asks it in two parts and recommends yes to loading a target someone else wrote under [section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)'s rules, and no, for now, to the project pointing at where they are.
+**The open question, as note 27 states it:** "Rule 9: may the project list or link target files that other people publish and host, without hosting them or naming a real application in this repository?" [Decision 0213](../decisions/0213-whether-a-target-someone-else-wrote-may-be-loaded-and-found.md) asked it in two parts. The owner answered ([decision 0242](../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)): a target someone else wrote may be loaded, under [section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)'s rules, and the project still keeps no list of places where targets are published.
 
 What can be done without changing the rule, by an agent:
 

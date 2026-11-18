@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use a2m_actions::settings::{Layer, SCHEMA, find};
+use a2m_actions::settings::{InstallationKeeper, Layer, SCHEMA, find};
 use a2m_actions::{Settings, Sources, settings::SourceFile};
 use a2m_core::{FailureClass, Value};
 
@@ -241,15 +241,47 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
     })
     .unwrap();
     assert_eq!(tightened.int("policy.max_records_per_run"), Some(5));
-    // The installation file may loosen: there it is visible as such. A
-    // higher layer may then go back down, and not above it.
+    // The installation file an administrator keeps may loosen: there it
+    // is visible as such. A higher layer may then go back down, and not
+    // above it.
     let installation = Settings::load(&Sources {
         installation: file("installation.toml", loosen),
+        installation_keeper: InstallationKeeper::Administrator,
         user: file("user.toml", "[policy]\nmax_records_per_run = 200\n"),
         ..Sources::none()
     })
     .unwrap();
     assert_eq!(installation.int("policy.max_records_per_run"), Some(200));
+    // An installation file another account can change, or one nobody
+    // checked, is held to the person's rule (decision 0241): it may
+    // tighten, and its loosening is refused by name with the file.
+    for keeper in [
+        InstallationKeeper::default(),
+        InstallationKeeper::Open {
+            path: PathBuf::from("installation"),
+            why: "belongs to an account that is not the administrator's",
+        },
+    ] {
+        let failure = Settings::load(&Sources {
+            installation: file("installation.toml", loosen),
+            installation_keeper: keeper.clone(),
+            ..Sources::none()
+        })
+        .unwrap_err();
+        assert_eq!(failure.code().as_str(), "setting_protected");
+        assert!(
+            failure.message().contains("installation.toml")
+                && failure.message().contains("only when no account but an administrator"),
+            "{failure}"
+        );
+        let tightened = Settings::load(&Sources {
+            installation: file("installation.toml", tighten),
+            installation_keeper: keeper,
+            ..Sources::none()
+        })
+        .unwrap();
+        assert_eq!(tightened.int("policy.max_records_per_run"), Some(5));
+    }
     // The other directions: a list that grows, a switch that turns on, a
     // word further down its rank.
     for loosening in [
@@ -315,6 +347,7 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     ] {
         let failure = Settings::load(&Sources {
             installation: file("installation.toml", locked),
+            installation_keeper: InstallationKeeper::Administrator,
             user: file("user.toml", change),
             ..Sources::none()
         })
@@ -323,12 +356,23 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     }
     let kept = Settings::load(&Sources {
         installation: file("installation.toml", locked),
-        user: file("user.toml", "[logging]\nformat = \"json\"\n"),
+        installation_keeper: InstallationKeeper::Administrator,
+        user: file("user.toml", "[tools]\nlisted_limit = 10\n"),
         ..Sources::none()
     })
     .unwrap();
     assert!(kept.entry("policy.max_records_per_run").unwrap().locked);
-    assert!(!kept.entry("logging.format").unwrap().locked);
+    assert!(!kept.entry("tools.listed_limit").unwrap().locked);
+    assert_eq!(kept.int("tools.listed_limit"), Some(10));
+    // A lock holds a value against the person's own layers: it is taken
+    // only from a file an administrator keeps.
+    let failure = Settings::load(&Sources {
+        installation: file("installation.toml", locked),
+        ..Sources::none()
+    })
+    .unwrap_err();
+    assert_eq!(failure.code().as_str(), "setting_protected");
+    assert!(failure.message().contains("lock keys only when"), "{failure}");
     // Only the installation file may lock.
     assert!(
         Settings::load(&Sources {
@@ -515,6 +559,7 @@ fn a_proxy_setting_is_refused_while_no_proxy_is_supported() {
             "settings.toml",
             "[network]\nproxy = \"http://proxy.example.invalid:3128\"\n",
         ),
+        installation_keeper: InstallationKeeper::Administrator,
         ..Sources::none()
     };
     let failure = Settings::load(&sources).unwrap_err();

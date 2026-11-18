@@ -186,7 +186,6 @@ Of the `engine.*` actions, which act on the process, `engine.stop` is carried ou
 | --- | --- | --- |
 | pip | One wheel per platform: this binary and the pure-Python `anything2mcp` package, the SDK. No engine logic in Python ([decision 0025](../../decisions/0025-pip-and-npm-packages-ship-the-binary-with-a-thin-sdk-no-in-process-bindings-yet.md)) | The binary as a script on the path; `a2m` to be settled by research brief 28 |
 | npm | A launcher package and one package per platform holding only the binary; the TypeScript SDK; no install script | The launcher's commands start the platform binary |
-| crates.io | This crate | `cargo install anything2mcp` builds both small targets from the one module |
 | Standalone | Installers, Homebrew and winget entries, a container image, an offline bundle | The binary, and a link or copy for `a2m` |
 
 Every first-party pack is compiled in and switched off until enabled ([spec section 605](../../spec/6-running-it/605-packaging-and-release.md)). The SDKs start `bridge` for a local engine, or speak HTTPS to a server; both are generated from the recorded catalog and the OpenAPI document.

@@ -213,11 +213,11 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0208 | [The first release reaches what the person's machine reaches, and serves on that machine only](0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md) | Accepted (owner decision) |
 | 0205 | [A sign-in an agent asks for is carried out by its person on the engine's page](0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md) | Accepted (design decision) |
 | 0206 | [The `page_http` mode writes by PUT, with the page's own token, in an acting tab](0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md) | Accepted (design decision) |
-| 0211 | [Whether the engine may ever act in a session the person already has](0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md) | Proposed (owner decision) |
-| 0212 | [Whether an application that offers only pixels is ever reached](0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) | Proposed (owner decision) |
-| 0213 | [Whether a target someone else wrote may be loaded, and found](0213-whether-a-target-someone-else-wrote-may-be-loaded-and-found.md) | Proposed (owner decision) |
+| 0211 | [Whether the engine may ever act in a session the person already has](0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md) | Accepted (owner decision, by 0242) |
+| 0212 | [Whether an application that offers only pixels is ever reached](0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) | Accepted (owner decision, by 0242) |
+| 0213 | [Whether a target someone else wrote may be loaded, and found](0213-whether-a-target-someone-else-wrote-may-be-loaded-and-found.md) | Accepted (owner decision, by 0242) |
 | 0214 | [Ways through the refusals that keep a person from their own machine](0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md) | Proposed (design decision) |
-| 0215 | [Whether a person may pre-approve an action that leaves nothing to read back](0215-whether-a-person-may-pre-approve-an-action-that-leaves-nothing-to-read-back.md) | Proposed (owner decision) |
+| 0215 | [Whether a person may pre-approve an action that leaves nothing to read back](0215-whether-a-person-may-pre-approve-an-action-that-leaves-nothing-to-read-back.md) | Accepted (owner decision, by 0242) |
 | 0209 | [The desktop pack reads Windows applications through UI Automation, on a thread of its own](0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md) | Accepted (design decision) |
 | 0216 | [The command pack on three systems: the check on Windows, the administrators' group, and a script the target keeps](0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md) | Accepted (design decision) |
 | 0217 | [The HTTP pack reads answers that are not JSON](0217-the-http-pack-reads-answers-that-are-not-json.md) | Accepted (design decision) |
@@ -227,16 +227,16 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0231 | [The owner's direction is written in exact words of the agent's own](0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md) | Accepted (owner decision) |
 | 0220 | [A first run on Linux needs no administrator's file](0220-a-first-run-on-linux-needs-no-administrators-file.md) | Accepted (design decision) |
 | 0223 | [A network is a place, a recognized network, and a reach](0223-a-network-is-a-place-a-recognized-network-and-a-reach.md) | Proposed (design decision) |
-| 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Proposed (owner decision) |
-| 0225 | [Whether anything is ever sent on a network the person has not named](0225-whether-anything-is-ever-sent-on-a-network-the-person-has-not-named.md) | Proposed (owner decision) |
-| 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Proposed (owner decision) |
-| 0232 | [Whether a credential the machine holds for the person may be used through its holder](0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Proposed (owner decision) |
-| 0233 | [Whether being told by another machine is serving it](0233-whether-being-told-by-another-machine-is-serving-it.md) | Proposed (owner decision) |
+| 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Accepted (owner decision, by 0242) |
+| 0225 | [Whether anything is ever sent on a network the person has not named](0225-whether-anything-is-ever-sent-on-a-network-the-person-has-not-named.md) | Accepted (owner decision, by 0242) |
+| 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Accepted (owner decision, by 0242) |
+| 0232 | [Whether a credential the machine holds for the person may be used through its holder](0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Accepted (owner decision, by 0242) |
+| 0233 | [Whether being told by another machine is serving it](0233-whether-being-told-by-another-machine-is-serving-it.md) | Accepted (owner decision, by 0242) |
 | 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Proposed (design decision) |
 | 0236 | [A declared setting whose feature is not built is refused by name](0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) | Accepted (design decision) |
 | 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |
-| 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Proposed (owner decision) |
-| 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Proposed (owner decision) |
+| 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Accepted (owner decision, by 0242) |
+| 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Accepted (owner decision, by 0242) |
 | 0219 | [Shadow bindings reach the product, and what a first run by hand found is mended](0219-shadow-bindings-reach-the-product-and-the-first-hour-is-mended.md) | Accepted (design decision) |
 | 0221 | [The repository is cleaned, and its names say what each thing holds](0221-the-repository-is-cleaned-and-its-names-say-what-each-thing-holds.md) | Accepted (design decision) |
 | 0242 | [The owner takes the recommended answer to every open question](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) | Accepted (owner decision) |

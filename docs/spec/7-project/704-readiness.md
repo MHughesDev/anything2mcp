@@ -130,8 +130,8 @@ These are named in the specification and left for the package that builds them. 
 | Usage metering | Phase 9; the ledger already holds the data |
 | High-availability details of the cluster profile | Package 9.4; the stateless front and outward-connecting runners already allow it |
 | Packs beyond the nine designed | One at a time, each designed as its own section first and cleared against the entry bar |
-| A browser extension that works inside the person's own profile | Not while rule five stands: it would drive the person's everyday profile. Whether it may is the owner's question in [decision 0211](../../decisions/0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md) (Proposed) |
-| A vision mode for interfaces that offer only pixels | Not planned; clicking by position cannot be verified. Whether a read-only form is ever wanted is the owner's question in [decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) (Proposed) |
+| A browser extension that works inside the person's own profile | Not while rule five stands: it would drive the person's everyday profile. The owner confirmed this ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)): the engine does not act in the person's everyday browser, by an extension or otherwise |
+| A vision mode for interfaces that offer only pixels | Not planned; clicking by position cannot be verified. The owner decided that nothing in a run reads a picture ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) |
 
 ## Risks
 
@@ -163,7 +163,6 @@ Ordered by how much they could change the design.
 None of these stops the build. [Publishing setup](../../plan/publishing-setup.md) has the detail for the first three.
 
 - PyPI: a pending trusted publisher for `anything2mcp` that names the renamed repository, the workflow `release.yml`, and the environment `pypi`. The first release from the workflow then holds the name.
-- crates.io: one first publish of `anything2mcp`, after which trusted publishing can be configured.
 - npm: one first publish of `anything2mcp`, after which trusted publishing can be configured.
 - Switch on private vulnerability reporting in the repository's settings.
 - Confirm a Windows machine is available, or that CI is the only Windows environment.

@@ -17,7 +17,7 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 ## Status
 
-**Pre-alpha. Not yet published to PyPI, npm, or crates.io**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source.
+**Pre-alpha. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source.
 
 What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio bridge, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
 
@@ -124,14 +124,14 @@ A neutral kernel does the work that is the same everywhere; a pack knows one kin
 Each limit carries its kind, as in [SCOPE.md](SCOPE.md): a rule (one of the ten rules in AGENTS.md, which only the owner changes), a choice (a design choice in force today), or not yet.
 
 - **It does not improvise.** No model runs at run time, so when a page or a response changes, a tool stops with a named failure instead of finding its way around. Rule 1.
-- **It does not use your everyday browser profile.** The browser runs with a data directory the engine owns. Rule 5; whether that may ever change is a question open for the owner ([decision 0211](docs/decisions/0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md)).
-- **It does not click by pixel or read a screenshot.** It reaches controls through the page or the accessibility tree, or not at all. Rules 1, 3, and 7; whether a fixed, non-learned recognizer may ever read a screen is a question open for the owner ([decision 0212](docs/decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md)).
+- **It does not use your everyday browser profile.** The browser runs with a data directory the engine owns. Rule 5; the owner confirmed it ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). A permission you grant the engine in the system's own settings is within the rule.
+- **It does not click by pixel or read a screenshot.** It reaches controls through the page or the accessibility tree, or not at all. Rules 1, 3, and 7; the owner decided that nothing in a run reads a picture; the scout may keep a screenshot as build-time evidence, which is not built yet ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)).
 - **It does not get past a sign-in, a licence check, or bot protection.** A block is a named stop. Rule 5.
 - **It does not loosen its rules by setting.** An empty settings file is the safe single-user installation; layers closer to a project can only make things stricter ([configuration](docs/spec/2-kernel/226-configuration.md)). Choice ([decision 0066](docs/decisions/0066-configuration-in-layers-that-may-only-tighten-and-a-bar-that-is-measured.md)).
 
 ## Installing
 
-Today, only from source, as above. A release will bring one binary by three routes: a pip wheel for eight platforms, an npm launcher with eight platform packages, and later crates.io. The release workflow builds and checks the wheels and the npm packages, and has never published; nothing is on a registry yet. [Publishing setup](docs/plan/publishing-setup.md) says what remains, and the [changelog](CHANGELOG.md) will say when it changes.
+Today, only from source, as above. A release will bring one binary by two routes: a pip wheel for eight platforms and an npm launcher with eight platform packages. The product is not published to crates.io ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). The release workflow builds and checks the wheels and the npm packages, and has never published; nothing is on a registry yet. [Publishing setup](docs/plan/publishing-setup.md) says what remains, and the [changelog](CHANGELOG.md) will say when it changes.
 
 ## Documentation
 

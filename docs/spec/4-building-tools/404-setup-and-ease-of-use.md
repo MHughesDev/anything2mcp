@@ -14,7 +14,7 @@ anything2mcp serve                # run as a server in the configured profile
 
 Principles behind the commands:
 
-- **One install.** `pip install anything2mcp`, `npm install -g anything2mcp`, `cargo install anything2mcp`, a downloadable binary, or a container image all deliver the same binary.
+- **One install.** `pip install anything2mcp`, `npm install -g anything2mcp`, a downloadable binary, or a container image all deliver the same binary.
 - **Sensible defaults.** A new install is the Solo profile: stdio, a local store, the user's own sign-in, approvals on for writes. Nothing needs configuring to start.
 - **`anything2mcp doctor`** checks the browser, key store, network reach to each target, session health, and clock, and prints a fix for each problem.
 - **Every error names its fix.** Failures carry a code, a plain sentence, and the next command or tool to run.

@@ -19,7 +19,7 @@ How a version of Anything2MCP is numbered, built, and published. The design behi
 
 ## Publishing
 
-Publishing cannot be undone. A published version can be yanked, and never replaced.
+The first version to publish is 0.1.0, once the first hour works from a published package ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)); the manifests carry 0.0.1 until then. Publishing cannot be undone. A published version can be yanked, and never replaced.
 
 Only the release workflow publishes, with short-lived credentials that the registry issues to that one workflow file. No token is stored, and nobody publishes from their own machine.
 
@@ -32,11 +32,11 @@ The workflow builds eight platform wheels and a source distribution with maturin
 
 For npm it takes the binary out of each wheel (so the npm and pip packages carry the same binary, built once), puts it in that platform's package, packs the eight platform packages and the launcher, and checks the nine together: one version, the launcher naming exactly the eight at that version, the right `os` and `cpu`, one executable binary in each, nothing outside the `files` list, and the launcher installed from the packed files and run under both names. Then one job waiting on the `npm` environment publishes the eight platform packages and the launcher last, with npm's trusted publishing and provenance and no token. **If it stops halfway**, some platform packages are on the registry and the launcher is not. Re-run the failed job (Actions, Re-run failed jobs): it asks the registry for each version first and skips one that is already there, so it finishes the set. A version already published is never replaced; if one of the published binaries was wrong, publish a higher version. The npm and PyPI publish jobs are independent: either can be re-run alone.
 
-The workflow also writes a bill of materials, a list per target of the Rust crates compiled into the binary with their licences, and keeps it as the run's `bill-of-materials` artifact. It does not publish to crates.io, does not sign any artifact or attest the binaries, and makes no release page, no standalone archives or installers, and no list of third-party licence texts; see [publishing setup](docs/plan/publishing-setup.md). Before the first npm publish, the owner has setup to do there.
+The workflow also writes a bill of materials, a list per target of the Rust crates compiled into the binary with their licences, and keeps it as the run's `bill-of-materials` artifact. It does not publish to crates.io, which the product is not published to ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)), does not sign any artifact or attest the binaries, and makes no release page, no standalone archives or installers, and no list of third-party licence texts; see [publishing setup](docs/plan/publishing-setup.md). Before the first npm publish, the owner has setup to do there.
 
 Either way the workflow refuses to publish a version that is not the package's own, or a commit that is not on `main`.
 
-The order the design asks for, once more than one registry is involved: crates.io, the release page, PyPI, npm, then everything that installs from those. Today PyPI and npm are published by separate jobs that do not wait on each other.
+The order the design asks for, once more than one registry is involved: the release page, PyPI, npm, then everything that installs from those. Today PyPI and npm are published by separate jobs that do not wait on each other.
 
 ## After a release
 

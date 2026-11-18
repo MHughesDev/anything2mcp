@@ -22,7 +22,7 @@ Non-goals:
 
 - Defeating MFA, CAPTCHAs, bot defenses, licensing, or access controls. The system acts with exactly the user's rights, openly.
 - Live AI improvisation during a run.
-- Pixel-only targets such as remote desktops. [Section 106](106-what-it-latches-onto.md) refuses clicking by pixel; whether a later read-only mode is ever wanted is the owner's question in [decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) (Proposed).
+- Pixel-only targets such as remote desktops. [Section 106](106-what-it-latches-onto.md) refuses clicking by pixel; the owner decided that such applications are not reached at run time ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)).
 
 The four guarantees, each with how it is met and proven:
 
