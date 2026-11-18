@@ -881,6 +881,16 @@ pub struct FailsAs {
     pub code: FailureCode,
 }
 
+impl From<&crate::CodeEntry> for FailsAs {
+    /// A step that fails as the code of `row`, in the row's class.
+    fn from(row: &crate::CodeEntry) -> Self {
+        Self {
+            class: row.class,
+            code: row.failure_code(),
+        }
+    }
+}
+
 /// What a pipeline may not exceed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

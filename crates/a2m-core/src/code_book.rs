@@ -143,6 +143,15 @@ impl CodeEntry {
     pub const fn failure_code(&self) -> FailureCode {
         FailureCode::fixed(self.code)
     }
+
+    /// A failure of this code, in the row's class, with `message` and
+    /// `next` for the case at hand. Give the row's own [`next`](Self::next)
+    /// where the case adds nothing to it. The class comes from the row, so
+    /// the place that makes the failure cannot give the code another one.
+    #[must_use]
+    pub fn failure(&self, message: impl Into<String>, next: impl Into<String>) -> Failure {
+        Failure::new(self.class, self.failure_code(), message, next)
+    }
 }
 
 /// Whether `text` holds nothing but white space.
@@ -288,9 +297,11 @@ impl CodeBook {
 /// not ([`Passes::default_for`]). An empty meaning or next step, a malformed
 /// code, and a `then` that names no action fail when the crate is compiled.
 ///
-/// It writes, where it is called: a [`FailureCode`] constant per row with its
-/// meaning and next step as its documentation; `ALL`, every class and code;
-/// and `TABLE`, every row as a [`CodeEntry`]. Call it once per crate, in a
+/// It writes, where it is called: a module `row` with a [`CodeEntry`]
+/// constant per row, from which a failure of the code is made
+/// ([`CodeEntry::failure`]); a [`FailureCode`] constant of the same name per
+/// row, with its meaning and next step as its documentation; `ALL`, every
+/// class and code; and `TABLE`, every row. Call it once per crate, in a
 /// public module named `codes`, so that a book can list `<crate>::codes::TABLE`.
 #[macro_export]
 macro_rules! failure_codes {
@@ -311,20 +322,29 @@ macro_rules! failure_codes {
             ;
         )+
     ) => {
+        /// The row of each code, by the code's constant name. A failure of
+        /// one of these codes is made from its row, with `CodeEntry::failure`,
+        /// so that its class is the table's and no call site states one.
+        pub mod row {
+            $(
+                #[doc = $meaning]
+                pub const $name: $crate::CodeEntry = $crate::CodeEntry::__row(
+                    env!("CARGO_PKG_NAME"),
+                    $crate::FailureClass::$class,
+                    $code,
+                    $meaning,
+                    $next,
+                    $crate::failure_codes!(@passes $($passes)?),
+                    $crate::failure_codes!(@then $($action, $when)?),
+                );
+            )+
+        }
+
         $(
             #[doc = $meaning]
             #[doc = ""]
             #[doc = concat!("What to do: ", $next)]
-            pub const $name: $crate::FailureCode = $crate::CodeEntry::__row(
-                env!("CARGO_PKG_NAME"),
-                $crate::FailureClass::$class,
-                $code,
-                $meaning,
-                $next,
-                $crate::failure_codes!(@passes $($passes)?),
-                $crate::failure_codes!(@then $($action, $when)?),
-            )
-            .failure_code();
+            pub const $name: $crate::FailureCode = row::$name.failure_code();
         )+
 
         /// Every code of this crate with its one class.
@@ -334,17 +354,7 @@ macro_rules! failure_codes {
         /// Every code of this crate, with its class, meaning, next step,
         /// whether it passes by itself, and the action that is the usual
         /// way out.
-        pub const TABLE: &[$crate::CodeEntry] = &[ $(
-            $crate::CodeEntry::__row(
-                env!("CARGO_PKG_NAME"),
-                $crate::FailureClass::$class,
-                $code,
-                $meaning,
-                $next,
-                $crate::failure_codes!(@passes $($passes)?),
-                $crate::failure_codes!(@then $($action, $when)?),
-            )
-        ),+ ];
+        pub const TABLE: &[$crate::CodeEntry] = &[ $( row::$name ),+ ];
     };
 }
 
@@ -396,6 +406,13 @@ mod tests {
         assert_eq!(full.passes, Passes::ByItself);
         assert_eq!(full.then, None);
         assert_eq!(first::QUEUE_FULL, full.failure_code());
+        assert_eq!(&first::row::QUEUE_FULL, full);
+        // A failure made from a row has the row's class; nothing else gives it one.
+        let made = first::row::GATES_NOT_PASSED
+            .failure("Gates failed.", first::row::GATES_NOT_PASSED.next);
+        assert_eq!(made.class(), FailureClass::Input);
+        assert_eq!(made.code(), &first::GATES_NOT_PASSED);
+        assert_eq!(made.next_step(), "Run the gates, then publish again.");
         assert_eq!(first::TABLE[1].passes, Passes::NotByItself);
         let gates = &first::TABLE[2];
         let then = gates.then.unwrap();

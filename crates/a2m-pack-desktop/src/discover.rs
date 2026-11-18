@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, FindingKind,
-    LimitationCode, ProducedBy, Source, Step, Subject, UnknownReason, Value, Values,
+    Address, Coverage, EvidenceLevel, FailsAs, Failure, Finding, FindingKind, LimitationCode,
+    ProducedBy, Source, Step, Subject, UnknownReason, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -43,8 +43,7 @@ pub(crate) struct DesktopSnapshot {
 
 fn invalid(why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::STEP_NOT_USABLE,
+        &codes::row::STEP_NOT_USABLE,
         format!("The desktop driver's snapshot is not in the form this discoverer reads: {why}."),
         "Run the discovery again with the version of the desktop pack that is enabled.",
     )
@@ -71,10 +70,7 @@ impl Discoverer for DesktopSnapshot {
                 refers_to: None,
                 args: Vec::new(),
                 timeout_ms: STEP_TIMEOUT_MS,
-                fails_as: FailsAs {
-                    class: FailureClass::UnknownVariant,
-                    code: codes::UNEXPECTED_PAGE,
-                },
+                fails_as: FailsAs::from(&codes::row::UNEXPECTED_PAGE),
                 commits: false,
                 lookup: false,
                 idempotent: true,
