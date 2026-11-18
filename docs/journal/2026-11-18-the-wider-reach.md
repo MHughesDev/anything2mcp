@@ -1,13 +1,13 @@
 # 2026-11-18: the wider reach
 
-This entry covers the work after pull request 13 merged into `main` (merge commit 631d3ea). The entry before it is [the overnight build](2026-11-17-the-overnight-build.md). Its author ran no tests: every count below is taken from a record, a test file, CI's result, or the lead agent's notes, and the last are marked.
+This entry covers the work after pull request 13 merged into `main` (merge commit 631d3ea). The entry before it is [the overnight build](2026-11-17-the-overnight-build.md). Its authors ran no tests: every count below is taken from a record, a test file, CI's result, a pull request's description, or the lead agent's notes, and the last two are marked. It was first written while pull request 15 was open, and brought up to date after it merged; the section "After pull request 15 merged" is the later part.
 
 ## State at the end
 
-- **On `main`:** pull request 14, merged at its head 07eda99 (merge commit b487c6e) after five CI rounds. Every check passed on Windows, macOS, and Linux: 40 checks, with the two publish jobs skipped. It holds the work of decisions 0200 and 0205 to 0255.
-- **Open:** pull request 15, a draft, at the validated commit 42eea49, with CI running when this was written. It holds decisions 0258 to 0277 and their code. The whole tree was validated on Linux at that commit: 2,119 tests, none failing (the lead's count). Nothing in it has run on Windows or macOS.
-- **Written after that commit:** records 0278 to 0282, the documents they change, and this entry. They change no code.
-- **What works that did not before, proven in CI on all three systems:** the desktop pack reads Windows and macOS applications against its stand; the MCP pack starts a local server program on Windows; the shared check of who may change a program runs on Windows; the network readers run on Windows and macOS.
+- **On `main`:** pull request 14, merged at its head 07eda99 (merge commit b487c6e) after five CI rounds, with the work of decisions 0200 and 0205 to 0255; and pull request 15, merged at its head 851853e after two CI rounds, with decisions 0258 to 0277 and their code. For each, every check passed on Windows, macOS, and Linux: 40 checks, with the two publish jobs skipped.
+- **Open:** pull request 16, a draft, at 0a09a5b, with CI running when this was brought up to date. It holds decisions 0264 and 0278 to 0284 and their code. The whole tree passed on Linux at that commit: 2,153 tests, none failing (its description's count). Nothing new in it has run on Windows or macOS.
+- **Written after that commit:** record 0285, the documents it and the state above change, and this entry's later part. They change no code.
+- **What works that did not before, proven in CI on all three systems:** the desktop pack reads Windows and macOS applications against its stand; the MCP pack starts a local server program on Windows; the shared check of who may change a program runs on Windows; the network readers run on Windows and macOS (pull request 14); the second audit's fixes, the network tools, files handed to the scout, and the command line's log, help, and completion (pull request 15).
 
 ## Done
 
@@ -28,6 +28,18 @@ This entry covers the work after pull request 13 merged into `main` (merge commi
 - **The sixth audit's answers:** 0261, 0262, 0269, 0270, 0271, 0272, 0273 (below).
 - **What the scout may learn from a program itself** (0276) and research note 30 behind it, with the roadmap packages X1 to X7.
 
+### After pull request 15 merged
+
+- **Its two CI rounds.** The validated commit 42eea49, then 851853e: the test that a network answer from another process is dropped unread sent its forged datagram to the reader's own port, which a system allows only to a sender with the network-admin right, which a CI runner lacks. The reader's rule was unchanged; the reader now takes its datagrams through one function, so the test proves the drop on every machine.
+- **The unexplained lost answer.** During pull request 15's CI, one request on macOS lost its answer, and its cause was not found; the head that merged passed every check. Established since, in pull request 16: a command's failure for a lost answer now says what the client saw, in one of six fixed phrases, and `a_request_being_answered_when_the_channel_stops_is_still_answered` in `crates/a2m-local/src/tests/channel.rs` holds that a request the engine is answering when its channel stops is still answered. Not established: which side closed, whether the engine or the client was at fault, and whether it happens again. If it does, the phrase names the side.
+- **Watches reach an agent** ([0283](../decisions/0283-watches-reach-an-agent-through-the-registry-and-their-person-confirms-each-on-the-page.md)): eight `watch` actions through `a2m_action_run`, the person's confirmation on the engine's page, the tending of due checks, five protected settings, and an engine held from idle while a watch is due. Against the test application, ten quiet checks recorded nothing and one change made through the stand's interface was reported once, on that watch alone. Every read is compared whole. The line 0283 left owed to the scheduler, that a check refused for a spent budget waits for the refill, is done in `Scheduler::submit_check` (`a_check_refused_for_its_budget_waits_until_the_share_refills_and_misses_nothing`).
+- **Two watches of one read share a run** ([0285](../decisions/0285-two-watches-of-the-same-read-for-one-person-share-a-run-and-ending-one-never-cancels-a-run-another-rests-on.md), written in this later part): rule 6 gives the second watch's check the first one's unfinished run. That is kept. But a check's run is cancelled by its identifier alone in four places, so ending one watch, or a run resting for a sign-in, can cancel a run another watch's check or the person's own call rests on. The fix is package W2b; the person's own call is Not yet reached by it.
+- **The publish page** ([0264](../decisions/0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md)) renders the typed review, sign-ins first, from one call to the session keeper; the command, HTTP, and MCP packs state what their tools start, set, and send, and the file pack its part.
+- **The browser's request gap,** found while writing the web pack's statement for that page: `Page::judge_request` refuses a request only where a tab observes and the method may write, so a tab's images, scripts, styles, and its `GET`, `HEAD`, and `OPTIONS` requests go to any origin, and every request of a tab that may act passes. The web pack therefore states nothing about where a web tool sends. It is package P3, and `SCOPE.md` says so.
+- **The readers** ([0284](../decisions/0284-the-command-packs-scout-reads-a-fish-completion-file-and-a-manual-page-it-is-handed.md)): the command pack's scout reads a fish completion file and a manual page a person hands it from the project's `sources` folder, as text and never run, and keeps what each source says of each option; where they disagree, the draft asks. PowerShell's manifests and help files are package X4b.
+- **The failure-code tables** (0258): twenty crates are in the one form, `a2m-core` among them; seven are not (`a2m-actions`, `a2m-local`, `a2m-pack-desktop`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-web-browser`, `a2m-pack-web-ui`), package FC2.
+- **The roadmap** was brought to the code: W2 split into W2a (done), W2b, and W2c; X4 into X4a (done) and X4b; new rows P1 to P3 for the publish page and FC1 and FC2 for the tables; eighteen packages are ready.
+
 ### The five CI rounds of pull request 14
 
 1. The validated commit 0dce455 (2,022 tests on Linux, none failing; the lead's count). What failed on it was mended by the four commits below.
@@ -42,10 +54,10 @@ What the rounds showed is recorded in [decision 0278](../decisions/0278-what-the
 
 - The cold start of a command was one key derivation (Argon2id, 64 MiB, three passes): 1.9 s in an unoptimized build, 0.19 s optimized for size, 0.13 s fully optimized. Decision 0253 compiles it optimized in every build.
 - The `use` toolset's list was 8,431 bytes for eleven tools, about 2,100 tokens; the `build` toolset's 10,424 bytes for fifteen (round 2 of the [idea rounds](../plan/idea-rounds.md)).
-- The generator of the failure-code table found 356 codes where round 1 had counted 136; it finds 368 on the tree as it stands, 23 crates of them still outside the one table form (`tools/failure_codes.py --list`).
+- The generator of the failure-code table found 356 codes where round 1 had counted 136; it finds 368 on the tree as it stands, 23 crates of them still outside the one table form (`tools/failure_codes.py --list`). At 0a09a5b, seven crates are outside it.
 - 107 of 111 entries of the engine's home were readable by group and others, none of them in the clear (round 14); decision 0241 made the home the owner's alone.
 - The engine's log was empty after about 300 commands at the default level (round 16); decision 0266.
-- 38 of the catalog's 99 actions are not built (counted from the catalog and the handlers for [section 704](../spec/7-project/704-readiness.md)).
+- 38 of the catalog's 99 actions are not built (counted from the catalog and the handlers for [section 704](../spec/7-project/704-readiness.md)). After the eight `watch` actions, 38 of 107 (counted the same way, in the later part).
 - Nothing was measured on Windows or macOS beyond CI's pass or fail, and no budget of section 225 was measured.
 
 ## The two audit rounds, and what answered each
@@ -73,13 +85,13 @@ What the rounds showed is recorded in [decision 0278](../decisions/0278-what-the
 ## Changed in the design
 
 - **The owner's decisions:** 0208 (the machine is the measure of reach and the boundary of service), 0222 (the product knows its network), 0230 (the scope on both sides, describing without ruling), 0231 (the owner's direction in exact words of the agent's own), 0242 (the recommended answer to each of eighteen questions), and 0277 (the North Star). The owner handed the choice of 0276 to the agents, and stopped the idea rounds after round 25.
-- **Records written by agents,** each with its own status line: 0200, 0205 to 0207, 0209, 0211 to 0221, 0223 to 0226, 0232 to 0234, 0236 to 0241, 0243 to 0255, 0258, 0260 to 0263, 0266, 0269 to 0273, 0276, and in this pass:
+- **Records written by agents,** each with its own status line: 0200, 0205 to 0207, 0209, 0211 to 0221, 0223 to 0226, 0232 to 0234, 0236 to 0241, 0243 to 0255, 0258, 0260 to 0264, 0266, 0269 to 0273, 0276, 0283 to 0285, and in this pass:
   - [0278](../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md), what the first runs on Windows and macOS showed (it supersedes points 5 and 8 of 0209 in part);
   - [0279](../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md), what the surveys left open against 0276 (type libraries read from their bytes, the D-Bus reader on `quick-xml`, fish completions only, E6 withdrawn, one interception question left open, four interfaces and not five);
   - [0280](../decisions/0280-the-use-toolset-lists-at-most-twelve-tools.md), the `use` toolset lists at most twelve tools (it supersedes the last sentence of 0094 point 3);
   - [0281](../decisions/0281-an-mcp-result-is-to-carry-its-decision-so-that-a-call-at-the-mcp-door-can-be-explained.md), an MCP result is to carry its decision (not built);
   - [0282](../decisions/0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md), Proposed: whether the command pack may start programs that run what their arguments name.
-- **Numbers held for planned work and not yet written:** 0256, 0257, 0259, 0267, and 0268 (the command-line package), 0264 (the publish page), 0265 (a keyed digest of a body), 0274 (bounding a system's words in a tool's result), and 0275 (what the product holds for a person).
+- **Numbers held for planned work and not yet written:** 0256, 0257, 0259, 0267, and 0268 (the command-line package), 0265 (a keyed digest of a body), 0274 (bounding a system's words in a tool's result), and 0275 (what the product holds for a person).
 - **Research:** notes 27 to 30. Note 30 compares three ways for each thing the scout might learn from a compiled program: use existing software, take a part and adapt it, or build it.
 - **Reviews:** coverage, breadth, and configurability, in `docs/reviews/`, and the two audit rounds above.
 
@@ -104,6 +116,6 @@ Every record above that is not the owner's. The widest-reaching: a sign-in goes 
 
 ## Next
 
-1. **Read this entry, then pull request 15's CI result.** Mend what fails on Windows and macOS with commits built on 42eea49 from the named files alone, and merge when every check passes. Expect first runs of the held folder chain on Windows (0272), the macOS access lists and the Windows fixed-disk check (0271), and the Windows proxy lists (0261).
-2. **Then the registry lane, one package at a time in `a2m-actions`:** the watches' wiring (package W2, with what decision 0262 leaves to the registry); the publish page from the typed review summary (0264); the command-line package, its answers carrying their next step and a retry hint, and an MCP failure carrying the same data as every face, with the decision of 0281.
-3. **Alongside, in crates nobody holds:** the failure tables for the 23 crates outside the form; the scout's readers X1, X4, and the spike X7; package N2b; D7 and D8 of decision 0271.
+1. **Read this entry, then pull request 16's CI result.** Mend what fails on Windows and macOS with commits built on 0a09a5b from the named files alone, and merge when every check passes. Expect the first runs there of the watch tests (and their timing on slower runners), the publish page, and the command pack's readers; watch whether the lost answer on macOS comes again, and read its phrase if it does.
+2. **Then the registry lane, one package at a time in `a2m-actions`:** W2b, the cancels of decision 0285; then W2c; the command-line package, its answers carrying their next step and a retry hint, and an MCP failure carrying the same data as every face, with the decision of 0281.
+3. **Alongside, in crates nobody holds:** FC2, the seven crates outside the failure-code form, one at a time; P2 and P3, the remaining packs' statements and the browser's request gap; the scout's readers X1 and X4b, and the spike X7; package N2b; D7 and D8 of decision 0271.
