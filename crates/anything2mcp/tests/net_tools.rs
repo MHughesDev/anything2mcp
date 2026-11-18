@@ -14,7 +14,7 @@ mod common;
 
 use anything2mcp::PASSPHRASE_VARIABLE;
 use common::Machine;
-use common::served::{Bridge, Served, object, output, stateless, texts_under};
+use common::served::{Bridge, Served, output, stateless};
 use serde_json::{Value as Json, json};
 
 const VERBS: [&str; 7] = [
@@ -166,6 +166,8 @@ const PROXY: &str = "http://someone:pa/ss?wo#rd@proxy.example:3128";
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_proxy_password_in_the_engines_environment_reaches_no_caller() {
+    use common::served::{object, texts_under};
+
     let machine = Machine::new("orders", &[]).with_passphrase();
     // The engine's own environment holds the proxy. On Linux the reader
     // reads the engine's environment, never the caller's.

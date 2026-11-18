@@ -267,3 +267,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0273 | [The settings keeper, and the registry's owed lines, after a second reader](0273-the-settings-keeper-and-the-registrys-owed-lines-after-a-second-reader.md) | Accepted (design decision) |
 | 0263 | [A person hands the scout files of the project's sources folder, by names the discoverers declare](0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) | Accepted (design decision) |
 | 0272 | [The file pack's folder writes act through a held folder, after a second reader](0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md) | Accepted (design decision) |
+| 0260 | [The machine's network facts are served as reads of the local user, and one of them is listed](0260-the-machines-network-facts-are-served-as-reads-of-the-local-user-one-listed.md) | Accepted (design decision) |

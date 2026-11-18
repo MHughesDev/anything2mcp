@@ -125,6 +125,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - `serve` handles the hang-up signal, stops cleanly on a signal sent while it is still starting, and its last object names what stopped it (`by`, and the sending process for `engine stop`).
 - Every command's help says its effect, who may run it, and whether a person is asked; commands that are not built say so first and are marked in the listings; help wraps to the terminal's width.
 - `completion <shell>` prints a completion script for bash, zsh, fish, or PowerShell, generated from the commands themselves, with no engine.
+- Network tools: `anything2mcp net interfaces`, `routes`, `resolvers`, `neighbours`, `listeners`, `proxy`, and `standing` show what this machine already knows of its own networks, and send nothing. Agents see `a2m_net_standing` and reach the rest through `a2m_action_run`; a proxy's credentials never reach a caller (decision 0260).
 
 ### Changed
 

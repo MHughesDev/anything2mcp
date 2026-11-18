@@ -57,6 +57,13 @@ ACTIONS = (
     "grant.list",
     "grant.remove",
     "killswitch.set",
+    "net.interfaces",
+    "net.listeners",
+    "net.neighbours",
+    "net.proxy",
+    "net.resolvers",
+    "net.routes",
+    "net.standing",
     "plan.show",
     "plugin.install",
     "plugin.list",
@@ -733,6 +740,67 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def net_interfaces(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """This machine's network interfaces and their addresses, read from the
+        operating system. Hardware addresses are shown as their length only.
+        Sends nothing.
+
+        The engine action is ``net.interfaces``.
+        """
+        return self._action("net.interfaces", {}, idempotency_key)
+
+    def net_listeners(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The sockets listening on this machine, each with the kind of place its
+        address is, and the program that holds it where this user may see it.
+        Sends nothing.
+
+        The engine action is ``net.listeners``.
+        """
+        return self._action("net.listeners", {}, idempotency_key)
+
+    def net_neighbours(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The neighbour table this machine already holds, never refreshed by
+        asking. Hardware addresses are shown as their length only. Sends
+        nothing.
+
+        The engine action is ``net.neighbours``.
+        """
+        return self._action("net.neighbours", {}, idempotency_key)
+
+    def net_proxy(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The proxy setting this engine reads, with any credentials removed: on
+        Linux this engine's own environment, not the caller's; on Windows the
+        user's system setting. Read to be shown, never applied. Sends nothing.
+
+        The engine action is ``net.proxy``.
+        """
+        return self._action("net.proxy", {}, idempotency_key)
+
+    def net_resolvers(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The name servers and search domains this machine uses, as the system
+        states them. Sends nothing.
+
+        The engine action is ``net.resolvers``.
+        """
+        return self._action("net.resolvers", {}, idempotency_key)
+
+    def net_routes(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """This machine's routes, and each family's default routes, lowest metric
+        first. Sends nothing.
+
+        The engine action is ``net.routes``.
+        """
+        return self._action("net.routes", {}, idempotency_key)
+
+    def net_standing(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """Where this machine stands on its networks: for each interface, the kind
+        of place each of its addresses is, and which interface carries each
+        family's preferred default route. Sends nothing.
+
+        The engine action is ``net.standing``.
+        """
+        return self._action("net.standing", {}, idempotency_key)
 
     def plan_show(
         self,
