@@ -113,7 +113,10 @@ mod tests {
         let mut list: Vec<u32> = (0..9).collect();
         keep(&mut list, 3, "neighbours", &mut cuts);
         assert_eq!(cuts.len(), 1);
-        assert_eq!((cuts[0].kept, cuts[0].seen, cuts[0].table_cut), (3, 9, true));
+        assert_eq!(
+            (cuts[0].kept, cuts[0].seen, cuts[0].table_cut),
+            (3, 9, true)
+        );
     }
 
     #[test]

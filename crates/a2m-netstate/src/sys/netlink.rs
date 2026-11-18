@@ -135,14 +135,22 @@ fn dump_once(request: u16, fact: Fact) -> Result<Option<Dump>, NetError> {
                     return Ok(None);
                 }
                 match kind {
-                    NLMSG_DONE => return Ok(Some(Dump { messages, cut: false })),
+                    NLMSG_DONE => {
+                        return Ok(Some(Dump {
+                            messages,
+                            cut: false,
+                        }));
+                    }
                     NLMSG_ERROR => {
                         let code = datagram
                             .get(at + HEADER..at + HEADER + 4)
                             .map(|b| i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
                             .unwrap_or(0);
                         if code == 0 {
-                            return Ok(Some(Dump { messages, cut: false }));
+                            return Ok(Some(Dump {
+                                messages,
+                                cut: false,
+                            }));
                         }
                         let error = std::io::Error::from_raw_os_error(code.saturating_neg());
                         return Err(NetError::from_io(fact, &error));

@@ -45,8 +45,23 @@ const RTM_F_CLONED: u32 = 0x200;
 /// Software link kinds the kernel names that carry traffic inside other
 /// traffic. Any other named kind is a software link that is not a tunnel.
 const TUNNEL_KINDS: &[&str] = &[
-    "tun", "wireguard", "ipip", "gre", "gretap", "ip6gre", "ip6gretap", "sit", "ip6tnl", "vti",
-    "vti6", "vxlan", "geneve", "erspan", "ip6erspan", "bareudp", "gtp",
+    "tun",
+    "wireguard",
+    "ipip",
+    "gre",
+    "gretap",
+    "ip6gre",
+    "ip6gretap",
+    "sit",
+    "ip6tnl",
+    "vti",
+    "vti6",
+    "vxlan",
+    "geneve",
+    "erspan",
+    "ip6erspan",
+    "bareudp",
+    "gtp",
 ];
 
 fn ip_of(family: u8, bytes: &[u8]) -> Option<IpAddr> {
@@ -234,7 +249,11 @@ pub(crate) fn interfaces() -> Result<Interfaces, NetError> {
     }
     Ok(Interfaces {
         interfaces: found.into_values().collect(),
-        read_from: vec!["netlink RTM_GETLINK", "netlink RTM_GETADDR", "/sys/class/net"],
+        read_from: vec![
+            "netlink RTM_GETLINK",
+            "netlink RTM_GETADDR",
+            "/sys/class/net",
+        ],
         cut,
     })
 }

@@ -286,7 +286,8 @@ struct RouteMessage {
 
 fn messages(fact: Fact, table: &[u8]) -> Result<Vec<RouteMessage>, NetError> {
     let header = size_of::<libc::rt_msghdr>();
-    let field = |at: usize, offset: usize, width: usize| table.get(at + offset..at + offset + width);
+    let field =
+        |at: usize, offset: usize, width: usize| table.get(at + offset..at + offset + width);
     let mut found = Vec::new();
     let mut at = 0usize;
     while at + header <= table.len() {

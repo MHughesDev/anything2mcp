@@ -126,7 +126,9 @@ impl From<NetError> for Failure {
             NetError::Unreadable { what, .. } => Self::new(
                 FailureClass::UnknownVariant,
                 NetError::UNREADABLE,
-                format!("The system's answer for {name} had a shape this reader does not know: {what}."),
+                format!(
+                    "The system's answer for {name} had a shape this reader does not know: {what}."
+                ),
                 "Report the operating system and its version; the reader stops rather than guess.",
             ),
             NetError::Failed { code, .. } => Self::new(

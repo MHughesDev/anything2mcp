@@ -61,11 +61,8 @@ fn the_interfaces_agree_with_sys_and_the_kernels_local_table() {
             sys(name, "mtu"),
             "{name}"
         );
-        let flags = u32::from_str_radix(
-            sys(name, "flags").unwrap().trim_start_matches("0x"),
-            16,
-        )
-        .unwrap();
+        let flags =
+            u32::from_str_radix(sys(name, "flags").unwrap().trim_start_matches("0x"), 16).unwrap();
         if interface.state == Some(LinkState::Up) {
             assert_ne!(flags & 1, 0, "{name} is up but /sys says down");
         }
@@ -78,13 +75,20 @@ fn the_interfaces_agree_with_sys_and_the_kernels_local_table() {
         let zero = in_sys.chars().all(|c| c == '0' || c == ':');
         match &interface.hardware_address {
             Some(address) => {
-                let written: Vec<String> =
-                    address.octets().iter().map(|o| format!("{o:02x}")).collect();
+                let written: Vec<String> = address
+                    .octets()
+                    .iter()
+                    .map(|o| format!("{o:02x}"))
+                    .collect();
                 assert_eq!(written.join(":"), in_sys, "{name}");
             }
             None => assert!(zero || in_sys.is_empty(), "{name}"),
         }
-        if Path::new("/sys/class/net").join(name).join("wireless").exists() {
+        if Path::new("/sys/class/net")
+            .join(name)
+            .join("wireless")
+            .exists()
+        {
             assert_eq!(interface.kind, Some(InterfaceKind::Wireless));
         }
     }
@@ -149,7 +153,13 @@ fn the_ipv4_routes_are_those_of_proc_net_route() {
         let mask = text::proc_ipv4(c[7]).unwrap();
         let prefix = text::prefix_of_mask(&mask.octets()).unwrap();
         let gateway = (flags & 0x2 != 0).then_some(IpAddr::V4(gateway));
-        theirs.insert((c[0].to_owned(), IpAddr::V4(destination), prefix, gateway, metric));
+        theirs.insert((
+            c[0].to_owned(),
+            IpAddr::V4(destination),
+            prefix,
+            gateway,
+            metric,
+        ));
     }
     let ours: BTreeSet<_> = read
         .routes
@@ -187,7 +197,11 @@ fn the_ipv4_neighbours_include_every_entry_of_proc_net_arp() {
             .skip(1)
             .map(|line| {
                 let c: Vec<&str> = line.split_whitespace().collect();
-                (c[0].parse::<IpAddr>().unwrap(), c[3].to_owned(), c[5].to_owned())
+                (
+                    c[0].parse::<IpAddr>().unwrap(),
+                    c[3].to_owned(),
+                    c[5].to_owned(),
+                )
             })
             .collect::<BTreeSet<_>>()
     };

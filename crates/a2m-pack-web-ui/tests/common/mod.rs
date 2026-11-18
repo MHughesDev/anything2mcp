@@ -384,6 +384,17 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        self.try_prepare_leased(mode, fence, posture, None).await
+    }
+
+    /// The same, under a session's lease.
+    pub async fn try_prepare_leased(
+        &self,
+        mode: &Mode,
+        fence: Option<Fence>,
+        posture: Posture,
+        lease: Option<&a2m_auth::SessionLease>,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
         let handle = self.handle_of(mode);
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
@@ -402,7 +413,7 @@ impl Scene {
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
         };
-        let prepared = handle.prepare(&cx, None).await?;
+        let prepared = handle.prepare(&cx, lease).await?;
         Ok((handle, prepared))
     }
 

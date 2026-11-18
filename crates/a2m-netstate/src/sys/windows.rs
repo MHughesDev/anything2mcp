@@ -31,8 +31,7 @@ use windows_sys::Win32::NetworkManagement::IpHelper::{
     GetAdaptersAddresses, GetExtendedTcpTable, GetExtendedUdpTable, GetIpForwardTable2,
     GetIpNetTable2, IP_ADAPTER_ADDRESSES_LH, MIB_IPFORWARD_ROW2, MIB_IPFORWARD_TABLE2,
     MIB_IPNET_ROW2, MIB_IPNET_TABLE2, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID,
-    MIB_UDP6ROW_OWNER_PID, MIB_UDPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
-    UDP_TABLE_OWNER_PID,
+    MIB_UDP6ROW_OWNER_PID, MIB_UDPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER, UDP_TABLE_OWNER_PID,
 };
 use windows_sys::Win32::Networking::WinHttp::{
     WINHTTP_CURRENT_USER_IE_PROXY_CONFIG, WinHttpGetIEProxyConfigForCurrentUser,
@@ -41,8 +40,7 @@ use windows_sys::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_INET,
 };
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 
 use crate::bound::{self, MOST_INTERFACES, MOST_TABLE_BYTES};
@@ -215,9 +213,9 @@ fn adapters(fact: Fact) -> Result<Vec<Adapter>, NetError> {
             // SAFETY: a list the system wrote in the buffer, as above.
             let entry = unsafe { &*unicast };
             // SAFETY: the system wrote the socket address and its length.
-            if let Some(address) = unsafe {
-                ip_of_sockaddr(entry.Address.lpSockaddr, entry.Address.iSockaddrLength)
-            } {
+            if let Some(address) =
+                unsafe { ip_of_sockaddr(entry.Address.lpSockaddr, entry.Address.iSockaddrLength) }
+            {
                 addresses.push(InterfaceAddress {
                     address,
                     prefix_length: Some(entry.OnLinkPrefixLength),
@@ -231,9 +229,9 @@ fn adapters(fact: Fact) -> Result<Vec<Adapter>, NetError> {
             // SAFETY: a list the system wrote in the buffer, as above.
             let entry = unsafe { &*server };
             // SAFETY: the system wrote the socket address and its length.
-            if let Some(address) = unsafe {
-                ip_of_sockaddr(entry.Address.lpSockaddr, entry.Address.iSockaddrLength)
-            } {
+            if let Some(address) =
+                unsafe { ip_of_sockaddr(entry.Address.lpSockaddr, entry.Address.iSockaddrLength) }
+            {
                 name_servers.push(address);
             }
             server = entry.Next;
@@ -261,7 +259,11 @@ fn adapters(fact: Fact) -> Result<Vec<Adapter>, NetError> {
         }
         let length = (adapter.PhysicalAddressLength as usize).min(adapter.PhysicalAddress.len());
         found.push(Adapter {
-            index: if index != 0 { index } else { adapter.Ipv6IfIndex },
+            index: if index != 0 {
+                index
+            } else {
+                adapter.Ipv6IfIndex
+            },
             // SAFETY: the system wrote the name as a zero-ended wide string.
             name: unsafe { wide(adapter.FriendlyName) },
             if_type: adapter.IfType,
@@ -338,7 +340,11 @@ pub(crate) fn interfaces() -> Result<Interfaces, NetError> {
 /// functions, whose first member is the row count and whose rows follow at
 /// `rows`, and it has not been given back.
 #[allow(unsafe_code)] // reads a table the system lent, explained above
-unsafe fn rows<Row: Copy>(count: u32, rows: *const Row, table: *const core::ffi::c_void) -> Vec<Row> {
+unsafe fn rows<Row: Copy>(
+    count: u32,
+    rows: *const Row,
+    table: *const core::ffi::c_void,
+) -> Vec<Row> {
     let count = (count as usize).min(MOST_TABLE_BYTES / size_of::<Row>().max(1));
     // SAFETY: the system wrote `count` rows after the count; the bound
     // only shortens the read.
@@ -526,7 +532,10 @@ fn socket_table(fact: Fact, tcp: bool, family: u16) -> Result<Vec<u64>, NetError
 /// The rows of a socket table: its count, then its rows.
 fn table_rows<Row: Copy>(buffer: &[u64]) -> Vec<Row> {
     let bytes: Vec<u8> = buffer.iter().flat_map(|w| w.to_ne_bytes()).collect();
-    let Some(count) = bytes.get(..4).map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]])) else {
+    let Some(count) = bytes
+        .get(..4)
+        .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+    else {
         return Vec::new();
     };
     // The rows begin where the table's `table` member does: after the
@@ -574,7 +583,12 @@ fn program_of(process_id: u32) -> Option<String> {
     // SAFETY: the buffer holds `length` wide characters; the system writes
     // no more and sets `length` to what it wrote.
     let ok = unsafe {
-        QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buffer.as_mut_ptr(), &raw mut length)
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            buffer.as_mut_ptr(),
+            &raw mut length,
+        )
     };
     // SAFETY: the handle was opened above and is closed once.
     unsafe { CloseHandle(handle) };
@@ -590,19 +604,39 @@ pub(crate) fn listeners() -> Result<Listeners, NetError> {
     let mut found: Vec<(Transport, IpAddr, u16, u32)> = Vec::new();
     for row in table_rows::<MIB_TCPROW_OWNER_PID>(&socket_table(fact, true, AF_INET)?) {
         let address = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()));
-        found.push((Transport::Tcp, address, port_of(row.dwLocalPort), row.dwOwningPid));
+        found.push((
+            Transport::Tcp,
+            address,
+            port_of(row.dwLocalPort),
+            row.dwOwningPid,
+        ));
     }
     for row in table_rows::<MIB_TCP6ROW_OWNER_PID>(&socket_table(fact, true, AF_INET6)?) {
         let address = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr));
-        found.push((Transport::Tcp, address, port_of(row.dwLocalPort), row.dwOwningPid));
+        found.push((
+            Transport::Tcp,
+            address,
+            port_of(row.dwLocalPort),
+            row.dwOwningPid,
+        ));
     }
     for row in table_rows::<MIB_UDPROW_OWNER_PID>(&socket_table(fact, false, AF_INET)?) {
         let address = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()));
-        found.push((Transport::Udp, address, port_of(row.dwLocalPort), row.dwOwningPid));
+        found.push((
+            Transport::Udp,
+            address,
+            port_of(row.dwLocalPort),
+            row.dwOwningPid,
+        ));
     }
     for row in table_rows::<MIB_UDP6ROW_OWNER_PID>(&socket_table(fact, false, AF_INET6)?) {
         let address = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr));
-        found.push((Transport::Udp, address, port_of(row.dwLocalPort), row.dwOwningPid));
+        found.push((
+            Transport::Udp,
+            address,
+            port_of(row.dwLocalPort),
+            row.dwOwningPid,
+        ));
     }
     let mut programs = std::collections::BTreeMap::new();
     let listeners = found
@@ -651,7 +685,7 @@ pub(crate) fn proxy() -> Result<Proxy, NetError> {
     if ok == 0 {
         return Err(NetError::from_io(fact, &std::io::Error::last_os_error()));
     }
-    let mut take = |text: *mut u16| {
+    let take = |text: *mut u16| {
         // SAFETY: a zero-ended wide string the system allocated, or null.
         let value = unsafe { wide(text) };
         if !text.is_null() {

@@ -24,7 +24,7 @@ use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
-use crate::drive_folder::Entries;
+use crate::drive_folder::{Entries, Here};
 use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
     BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST,
@@ -1108,9 +1108,11 @@ impl Driver for FileDriver {
                     state
                         .entries
                         .act(
-                            &state.folder,
-                            self.limits,
-                            state.posture,
+                            Here {
+                                folder: &state.folder,
+                                limits: self.limits,
+                                posture: state.posture,
+                            },
                             step,
                             spec,
                             document,

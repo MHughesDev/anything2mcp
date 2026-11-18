@@ -80,7 +80,10 @@ const FORBIDDEN: &[&str] = &[
 const DEPENDENCIES: &[&str] = &["a2m-core", "serde", "rustix", "libc", "windows-sys"];
 
 fn sources(folder: &Path, found: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(folder).unwrap().flatten() {
+    for entry in std::fs::read_dir(folder)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .flatten()
+    {
         let path = entry.path();
         if path.is_dir() {
             sources(&path, found);
@@ -92,7 +95,7 @@ fn sources(folder: &Path, found: &mut Vec<PathBuf>) {
 
 /// A file's code: comment lines dropped, and the test module cut off.
 fn code(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
     let body = text.split("#[cfg(test)]").next().unwrap_or_default();
     body.lines()
         .filter(|line| !line.trim_start().starts_with("//"))
@@ -102,7 +105,10 @@ fn code(path: &Path) -> String {
 
 fn all_sources() -> Vec<PathBuf> {
     let mut found = Vec::new();
-    sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut found,
+    );
     found.sort();
     found
 }
@@ -111,11 +117,14 @@ fn all_sources() -> Vec<PathBuf> {
 fn no_source_file_connects_sends_listens_or_resolves() {
     let files = all_sources();
     // The readers of all three systems are here.
-    for name in ["linux.rs", "netlink.rs", "macos.rs", "windows.rs", "other.rs"] {
-        assert!(
-            files.iter().any(|f| f.ends_with(name)),
-            "{name} is missing"
-        );
+    for name in [
+        "linux.rs",
+        "netlink.rs",
+        "macos.rs",
+        "windows.rs",
+        "other.rs",
+    ] {
+        assert!(files.iter().any(|f| f.ends_with(name)), "{name} is missing");
     }
     for file in &files {
         let code = code(file);
@@ -168,11 +177,7 @@ fn the_dependencies_are_a_closed_list() {
         if !is_dependency || line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let name = line
-            .split(['=', '.'])
-            .next()
-            .unwrap_or_default()
-            .trim();
+        let name = line.split(['=', '.']).next().unwrap_or_default().trim();
         assert!(DEPENDENCIES.contains(&name), "`{name}` is not on the list");
     }
     // rustix's only added feature is its socket calls, for netlink.

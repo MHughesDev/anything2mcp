@@ -56,6 +56,17 @@ struct Current {
     intended: Option<Digest>,
 }
 
+/// Where a step acts, and what the run may do there.
+#[derive(Clone, Copy)]
+pub(crate) struct Here<'a> {
+    /// The surface's folder.
+    pub folder: &'a Folder,
+    /// The limits of `packs.file`.
+    pub limits: FileLimits,
+    /// What the run may do.
+    pub posture: Posture,
+}
+
 /// What the driver holds for folders and growing files.
 #[derive(Default)]
 pub(crate) struct Entries {
@@ -112,14 +123,17 @@ impl Entries {
     #[allow(clippy::too_many_lines)] // one step after another; each is a few lines
     pub(crate) async fn act(
         &mut self,
-        folder: &Folder,
-        limits: FileLimits,
-        posture: Posture,
+        here: Here<'_>,
         step: &Step,
         spec: StepSpec,
         name: &str,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
+        let Here {
+            folder,
+            limits,
+            posture,
+        } = here;
         let ceiling = limits.parse.rows as usize;
         let done = |values: Values| {
             Ok(StepOutcome::Done(Observed {
@@ -416,7 +430,9 @@ impl Entries {
                                 )));
                             }
                             None => {
-                                return Err(out_of_order("a delete of an entry that was not found"));
+                                return Err(out_of_order(
+                                    "a delete of an entry that was not found",
+                                ));
                             }
                         }
                         Pending::Delete

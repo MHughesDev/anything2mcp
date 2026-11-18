@@ -139,7 +139,12 @@ pub fn resolvers() -> Result<Resolvers, NetError> {
     let most = bound::MOST_RESOLVER_ENTRIES;
     bound::keep(&mut read.settings, most, "settings", &mut read.cut);
     for setting in &mut read.settings {
-        bound::keep(&mut setting.name_servers, most, "name_servers", &mut read.cut);
+        bound::keep(
+            &mut setting.name_servers,
+            most,
+            "name_servers",
+            &mut read.cut,
+        );
         bound::keep(
             &mut setting.search_domains,
             most,

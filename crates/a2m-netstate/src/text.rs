@@ -348,7 +348,10 @@ mod tests {
         assert_eq!(settings[1].applies_to, "bypass");
         let json = format!("{settings:?}");
         assert!(!json.contains("secret-for-tests"));
-        let list = proxy_list("system", "http=a.example:80;https=u:secret-for-tests@b.example:443");
+        let list = proxy_list(
+            "system",
+            "http=a.example:80;https=u:secret-for-tests@b.example:443",
+        );
         assert_eq!(list[1].applies_to, "https");
         assert_eq!(list[1].value, "b.example:443");
         assert!(list[1].credentials_removed);

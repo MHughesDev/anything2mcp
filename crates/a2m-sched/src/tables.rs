@@ -780,7 +780,8 @@ pub(crate) fn admit(
         queue_wait.unwrap_or(settings.queue_wait),
     )?;
     if !budgets.is_empty()
-        && let Take::Wait { until } = budget::take(tx, &settings.default_rate, &budgets, 1, true, reserve)?
+        && let Take::Wait { until } =
+            budget::take(tx, &settings.default_rate, &budgets, 1, true, reserve)?
     {
         return Err(failure::rate_limited(between(now, until)));
     }
