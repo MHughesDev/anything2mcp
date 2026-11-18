@@ -126,7 +126,7 @@ Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-c
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `authoring.scout.run` | `on_request`: only when `scout.run` is called. `on_add`: also when a target is added | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
+| `authoring.scout.run` | `off`: never; `scout.run` is refused by name. `on_request`: only when `scout.run` is called. `on_add`: also when a target is added; that part is not built, so today `on_add` acts as `on_request` (adding a target names `scout run` as the next step) | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
 | `authoring.scout.try_reads` | Whether stage 6 runs | On |
 | `authoring.scout.budget` | Limits on time, requests, and depth for one scout | Small enough that a scout of an ordinary system ends within minutes |
 | `authoring.scout.providers` | Which optional discoverers the scout may use, by name | None. The first-party discoverers are always available |
