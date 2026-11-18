@@ -140,6 +140,92 @@ mod on_linux {
     }
 }
 
+example_desk::stand_child!();
+
+/// The stand's own tests on Windows: its window is up in a process of its
+/// own, and its witness counts what a client sends its controls.
+#[cfg(windows)]
+mod on_windows {
+    use std::time::{Duration, Instant};
+
+    use example_desk::{Desk, LATE, Order, Session};
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BM_CLICK, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETTEXT,
+    };
+
+    /// Sends one message to a control of the stand, as another process.
+    #[allow(unsafe_code)] // one call into the system, explained below
+    fn send(control: isize, message: u32, wparam: usize, lparam: isize) {
+        let mut result = 0_usize;
+        // SAFETY: the handle is a window of the stand's; for `WM_GETTEXT`
+        // the system copies the text into the test's buffer, whose length
+        // `wparam` states; the call gives up after five seconds.
+        let sent = unsafe {
+            SendMessageTimeoutW(
+                HWND(control as *mut _),
+                message,
+                WPARAM(wparam),
+                LPARAM(lparam),
+                SMTO_ABORTIFHUNG,
+                5_000,
+                Some(&raw mut result),
+            )
+        };
+        assert_ne!(
+            sent.0, 0,
+            "the stand's control did not take message {message:#x}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_window_is_up_and_its_control_interface_counts_what_it_is_asked() {
+        let Some(session) = Session::start().unwrap() else {
+            eprintln!("skipped: this machine has no interactive desktop for the stand");
+            return;
+        };
+        let desk = Desk::start(&session, Order::example()).await.unwrap();
+        let truth = desk.truth();
+        assert_eq!(truth.writes, 0);
+        assert!(!truth.acted(), "{:?}", truth.asked);
+        assert_eq!(truth.tracking, "");
+
+        // A client that asks the password edit for its text is counted.
+        let handles = desk.handles();
+        let mut buffer = vec![0_u16; 256];
+        send(
+            handles.password,
+            WM_GETTEXT,
+            buffer.len(),
+            buffer.as_mut_ptr() as isize,
+        );
+        let truth = desk.truth();
+        assert_eq!(truth.secret_reads, 1, "{:?}", truth.asked);
+
+        // A click of Save is counted as an act. Whether the button then
+        // tells its window, which the stand counts as a write, can depend
+        // on the window being active, which it never is.
+        send(handles.save, BM_CLICK, 0, 0);
+        let truth = desk.truth();
+        assert!(truth.acted(), "{:?}", truth.asked);
+        assert_eq!(
+            truth.asked.get("button:save.BM_CLICK"),
+            Some(&1),
+            "{:?}",
+            truth.asked
+        );
+        eprintln!("writes counted after one click of Save: {}", truth.writes);
+
+        // The late value appears when the control interface says so.
+        desk.show_late(Duration::from_millis(10));
+        let start = Instant::now();
+        while desk.truth().tracking.is_empty() && start.elapsed() < Duration::from_secs(5) {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(desk.truth().tracking, LATE);
+    }
+}
+
 #[test]
 fn a_machine_without_the_programs_skips_unless_required() {
     // Either the programs are here, or the start says why it gives none.

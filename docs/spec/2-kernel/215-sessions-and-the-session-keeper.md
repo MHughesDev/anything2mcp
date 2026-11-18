@@ -161,7 +161,7 @@ The keeper climbs a ladder and never repeats a rung:
 | A hosted user session on a server | A sign-in page that shows the server runner's browser; see [section 602](../6-running-it/602-identity-on-a-shared-server.md) |
 | A service account | Nobody; stored credentials, within the attempt limit |
 
-The engine never asks for a password in its own interface, and the keeper learns that a sign-in finished from the target's probe succeeding, without seeing the credentials.
+The engine never asks for the password of a sign-in that is a web page in its own interface, and the keeper learns that such a sign-in finished from the target's probe succeeding, without seeing the credentials. A credential that a provider holds or exchanges, such as a token or a key, is typed by the person on the engine's own page of the person's act `session.login`, or stored beforehand with `secret.set`; it is sealed for that person alone and never reaches a caller, and a one-time code a provider asks for is typed on the same page, for that one sign-in, and kept nowhere ([decision 0205](../../decisions/0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md)).
 
 ## Saving and moving a session
 

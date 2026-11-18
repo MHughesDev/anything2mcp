@@ -18,7 +18,7 @@ use a2m_core::{
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
-    Reconciled, RecordIntent, RecordRef, RetentionClass, Settled,
+    Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, ShadowOutcome,
 };
 use a2m_provider::{BoxFuture, DiscoveryReport};
 use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
@@ -126,6 +126,26 @@ pub struct PassedOver {
     pub class: FailureClass,
     /// The code of the reason.
     pub code: FailureCode,
+}
+
+/// How a binding in shadow compared with the binding that did the real work
+/// of a live read (decision 0207). The implementation keeps it in the
+/// ledger with the job's run and lease, through `Shadows::record`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowCompared {
+    /// The operation called.
+    pub operation: OperationName,
+    /// The shadow binding: its place, its mode, and its digest.
+    pub shadow: crate::BindingPin,
+    /// The binding that did the real work, whose outputs the caller was
+    /// given.
+    pub verified: crate::BindingPin,
+    /// Whether the operation writes. Always false today: the shadow of a
+    /// write is not built.
+    pub writes: bool,
+    /// How it compared: the names of the outputs that differed and how,
+    /// never a value.
+    pub outcome: ShadowOutcome,
 }
 
 /// Something the engine tells the control plane while it runs a job.
@@ -406,4 +426,30 @@ pub trait Control: Send + Sync {
     /// memory only, scrubs them, and stores none of them as they are.
     /// Nothing by default.
     fn step_observed(&self, _step: &a2m_core::Step, _observed: Option<&Values>) {}
+
+    /// Whether the control plane keeps shadow comparisons. Only then does
+    /// the engine run a binding in shadow beside a live read: a shadow that
+    /// could not be counted would cost the system for nothing. False by
+    /// default.
+    fn keeps_shadow(&self) -> bool {
+        false
+    }
+
+    /// Keeps how a binding in shadow compared, in the ledger, under the
+    /// job's run and lease. A failure is the engine's to ignore: a shadow
+    /// never changes what the caller is given.
+    ///
+    /// By default the control plane keeps none, and says so with `busy`,
+    /// `shadow_not_kept`.
+    fn shadow<'a>(&'a self, compared: ShadowCompared) -> BoxFuture<'a, Result<(), Failure>> {
+        let _ = compared;
+        Box::pin(async move {
+            Err(codes::fail(
+                FailureClass::Busy,
+                codes::SHADOW_NOT_KEPT,
+                "The control plane keeps no shadow comparisons.",
+                "Nothing to do; the call's result is the verified binding's.",
+            ))
+        })
+    }
 }

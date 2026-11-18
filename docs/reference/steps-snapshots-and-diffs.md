@@ -19,7 +19,7 @@ The compiler lowers each binding's verb into a fixed list of steps ([spec sectio
 | | `handle` | Deal with a declared variant, such as a dialog |
 | | `upload`, `download` | Attach or receive a file |
 | `ui` only | `observe` | Capture the response for a named endpoint while the page acts |
-| `page_http`, `http` | `token` | Fetch a declared anti-forgery token |
+| `http` | `token` | Fetch a declared anti-forgery token. `page_http` has no such step: its `request` reads the page's token inside the page in the same call that sends the write ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) |
 | | `request` | Send a request built from an endpoint and expressions |
 | | `validate` | Check the response against its schema |
 | | `extract` | Take values out of the response |

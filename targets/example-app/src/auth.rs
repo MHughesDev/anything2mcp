@@ -4,8 +4,10 @@
 //! signs in by form, with a username and a password, and optionally a one-time code;
 //! the session is a cookie. The same JSON interface is served three more times:
 //! under `/secure/api` for a session cookie, under `/secure/bearer/api` for a bearer
-//! token, and under `/secure/key/api` for an API key in a header. The credentials are
-//! made up and declared in [`crate::harness`].
+//! token, and under `/secure/key/api` for an API key in a header. The copy for a
+//! bearer token serves its description openly, at `/secure/bearer/api/openapi.json`,
+//! and the description says each operation takes the token. The credentials are made
+//! up and declared in [`crate::harness`].
 
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hasher, RandomState};
@@ -207,7 +209,12 @@ pub(crate) fn routes(state: &AppState) -> Router<AppState> {
         )
         .nest(
             "/secure/bearer",
-            interface().route_layer(from_fn_with_state(state.clone(), bearer_guard)),
+            interface()
+                .route_layer(from_fn_with_state(state.clone(), bearer_guard))
+                // The description of this copy is served openly, as many
+                // systems serve theirs, and says that every operation it
+                // describes takes the token.
+                .merge(crate::openapi::bearer_routes()),
         )
         .nest(
             "/secure/key",

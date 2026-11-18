@@ -68,6 +68,7 @@ impl Keeper {
     pub async fn report(&self, lease: &SessionLease, sign: ExpirySign);
     pub async fn sign_in(&self, key: &SessionKey, entry: Arc<AuthEntry>, acting_for: Option<PrincipalId>) -> Result<SignInTicket, Failure>; // session.login
     pub async fn status(&self, workspace: &WorkspaceId, identity: Option<&Identity>) -> Result<Vec<SessionStatus>, Failure>;              // session.status, session.list
+    pub async fn signed_in(&self, session: SessionId, limit: Duration) -> Result<SessionStatus, Failure>; // waits for the outcome of sign_in; starts nothing (decision 0205)
     pub async fn timeline(&self, session: SessionId) -> Result<Vec<SessionEvent>, Failure>;
     pub async fn revoke(&self, key: &SessionKey, by: EndedBy) -> Result<(), Failure>;   // session.revoke (Owner), session.end (Administrator)
     pub async fn tick(&self);          // timers; reads the keeper's clock
@@ -144,7 +145,7 @@ pub trait AskPerson: Send + Sync {
     fn return_address(&self) -> Option<String> { None }   // where a person's browser comes back to after a link
 }
 pub enum PersonAsk { OpenLink { url: String, reason: PersonReason }, EnterCode { reason: PersonReason }, Notify { reason: PersonReason } }
-pub enum PersonAnswer { Done(Returned), Declined, NoAnswer, Unreachable }   // Returned: named values, each a Secret
+pub enum PersonAnswer { Done(Returned), Declined, NoAnswer, Unreachable }   // Returned: named values, each a Secret; new, with, get, iter, is_empty, only
 pub enum PersonReason { SignIn, Consent, SecondFactor, CredentialRefused }
 
 pub trait AuthProvider: Send + Sync {
@@ -171,7 +172,7 @@ pub struct ProviderSet { /* new(), neutral(), with(Arc<dyn AuthProvider>) -> Res
 pub trait Credentials: Send + Sync {
     fn open<'a>(&'a self, session: &'a SessionKey, reference: &'a CredentialRef) -> BoxFuture<'a, Result<Secret, Failure>>;
 }
-pub struct StoredCredentials { /* new(SessionStore, Arc<Vault>); put(workspace, identity, reference, &Secret) */ }
+pub struct StoredCredentials { /* new(SessionStore, Arc<Vault>); put(workspace, identity, reference, &Secret); holds(workspace, identity, reference) -> bool, opening nothing */ }
 
 /// The module `tls`: the one way an HTTP client of the product is made (record 0157).
 pub mod tls {

@@ -474,21 +474,14 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
         "{made}"
     );
 
-    // `add` registers the target, then stops at the first of its actions
-    // that is not built, and says which.
+    // `add` registers the target, scouts it, shows the report, and asks
+    // for the sign-in, which a target that declares none does not need
+    // (decision 0205).
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
-    assert_eq!(add.status.code(), Some(1), "{added}");
+    assert_eq!(add.status.code(), Some(0), "{added}");
     assert_eq!(added["action"], "session.login", "{added}");
-    assert_eq!(added["error"]["code"], "action_not_built");
-    // The step it stopped before was never begun, and the note says what
-    // was done and what was not.
-    let note = added["error"]["message"].as_str().unwrap();
-    assert!(note.contains("stopped before `session.login`"), "{note}");
-    assert!(
-        note.contains("Done: `target.add`, `scout.run`, `scout.report`"),
-        "{note}"
-    );
+    assert_eq!(added["result"]["state"], "not_needed", "{added}");
     let file = bare
         .project
         .path()

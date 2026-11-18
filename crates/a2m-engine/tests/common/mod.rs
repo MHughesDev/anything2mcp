@@ -297,6 +297,14 @@ pub struct Hooks {
     /// The step that hands out a code before the save records nothing for
     /// reconcile.
     pub records_nothing: AtomicBool,
+    /// Every step of this mode never ends.
+    pub mode_hangs: Mutex<Option<String>>,
+    /// Every step of this mode fails as the system's answer that it is
+    /// unavailable.
+    pub mode_fails: Mutex<Option<String>>,
+    /// What a step of this mode observes has this value under this name,
+    /// in place of what the application holds.
+    pub mode_alters: Mutex<Option<(String, String, Value)>>,
 }
 
 /// What one step was given.
@@ -536,8 +544,15 @@ impl AppDriver {
             if hooks.panics_on.lock().unwrap().as_deref() == Some(step.kind.as_str()) {
                 panic!("the test driver was told to panic in `{}`", step.kind);
             }
-            if hooks.hangs_on.lock().unwrap().as_deref() == Some(step.kind.as_str()) {
+            if hooks.hangs_on.lock().unwrap().as_deref() == Some(step.kind.as_str())
+                || hooks.mode_hangs.lock().unwrap().as_deref() == Some(self.mode.as_str())
+            {
                 std::future::pending::<()>().await;
+            }
+            if hooks.mode_fails.lock().unwrap().as_deref() == Some(self.mode.as_str()) {
+                return Err(StepFailure::answered(unavailable(
+                    "The application answered that it is unavailable.",
+                )));
             }
             if hooks.session_ended.load(Ordering::SeqCst) {
                 return Err(StepFailure::answered(Failure::new(
@@ -1024,6 +1039,13 @@ impl Driver for AppDriver {
                 self.hooks.elsewhere.lock().unwrap().push(answer);
             }
             let mut done = self.act_inner(prepared, step, input).await;
+            let altered = self.hooks.mode_alters.lock().unwrap().clone();
+            if let (Ok(StepOutcome::Done(observed)), Some((mode, name, value))) =
+                (&mut done, altered)
+                && mode == self.mode.as_str()
+            {
+                observed.values.insert(name, value);
+            }
             let planted = self.hooks.captures_with.lock().unwrap().clone();
             if let (Ok(StepOutcome::Done(observed)), Some((kind, text))) = (&mut done, planted)
                 && kind == step.kind.as_str()
@@ -2103,6 +2125,10 @@ pub struct StoreControl {
     /// record it was asked for.
     pub others: Mutex<Option<Arc<dyn a2m_provider::OtherRecords>>>,
     pub others_asked: Mutex<Vec<(String, RecordRef)>>,
+    /// Whether the control plane keeps shadow comparisons, and those the
+    /// engine handed it, in order.
+    pub keeps_shadow: AtomicBool,
+    pub shadows: Mutex<Vec<a2m_engine::ShadowCompared>>,
 }
 
 /// Starts the clock of the runtime again when a call that hangs is given
@@ -2602,6 +2628,37 @@ impl Control for StoreControl {
             .push((operation.to_string(), asking));
         self.others.lock().unwrap().clone()
     }
+
+    fn keeps_shadow(&self) -> bool {
+        self.keeps_shadow.load(Ordering::SeqCst)
+    }
+
+    fn shadow<'a>(
+        &'a self,
+        compared: a2m_engine::ShadowCompared,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            self.hooks.note("shadow");
+            self.shadows.lock().unwrap().push(compared.clone());
+            // As the action registry's control plane does: the ledger keeps
+            // it under the run and the lease, by the shadow binding's digest.
+            let comparison = a2m_ledger::ShadowComparison {
+                fence: self.fence(),
+                operation: compared.operation,
+                binding: compared.shadow.digest,
+                mode: compared.shadow.mode,
+                position: u32::try_from(compared.shadow.position).unwrap(),
+                against: compared.verified.digest,
+                writes: compared.writes,
+                outcome: compared.outcome,
+            };
+            self.store
+                .write(Durability::Synced, move |tx| {
+                    tx.shadow().record(&comparison).map(|_| ())
+                })
+                .await
+        })
+    }
 }
 
 // ---- the engine's caller ----
@@ -2618,6 +2675,8 @@ pub struct Scene {
     pub attempt: AtomicU32,
     pub conditions: Mutex<Conditions>,
     pub pin: Mutex<Option<Mode>>,
+    /// The one binding the next jobs run, when a test names one.
+    pub binding: Mutex<Option<a2m_engine::BindingPin>>,
     pub lease: LeaseClock,
     /// The engine's clock: a test moves it.
     pub clock: Arc<ManualClock>,
@@ -2764,6 +2823,8 @@ impl Scene {
             project: Mutex::new(None),
             others: Mutex::new(None),
             others_asked: Mutex::new(Vec::new()),
+            keeps_shadow: AtomicBool::new(false),
+            shadows: Mutex::new(Vec::new()),
         });
         Self {
             app,
@@ -2775,6 +2836,7 @@ impl Scene {
             attempt: AtomicU32::new(1),
             conditions: Mutex::new(Conditions::default()),
             pin: Mutex::new(None),
+            binding: Mutex::new(None),
             lease: LeaseClock::unbounded(),
             clock,
             source: Mutex::new(None),
@@ -2981,6 +3043,7 @@ impl Scene {
             snapshot: self.snapshot().await,
             conditions: self.conditions.lock().unwrap().clone(),
             pin: self.pin.lock().unwrap().clone(),
+            binding: self.binding.lock().unwrap().clone(),
             parallelism: Parallelism::default(),
             lease: self.lease.clone(),
             capture: CaptureLevel::Standard,

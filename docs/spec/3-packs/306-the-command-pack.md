@@ -348,3 +348,5 @@ Steps 2, 3, 6, and 7 are built in `a2m-pack-command`, except what the [crate's d
 - How a person signs a program in when it keeps its own sign-in and asks for it interactively.
 - Whether the terminal kind becomes an interface mode of this pack, as section 106 asks.
 - Confinement: which operating-system mechanism could make a command's file and network reach `confined` rather than `declared`.
+- Whether "a script that the system ships" includes a script the developer keeps in the target, run by a fixed interpreter: the cheapest route to the operating systems' scripting interfaces and to PowerShell ([decision 0214](../../decisions/0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md), Proposed). Until it is decided, it does not.
+- Which folders a group can write on an ordinary installation of each system, and so what the refusal above costs: on macOS the folder of installed applications is believed to be writable by the administrators' group, which would refuse every program inside an application bundle (research brief 35).

@@ -506,19 +506,29 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
         assert!(!refused.to_json().to_string().contains("secret-for-tests"));
     }
 
-    // `add` registers the target, scouts it, and shows the report, then
-    // stops before the sign-in, which is not built, and says so.
+    // `add` registers the target, scouts it, shows the report, and asks
+    // for the sign-in (decision 0205): every step is built.
     let add = SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.word == "add")
         .unwrap();
     let run = add.on(registry);
     let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(steps, ["target.add", "scout.run", "scout.report"]);
-    assert_eq!(run.stops_before, Some("session.login"));
+    assert_eq!(
+        steps,
+        ["target.add", "scout.run", "scout.report", "session.login"]
+    );
+    assert_eq!((run.stops_before, run.note), (None, None));
+    // A shortcut whose first step is not built does nothing, and says so.
+    let learn = SHORTCUTS
+        .iter()
+        .find(|shortcut| shortcut.word == "learn")
+        .unwrap();
+    let run = learn.on(registry);
+    assert!(run.steps.is_empty());
+    assert_eq!(run.stops_before, Some("capture.start"));
     let note = run.note.unwrap();
-    assert!(note.contains("stopped before `session.login`"), "{note}");
-    assert!(note.contains("Done: `target.add`, `scout.run`"), "{note}");
+    assert!(note.contains("`learn` does nothing yet"), "{note}");
     // A shortcut whose steps are all built runs them all and says nothing.
     let lint = SHORTCUTS
         .iter()
@@ -860,4 +870,58 @@ async fn the_kernel_says_how_much_work_it_has_in_hand() {
     assert_eq!(status(&done), "completed", "{done:?}");
     assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
     world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_in_is_asked_for_by_name_and_a_session_is_ended_only_by_whose_it_is() {
+    let world = World::ready().await;
+    // The published target signs in through a provider no pack of this
+    // engine registers: the sign-in stops by name before anyone is asked.
+    let login = world
+        .call("session.login", json!({"target": "example"}))
+        .await;
+    assert_eq!(
+        error_of(&login),
+        (FailureClass::Input, "auth_provider_unknown".to_owned())
+    );
+    // A surface the target does not declare is refused by name.
+    let refused = world
+        .call(
+            "session.login",
+            json!({"target": "example", "surface": "elsewhere"}),
+        )
+        .await;
+    assert_eq!(
+        error_of(&refused),
+        (FailureClass::Input, "not_found".to_owned())
+    );
+    // No credential is an input of the action: one given is refused as a
+    // field the schema does not know, and is in nothing the caller is told.
+    let given = world
+        .call(
+            "session.login",
+            json!({"target": "example", "password": "secret-for-tests-login"}),
+        )
+        .await;
+    assert!(!given.ok);
+    assert!(
+        !given
+            .to_json()
+            .to_string()
+            .contains("secret-for-tests-login")
+    );
+    // A session that is nobody's, or another person's, is not found.
+    let revoked = world
+        .call(
+            "session.revoke",
+            json!({"session_id": "s_01a1ec44a011702e856226a0336b125a"}),
+        )
+        .await;
+    assert_eq!(
+        error_of(&revoked),
+        (FailureClass::Input, "not_found".to_owned())
+    );
+    let listed = world.ok("session.list", json!({})).await;
+    assert_eq!(listed["complete"], true, "{listed}");
+    assert_eq!(listed["sessions"], json!([]), "{listed}");
 }

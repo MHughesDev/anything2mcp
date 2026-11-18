@@ -7,17 +7,24 @@
 //! and waits for the application to signal a change. Whatever a target
 //! file or a caller holds, nothing else can be asked through it.
 //!
-//! On Linux it is AT-SPI over the session's accessibility bus. Elsewhere it
-//! is a stand-in whose every method stops with `system_not_built`.
+//! On Linux it is AT-SPI over the session's accessibility bus (decision
+//! 0198); on Windows, UI Automation on a thread of the handle's own
+//! (decision 0209). Elsewhere it is a stand-in whose every method stops
+//! with `system_not_built`.
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::Look;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub(crate) use self::windows::Look;
+
+#[cfg(not(any(target_os = "linux", windows)))]
 mod none;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(crate) use none::Look;
 
 use a2m_core::{Failure, FailureClass};
@@ -47,12 +54,13 @@ impl Default for Limits {
 }
 
 /// The application a surface declares, found and proven: its connection on
-/// the accessibility bus and its process.
+/// the accessibility bus, or on Windows its process, and its process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct App {
     /// Its root element.
     pub root: El,
-    /// The process the bus daemon says owns its connection.
+    /// The process the bus daemon says owns its connection, or on Windows
+    /// the process its windows belong to.
     pub process: u32,
 }
 
@@ -69,30 +77,37 @@ pub(crate) struct Window {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AxError {
     /// No running application is the program and the name.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     NotRunning,
     /// Several are.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     Ambiguous(usize),
     /// The session's accessibility switch is off.
     #[cfg(target_os = "linux")]
     AccessibilityOff,
+    /// The program runs at a higher level than the engine.
+    #[cfg(windows)]
+    Elevated,
+    /// The program runs as another user, or in another session.
+    #[cfg(windows)]
+    NotOwned,
     /// The program's digest is not the one stated.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     NotProven,
     /// A control that holds a secret was asked for its value.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     Secret,
     /// A text longer than the bound.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     TooLarge,
-    /// The bus, or the application, went away or answered with an error.
-    #[cfg(target_os = "linux")]
+    /// The interface, or the application, went away or answered with an
+    /// error: what the system said, with no value of the application.
+    #[cfg(any(target_os = "linux", windows))]
     Lost(String),
     /// The deadline passed.
     Timeout,
     /// This system has no back end.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     NotBuilt,
 }
 
@@ -100,21 +115,26 @@ impl AxError {
     /// The failure the driver reports, with no value of the application in
     /// it.
     pub(crate) fn failure(&self, program: &str) -> Failure {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         let program = codes::shown(program);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         let _ = program;
         match self {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             Self::NotRunning => codes::failure(
                 FailureClass::Busy,
                 codes::APPLICATION_NOT_RUNNING,
                 format!(
-                    "No application in this session is the program `{program}` with the name the surface states and publishes an accessibility tree. The desktop pack starts nothing."
+                    "No application in this session is the program `{program}` with the name the surface states and {}. The desktop pack starts nothing.",
+                    if cfg!(windows) {
+                        "shows a window"
+                    } else {
+                        "publishes an accessibility tree"
+                    }
                 ),
                 "Start the application as you normally do, then run the tool again.",
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             Self::Ambiguous(count) => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_AMBIGUOUS,
@@ -130,7 +150,25 @@ impl AxError {
                 "The session's accessibility setting is off, and the application publishes no accessibility tree while it is. The pack changes no setting.".to_owned(),
                 "Turn on the accessibility setting of your desktop (the toolkit accessibility switch), restart the application, and run the tool again.",
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(windows)]
+            Self::Elevated => codes::failure(
+                FailureClass::Busy,
+                codes::TARGET_ELEVATED,
+                format!(
+                    "The program `{program}` runs at a higher level than the engine (as administrator), and the pack does not reach it."
+                ),
+                "Start the application as yourself, without administrator rights, then run the tool again.",
+            ),
+            #[cfg(windows)]
+            Self::NotOwned => codes::failure(
+                FailureClass::Policy,
+                codes::APPLICATION_NOT_OWNED,
+                format!(
+                    "The program `{program}` runs as another user, or in another session, and the pack reads only the applications of the user the engine runs as, in its own session."
+                ),
+                "Start the application in your own session, as yourself, then run the tool again.",
+            ),
+            #[cfg(any(target_os = "linux", windows))]
             Self::NotProven => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_NOT_PROVEN,
@@ -139,25 +177,28 @@ impl AxError {
                 ),
                 "Review the program that is installed, then state its digest in the surface, or reinstall the reviewed one.",
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             Self::Secret => codes::failure(
                 FailureClass::Policy,
                 codes::PASSWORD_READ_REFUSED,
                 "The element is a control that holds a secret; its value is never read.".to_owned(),
                 "Read another field. A secret is never an output of a tool.",
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             Self::TooLarge => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::READ_TOO_LARGE,
                 "A value of the window is longer than the desktop pack reads.".to_owned(),
                 "Read a field that holds less.",
             ),
-            #[cfg(target_os = "linux")]
-            Self::Lost(_) => codes::failure(
+            #[cfg(any(target_os = "linux", windows))]
+            Self::Lost(why) => codes::failure(
                 FailureClass::Transient,
                 a2m_provider::codes::CONNECTION_LOST,
-                "The accessibility bus, or the application on it, went away or did not answer.".to_owned(),
+                format!(
+                    "The accessibility interface, or the application on it, went away or did not answer: {}.",
+                    codes::shown(why)
+                ),
                 "Check that the application is still running, then run the tool again.",
             ),
             Self::Timeout => codes::failure(
@@ -166,7 +207,7 @@ impl AxError {
                 "The application did not answer in time.".to_owned(),
                 "Run the tool again.",
             ),
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", windows)))]
             Self::NotBuilt => codes::system_not_built(),
         }
     }

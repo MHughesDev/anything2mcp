@@ -11,6 +11,7 @@
 )]
 
 pub mod browser;
+pub mod prefixed;
 pub mod proxy;
 pub mod service;
 

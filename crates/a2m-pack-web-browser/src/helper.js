@@ -458,9 +458,121 @@
     return { status: response.status, media_type: type, body };
   }
 
+  // The page's own anti-forgery token, from the place the entry names:
+  // the one text the page holds there, or why there is none to send.
+  const TOKEN_FORM = /^[A-Za-z0-9\-_.~+\/=]{8,512}$/;
+  function pageToken(from, name) {
+    const found = new Set();
+    if (from === "meta") {
+      for (const el of document.querySelectorAll("meta")) {
+        if (el.getAttribute("name") === name) found.add(el.getAttribute("content") || "");
+      }
+    } else if (from === "input") {
+      for (const el of document.querySelectorAll("input")) {
+        if (el.type === "hidden" && el.name === name) found.add(el.value);
+      }
+    } else if (from === "cookie") {
+      for (const pair of document.cookie.split(";")) {
+        const at = pair.indexOf("=");
+        if (at > 0 && pair.slice(0, at).trim() === name) found.add(pair.slice(at + 1).trim());
+      }
+    } else {
+      return { problem: "unusable" };
+    }
+    if (found.size === 0) return { problem: "missing" };
+    if (found.size > 1) return { problem: "several" };
+    const [value] = found;
+    if (!TOKEN_FORM.test(value)) return { problem: "unusable" };
+    return { value };
+  }
+
+  // A write from the page's own origin, with the page's own session and
+  // the page's own anti-forgery token, read here, in the same call that
+  // sends it. The token is never handed back: every copy of it in the
+  // answer is replaced before the answer leaves the page, and no message of
+  // an error is handed back either, since one could quote what was sent.
+  // Everything before `fetch` is checked first; an answer of `refused`
+  // means nothing was sent, and `failed` that whether it was is not known.
+  async function writeFromPage(spec, limit) {
+    if (location.origin === "null") return { refused: "path" };
+    const path = spec.path;
+    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+      return { refused: "path" };
+    }
+    const address = new URL(path, location.origin);
+    if (address.origin !== location.origin) return { refused: "path" };
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(spec.method)) return { refused: "method" };
+    const fields = {};
+    for (const [name, value] of Object.entries(spec.fields || {})) fields[name] = value;
+    const headers = {};
+    let token = null;
+    if (spec.token) {
+      const found = pageToken(spec.token.from, spec.token.name);
+      if (found.problem) return { refused: "token_" + found.problem };
+      token = found.value;
+      if (spec.token.to === "header") headers[spec.token.to_name] = token;
+      else if (spec.token.to === "field" && !(spec.token.to_name in fields)) fields[spec.token.to_name] = token;
+      else return { refused: "token_place" };
+    }
+    let body;
+    if (spec.encoding === "json") {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(fields);
+    } else if (spec.encoding === "form") {
+      headers["Content-Type"] = "application/x-www-form-urlencoded";
+      body = new URLSearchParams(Object.entries(fields).map(([name, value]) => [name, String(value)])).toString();
+    } else {
+      return { refused: "encoding" };
+    }
+    const scrub = (text) => {
+      if (token === null) return text;
+      let out = text;
+      for (const form of new Set([token, token.split("/").join("\\/"), encodeURIComponent(token)])) {
+        out = out.split(form).join("[redacted]");
+      }
+      return out;
+    };
+    let response;
+    try {
+      response = await fetch(address.href, {
+        method: spec.method,
+        headers,
+        body,
+        credentials: "same-origin",
+        redirect: "manual",
+        cache: "no-store",
+      });
+    } catch (_) {
+      return { failed: true };
+    }
+    try {
+      if (response.type === "opaqueredirect") return { redirected: true };
+      const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      let text = "";
+      if (response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (text.length > limit) {
+            await reader.cancel();
+            return { too_large: true };
+          }
+        }
+        text += decoder.decode();
+        if (text.length > limit) return { too_large: true };
+      }
+      return { status: response.status, media_type: scrub(type), body: scrub(text) };
+    } catch (_) {
+      return { failed: true };
+    }
+  }
+
   const page = () => ({ address: location.href, title: document.title });
 
-  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, readFromPage, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, readFromPage, writeFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
     Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
   );

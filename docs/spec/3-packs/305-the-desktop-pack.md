@@ -138,12 +138,14 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it |
 | `busy` | `runner_unavailable` | No interactive desktop session, or the operating system's accessibility permission is not granted |
 | `busy` | `application_not_running`, `accessibility_off`, `system_not_built` | The application the surface names is not running; it runs and publishes nothing while the session's accessibility switch is off; the pack has no back end for this system (decision 0198) |
+| `busy` | `target_elevated` | On Windows, the application runs at a higher level than the engine, as administrator ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) |
 | `policy` | `password_read_refused` | A step would read a control that holds a secret |
+| `policy` | `application_not_owned` | On Windows, the program the surface states runs as another user or in another session ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent |
 
 ## The test stand
 
-Test-application case 28: a small native program with the same data as the test application, on three operating systems, with the same control interface, so ground truth comes from the program's store ([test application plan](../../plan/test-application.md)).
+Test-application case 28: a small native program with the same data as the test application, on three operating systems, with the same control interface, so ground truth comes from the program's store. On Linux it is a tree the stand publishes over AT-SPI (decision 0198); on Windows a window of plain Win32 controls in a process of its own, whose subclassed controls count the messages a client sends them (decision 0209) ([test application plan](../../plan/test-application.md)).
 
 | Must always hold | Proven by |
 | --- | --- |
@@ -172,7 +174,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 1. Slice 8.1, in `spikes/`, with brief 19: on each operating system, read a simple program's tree, find a text field by name, set it, and read it back. A decision record on the library ([research note 09](../../research/09-rust-building-blocks.md) lists candidates, none verified by use).
 2. Case 28, with its control interface.
-3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198); then writes with read-back; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
+3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198, and on Windows, [decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md), where it is proven only once CI's Windows runner has run it); then writes with read-back; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
 
 ## Open points
 

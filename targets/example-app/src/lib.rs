@@ -3,7 +3,7 @@
 //! Anything2MCP is never tested against a real business application. Everything is
 //! proven against this one, which imitates the hard cases and has a control
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
-//! lists the cases; this crate covers cases 1 to 4, and the parts its README names
+//! lists the cases; this crate covers cases 1 to 5, and the parts its README names
 //! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34.
 //!
 //! It is test equipment, not part of the product, so it sits outside the crate
@@ -17,6 +17,7 @@ pub mod details;
 mod edges;
 mod escapes;
 pub mod faults;
+pub mod forgery;
 pub mod harness;
 mod leaving;
 mod openapi;
@@ -54,6 +55,8 @@ pub(crate) struct Inner {
     pub(crate) auth: AuthState,
     pub(crate) deliveries: Deliveries,
     pub(crate) trap_writes: BTreeMap<String, u64>,
+    /// Case 5: the notes a write needs the page's anti-forgery token for.
+    pub(crate) notes: forgery::Notes,
     /// The method and path of every request the application received, outside
     /// the control interface, oldest first, up to [`SEEN_KEPT`].
     pub(crate) seen: Vec<String>,
@@ -71,6 +74,7 @@ impl Default for Inner {
             auth: AuthState::default(),
             deliveries: Deliveries::default(),
             trap_writes: BTreeMap::new(),
+            notes: forgery::seeded(),
             seen: Vec::new(),
         }
     }
@@ -98,6 +102,7 @@ pub fn router() -> Router {
         .merge(escapes::routes())
         .merge(leaving::routes())
         .merge(own_requests::routes())
+        .merge(forgery::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

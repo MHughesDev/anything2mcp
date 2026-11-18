@@ -214,6 +214,46 @@ async fn a_file_is_read_through_the_file_pack() {
     world.close().await;
 }
 
+/// Records the offline test of `tool` from one real read of the stand, as
+/// `name` (decision 0196), and holds that the recorded test passed, that
+/// `test` lists it passed, and that no value of `held`, what the stand
+/// holds, is in any byte the recording wrote (decision 0200).
+async fn recorded(
+    machine: &Machine,
+    world: &World,
+    (tool, input, name): (&str, &str, &str),
+    held: &[String],
+) {
+    let recorded = world
+        .ok(&[
+            "fixture", "record", "example", "--tool", tool, "--input", input, "--name", name,
+        ])
+        .await;
+    assert_eq!(recorded["test_state"], "passed", "{recorded}");
+    let tested = world.ok(&["test", "example"]).await;
+    let listed = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|test| test["test"] == name && test["state"] == "passed");
+    assert!(listed, "{tested}");
+    let target = machine.project.path().join("targets").join("example");
+    let mut files = vec![target.join("tests").join(format!("{name}.yaml"))];
+    for entry in std::fs::read_dir(target.join("fixtures").join(name)).unwrap() {
+        files.push(entry.unwrap().path());
+    }
+    for file in files {
+        let text = String::from_utf8_lossy(&std::fs::read(&file).unwrap()).into_owned();
+        for value in held {
+            assert!(
+                !text.contains(value.as_str()),
+                "{value} in {}: {text}",
+                file.display()
+            );
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_data_store_is_read_through_the_data_pack() {
     // The project folder is the folder the stand keeps its store in: the
@@ -251,6 +291,29 @@ async fn a_data_store_is_read_through_the_data_pack() {
     );
     assert_eq!(read["notes"], held.text("notes").unwrap(), "{read}");
     assert_eq!(stand.writes().unwrap().len(), writes);
+    // The read's offline test, recorded from it: nothing the store holds
+    // for the customer is in a file written.
+    let values: Vec<String> = held
+        .values()
+        .filter_map(|(_, value)| match value {
+            example_db::rows::Value::Text(text) => Some(text.clone()),
+            example_db::rows::Value::Integer(number) => Some(number.to_string()),
+            _ => None,
+        })
+        .filter(|value| value.chars().count() >= 3)
+        .collect();
+    recorded(
+        &machine,
+        &world,
+        (
+            "example_customer_get",
+            r#"{"customer_id": "C-002"}"#,
+            "customer_get_recorded",
+        ),
+        &values,
+    )
+    .await;
+    assert_eq!(stand.writes().unwrap().len(), writes);
     world.close().await;
 }
 
@@ -270,6 +333,30 @@ async fn a_page_is_read_through_the_web_pack() {
     let held = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
     assert_eq!(read["description"], held.description.as_str(), "{read}");
     assert_eq!(read["quantity"], held.quantity, "{read}");
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0);
+    // The read's offline test, recorded from the page: nothing the
+    // application holds for the line item is in a file written.
+    let values: Vec<String> = [
+        "A-100".to_owned(),
+        held.item_code.clone(),
+        held.description.clone(),
+        held.quantity.to_string(),
+        held.length_sixteenths.to_string(),
+    ]
+    .into_iter()
+    .filter(|value| value.chars().count() >= 3)
+    .collect();
+    recorded(
+        &machine,
+        &world,
+        (
+            "example_line_item_get",
+            r#"{"order_id": "A-100", "item_code": "L-101"}"#,
+            "line_item_recorded",
+        ),
+        &values,
+    )
+    .await;
     assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0);
     world.close().await;
 }

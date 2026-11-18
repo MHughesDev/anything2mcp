@@ -18,10 +18,18 @@
 //! desktop pack asks it, and never proves anything through the pack's own
 //! read alone.
 //!
-//! It runs on Linux only. Elsewhere [`Session::start`] finds nothing to
-//! start, as on a Linux machine without the programs.
+//! On Windows the same window is made of plain Win32 controls, in a process
+//! of its own that the test starts and stops, and UI Automation reads it
+//! through the proxies the system ships for its standard controls
+//! (decision 0209). Every subclassed control counts the messages a client
+//! sends it, which is what the stand can witness there; a test binary that
+//! starts it declares [`stand_child!`]. On macOS [`Session::start`] finds
+//! nothing to start, as on a Linux machine without the programs.
 
+#[cfg(not(windows))]
 mod session;
+#[cfg(windows)]
+mod win;
 
 #[cfg(target_os = "linux")]
 mod app;
@@ -29,7 +37,35 @@ mod app;
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[cfg(not(windows))]
 pub use session::Session;
+#[cfg(windows)]
+pub use win::{CHILD_TEST, Session};
+
+/// Declares, in a test binary, the test that serves the stand on Windows:
+/// there the stand's process is this test binary, copied and started again
+/// with this one test alone. In every other run, and on every other
+/// system, the test returns at once. Every test binary that starts a
+/// [`Desk`] declares it once.
+#[macro_export]
+macro_rules! stand_child {
+    () => {
+        /// Serves the desktop stand when this process is the stand's own
+        /// (on Windows); otherwise passes at once.
+        #[test]
+        fn example_desk_stand_child() {
+            $crate::serve_if_child();
+        }
+    };
+}
+
+/// Serves the stand and ends the process, when this process was started
+/// to be the stand on Windows; otherwise returns at once. Called by the
+/// test [`stand_child!`] declares.
+pub fn serve_if_child() {
+    #[cfg(windows)]
+    win::serve_if_child();
+}
 
 /// The name the application has on the accessibility bus.
 pub const APPLICATION: &str = "example-desk";
@@ -106,6 +142,22 @@ pub struct Truth {
 }
 
 impl Truth {
+    /// How many times the value of a control was asked for as text: on
+    /// Linux through AT-SPI's text interface, on Windows by a message that
+    /// gets an edit's text. A name is not a value.
+    #[must_use]
+    pub fn values_read(&self) -> u64 {
+        self.asked
+            .iter()
+            .filter(|(member, _)| {
+                member.as_str() == "Text.GetText"
+                    || (member.starts_with("edit:")
+                        && (member.ends_with(".WM_GETTEXT") || member.ends_with(".EM_GETLINE")))
+            })
+            .map(|(_, times)| *times)
+            .sum()
+    }
+
     /// Whether anything was asked that could change the application: a
     /// press, a text set or typed, a value set, a selection, a focus.
     #[must_use]
@@ -117,9 +169,10 @@ impl Truth {
     }
 }
 
-/// The members of the AT-SPI interfaces that change an application. The
-/// stand answers some of them, so that a test can see whether one was
-/// asked.
+/// The members of the AT-SPI interfaces, and the window messages, that
+/// change an application. The Linux stand answers some of the members, so
+/// that a test can see whether one was asked; the Windows stand counts the
+/// messages its controls are sent.
 pub const ACTING_MEMBERS: &[&str] = &[
     "DoAction",
     "SetTextContents",
@@ -141,6 +194,24 @@ pub const ACTING_MEMBERS: &[&str] = &[
     "SetPosition",
     "SetExtents",
     "SetSize",
+    "WM_SETTEXT",
+    "EM_REPLACESEL",
+    "EM_SETSEL",
+    "EM_UNDO",
+    "WM_CHAR",
+    "WM_KEYDOWN",
+    "WM_LBUTTONDOWN",
+    "WM_SETFOCUS",
+    "WM_PASTE",
+    "WM_CUT",
+    "WM_CLEAR",
+    "BM_CLICK",
+    "BM_SETCHECK",
+    "BM_SETSTATE",
+    "LVM_SETITEMSTATE",
+    "LVM_SETITEMTEXTW",
+    "LVM_ENSUREVISIBLE",
+    "LVM_SCROLL",
 ];
 
 /// Why the stand could not do what a test asked.
@@ -166,6 +237,19 @@ pub fn required() -> bool {
 pub struct Desk {
     #[cfg(target_os = "linux")]
     inner: app::App,
+    #[cfg(windows)]
+    inner: win::Stand,
+}
+
+/// Two of the Windows stand's controls, by their window handles in number
+/// form, for the stand's own test of its witness.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Handles {
+    /// Save.
+    pub save: isize,
+    /// The password edit.
+    pub password: isize,
 }
 
 impl fmt::Debug for Desk {
@@ -181,7 +265,8 @@ impl Desk {
     /// # Errors
     ///
     /// When the accessibility bus cannot be reached or the registry does
-    /// not embed the application; on a system other than Linux, always.
+    /// not embed the application; on Windows, when the stand's process does
+    /// not show its window; on any other system, always.
     pub async fn start(session: &Session, order: Order) -> Result<Self, StandError> {
         #[cfg(target_os = "linux")]
         {
@@ -189,7 +274,13 @@ impl Desk {
                 inner: app::App::start(session.address(), order).await?,
             })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                inner: win::Stand::start(session, order).await?,
+            })
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             let _ = (session, order);
             Err(StandError(
@@ -199,25 +290,53 @@ impl Desk {
     }
 
     /// What the stand holds and what it was asked.
+    ///
+    /// # Panics
+    ///
+    /// On Windows, when the stand's process does not answer: a test can
+    /// prove nothing past a stand that cannot say what it holds, and the
+    /// message says what it did say.
     #[must_use]
     pub fn truth(&self) -> Truth {
         #[cfg(target_os = "linux")]
         {
             self.inner.truth()
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        {
+            self.inner.truth().unwrap_or_else(|error| panic!("{error}"))
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             Truth::default()
+        }
+    }
+
+    /// Save and the password edit, for the stand's own test.
+    #[cfg(windows)]
+    #[must_use]
+    pub fn handles(&self) -> Handles {
+        Handles {
+            save: self.inner.save,
+            password: self.inner.password,
         }
     }
 
     /// The control interface: the field labelled `Tracking` shows [`LATE`]
     /// once `after` has passed, and the application signals the change as
     /// a toolkit does.
+    ///
+    /// # Panics
+    ///
+    /// On Windows, when the stand's process does not take the command.
     pub fn show_late(&self, after: std::time::Duration) {
         #[cfg(target_os = "linux")]
         self.inner.show_late(after);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        self.inner
+            .show_late(after)
+            .unwrap_or_else(|error| panic!("{error}"));
+        #[cfg(not(any(target_os = "linux", windows)))]
         let _ = after;
     }
 }

@@ -155,6 +155,22 @@ impl World {
         window: Duration,
         change: fn(&mut a2m_core::Plan),
     ) -> Self {
+        Self::build(prompt, window, change, false).await
+    }
+
+    /// A world whose target's surface is signed in to through the test
+    /// provider [`CODE_PROVIDER`], which asks its person for a one-time
+    /// code and nothing else (decision 0205).
+    pub(crate) async fn signing_in(prompt: Arc<dyn PresencePrompt>, window: Duration) -> Self {
+        Self::build(prompt, window, declare_code_sign_in, true).await
+    }
+
+    async fn build(
+        prompt: Arc<dyn PresencePrompt>,
+        window: Duration,
+        change: fn(&mut a2m_core::Plan),
+        codes: bool,
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let (folder, paths) = home("k");
         let clock: Arc<dyn Clock> =
@@ -177,6 +193,9 @@ impl World {
             hooks: Arc::new(engine::Hooks::default()),
             discoverer: Arc::new(engine::WritingDiscoverer::default()),
         });
+        if codes {
+            builder.add_pack(&CodePack);
+        }
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
         let surface = LocalSurface::new(SurfaceParts {
@@ -221,4 +240,163 @@ impl World {
             .dispatch(Request::new(action, input, self.caller.clone()))
             .await
     }
+}
+
+/// The test provider that signs in with a one-time code its person types.
+pub(crate) const CODE_PROVIDER: &str = "example_code";
+/// The only code it takes.
+pub(crate) const RIGHT_CODE: &str = "246810";
+
+const CODE_MANIFEST: &str = r#"manifest_format = 1
+contract = 1
+
+[provider]
+name = "example_codes"
+version = "0.1.0"
+publisher = "Example"
+kind = "pack"
+
+[points]
+auth_provider = ["example_code"]
+
+[effects]
+sessions = ["json_app"]
+"#;
+
+/// A pack with one auth provider and nothing else.
+struct CodePack;
+
+impl a2m_provider::Pack for CodePack {
+    fn manifest(&self) -> &'static str {
+        CODE_MANIFEST
+    }
+
+    fn register(
+        &self,
+        _cx: &a2m_provider::PackContext,
+        to: &mut a2m_provider::Registrar<'_>,
+    ) -> Result<(), a2m_core::Failure> {
+        to.auth_provider(Arc::new(CodeProvider))
+    }
+}
+
+/// Signs in by asking the session's person for a one-time code, through
+/// the keeper's own way to the person. A wrong code is refused by name.
+struct CodeProvider;
+
+impl a2m_auth::AuthProvider for CodeProvider {
+    fn name(&self) -> a2m_auth::ProviderName {
+        a2m_auth::ProviderName::fixed(CODE_PROVIDER)
+    }
+
+    fn needs(&self) -> a2m_auth::ProviderNeeds {
+        a2m_auth::ProviderNeeds {
+            person: true,
+            silent_renewal: false,
+            light_prompt: false,
+            movable: false,
+            confirms: true,
+        }
+    }
+
+    fn check(&self, _entry: &a2m_auth::AuthEntry) -> Result<(), a2m_core::Failure> {
+        Ok(())
+    }
+
+    fn sign_in<'a>(
+        &'a self,
+        cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<a2m_auth::Material, a2m_core::Failure>> {
+        Box::pin(async move {
+            let answer = cx
+                .ask_person(a2m_auth::PersonAsk::EnterCode {
+                    reason: a2m_auth::PersonReason::SecondFactor,
+                })
+                .await;
+            let refused = || {
+                a2m_core::Failure::new(
+                    a2m_core::FailureClass::SessionExpired,
+                    a2m_auth::codes::NEEDS_MFA,
+                    "The one-time code was not taken.",
+                    "Sign in again and type the code you are given.",
+                )
+            };
+            match answer {
+                a2m_auth::PersonAnswer::Done(returned) => match returned.get("code") {
+                    Some(code) if code.expose() == RIGHT_CODE => {
+                        Ok(a2m_auth::Material::new(self.name()).with_plain("signed_in", "yes"))
+                    }
+                    _ => Err(refused()),
+                },
+                _ => Err(refused()),
+            }
+        })
+    }
+
+    fn is_signed_in<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _now: Timestamp,
+    ) -> a2m_auth::BoxFuture<'a, a2m_auth::SignedIn> {
+        Box::pin(async { a2m_auth::SignedIn::Yes { until: None } })
+    }
+
+    fn detect_expiry(&self, _sign: &a2m_auth::RawSign) -> Option<a2m_auth::ExpirySign> {
+        None
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<a2m_auth::Material, a2m_core::Failure>> {
+        Box::pin(async {
+            Err(a2m_core::Failure::new(
+                a2m_core::FailureClass::SessionExpired,
+                a2m_auth::codes::NEEDS_LOGIN,
+                "The test provider does not renew.",
+                "Sign in again.",
+            ))
+        })
+    }
+
+    fn sign_out<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<(), a2m_core::Failure>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn inject(
+        &self,
+        _material: &a2m_auth::Material,
+        _sink: &mut dyn a2m_auth::CredentialSink,
+    ) -> Result<(), a2m_core::Failure> {
+        Ok(())
+    }
+}
+
+/// The published plan, with its first surface signed in to through the
+/// test provider, probed with the read the plan has first.
+fn declare_code_sign_in(plan: &mut a2m_core::Plan) {
+    let mut inputs = a2m_core::Values::new();
+    inputs.insert("order_id", a2m_core::Value::Text("A-100".to_owned()));
+    plan.auth.push(a2m_core::AuthPlan {
+        surfaces: vec![a2m_core::SurfaceIndex::new(0)],
+        mode: a2m_core::SignInMode::ManagedSession,
+        provider: a2m_auth::ProviderName::fixed(CODE_PROVIDER),
+        probe: a2m_core::ProbePlan::Operation {
+            operation: a2m_core::OperationIndex::new(0),
+            inputs,
+        },
+        expiry_signals: Vec::new(),
+        idle_ms: None,
+        absolute_ms: None,
+        sign_out: None,
+        settings: Vec::new(),
+        credentials: Vec::new(),
+        attempt_limit: 1,
+        movable: false,
+    });
 }

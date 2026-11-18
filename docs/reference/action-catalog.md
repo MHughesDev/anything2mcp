@@ -27,7 +27,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `run.undo` | Build the reverse diff of a completed write run, for approval | Operator | No | 9 |
 | `run.trace` | Summary of a run's trace, with links to artifacts | Viewer | No | 1 |
 | `session.status` | Whether each target is signed in for the caller | Viewer | use | 2 |
-| `session.login` | Ask the caller's person to sign in to a target | Viewer | use | 2 |
+| `session.login` | Ask the caller's person to sign in to a target; the person gives any credential on the engine's own page, never through an input | Viewer | use | 2 |
 | `session.revoke` | End one of the caller's own sessions | Viewer | No | 2 |
 
 ## Building a target

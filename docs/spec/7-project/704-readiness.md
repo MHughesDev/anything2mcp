@@ -134,8 +134,8 @@ These are named in the specification and left for the package that builds them. 
 | Usage metering | Phase 9; the ledger already holds the data |
 | High-availability details of the cluster profile | Package 9.4; the stateless front and outward-connecting runners already allow it |
 | Packs beyond the nine designed | One at a time, each designed as its own section first and cleared against the entry bar |
-| A browser extension that works inside the person's own profile | Later, if ever; a possible answer to systems that allow one session, and not committed |
-| A vision mode for interfaces that offer only pixels | Not planned; clicking by position cannot be verified |
+| A browser extension that works inside the person's own profile | Not while rule five stands: it would drive the person's everyday profile. Whether it may is the owner's question in [decision 0211](../../decisions/0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md) (Proposed) |
+| A vision mode for interfaces that offer only pixels | Not planned; clicking by position cannot be verified. Whether a read-only form is ever wanted is the owner's question in [decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) (Proposed) |
 
 ## Risks
 

@@ -28,6 +28,6 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 - **Group-committed ledger.** Intent records from concurrent runs are written to disk together, so durability does not cost one disk sync per record.
 - **Lean results.** Results are concise by default, with large data passed as resource links, which also saves the calling agent's tokens and time.
 
-**Guardrails.** Speed never overrides the first two priorities. A faster binding is used only after shadow verification. Rate budgets per surface still apply, so Anything2MCP is never faster than the system's owner allows.
+**Guardrails.** Speed never overrides the first two priorities. A faster binding is used only after shadow verification. A binding in shadow holds a live read up by at most its time limit, 2 seconds unless set, once per operation in a job; past it the shadow is cancelled and counted as not compared ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). Rate budgets per surface still apply, so Anything2MCP is never faster than the system's owner allows.
 
 **Measured, always.** A benchmark suite runs in CI against a local test stand for every mode. A change that slows a budgeted path by more than 10% fails the build. Each run's trace records time spent in Anything2MCP against time spent waiting on the system, so slow tools are visible in production.

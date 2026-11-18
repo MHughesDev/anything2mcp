@@ -261,6 +261,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "windows",
  "zbus",
 ]
 
@@ -1040,6 +1041,7 @@ name = "example-desk"
 version = "0.0.1"
 dependencies = [
  "tokio",
+ "windows",
  "zbus",
 ]
 

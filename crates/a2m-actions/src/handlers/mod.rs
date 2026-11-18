@@ -10,6 +10,7 @@ mod promote;
 mod provider;
 mod scout;
 mod scout_report;
+pub(crate) mod sessions;
 pub(crate) mod tools;
 
 pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
@@ -78,6 +79,10 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "secret.set" => admin::secret_set,
         "killswitch.set" => admin::killswitch_set,
         "session.status" => admin::session_status,
+        "session.login" => sessions::session_login,
+        "session.revoke" => sessions::session_revoke,
+        "session.list" => sessions::session_list,
+        "session.end" => sessions::session_end,
         _ => return None,
     })
 }

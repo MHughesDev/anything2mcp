@@ -700,13 +700,25 @@ fn a_page_http_binding_on_an_operation_that_writes_is_refused_by_name() {
         "{}",
         shown(&problems)
     );
-    // A write verb is not one the mode serves.
+    // A write verb the mode does not serve is the compiler's refusal.
     let problems = compile_drafts(&stand, &folder, &report, path, |text| {
-        text.replace("verb: \"read\"", "verb: \"update\"")
+        text.replace("verb: \"read\"", "verb: \"create\"")
     })
     .unwrap_err();
     assert!(
         shown(&problems).contains("unknown_verb"),
+        "{}",
+        shown(&problems)
+    );
+    // An `update` through an entry that reads is refused by this pack's
+    // name: a write is made only through an entry a person wrote for it.
+    let problems = compile_drafts(&stand, &folder, &report, path, |text| {
+        text.replace("verb: \"read\"", "verb: \"update\"")
+            .replace("effect: \"read\"", "effect: \"write\"")
+    })
+    .unwrap_err();
+    assert!(
+        shown(&problems).contains("web.page_http_writes"),
         "{}",
         shown(&problems)
     );

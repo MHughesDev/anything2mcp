@@ -32,6 +32,12 @@ pub const APPLICATION_NOT_RUNNING: FailureCode = FailureCode::fixed("application
 /// `busy`: the session's accessibility switch is off and the application
 /// publishes no tree. The pack changes no setting.
 pub const ACCESSIBILITY_OFF: FailureCode = FailureCode::fixed("accessibility_off");
+/// `busy`: the application runs at a higher level than the engine, as
+/// administrator. Windows only; the pack does not reach it.
+pub const TARGET_ELEVATED: FailureCode = FailureCode::fixed("target_elevated");
+/// `policy`: the program the surface states runs as another user, or in
+/// another session. Windows only; the pack reads none of it.
+pub const APPLICATION_NOT_OWNED: FailureCode = FailureCode::fixed("application_not_owned");
 /// `busy`: this pack has no back end for the operating system it runs on.
 pub const SYSTEM_NOT_BUILT: FailureCode = FailureCode::fixed("system_not_built");
 /// `input`: a step this driver cannot carry out as the plan wrote it.
@@ -48,8 +54,10 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "application_not_proven"),
     (FailureClass::UnknownVariant, "read_too_large"),
     (FailureClass::Policy, "password_read_refused"),
+    (FailureClass::Policy, "application_not_owned"),
     (FailureClass::Busy, "application_not_running"),
     (FailureClass::Busy, "accessibility_off"),
+    (FailureClass::Busy, "target_elevated"),
     (FailureClass::Busy, "system_not_built"),
     (FailureClass::Input, "step_not_usable"),
 ];
@@ -77,16 +85,16 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 }
 
 /// The pack has no back end for this operating system.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(crate) fn system_not_built() -> Failure {
     failure(
         FailureClass::Busy,
         SYSTEM_NOT_BUILT,
         format!(
-            "The desktop pack reads applications only on Linux in this version; this system is {}.",
+            "The desktop pack reads applications only on Linux and Windows in this version; this system is {}.",
             std::env::consts::OS
         ),
-        "Run the target on Linux. The Windows and macOS back ends are not built yet.",
+        "Run the target on Linux or Windows. The macOS back end is not built yet.",
     )
 }
 

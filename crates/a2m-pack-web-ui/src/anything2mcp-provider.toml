@@ -1,5 +1,5 @@
 # The manifest of the web pack's drivers. What is not built is not declared:
-# the `site_tools` mode, the write half of `page_http`, the auth providers, the screen
+# the `site_tools` mode, the `page_http` writes beyond `update` by PUT, the auth providers, the screen
 # matcher, platform profiles, and every control beyond the ones listed here.
 manifest_format = 1
 contract = 1
@@ -23,14 +23,19 @@ session_reads = 4
 session_writes = 1
 exclusive = "none"
 
-# A read made as a request from inside the page, with the page's own
-# session, in an observing tab whatever the run's posture (decision 0190).
-# Reads only: the lowering refuses a write by name until the write half is
-# designed. Neither step saves.
+# A request made from inside the page, with the page's own session. A read
+# runs in an observing tab whatever the run's posture (decision 0190). An
+# `update` is a PUT from inside the page with the page's own anti-forgery
+# token, in an acting tab opened only in a posture that may act, and read
+# back in the observing tab (decision 0206). A `request` saves exactly when
+# its entry writes, and the lowering marks it `commits` then; a `goto`
+# never saves; so no kind always saves. The driver's own guard refuses a
+# writing request that is not marked `commits` in every posture, and lifts
+# for the marked one in a live run and against a declared test record.
 [[modes]]
 name = "page_http"
 archetype = "request"
-verbs = ["read"]
+verbs = ["read", "update"]
 steps = ["goto", "request"]
 commit_steps = []
 rank = 40
@@ -51,8 +56,9 @@ name = "screen"
 directory = "screens/"
 surface_kinds = ["web"]
 
-# The reads a page makes from inside itself, in the form of entries of the
-# endpoint catalog (decision 0190).
+# The requests a page makes from inside itself, in the form of entries of
+# the endpoint catalog: reads (decision 0190), and writes by PUT, written by
+# a person, never drafted (decision 0206).
 [[file_kinds]]
 name = "page_request"
 directory = "page_requests/"
@@ -134,6 +140,14 @@ code = "fingerprint_mismatch"
 [[failure_codes]]
 class = "drift"
 code = "response_schema_mismatch"
+
+[[failure_codes]]
+class = "drift"
+code = "anti_forgery_not_found"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "anti_forgery_unreadable"
 
 [[failure_codes]]
 class = "unknown_variant"

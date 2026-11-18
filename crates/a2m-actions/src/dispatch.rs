@@ -9,6 +9,7 @@
 //! redactor on its way out.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use a2m_core::{DecisionId, EffectClass, Failure, FailureClass, Hazard, Redact, Values};
 use a2m_policy::{
@@ -441,6 +442,12 @@ pub struct Call {
     pub project_refused: Option<Failure>,
     /// Proof that a person is present, when the action needed it.
     pub presence: Option<PresenceProof>,
+    /// What a person gave on the page of a person's act, beside the input,
+    /// by name: a credential for a sign-in (decision 0205). Each value was
+    /// registered with the redactor when it was handed over, is never part
+    /// of the input, and is given to no caller. `None` for every call that
+    /// did not come from such a page.
+    pub given: Option<Arc<a2m_auth::Returned>>,
     /// The effect class and hazard the dispatcher's decision was made for.
     /// For `tool.call` these are the published tool's, as it stood when
     /// the decision was made; the handler refuses a tool that has another
@@ -458,6 +465,7 @@ impl std::fmt::Debug for Call {
             .field("decision", &self.decision)
             .field("project", &self.project.is_some())
             .field("presence", &self.presence.is_some())
+            .field("given", &self.given.is_some())
             .field("decided", &self.decided)
             .finish_non_exhaustive()
     }
@@ -782,6 +790,7 @@ impl Kernel {
             project,
             project_refused,
             presence,
+            given: None,
             decided,
         };
         let mut output = self

@@ -15,6 +15,20 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new().route(PATH, get(|| async { Json(document()) }))
 }
 
+/// The description of the copy served under `/secure/bearer`, at `PATH`
+/// under it: the same document, which states that every operation takes
+/// the bearer token. It is served openly; the operations are not.
+pub(crate) fn bearer_routes() -> Router<AppState> {
+    Router::new().route(
+        PATH,
+        get(|| async {
+            let mut described = document();
+            described["security"] = json!([{"bearer": []}]);
+            Json(described)
+        }),
+    )
+}
+
 fn param(name: &str, example: &str) -> Value {
     json!({"name": name, "in": "path", "required": true, "schema": {"type": "string"}, "example": example})
 }

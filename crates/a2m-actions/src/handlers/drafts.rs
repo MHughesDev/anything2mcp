@@ -41,6 +41,34 @@ fn draft_file(folder: &CheckedPath, path: &RelPath) -> Result<CheckedPath, Failu
     folder.join(path.as_str())
 }
 
+/// Refuses a path that passes through a link below the target's folder
+/// (audit finding DD-1): a draft is written or removed only in the target's
+/// own folders, never in a folder a link leads to, even one inside the
+/// project. A part not there yet is no link.
+fn no_link_on_the_way(folder: &CheckedPath, path: &RelPath) -> Result<(), Failure> {
+    let parts: Vec<&str> = path.parts().collect();
+    let mut at = String::new();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        if !at.is_empty() {
+            at.push('/');
+        }
+        at.push_str(part);
+        match folder.join(&at)?.entry_kind()? {
+            EntryKind::Folder | EntryKind::Absent => {}
+            _ => {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!(
+                        "`{at}` of the target is a link or not a folder, and a draft is never written or removed through one."
+                    ),
+                    "Make it a folder of the target's own.",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn no_such_file(target: &TargetName, path: &RelPath) -> Failure {
     codes::input(
         codes::NOT_FOUND,
@@ -96,6 +124,68 @@ fn its_own(problem: &a2m_files::Diagnostic, path: &RelPath) -> bool {
         && matches!(problem.stage, Stage::Parse | Stage::Validate)
 }
 
+/// The refusal of a written file that makes a binding verified, or keeps
+/// one verified while changing it (audit finding PM-2): only
+/// `binding.promote` makes a binding verified, on its evidence. Each binding
+/// the new text holds as `verified` must be, at the same place of the same
+/// operation, a binding the target's files on disk hold as `verified`, of
+/// the same mode, written the same. `None` where the text may be written.
+fn verified_by_hand(previous: &Sources, edited: &SourceFile) -> Option<Failure> {
+    if edited.kind.as_str() != "operation" {
+        return None;
+    }
+    let before = |operation: &str| {
+        previous
+            .of_kind("operation")
+            .flat_map(|file| file.docs.iter())
+            .find(|doc| doc.text("operation") == Some(operation))
+    };
+    for doc in &edited.docs {
+        let Some(operation) = doc.text("operation") else {
+            continue;
+        };
+        let bindings = doc.get("bindings").map(a2m_files::Located::items);
+        for (position, binding) in bindings.unwrap_or_default().iter().enumerate() {
+            if binding.text("status") != Some("verified") {
+                continue;
+            }
+            let earlier = before(operation)
+                .and_then(|earlier| earlier.get("bindings"))
+                .and_then(|bindings| bindings.items().get(position).cloned());
+            let kept = earlier.as_ref().is_some_and(|earlier| {
+                earlier.text("status") == Some("verified") && earlier.to_json() == binding.to_json()
+            });
+            if kept {
+                continue;
+            }
+            let (message, next) = if earlier
+                .as_ref()
+                .is_some_and(|earlier| earlier.text("status") == Some("verified"))
+            {
+                (
+                    format!(
+                        "The binding {} of `{}` is verified, and this text changes it while leaving it `verified`: a changed binding has not earned what the verified one did.",
+                        position + 1,
+                        codes::shown(operation)
+                    ),
+                    "Write the changed binding with `status: draft`, test it, and make it verified with `binding.promote`.",
+                )
+            } else {
+                (
+                    format!(
+                        "The binding {} of `{}` is written as `verified`, and the target's files do not hold it so: a binding is made verified only by `binding.promote`, on its evidence.",
+                        position + 1,
+                        codes::shown(operation)
+                    ),
+                    "Write it with `status: draft`, test it and try it, then call `binding.promote`.",
+                )
+            };
+            return Some(codes::input(codes::BINDING_NOT_PROMOTABLE, message, next));
+        }
+    }
+    None
+}
+
 handler!(
     /// `draft.write`: one draft file, validated and linted before it is
     /// written. A file that does not read, or does not fit its kind's
@@ -133,12 +223,30 @@ handler!(
                 Err(problem) => return Ok(Err(Diagnostics::from(problem))),
             };
             let root = TargetRoot::new(folder.as_path());
-            let previous = a2m_files::load(&root, set)
-                .unwrap_or_else(|_| Sources::from_files(root.clone(), Vec::new()));
+            let loaded = a2m_files::load(&root, set).ok();
+            let previous = loaded
+                .clone()
+                .unwrap_or_else(|| Sources::from_files(root.clone(), Vec::new()));
+            // What the disk holds of the file now, where the target as a
+            // whole does not load.
+            let on_disk = || {
+                let file = draft_file(&folder, &at).ok()?;
+                let bytes = file.read(LARGEST_TARGET_FILE as u64).ok()?;
+                let read = SourceFile::read(at.clone(), &bytes, set).ok()?;
+                Some(Sources::from_files(root.clone(), vec![read]))
+            };
+            let before = match loaded {
+                Some(loaded) => loaded,
+                None => on_disk().unwrap_or_else(|| previous.clone()),
+            };
+            if let Some(refused) = verified_by_hand(&before, &edited) {
+                return Err(refused);
+            }
             let problems = a2m_files::lint_one(&previous, edited.clone(), set);
             if problems.iter().any(|problem| its_own(problem, &at)) {
                 return Ok(Err(problems));
             }
+            no_link_on_the_way(&folder, &at)?;
             let file = draft_file(&folder, &at)?;
             if matches!(file.entry_kind()?, EntryKind::Folder | EntryKind::Link) {
                 return Err(codes::input(
@@ -216,6 +324,7 @@ handler!(
                     "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
                 ));
             }
+            no_link_on_the_way(&folder, &at)?;
             let file = draft_file(&folder, &at)?;
             match file.entry_kind()? {
                 EntryKind::File => {}
@@ -485,7 +594,8 @@ handler!(
             vault: kernel.inner.vault.clone(),
         };
         let gates =
-            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world, None)
+                .await?;
         let all_passed = gates.passed;
         let output = Output::ok(json!({
             "target": target.as_str(),

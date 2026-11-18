@@ -11,9 +11,10 @@
 //! | `snapshot` | The shape of every window of the application: roles, the names that are the window's shape, the structure. Never a value |
 //!
 //! Nothing here starts a program, and nothing reaches another application:
-//! the back end asks the bus daemon which process owns each application's
-//! connection and asks an application nothing until it is proven to be
-//! the program the surface declares.
+//! the back end asks the system which process owns each application's
+//! connection (the bus daemon on Linux) or window (Windows), and asks an
+//! application nothing until it is proven to be the program the surface
+//! declares.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -489,7 +490,7 @@ impl Driver for DesktopDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", windows)) {
             DriverHealth::Ready
         } else {
             DriverHealth::Unavailable(codes::SYSTEM_NOT_BUILT)

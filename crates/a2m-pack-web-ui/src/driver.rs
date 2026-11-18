@@ -401,7 +401,24 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
             ),
             "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.",
         ),
+        // A write from inside the page, before anything was sent: the page
+        // does not hold its token where the entry says (decision 0206).
+        BrowserError::Token(a2m_pack_web_browser::TokenProblem::Missing) => fail(
+            FailureClass::Drift,
+            codes::ANTI_FORGERY_NOT_FOUND,
+            format!(
+                "The page holds no anti-forgery token where the entry says, at {what}. Nothing was sent."
+            ),
+            "Look at where the page holds its token now, and correct the entry's `anti_forgery`.",
+        ),
+        BrowserError::Token(problem) => fail(
+            FailureClass::UnknownVariant,
+            codes::ANTI_FORGERY_UNREADABLE,
+            format!("At {what}, {problem}. Nothing was sent."),
+            "Look at the page; a token is read from one place that holds one text.",
+        ),
         BrowserError::Unexpected(_)
+        | BrowserError::WriteRefused(_)
         | BrowserError::PasswordField
         | BrowserError::LaunchFailed(_) => fail(
             FailureClass::UnknownVariant,

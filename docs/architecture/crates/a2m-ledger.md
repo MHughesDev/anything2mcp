@@ -44,7 +44,7 @@ Table owners. The ledger's and the policy engine's tables exist; the others are 
 
 | Owner | Tables |
 | --- | --- |
-| `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`, `caller_idempotency`. Not built yet: `workspaces`, `run_steps`, `outbox` |
+| `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`, `caller_idempotency`, `shadow_comparisons`, `shadow_promotions`. Not built yet: `workspaces`, `run_steps`, `outbox` |
 | `a2m-policy` | `decisions`, `approvals`, and the rest of what its own migrations create: `principals`, `grants`, `policy_versions`, `consents`, `delegations`, `kill_switches`, `quota_counters` |
 | `a2m-auth` | `sessions`, `session_events`, `session_state` |
 | `a2m-sched` | Built: `jobs`, with its `session_key` column; `runners`; `resource_holds`; `caller_turns`; `scheduler_holds`; `budgets`, which holds the rate buckets |
@@ -112,6 +112,7 @@ impl Tx<'_> {
     pub fn findings(&mut self) -> Findings<'_, '_>;
     pub fn versions(&mut self) -> Versions<'_, '_>;
     pub fn audit(&mut self) -> Audit<'_, '_>;
+    pub fn shadow(&mut self) -> Shadows<'_, '_>;
 }
 pub enum Owner { Ledger, Policy, Auth, Sched, Engine, Actions }
 pub struct PolicyKey { /* this store's number; not Clone */ }   // Store::policy_key(&self) -> Result<PolicyKey, Failure>, once
@@ -244,6 +245,35 @@ impl Audit<'_, '_> {
 }
 ```
 
+```rust
+// A binding in shadow (decision 0207): `tx.shadow()`. Migration 0020; append-only by trigger.
+impl Shadows<'_, '_> {
+    /// One comparison beside a live read, under the run's current lease; workspace, target,
+    /// and environment are the run's. Refuses a writing operation (`shadow_write_not_built`), an
+    /// offline test's store, a run not `running` or not a read (`shadow_not_counted`), a stale fence.
+    pub fn record(&mut self, comparison: &ShadowComparison) -> Result<u64, Failure>;
+    pub fn standing(&mut self, ws, target, operation, binding: &Digest) -> Result<Option<ShadowStanding>, Failure>;
+    pub fn promotable(&mut self, subject: &ShadowSubject, threshold: ShadowThreshold) -> Result<Promotable, Failure>;
+    /// Asks `promotable` again in the same transaction; `policy`/`shadow_not_promotable` with the reason.
+    pub fn promote(&mut self, promotion: &ShadowPromotion) -> Result<PromotionRow, Failure>;
+    /// By operation, then digest: the data of `shadow.report`.
+    pub fn report(&mut self, ws, target, operation: Option<&OperationName>) -> Result<Vec<ShadowStanding>, Failure>;
+}
+pub struct ShadowComparison { pub fence: Fence, pub operation, pub binding: Digest, pub mode: Mode, pub position: u32,
+                              pub against: Digest, pub writes: bool, pub outcome: ShadowOutcome }
+pub enum ShadowOutcome { Matched, Mismatched(Vec<DifferingOutput>), NotCompared { class, code } }
+pub struct DifferingOutput { pub name: String, pub how: Difference }   // Differs, Missing, Unreadable; never a value
+pub struct ShadowThreshold { pub read: u32, pub write: u32 }          // default 5 and 20 (section 226)
+pub struct ShadowSubject { pub workspace, pub target, pub operation, pub binding: Digest, pub writes: bool }
+pub struct ShadowStanding { pub operation, pub binding, pub mode, pub matches, pub mismatches, pub not_compared,
+                            pub in_a_row, pub in_a_row_through: Option<u64>, pub last_mismatch: Option<LastMismatch>,
+                            pub first_at, pub last_at, pub promoted: Option<PromotionRow> }
+pub enum Promotable { Yes { in_a_row, threshold, through_seq }, No(NotPromotable) }
+pub enum NotPromotable { WritesNotBuilt, NothingCompared, TooFew { in_a_row, threshold },
+                         MismatchSince { in_a_row, threshold, differing }, Promoted(PromotionRow) }
+pub struct ShadowPromotion { pub subject: ShadowSubject, pub mode: Mode, pub promoted_by: PrincipalId, pub threshold: ShadowThreshold }
+```
+
 Contracts that the signatures do not show:
 
 - **A transaction lives inside one closure.** The closure is `Send + 'static`, so it owns what it uses; it returns a value, which reaches the caller only if the commit succeeded. Code that needs to wait, such as sealing a blob, does so before or after the closure, never inside.
@@ -261,6 +291,7 @@ Contracts that the signatures do not show:
 - **Wrapped keys are rows, nothing more.** `vault_keys` holds what the vault hands over, already wrapped. The ledger never unwraps, chooses, or rotates a key; the vault does, through `KeyRecords`.
 - **Blobs are sealed before they are written,** with the workspace, the owner, the kind `blob`, and the blob's name as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention. A row that takes a blob reference refuses one that names no blob.
 - **An `Opened::Existing` is not an error.** A second identical call gets the first run's identifier.
+- **Shadow evidence is counted where it is kept** ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). A comparison is one row, never changed, by the shadow binding's digest: a binding whose steps change starts from nothing. What it has earned is a query: matches in a row since its last mismatch; a comparison not compared neither counts nor resets. The ledger never promotes by itself: `promote` records a person's promotion on the run of matches counted in its own transaction, once per digest. It does not change the binding's status, which is in the target's files; nor can it tell a person from an agent, which its caller checks.
 - **A finding cannot be stored above `discovered`.** The type refuses to make one or to read one back, and the table refuses the row.
 
 ## Used by, and uses
@@ -302,6 +333,9 @@ The codes are constants in the crate's `codes` module.
 | `unknown_variant` | `table_not_owned` | A statement through `Tx::tables` names a table of another crate, or does what only the store may |
 | `input` | `not_found` | No run, record, blob, version, or question with that identifier |
 | `input` | `schema_invalid`, `plan_hash_mismatch` | Something the store cannot keep; a plan whose hash is not the digest of its bytes |
+| `policy` | `shadow_not_counted` | A shadow comparison in an offline test's store, or beside a run that is not a read under way |
+| `policy` | `shadow_not_promotable` | A promotion the evidence does not allow: nothing compared for the binding as it is now, too few matches in a row, a mismatch since, or promoted already |
+| `busy` | `shadow_write_not_built` | A shadow comparison of an operation that writes: the shadow of a write is not built |
 
 ## Invariants
 
@@ -320,6 +354,7 @@ The codes are constants in the crate's `codes` module.
 | A finding is never stored above `discovered` | The type's refusal, the table's refusal of the row, and a planted body refused when read |
 | The audit chain detects a removed, changed, or reordered entry | Planted tampering in a test |
 | A migration applied twice changes nothing, and a store from a newer engine is refused | A test that opens twice, then plants a later migration and a changed checksum |
+| A binding is promotable only after the threshold's exact matches in a row; a mismatch starts the count again, a changed digest has earned nothing, and a comparison is taken only beside a live read under way | `tests/shadow.rs`, through the calls and through a second connection |
 | Both databases give the same answers | The rule tests run on SQLite and Postgres in CI from Phase 6 |
 
 ## Build order
@@ -333,7 +368,8 @@ The codes are constants in the crate's `codes` module.
 7. Done (the safety audit, decision 0145): the policy engine's key; `begin_writes` reading the whole clearance; the triggers of migration 0012; a sent write in doubt whatever its class; the intent's mode, a landed record's outputs, and the evidence of a `not landed` read kept with the record; the `testing` feature.
 8. Done (the kernel's second pass, [decision 0172](../../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)): a record that ends on an acknowledgement, with migration 0015 and its triggers; `tally`; a caller key's digest under its own purpose; a stored failure that keeps what the system said, read back whole by `run_failure` and `record_failure`. Not built: a person's settlement of an `acknowledged` record whose answer was lost.
 8a. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `StoreConfig::throwaway` and `Store::is_throwaway`, an offline test's own store in memory, which keeps its policy key; `WriteClearance::OfflineTest`, taken only there, recorded as a decision of the test's rule so the triggers of rule 3 hold; `PublishedVersion::gate_evidence` and `Versions::gate_evidence`, with migration 0016. Tests: `tests/offline.rs`, `tests/store.rs`.
-8b. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `Ledger::recorded_before_commit`, the values recorded before the save of every record of an operation in a workspace whose write may have landed (`RecordRow::may_have_landed`); migration 0017, a trigger that keeps a version's `gate_evidence` as written (LE-1); migration 0018, `actions_scouts.project`.
+8b. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `Ledger::recorded_before_commit`, the values recorded before the save of every record of an operation in a workspace whose write may have landed (`RecordRow::may_have_landed`), of its current attempt alone, after its current intent (`intent_seq`), so that a value an attempt settled as not landed recorded is held by nothing ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md), `tests/acknowledged.rs`); migration 0017, a trigger that keeps a version's `gate_evidence` as written (LE-1); migration 0018, `actions_scouts.project`.
+8c. Done ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)): `Tx::shadow`, migration 0020, the tables `shadow_comparisons` and `shadow_promotions`; comparisons, standings, the promotable question, a person's promotion, and the report. Tests: `tests/shadow.rs`.
 9. Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 
 ## Open points

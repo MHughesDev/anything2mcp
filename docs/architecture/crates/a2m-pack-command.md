@@ -194,7 +194,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 6. Not built: `upsert`, `upload`, `download`, and the `collect` step.
 7. Not built: secrets. No credential reaches a program yet: standard input is always closed, and the lease is not applied. `{session.state_dir}` does not compile.
 8. Not built: `stdin` from a param or a blob; a working folder other than a fresh one; an encoding other than UTF-8; a table split at fixed positions; the fixed pair of an interpreter and a script; reading a manual page or a completion file; a grace period before a forced stop; more than one start at a time on a surface.
-9. Not built: on Windows, the check that nobody else can write the program's file, a folder on the way to it, or a link on the way. On every system, access lists beyond the mode are not read.
+9. Not built: on Windows, the check that nobody else can write the program's file, a folder on the way to it, or a link on the way. Until it is, the check passes on Windows: the path is resolved and nothing is refused (`src/safety.rs`, the module for systems that are not Unix), so the refusal in section 306 does not hold there. On every system, access lists beyond the mode are not read.
 10. Not proven here: Windows and macOS. The crate's tree compiles SQLite, so it cannot be checked for those systems from Linux; the tests are written to run there and have not.
 
 ## Open points

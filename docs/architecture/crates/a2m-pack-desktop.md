@@ -1,6 +1,6 @@
 # `a2m-pack-desktop`
 
-The desktop pack: the `desktop` driver, which reaches a desktop application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility interface on macOS, AT-SPI on Linux), and the discoverers and drafting rules for an observed window. Reads on Linux are built ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)); writes, Windows, and macOS are not. What each back end stands on was settled by slice 8.1 ([research note 19](../../research/19-desktop-accessibility-base.md), [decision 0120](../../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md)) and, for Linux, changed by decision 0198 after [research note 26](../../research/26-desktop-pack-before-it-is-built.md); this file says what it registers through the provider contract as built, and the steps that build it.
+The desktop pack: the `desktop` driver, which reaches a desktop application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility interface on macOS, AT-SPI on Linux), and the discoverers and drafting rules for an observed window. Reads on Linux are built ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)), and reads on Windows are built and type-checked, unproven until CI's Windows runner runs them ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); writes and macOS are not. What each back end stands on was settled by slice 8.1 ([research note 19](../../research/19-desktop-accessibility-base.md), [decision 0120](../../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md)) and, for Linux, changed by decision 0198 after [research note 26](../../research/26-desktop-pack-before-it-is-built.md); this file says what it registers through the provider contract as built, and the steps that build it.
 
 ## Facts
 
@@ -9,7 +9,7 @@ The desktop pack: the `desktop` driver, which reaches a desktop application thro
 | Side | Pack: desktop |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (registration), `a2m-auth` (`SessionLease`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext`, `Registrar`), `a2m-telemetry` (the clock of findings). Outside, on Linux only: the workspace's `zbus` (Tokio, proxy calls), `futures-core` (the signal stream), and `sha2` (a program's digest), with AT-SPI calls of the pack's own (decision 0198). When built: on Windows `windows` with the UI Automation features; on macOS `objc2-application-services` and `objc2-core-foundation` (decision 0120). None of them compiles C. Its stand is `targets/example-desk`, a test dependency only |
+| Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (registration), `a2m-auth` (`SessionLease`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext`, `Registrar`), `a2m-telemetry` (the clock of findings). Outside, on Linux only: the workspace's `zbus` (Tokio, proxy calls), `futures-core` (the signal stream), and `sha2` (a program's digest), with AT-SPI calls of the pack's own (decision 0198). On Windows only: the workspace's `windows` with the UI Automation, COM, security, threading, and window features, and `sha2` (decision 0209). When built: on macOS `objc2-application-services` and `objc2-core-foundation` (decision 0120). None of them compiles C. Its stand is `targets/example-desk`, a test dependency only |
 | Built in | Slice 8.1, the spike (done); then package 8.3: its first slice, reads on Linux, is built (decision 0198) |
 | Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`desktop`, interface), [204](../../spec/2-kernel/204-supervising-subsystems.md) (one request at a time, starting and attaching), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (changing what is on a person's screen; attaching to a process), [305](../../spec/3-packs/305-the-desktop-pack.md), [106](../../spec/1-product/106-what-it-latches-onto.md) (the desktop row) |
 
@@ -22,7 +22,7 @@ The desktop pack: the `desktop` driver, which reaches a desktop application thro
 | The base on each system, the build order Linux, Windows, macOS, and `unsafe` confined to one module per system (decision 0120) | Profiles for toolkits, and what a support tier means here |
 | A wait is woken by an event and decided by a fresh read; where a system has no event for a condition, the condition is refused by lint (decision 0120) | Whether the AT-SPI cache interface is needed for large windows |
 | A field's name is the platform's accessible name: its own, else its label's (decision 0120) | How two windows of one program with no title are told apart beyond process and role |
-| Test-application case 28 is `targets/example-desk`, a tree published over AT-SPI by the stand itself, until a real toolkit's adapter stands on maintained crates (decision 0198, which changes decision 0120) | Whether a browser-runtime application whose inspector is disabled may be served by `desktop` |
+| Test-application case 28 is `targets/example-desk`, a tree published over AT-SPI by the stand itself, until a real toolkit's adapter stands on maintained crates (decision 0198, which changes decision 0120); on Windows a window of plain Win32 controls in a process of its own (decision 0209) | Whether a browser-runtime application whose inspector is disabled may be served by `desktop` |
 | An application built on a browser runtime is a web surface (spec sections 201 and 301) | |
 
 ## Owns
@@ -66,7 +66,7 @@ Through the provider contract as built ([decision 0089](../../decisions/0089-the
 | Finding kind | `window`, for `desktop` surfaces. Not `screen`, so that the web pack's drafting rules over `screen` findings never meet it | |
 | Drafting rules | From a `window` finding: a screen and a `get` read of the values the window labels, and a screen and a `list` read of each table it names; a name two controls share is an open question in a screen apart | |
 | Settings | `max_nodes` (2000), `max_depth` (32), `max_read_chars` (65536) | |
-| Platforms | None listed: the compiler side works on every system, and on Windows and macOS the driver stops at prepare as `busy`/`system_not_built` | |
+| Platforms | None listed: the compiler side works on every system; the driver reads on Linux and Windows, and on macOS stops at prepare as `busy`/`system_not_built` | |
 | Auth providers | None. A desktop application's own sign-in lives inside the application ([section 215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md)) | |
 
 ## Interface
@@ -88,7 +88,7 @@ pub mod codes;                                           // every failure code, 
 Inside, one look-only back end per system, with the same methods; the driver and the discoverer reach the application only through it.
 
 ```rust
-pub(crate) struct Look;   // linux.rs: AT-SPI; none.rs: every method is `system_not_built`
+pub(crate) struct Look;   // linux.rs: AT-SPI; windows.rs: UI Automation; none.rs (macOS): every method is `system_not_built`
 impl Look {
     async fn connect(session: Option<&str>) -> Result<Look, AxError>;
     async fn application(&self, program: &str, name: &str, digest: Option<&str>) -> Result<App, AxError>;
@@ -100,7 +100,7 @@ impl Look {
 }
 ```
 
-The type has no method that sets a value, invokes, selects, focuses, scrolls, or sends a key or a click, and the Linux module's one sending function sends only the members of its list of reads, which a test holds against the members of AT-SPI that act. A wait subscribes, reads the condition once, and reads it again on each signal from the application, until it holds or the deadline passes; it never decides from a signal's payload. The Windows and macOS back ends, when built, are the only modules with `#[allow(unsafe_code)]`, on each function, with a comment on each block; the macOS back end runs its observer's run loop on a thread it owns, and the Windows back end makes its UI Automation calls from a multithreaded apartment on a thread it owns, both handing events to Tokio through a channel (decision 0120).
+The type has no method that sets a value, invokes, selects, focuses, scrolls, or sends a key or a click, and the Linux module's one sending function sends only the members of its list of reads, which a test holds against the members of AT-SPI that act. A wait subscribes, reads the condition once, and reads it again on each signal from the application, until it holds or the deadline passes; it never decides from a signal's payload. The Windows back end, and the macOS one when built, are the only modules with `#[allow(unsafe_code)]`, on each function, with a comment on each block. The Windows back end makes every UI Automation call from a multithreaded apartment on a thread each `Look` owns, where every COM object is made and released, through one function that makes only the members of its list of reads, which two tests hold (the list against the members that act, and the module's source against the list); a wait listens to the system's accessibility events for the application's process through an out-of-context hook on a thread of the watch's own, handed to Tokio through a channel (decision 0209). The macOS back end will run its observer's run loop on a thread it owns (decision 0120).
 
 ### How the mode fills the loop
 
@@ -151,14 +151,15 @@ As built it starts nothing and uses no supervisor: it reads the process table to
 | `unknown_variant` | `unexpected_dialog` | A modal window |
 | `policy` | `password_read_refused` | A step would read a control that holds a secret. Built |
 | `busy` | `application_not_running` | No application of the session is the surface's program and name and publishes a tree; the pack starts nothing. Built |
-| `busy` | `system_not_built` | The pack has no back end for this operating system: Windows and macOS in this version. Built |
+| `busy` | `system_not_built` | The pack has no back end for this operating system: macOS in this version. Built |
 | `input` | `step_not_usable` | A plan this version of the pack cannot carry out. Built |
 | `rejected` | `app_validation_error` | A declared variant showing a validation message |
 | `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited |
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it |
 | `busy` | `runner_unavailable` | No interactive desktop session |
 | `busy` | `accessibility_off` | The macOS Accessibility permission is not granted to the program making the calls, or the Linux session's accessibility switch is off and the application's program runs and publishes no tree. The message names the setting; the pack changes nothing. Built for Linux |
-| `busy` | `target_elevated` | A Windows window runs at a higher integrity level than the runner |
+| `busy` | `target_elevated` | A Windows application runs elevated when the engine does not, or its token cannot be opened. Built for Windows (decision 0209) |
+| `policy` | `application_not_owned` | A Windows program the surface states runs as another user or in another session. Built for Windows (decision 0209) |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent. Built |
 
 ## Invariants
@@ -169,8 +170,8 @@ As built it starts nothing and uses no supervisor: it reads the process table to
 | Nothing but the declared application is asked anything | The stand, running, with a surface that names another program: it was asked nothing. Built |
 | No act reaches a window other than the expected one | A test that opens a second window of the same program before an act |
 | No input is sent by screen position | Review, and the back-end trait, which has no such method |
-| Nothing waits by polling | Review, and two tests: a condition no event ends stops at its deadline as `unexpected_page`; a value the stand shows a moment after the wait began ends it by its signal. Built for Linux |
-| A password field is never read | A test against a password field on each system: the stand counts no read of it, and its value is in no result, finding, draft, or log. Built for Linux |
+| Nothing waits by polling | Review, and two tests: a condition no event ends stops at its deadline as `unexpected_page`; a value the stand shows a moment after the wait began ends it by its signal. Built for Linux; written for Windows, unproven until CI runs it |
+| A password field is never read | A test against a password field on each system: the stand counts no read of it, and its value is in no result, finding, draft, or log. Built for Linux; written for Windows, where the stand counts every message that asks the password edit for its text, unproven until CI runs it |
 | A committing action lost to a crash is `possible_commit` | Case 28 with the program killed after `invoke` |
 | Discovery changes nothing in the program | Case 28's control interface counts no write and no member that acts during `desktop_snapshot`, and no read of any text. Built |
 | Each widget driver sets and reads back its control | The conformance group "Acting", on case 28, on each system whose back end is built |
@@ -182,14 +183,14 @@ As built it starts nothing and uses no supervisor: it reads the process table to
 3. Done: the compiler side, with no system code: the manifest, `DesktopPack`, the `desktop` surface kind with its program field, the `screens/` file kind, the `read` and `list` lowerings, the refusal of a write, the control `desktop_text`, and a test that the fixture compiles into the same plan twice. Type-checked for Windows; for macOS the check stops in `a2m-provider`, below this crate. The design's four lint rules are not built (above).
 4. Done, but for starting a program and `desktop_probe`: the Linux back end, reads only: find the declared application already running, prove its process against the bus daemon's answer, find its window by an event-ended wait, `read`; `desktop_snapshot` and its drafting rules.
 5. Linux writes with read-back, and the fault cases: the program killed after `invoke`, a second window, a password field, a condition no event ends.
-6. The Windows back end, steps 4 and 5 again, with a native-controls window beside case 28; CI on the hosted Windows machine.
+6. The Windows back end, steps 4 and 5 again, with a native-controls window beside case 28; CI on the hosted Windows machine. Done for step 4, reads, and type-checked only: `backend/windows.rs` and the stand's window of plain Win32 controls in `targets/example-desk` behind `cfg(windows)`, with the same tests as Linux through one harness, a back-end test against the stand that prints its walk, and the CI job written for the lead (decision 0209). Unproven until that job runs. Writes are step 5's.
 7. The macOS back end, steps 4 and 5 again, proven on a machine where a person grants the permission; the CI gap written in the journal.
 
 ## Open points
 
 - **Starting a program that speaks no protocol.** The scoped supervisor offers `run` (to completion) and `start_foreign` (a program on a pair of pipes). A desktop application is neither, and the proof of its process needs its process number and start time. The supervisor needs a link kind for a program it watches until stopped, or `start_foreign` must allow pipes the program ignores. For `a2m-provider`, by decision record, before the pack starts anything; reads find the application already running instead (decision 0198).
 - How two windows of one program with no title are told apart, beyond process and role. The egui window has no name, and this version refuses a screen whose window has no title.
-- **Role words across systems.** A locator's role is one of the pack's own words, mapped on Linux from AT-SPI's roles. Whether one list serves UI Automation's control types and macOS's roles is for the Windows and macOS back ends.
+- **Role words across systems.** A locator's role is one of the pack's own words, mapped on Linux from AT-SPI's roles and on Windows from UI Automation's control types, in one table each (decision 0209: the list served Windows with two refinements, a password edit and a cell of a row). Whether it serves macOS's roles is for the macOS back end.
 - **A stand on a real toolkit.** The stand publishes its tree itself, so no toolkit's own tree is in the loop. It returns when egui's AT-SPI adapter stands on maintained crates, or as a second stand on a CI job that accepts the GTK library (decision 0198).
 - **The macOS permission on a hosted CI machine** (research note 26): not decided; the owner's.
 - Whether the AT-SPI cache interface is needed: a walk costs one to three milliseconds a node in a debug build.

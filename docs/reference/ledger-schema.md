@@ -303,6 +303,22 @@ As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and 
 
 As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sql`, and `0017-ledger-versions-gate-evidence-never-changes.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its plan, hash, version, target, workspace, or gate evidence, and every delete.
 
+## shadow_comparisons, shadow_promotions
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `seq` | int | Primary key of a comparison, in the order they were kept |
+| `workspace_id`, `target`, `environment` | id, text, text | Taken from the run, never from the caller |
+| `operation`, `binding_digest`, `mode`, `position` | text, text, text, int | The binding in shadow, named by the digest of what it does ([decision 0200](../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)) |
+| `against_digest`, `run_id` | text, id | The binding that did the real work, and the run it was compared beside |
+| `writes` | bool | Whether the operation writes; always false while the shadow of a write is not built |
+| `outcome` | enum | `match`, `mismatch`, `not_compared` |
+| `differing` | text | For a mismatch: the outputs that differed, by name, and how (`differs`, `missing`, `unreadable`), as JSON; never a value |
+| `why_class`, `why_code` | enum, text | For `not_compared`: what stopped it |
+| `at` | ts | When it was kept |
+
+A promotion (`shadow_promotions`) is one row per workspace, target, operation, and binding digest: who promoted it and when, the matches in a row it was promoted on, the threshold in force, and the last comparison counted. As built by migration `0020-ledger-shadow-comparisons-and-promotions.sql`, which `a2m-ledger` owns ([decision 0207](../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). Both are append-only by trigger; a comparison is taken only beside a run that is `running`, and leaves only with its run, when retention purges it. Counts are queries over the rows: a mismatch starts the run of matches again, and `not_compared` neither counts nor starts it again.
+
 ## audit
 
 Unchanged from the technical reference: an append-only, hash-chained log of who did what. Ledger events are evidence about runs; the audit log is the record of decisions and administration.

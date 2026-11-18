@@ -52,6 +52,14 @@ pub const ADDRESS_INVALID: FailureCode = FailureCode::fixed("address_invalid");
 /// `input`: a value that cannot stand in one segment of a screen's address.
 pub const ADDRESS_VALUE_REFUSED: FailureCode = FailureCode::fixed("address_value_refused");
 
+/// `drift`: the page a write is made from holds no anti-forgery token
+/// where its entry says. Nothing was sent (decision 0206).
+pub const ANTI_FORGERY_NOT_FOUND: FailureCode = FailureCode::fixed("anti_forgery_not_found");
+/// `unknown_variant`: the page holds two different anti-forgery tokens
+/// where its entry says, or one of a form that is not sent. Nothing was
+/// sent.
+pub const ANTI_FORGERY_UNREADABLE: FailureCode = FailureCode::fixed("anti_forgery_unreadable");
+
 /// Every code of this pack with its one class, as the manifest declares
 /// them. A test holds the two lists together.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -59,6 +67,8 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Drift, "locator_ambiguous"),
     (FailureClass::Drift, "fingerprint_mismatch"),
     (FailureClass::Drift, "response_schema_mismatch"),
+    (FailureClass::Drift, "anti_forgery_not_found"),
+    (FailureClass::UnknownVariant, "anti_forgery_unreadable"),
     (FailureClass::UnknownVariant, "unexpected_dialog"),
     (FailureClass::UnknownVariant, "unexpected_page"),
     (FailureClass::UnknownVariant, "unexpected_control"),

@@ -16,7 +16,10 @@
 //! `docs/architecture/crates/a2m-pack-web-browser.md`.
 //!
 //! An observing tab records, by structure alone, the requests its page
-//! makes by itself with GET to its own origins ([`PageExchange`]).
+//! makes by itself with GET to its own origins ([`PageExchange`]), and reads
+//! from inside its page with GET alone ([`ObserveTab::read_from_page`]); an
+//! acting tab writes from inside its page with the page's own anti-forgery
+//! token, which never leaves the page ([`ActTab::write_from_page`]).
 //!
 //! Not built yet: a visible window, exporting and importing a session's
 //! state, the watching tab, frames, the stream of every network exchange,
@@ -29,6 +32,7 @@ mod error;
 mod launch;
 mod origin;
 mod page_read;
+mod page_write;
 mod protocol;
 mod snapshot;
 mod structure;
@@ -50,6 +54,10 @@ pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, code
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};
+pub use page_write::{
+    AntiForgery, BodyEncoding, FieldValue, LONGEST_FIELD_TEXT, LONGEST_WRITE_NAME, MOST_FIELDS,
+    PageWrite, REFUSED_HEADERS, TokenFrom, TokenProblem, TokenTo, WriteMethod, plain_write_name,
+};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use structure::{
     ACTION_WORDS, LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART,

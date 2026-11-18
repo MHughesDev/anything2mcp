@@ -59,11 +59,7 @@ async fn a_snapshot_is_the_windows_shape_and_changes_nothing() {
     assert_eq!(truth.writes, 0);
     assert!(!truth.acted(), "{:?}", truth.asked);
     assert_eq!(truth.secret_reads, 0);
-    assert!(
-        !truth.asked.contains_key("Text.GetText"),
-        "{:?}",
-        truth.asked
-    );
+    assert_eq!(truth.values_read(), 0, "{:?}", truth.asked);
 
     let description = scene
         .registry
@@ -99,6 +95,16 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
     let findings = scene.discover().await;
     let (root, report) = scene.draft(&findings);
     let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    // What the drafts were made from, for a message that must explain a
+    // run on a machine nobody can look at.
+    let seen: String = findings
+        .iter()
+        .map(|finding| finding.found().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(12_000)
+        .collect();
     for expected in [
         "screens/example_order_values.yaml",
         "screens/example_order_values_undecided.yaml",
@@ -106,9 +112,12 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
         "operations/example_order_values_get.yaml",
         "operations/example_order_line_items_list.yaml",
     ] {
-        assert!(written.contains(&expected), "{expected} not in {written:?}");
+        assert!(
+            written.contains(&expected),
+            "{expected} not in {written:?}; drafted from:\n{seen}"
+        );
     }
-    assert_eq!(written.len(), 5, "{written:?}");
+    assert_eq!(written.len(), 5, "{written:?}; drafted from:\n{seen}");
     assert!(
         report.refused.is_empty() && report.conflicts.is_empty(),
         "{report:?}"
@@ -165,24 +174,22 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
         Ok(compiled) => compiled.plan,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
     };
-    scene.surface = common::surface_of(&scene.plan);
+    scene.surface = common::surface_of(&scene.plan, &scene.program);
     let order = Order::example();
     let got = scene
-        .read("example_example_order_get", Duration::from_secs(10))
-        .await
-        .unwrap();
+        .read_or_explain("example_example_order_get", Duration::from_secs(10))
+        .await;
     let text = |name: &str| got.get(name).and_then(Value::as_text).unwrap().to_owned();
     assert_eq!(text("order_number"), order.number);
     assert_eq!(text("customer"), order.customer);
     assert_eq!(text("status"), order.status);
     assert_eq!(text("tracking"), scene.desk().truth().tracking);
     let lines = scene
-        .read(
+        .read_or_explain(
             "example_example_order_line_items_list",
             Duration::from_secs(10),
         )
-        .await
-        .unwrap();
+        .await;
     let column = |name: &str| -> Vec<String> {
         lines
             .get(name)

@@ -20,7 +20,7 @@ Non-goals:
 
 - Defeating MFA, CAPTCHAs, bot defenses, licensing, or access controls. The system acts with exactly the user's rights, openly.
 - Live AI improvisation during a run.
-- Pixel-only targets such as Citrix or remote desktops, until a later vision mode is justified.
+- Pixel-only targets such as remote desktops. [Section 106](106-what-it-latches-onto.md) refuses clicking by pixel; whether a later read-only mode is ever wanted is the owner's question in [decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md) (Proposed).
 
 The four guarantees, each with how it is met and proven:
 

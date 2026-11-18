@@ -14,7 +14,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [08-entra-identity.md](08-entra-identity.md) | Acting as a user or a service under Entra ID | Partial |
 | [09-rust-building-blocks.md](09-rust-building-blocks.md) | Crates and engine options | Partial; most crates unverified |
 | [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `anything2mcp` | Completed; quick reviews |
-| [11-open-research.md](11-open-research.md) | 34 research briefs still to run | To do; briefs 1, 2, 24, 27, 32, 33, and 34 are answered by notes 17, 18, 25, 20, 22, 23, and 24 |
+| [11-open-research.md](11-open-research.md) | 35 research briefs still to run | To do; briefs 1, 2, 24, 27, 32, 33, and 34 are answered by notes 17, 18, 25, 20, 22, 23, and 24 |
 | [12-packaging-and-agent-interfaces.md](12-packaging-and-agent-interfaces.md) | Package names, pip and npm packaging, commands versus MCP tools | Partial; search results and registry checks |
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |
 | [14-sessions-and-policy-engines.md](14-sessions-and-policy-engines.md) | Browser profile limits, device-bound sessions, Entra session rules, Cedar | Partial; search results only |
@@ -30,6 +30,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [24-turning-tls-on.md](24-turning-tls-on.md) | What it takes to switch TLS on across the workspace: the panic, the options, the cost, the server side, trust roots | Completed; the repository and the crates' source read, licence trees checked, nothing compiled or run |
 | [25-webmcp-standard-status.md](25-webmcp-standard-status.md) | The state of the WebMCP draft and whether the engine can call a site's tools through the DevTools protocol | Completed; the draft's repository read, the protocol run against one Chrome build on Linux only |
 | [26-desktop-pack-before-it-is-built.md](26-desktop-pack-before-it-is-built.md) | What the desktop pack needs before it is built: each operating system's accessibility interface, the crates, a test stand that runs in CI, the product's rules applied to a desktop application, and the first slice | Completed; sources and registries read, nothing compiled or run; builds on note 19 |
+| [27-the-public-landscape-of-agent-tools.md](27-the-public-landscape-of-agent-tools.md) | What else exists in public that lets agents reach software, in eight families; what those projects can do that this product cannot, what makes the popular ones popular, and what this product has that they do not | Completed; repository and registry pages read, nothing installed or run; star counts as rendered, not verified; extends notes 03 and 16 |
 
 ## How to read the status
 

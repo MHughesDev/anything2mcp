@@ -1,6 +1,6 @@
 # The manifest of the desktop pack. What is not built is not declared: the
-# write half (set, invoke, a commit point, a read-back), the Windows and
-# macOS back ends, keys and clicks, starting an application, the
+# write half (set, invoke, a commit point, a read-back), the macOS back
+# end, keys and clicks, starting an application, the
 # `desktop_probe` discoverer, the lint rules of the design, and every
 # control but `desktop_text`. No platform list: the compiler side works on every
 # system, and the driver stops at prepare with `system_not_built` where it
@@ -106,6 +106,14 @@ code = "application_not_running"
 [[failure_codes]]
 class = "busy"
 code = "accessibility_off"
+
+[[failure_codes]]
+class = "busy"
+code = "target_elevated"
+
+[[failure_codes]]
+class = "policy"
+code = "application_not_owned"
 
 [[failure_codes]]
 class = "busy"
