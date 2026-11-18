@@ -120,11 +120,12 @@ pub struct ActWarning {
     pub message: String,
 }
 
-/// What a publish shows beside the tools, before it is redacted.
+/// What a publish shows, before it is redacted.
 #[derive(Default)]
 struct PublishShown {
     surfaces: Vec<ActSurface>,
     warnings: Vec<ActWarning>,
+    review: Option<a2m_files::ReviewSummary>,
 }
 
 /// One secret a person's act asks its person for on its page, beside the
@@ -162,9 +163,17 @@ pub struct PersonActAsk {
     /// as the hash of the plan a publish will store.
     pub input: Vec<ShownField>,
     /// What else the person should read before they act, one line each,
-    /// as text: for a publish, what each tool may do, the most dangerous
-    /// first.
+    /// as text, in the kernel's own sentences: for a publish, the tools
+    /// that act for the first time, the environment the compiler implied,
+    /// and the gates that ran. What each tool and each sign-in does is in
+    /// `review`, typed, and not repeated here.
     pub details: Vec<String>,
+    /// For a publish, the version's review summary (decisions 0252 and
+    /// 0264): each sign-in with every address the session keeper says a
+    /// credential or a token of it is sent to, and each tool, the most
+    /// dangerous first, with what it starts, sets, and reaches. Every text
+    /// in it has passed the redactor. None for every other act.
+    pub review: Option<a2m_files::ReviewSummary>,
     /// For a publish, every surface of the version, with where it leads
     /// and its notices; empty for every other act. They are not repeated
     /// among `details`: a page prints both (decision 0199).
@@ -509,6 +518,9 @@ impl Kernel {
             summary: def.summary.clone(),
             input: fields,
             details: details.iter().map(|line| redact.redact(line)).collect(),
+            review: publish
+                .review
+                .map(|review| review.map_text(&|text| redact.redact(text))),
             surfaces: publish
                 .surfaces
                 .into_iter()
@@ -701,48 +713,13 @@ impl Kernel {
         // The bindings that may act for the first time in this version, by
         // operation and mode: a first binding promoted from `draft` acts
         // first here, where a person decides (decision 0189).
-        let first_to_act = self.first_to_act(&target, &compiled.plan).await?;
-        let details = compiled
-            .review
-            .items
-            .iter()
-            .map(|item| {
-                let surfaces: Vec<String> = item.surfaces.iter().map(ToString::to_string).collect();
-                let mut line = format!(
-                    "{}: {}, hazard {}, {} commit points, surfaces {}",
-                    item.tool,
-                    item.effect,
-                    item.hazard,
-                    item.commit_points,
-                    if surfaces.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        surfaces.join(", ")
-                    },
-                );
-                if !item.destinations.is_empty() {
-                    line.push_str(&format!("; also reaches {}", item.destinations.join(", ")));
-                }
-                if !item.uploads.is_empty() {
-                    line.push_str(&format!("; sends files {}", item.uploads.join(", ")));
-                }
-                if !item.downloads.is_empty() {
-                    line.push_str(&format!("; receives files {}", item.downloads.join(", ")));
-                }
-                line
-            })
-            .chain(first_to_act)
-            .collect::<Vec<String>>();
+        let mut details = self.first_to_act(&target, &compiled.plan).await?;
         // Where each surface leads, its notices, and the warnings are
         // handed apart, in `PersonActAsk::surfaces` and `warnings`, and not
-        // also as lines: a page prints them once (decision 0199).
-        let shown = publish_shown(self, &compiled);
-        let mut details = details;
-        // Each sign-in: its provider, its credentials by reference, and
-        // every address a credential or a token goes to, in each
-        // environment. One the keeper would refuse is refused here, before
-        // the person is asked (decision 0248).
-        details.extend(self.sign_ins_shown(&target, &compiled.plan)?);
+        // also as lines: a page prints them once (decision 0199). What each
+        // tool and each sign-in does is the typed review (decision 0264).
+        let mut shown = publish_shown(self, &compiled);
+        shown.review = Some(self.review_shown(&target, &compiled)?);
         if implied_production
             && compiled
                 .plan
@@ -759,79 +736,52 @@ impl Kernel {
         Ok((input, details, shown, Vec::new()))
     }
 
-    /// One line for each sign-in `plan` declares in each of its
-    /// environments, for the person who publishes it: the surfaces it
-    /// covers, the provider, each credential by role and reference (never a
-    /// value), and every address a credential or a token of it is sent to.
+    /// The compiler's review summary of a version, with where each
+    /// sign-in sends in each environment stated by the session keeper:
+    /// `Keeper::sign_in_addresses` is the one place a sign-in's addresses
+    /// come from, for this page as for the person's sign-in page and the
+    /// keeper's own checks (decisions 0248 and 0264). A provider this
+    /// engine does not hold is stated as not held: every sign-in through
+    /// it stops by name before anything is sent, here as at run time.
     ///
     /// # Errors
     ///
     /// What the session keeper refuses an entry for before anything is
     /// sent: an address the target does not declare, a credential of
     /// another target, or a setting the provider does not accept.
-    fn sign_ins_shown(
+    fn review_shown(
         &self,
         target: &a2m_core::TargetName,
-        plan: &a2m_core::Plan,
-    ) -> Result<Vec<String>, Failure> {
+        compiled: &a2m_files::Compiled,
+    ) -> Result<a2m_files::ReviewSummary, Failure> {
+        let plan = &compiled.plan;
+        let mut review = compiled.review.clone();
         if plan.auth.is_empty() {
-            return Ok(Vec::new());
+            return Ok(review);
         }
         let keeper = self.keeper()?;
-        let mut lines = Vec::new();
-        for auth in &plan.auth {
-            let covered: Vec<String> = auth
-                .surfaces
-                .iter()
-                .filter_map(|index| plan.surface(*index))
-                .map(|surface| surface.name.to_string())
-                .collect();
-            let credentials: Vec<String> = auth
-                .credentials
-                .iter()
-                .map(|credential| format!("{} {}", credential.role, credential.reference))
-                .collect();
+        for (at, auth) in plan.auth.iter().enumerate() {
             for environment in &plan.environments {
                 let entry = crate::control::entry_of(plan, auth, &environment.name, true);
-                let addresses = match keeper.sign_in_addresses(target, &entry) {
-                    Ok(addresses) => addresses,
-                    // A provider this engine does not hold cannot say where
-                    // it sends; every sign-in through it stops by name
-                    // before anything is sent, here as at run time.
+                let sent = match keeper.sign_in_addresses(target, &entry) {
+                    Ok(addresses) => Some(
+                        addresses
+                            .into_iter()
+                            .map(|sent| a2m_files::SentAddress {
+                                address: sent.address,
+                                what: sent.what,
+                            })
+                            .collect(),
+                    ),
                     Err(failure) if failure.code() == &a2m_auth::codes::AUTH_PROVIDER_UNKNOWN => {
-                        lines.push(format!(
-                            "Sign-in of {} in the environment {}: through the provider {}, which this engine does not hold, so where it would send is not known here; it signs in nowhere until a pack that provides it is enabled.",
-                            covered.join(", "),
-                            environment.name,
-                            auth.provider,
-                        ));
-                        continue;
+                        None
                     }
                     Err(failure) => return Err(failure),
                 };
-                let sent: Vec<String> = addresses
-                    .iter()
-                    .map(|sent| format!("{} ({})", sent.address, sent.what))
-                    .collect();
-                lines.push(format!(
-                    "Sign-in of {} in the environment {}: through the provider {}; credentials {}; a credential or a token of it is sent to {}, and to no other address.",
-                    covered.join(", "),
-                    environment.name,
-                    auth.provider,
-                    if credentials.is_empty() {
-                        "none stored".to_owned()
-                    } else {
-                        credentials.join(", ")
-                    },
-                    if sent.is_empty() {
-                        "no address".to_owned()
-                    } else {
-                        sent.join(", ")
-                    },
-                ));
+                review.state_sent_to(at, &environment.name, sent);
             }
         }
-        Ok(lines)
+        Ok(review)
     }
 
     /// One line for each verified binding of `plan` that the target's
@@ -1168,5 +1118,9 @@ fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShow
             message: format!("{}: {}", warning.at.file.as_str(), warning.message),
         })
         .collect();
-    PublishShown { surfaces, warnings }
+    PublishShown {
+        surfaces,
+        warnings,
+        review: None,
+    }
 }

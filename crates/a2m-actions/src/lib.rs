@@ -45,6 +45,7 @@ mod signals;
 mod tools;
 
 /// An idempotency key, as the store keeps it (decision 0160).
+pub use a2m_files::ReviewSummary;
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
 pub use acts::{
     ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, AskedSecret, PersonActAsk, PersonActId,

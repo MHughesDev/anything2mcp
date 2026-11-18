@@ -1120,7 +1120,12 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
         fields.contains(&("target", "example")) && fields.contains(&("version", "1.0.0")),
         "{fields:?}"
     );
-    assert!(!ask.details.is_empty(), "the review summary is shown");
+    assert!(
+        ask.review
+            .as_ref()
+            .is_some_and(|review| !review.items.is_empty()),
+        "the review summary is shown"
+    );
     // The target declares only `test`: the page says `production` is
     // implied, not declared (decision 0219).
     assert!(
@@ -3529,12 +3534,14 @@ async fn a_drafted_sign_in_sends_no_stored_credential_until_its_person_sees_ever
     world.kernel.close(CloseReason::Asked).await;
 }
 
-/// Decision 0248: the publish review names, for each sign-in, the provider,
-/// each credential by its reference and never a value, and every address a
-/// credential or a token goes to; a sign-in that would send to an address
-/// the target does not declare is refused before the person is asked.
+/// Decisions 0248 and 0264: the publish act carries the typed review, in
+/// which each sign-in names its provider, each credential by its reference
+/// and never a value, and every address a credential or a token goes to,
+/// as the session keeper states them; a sign-in that would send to an
+/// address the target does not declare is refused before the person is
+/// asked.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_publish_shows_where_each_sign_in_sends_and_refuses_an_undeclared_address() {
+async fn the_publish_act_carries_the_typed_review_with_sign_in_addresses_from_the_keeper() {
     let world = World::open().await;
     *world.surface.pages.lock().unwrap() = true;
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
@@ -3570,20 +3577,61 @@ async fn a_publish_shows_where_each_sign_in_sends_and_refuses_an_undeclared_addr
         .await;
     assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
     let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
-    let line = ask
-        .details
+    let review = ask.review.as_ref().expect("the publish carries its review");
+    let sign_in = &review.sign_ins[0];
+    assert_eq!(sign_in.provider.as_str(), "oauth_client_credentials");
+    assert_eq!(sign_in.surfaces[0].as_str(), "desk");
+    assert_eq!(
+        (
+            sign_in.credentials[0].role.as_str(),
+            sign_in.credentials[0].reference.to_string()
+        ),
+        (
+            "client_secret",
+            "vault://example/service/client_secret".to_owned()
+        )
+    );
+    let test = sign_in
+        .sent_to
         .iter()
-        .find(|line| line.starts_with("Sign-in of desk in the environment test"))
-        .unwrap_or_else(|| panic!("{:?}", ask.details));
-    assert!(line.contains("oauth_client_credentials"), "{line}");
+        .find(|sent| sent.environment.as_str() == "test")
+        .unwrap();
+    let a2m_files::SentTo::Addresses { groups, .. } = &test.sent_to else {
+        panic!("{:?}", test.sent_to);
+    };
+    let mut sent: Vec<(&str, &str)> = groups
+        .iter()
+        .flat_map(|group| &group.addresses)
+        .map(|sent| (sent.address.as_str(), sent.what.as_str()))
+        .collect();
+    sent.sort_unstable();
+    // Exactly what the session keeper gives for the published entry: the
+    // surface the token goes to, in its words, and the token endpoint, and
+    // nothing else. The compiler alone could say neither.
+    let desk = ask
+        .surfaces
+        .iter()
+        .find(|surface| surface.name == "desk")
+        .unwrap();
+    let desk_in_test = desk
+        .addresses
+        .iter()
+        .find(|(environment, _)| environment == "test")
+        .map_or(desk.address.as_str(), |(_, address)| address.as_str());
+    let mut expected = vec![
+        (
+            "https://id.example.test/traps/write/token",
+            "the setting `token_endpoint`",
+        ),
+        (desk_in_test, "the surface `desk`"),
+    ];
+    expected.sort_unstable();
+    assert_eq!(sent, expected);
+    // The tools are no longer repeated as text lines.
     assert!(
-        line.contains("client_secret vault://example/service/client_secret"),
-        "{line}"
+        !ask.details.iter().any(|line| line.starts_with("Sign-in of")),
+        "{:?}",
+        ask.details
     );
-    assert!(
-        line.contains("https://id.example.test/traps/write/token (the setting `token_endpoint`)"),
-        "{line}"
-    );
-    assert!(line.contains("(the surface `desk`)"), "{line}");
     world.kernel.close(CloseReason::Asked).await;
 }
