@@ -124,3 +124,15 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: taken up.** An action that needs nothing from the engine is to open nothing: the registry already marks which actions need no health at all, and a command for one of those can be answered from the program itself, without a store, a lock, or a home. The same holds for a command that finds no engine and no home: it says so and makes neither. This is the general form of what the cold-start investigation found for `engine status` and `engine stop`, which open a whole kernel to say that no engine is running.
 
 **Next.** Joins the package for what a person and an agent meet at the command line, with a test that runs each such command against a home that does not exist and asserts that it still does not exist afterwards.
+
+## Round 20 (2026-11-18, 04:27 UTC)
+
+**Idea.** A person who holds a file that describes a system, such as an OpenAPI description or a device's published register map, can hand it to the scout in the real product, and the scout reads it.
+
+**Test.** The file pack's agent had just found that the engine passes a discovery job none of a surface's files. So the same question was put to every pack: read each discoverer that takes its material from the files of the job, read the one place where the engine builds a discovery job, and searched the product's tests for any that hands discovery a file. Reading only: no scout was run.
+
+**Result.** The person cannot. The engine gives a discovery job exactly one checked path, the project folder of the request that started it, and nothing puts any other file there. Three discoverers depend on more. The HTTP pack looks for a file under the name `description` and never finds one, so in the product an OpenAPI description is imported only when the system itself serves it at a path; when that fails, the failure's own fix says to give the description as a file, which the product offers no way to do. The device pack's reader of a published register map walks the job's files for names that end in `.csv`, meets only the project folder, and finds nothing. The file pack had the same fault until today's package gave its discoverer the surface's own folder. Each pack's own tests pass because they build the job by hand with the files in place. No product test hands discovery a file.
+
+**Verdict: taken up.** The scout is to take, by name, files of the project that the person points it at, each checked as every project path is and offered to the discoverers under the names they declare, and a product test is to import a description from a file and a register map from a file through the real command. Until that is built, the HTTP pack's fix text is to stop naming a step that cannot be taken.
+
+**Next.** A package of its own in the action registry and the engine's discovery job, after the validation in hand. The scope page gains a row for it, marked not yet built.
