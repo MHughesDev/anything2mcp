@@ -226,3 +226,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0220 | [A first run on Linux needs no administrator's file](0220-a-first-run-on-linux-needs-no-administrators-file.md) | Accepted (design decision) |
 | 0223 | [A network is a place, a recognized network, and a reach](0223-a-network-is-a-place-a-recognized-network-and-a-reach.md) | Proposed (design decision) |
 | 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Proposed (owner decision) |
+| 0225 | [Whether anything is ever sent on a network the person has not named](0225-whether-anything-is-ever-sent-on-a-network-the-person-has-not-named.md) | Proposed (owner decision) |
+| 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Proposed (owner decision) |

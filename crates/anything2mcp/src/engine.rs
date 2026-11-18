@@ -287,6 +287,9 @@ fn roots(paths: &Paths, place: StorePlace) -> Roots {
 /// reads that need no secret go on, and nothing is sealed or written.
 struct NoKeyStore {
     name: String,
+    /// The strength of the route that could not be taken: a passphrase
+    /// route that failed is not reported as a key store.
+    strength: StoreStrength,
     why: Failure,
 }
 
@@ -294,7 +297,7 @@ impl KeyStore for NoKeyStore {
     fn describe(&self) -> StoreDescription {
         StoreDescription {
             name: self.name.clone(),
-            strength: StoreStrength::OsStore,
+            strength: self.strength,
         }
     }
 
@@ -320,39 +323,33 @@ impl KeyStore for NoKeyStore {
 }
 
 fn no_key_store(name: &str, why: Failure) -> Arc<dyn KeyStore> {
-    Arc::new(NoKeyStore {
-        name: name.to_owned(),
-        why,
-    })
+    no_store_of(name, StoreStrength::OsStore, why)
 }
 
-fn passphrase_failure(message: &str, fix: &str) -> Failure {
-    Failure::new(
-        FailureClass::Busy,
-        a2m_vault::codes::KEY_STORE_UNREACHABLE,
-        message,
-        fix,
-    )
+fn no_store_of(name: &str, strength: StoreStrength, why: Failure) -> Arc<dyn KeyStore> {
+    Arc::new(NoKeyStore {
+        name: name.to_owned(),
+        strength,
+        why,
+    })
 }
 
 /// This machine's key store, as the installation's settings choose it.
 /// Never fails: a store that cannot be reached is one that does not
 /// answer, and the kernel opens degraded and says why.
 async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<dyn KeyStore> {
-    if settings.text("vault.backend") == Some("passphrase") {
+    // The route the setting chooses; where the build has no key store it
+    // is the default (decision 0220).
+    if PassphraseRoute::of_backend(settings.text("vault.backend")) == PassphraseRoute::Enabled {
         let name = "a passphrase given at start";
+        let no_store =
+            |why: Failure| no_store_of(name, StoreStrength::Passphrase, why);
         let Some(passphrase) = options
             .environment
             .get(PASSPHRASE_VARIABLE)
             .filter(|value| !value.is_empty())
         else {
-            return no_key_store(
-                name,
-                passphrase_failure(
-                    "The vault is set to take its root key from a passphrase, and none was given.",
-                    "Set the environment variable `A2M_VAULT_PASSPHRASE` for the engine's process.",
-                ),
-            );
+            return no_store(PassphraseKeyStore::not_given(PASSPHRASE_VARIABLE));
         };
         // The vault makes the salt once, under a lock beside the file, so two
         // commands that start together on a new installation end with one
@@ -364,7 +361,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         .await
         {
             Ok(salt) => salt,
-            Err(failure) => return no_key_store(name, failure),
+            Err(failure) => return no_store(failure),
         };
         return match PassphraseKeyStore::derive(
             PassphraseRoute::Enabled,
@@ -374,7 +371,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         .await
         {
             Ok(store) => Arc::new(store),
-            Err(failure) => no_key_store(name, failure),
+            Err(failure) => no_store(failure),
         };
     }
     let name = "the operating system's key store";

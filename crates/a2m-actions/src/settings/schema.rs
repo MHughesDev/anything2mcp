@@ -351,10 +351,11 @@ pub const SCHEMA: &[SettingDef] = &[
     def(
         "vault.backend",
         Kind::Text,
-        T("os_keystore"),
+        // A fact of the build, never chosen at run time (decision 0220).
+        T(a2m_vault::DEFAULT_BACKEND),
         I,
         NextStart,
-        "Where the vault's root key is kept: the operating system's key store, or a key service by reference.",
+        "Where the vault's root key is kept: the operating system's key store, a key derived from a passphrase (the default where this build has no key store), or a key service by reference.",
     ),
     def(
         "vault.root_key",

@@ -531,3 +531,39 @@ fn a_proxy_setting_is_refused_while_no_proxy_is_supported() {
     // Empty, as by default, it is no problem.
     assert!(Settings::load(&Sources::none()).is_ok());
 }
+
+/// Decision 0220: the vault's back end defaults to what the build has, the
+/// passphrase route where it has no key store, and only the installation
+/// chooses it; a user's file or the environment that sets it is refused.
+#[test]
+fn the_vault_back_end_defaults_to_what_the_build_has_and_only_the_installation_chooses_it() {
+    let none = Settings::load(&Sources::none()).unwrap();
+    assert_eq!(none.text("vault.backend"), Some(a2m_vault::DEFAULT_BACKEND));
+    #[cfg(target_os = "linux")]
+    assert_eq!(none.text("vault.backend"), Some("passphrase"));
+    for value in ["passphrase", "os_keystore"] {
+        for sources in [
+            Sources {
+                user: file("user.toml", &format!("[vault]\nbackend = \"{value}\"\n")),
+                ..Sources::none()
+            },
+            Sources {
+                environment: BTreeMap::from([(
+                    "A2M_VAULT__BACKEND".to_owned(),
+                    value.to_owned(),
+                )]),
+                ..Sources::none()
+            },
+        ] {
+            let refused = Settings::load(&sources).unwrap_err();
+            assert_eq!(refused.code().as_str(), "setting_protected", "{value}");
+            assert!(refused.message().contains("vault.backend"), "{refused}");
+        }
+    }
+    let installed = Settings::load(&Sources {
+        installation: file("settings.toml", "[vault]\nbackend = \"passphrase\"\n"),
+        ..Sources::none()
+    })
+    .unwrap();
+    assert_eq!(installed.text("vault.backend"), Some("passphrase"));
+}
