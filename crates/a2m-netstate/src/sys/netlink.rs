@@ -122,25 +122,42 @@ fn open(fact: Fact, timeout: Duration) -> Result<OwnedFd, NetError> {
     Ok(socket)
 }
 
-/// Whether a datagram came from this machine's kernel, which sends from
-/// port 0. Another process in the same namespace may address this socket's
-/// port; what it sends is dropped unread.
-fn from_kernel(sender: Option<SocketAddrAny>) -> bool {
+/// The netlink port a datagram was sent from, where the system names one.
+/// The kernel sends from port 0. A process with the network-admin right in
+/// the same namespace may address this socket's port; the kernel refuses
+/// any other process that tries (`EPERM`).
+fn sender_port(sender: Option<SocketAddrAny>) -> Option<u32> {
     sender
         .and_then(|address| SocketAddrNetlink::try_from(address).ok())
-        .is_some_and(|address| address.pid() == 0)
+        .map(|address| address.pid())
+}
+
+/// Receives one datagram on `socket` into `buffer`: its whole length, which
+/// may be more than the buffer holds, and the port of its sender.
+fn receive(socket: &OwnedFd, buffer: &mut [u8]) -> rustix::io::Result<(usize, Option<u32>)> {
+    let (_, received, sender) = rustix::net::recvfrom(socket, buffer, RecvFlags::TRUNC)?;
+    Ok((received, sender_port(sender)))
 }
 
 /// Reads the kernel's answer to the one request sent on `socket`.
 fn read_dump(socket: &OwnedFd, fact: Fact) -> Result<Option<Dump>, NetError> {
+    read_dump_from(fact, |buffer| receive(socket, buffer))
+}
+
+/// Reads a dump from the datagrams `next` receives, each with its sender's
+/// port. Only a datagram from the kernel (port 0) is read; any other is
+/// dropped unread.
+fn read_dump_from(
+    fact: Fact,
+    mut next: impl FnMut(&mut [u8]) -> rustix::io::Result<(usize, Option<u32>)>,
+) -> Result<Option<Dump>, NetError> {
     let mut messages = Vec::new();
     let mut total = 0usize;
     let mut foreign = 0usize;
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let (_, received, sender) =
-            rustix::net::recvfrom(socket, &mut buffer[..], RecvFlags::TRUNC).map_err(io(fact))?;
-        if !from_kernel(sender) {
+        let (received, sender) = next(&mut buffer[..]).map_err(io(fact))?;
+        if sender != Some(0) {
             foreign += 1;
             if foreign > MOST_FOREIGN_DATAGRAMS {
                 return Err(NetError::Unreadable {
@@ -315,19 +332,26 @@ mod tests {
         message
     }
 
+    /// The port the system gave `socket` when it was bound to port 0.
+    fn port_of(socket: &OwnedFd) -> u32 {
+        rustix::net::bind(socket, &SocketAddrNetlink::new(0, 0)).unwrap();
+        let port = SocketAddrNetlink::try_from(rustix::net::getsockname(socket).unwrap())
+            .unwrap()
+            .pid();
+        assert_ne!(port, 0);
+        port
+    }
+
     #[test]
     fn a_message_from_another_process_is_dropped_unread() {
         let fact = Fact::Interfaces;
         let reader = open(fact, READ_TIMEOUT).unwrap();
         // Take a port now, so that another socket can address it.
-        rustix::net::bind(&reader, &SocketAddrNetlink::new(0, 0)).unwrap();
-        let port = SocketAddrNetlink::try_from(rustix::net::getsockname(&reader).unwrap())
-            .unwrap()
-            .pid();
-        assert_ne!(port, 0);
+        let port = port_of(&reader);
         // Another socket, standing for another process, sends this reader a
         // forged end of the dump before the kernel answers.
         let forger = open(fact, READ_TIMEOUT).unwrap();
+        let forger_port = port_of(&forger);
         let mut forged = Vec::new();
         forged.extend_from_slice(&20u32.to_ne_bytes());
         forged.extend_from_slice(&NLMSG_DONE.to_ne_bytes());
@@ -335,13 +359,17 @@ mod tests {
         forged.extend_from_slice(&SEQUENCE.to_ne_bytes());
         forged.extend_from_slice(&0u32.to_ne_bytes());
         forged.extend_from_slice(&0i32.to_ne_bytes());
-        rustix::net::sendto(
+        // The kernel delivers it only for a process with the network-admin
+        // right; for any other it refuses the send itself, with `EPERM`.
+        match rustix::net::sendto(
             &forger,
             &forged,
             SendFlags::empty(),
             &SocketAddrNetlink::new(port, 0),
-        )
-        .unwrap();
+        ) {
+            Ok(sent) => assert_eq!(sent, forged.len()),
+            Err(refused) => assert_eq!(refused, rustix::io::Errno::PERM),
+        }
         rustix::net::sendto(
             &reader,
             &link_request(),
@@ -349,9 +377,22 @@ mod tests {
             &SocketAddrNetlink::new(0, 0),
         )
         .unwrap();
+        // Whether or not the kernel let the forger's send through, the
+        // reader first receives the forged end from the forger's port, and
+        // then what the socket holds: a forged end the kernel delivered, if
+        // any, and the kernel's answer.
+        let mut first = Some(forged);
+        let dump = read_dump_from(fact, |buffer| match first.take() {
+            Some(forged) => {
+                buffer[..forged.len()].copy_from_slice(&forged);
+                Ok((forged.len(), Some(forger_port)))
+            }
+            None => receive(&reader, buffer),
+        })
+        .unwrap()
+        .unwrap();
         // Read as the forged end, the dump would hold nothing; the kernel's
         // answer holds at least the loopback interface.
-        let dump = read_dump(&reader, fact).unwrap().unwrap();
         assert!(dump.messages.iter().any(|m| m.kind == 16));
     }
 
