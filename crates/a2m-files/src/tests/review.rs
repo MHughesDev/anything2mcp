@@ -10,8 +10,8 @@ use crate::{
     Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, Lowered, Lowering, NOT_STATED,
     PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
     REACH_NOT_STATED, Reach, ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE,
-    SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot, VariableValue,
-    compile, lint_one, load_files,
+    SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot,
+    VariableValue, compile, lint_one, load_files,
 };
 use a2m_core::{
     AddressScope, Digest, EffectClass, Environment, FileKindName, IdentityStrategy, Mode,
@@ -335,7 +335,7 @@ description: >
 ";
 
 fn stating_files() -> Files {
-    let mut files = example_files();
+    let mut files = with_settings(FIXED, "settings_put");
     add(&mut files, "operations/order_check.yaml", ORDER_CHECK);
     files
 }
@@ -398,6 +398,20 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
             leaves_this_machine: false
         }
     );
+    // A binding that starts a program states it, and cannot say where the
+    // program sends: the reach says so, and is never an empty "nowhere".
+    let settings = item("example_settings_set");
+    assert!(matches!(
+        &settings.bindings[0].states,
+        BindingStates::Stated { runs, .. } if runs[0].notice.is_none()
+    ));
+    assert!(matches!(
+        settings.reach,
+        Reach::Partly {
+            says: REACH_NOT_STATED,
+            ..
+        }
+    ));
     // Of two reads, the one that reaches off the machine is shown first,
     // though its name sorts after.
     let reads: Vec<&str> = compiled

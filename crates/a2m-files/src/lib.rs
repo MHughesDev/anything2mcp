@@ -53,8 +53,8 @@ pub use review::{
     BindingReview, BindingStatement, BindingStates, CredentialShown, EnvironmentVariable,
     NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, ProbeReview, ProgramRun,
     REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary, RunReview, SCRIPT_NOTICE,
-    SENT_TO_NOT_STATED, Sends, SentAddress, SentGroup, SentTo, SentToReview, SignInReview, Statement,
-    VariableValue,
+    SENT_TO_NOT_STATED, Sends, SentAddress, SentGroup, SentTo, SentToReview, SignInReview,
+    Statement, VariableValue,
 };
 pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{

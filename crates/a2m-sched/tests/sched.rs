@@ -781,6 +781,69 @@ async fn budgets_refill_by_the_clock_only_and_a_restart_does_not_refill_them() {
     );
 }
 
+#[tokio::test]
+async fn a_shadows_grant_is_whole_never_waits_and_leaves_the_callers_share() {
+    let stand = Stand::new("shadow-budget").await;
+    let one = stand.hello(1).await;
+    stand.admit(read(1, "a")).await;
+    let lease = stand.claim_one(one).await.lease_ref();
+    let surface = BudgetKey::surface(workspace(), &target(), &environment(), "orders").unwrap();
+    stand
+        .sched
+        .set_budget(
+            surface.clone(),
+            RateLimit {
+                capacity: 10,
+                refill: 1,
+                per: Duration::from_secs(3600),
+            },
+        )
+        .await
+        .unwrap();
+    let budgets = [surface];
+
+    // Half the burst is left for callers' own reads (decision 0251): of
+    // ten, a shadow may take five, all at once or nothing.
+    assert!(
+        stand
+            .sched
+            .rate_now(&lease, &budgets, 6, 50)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let grant = stand.sched.rate_now(&lease, &budgets, 3, 50).await.unwrap();
+    assert_eq!(grant.map(|grant| grant.requests), Some(3));
+    assert_eq!(
+        stand
+            .sched
+            .rate_now(&lease, &budgets, 2, 50)
+            .await
+            .unwrap()
+            .map(|grant| grant.requests),
+        Some(2)
+    );
+    // At the reserve: nothing more, and no wait for the refill.
+    assert!(
+        stand
+            .sched
+            .rate_now(&lease, &budgets, 1, 50)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // The caller's own read still finds its share.
+    assert_eq!(
+        stand
+            .sched
+            .rate(&lease, &budgets, 5)
+            .await
+            .unwrap()
+            .requests,
+        5
+    );
+}
+
 // ---- restart -------------------------------------------------------------
 
 #[tokio::test]
