@@ -406,6 +406,7 @@ class Actions:
         self,
         *,
         target: str,
+        files: Optional[Dict[str, Any]] = None,
         surface: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -418,6 +419,7 @@ class Actions:
             "discover.run",
             {
                 "target": target,
+                "files": files,
                 "surface": surface,
             },
             idempotency_key,
@@ -1115,6 +1117,7 @@ class Actions:
         self,
         *,
         target: str,
+        files: Optional[Dict[str, Any]] = None,
         fresh: Optional[bool] = None,
         wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
@@ -1129,6 +1132,7 @@ class Actions:
             "scout.run",
             {
                 "target": target,
+                "files": files,
                 "fresh": fresh,
                 "wait_seconds": wait_seconds,
             },
@@ -1297,10 +1301,13 @@ class Actions:
         *,
         file: str,
         target: str,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Operations drafted from a description the system publishes about itself,
-        given as a file in the project.
+        """A new scout of a target, handed a description the system publishes about
+        itself as a file of the project's `sources` folder: exactly `scout.run`
+        with `files` naming it `description`. Drafts by rule; never writes to
+        the system.
 
         The engine action is ``spec.import``.
         """
@@ -1309,6 +1316,7 @@ class Actions:
             {
                 "file": file,
                 "target": target,
+                "wait_seconds": wait_seconds,
             },
             idempotency_key,
         )

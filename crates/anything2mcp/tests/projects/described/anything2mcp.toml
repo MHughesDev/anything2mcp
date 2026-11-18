@@ -1,0 +1,6 @@
+# A project with no target yet, for the imaginary `example` system: a test adds the target with the
+# test application's address. The scout drafts and does not try the drafted reads, so that a test of
+# what it was handed ends quickly.
+
+[authoring.scout]
+try_reads = false

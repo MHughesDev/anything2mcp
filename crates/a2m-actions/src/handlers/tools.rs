@@ -198,51 +198,12 @@ async fn given_source(
         )),
         (Some(_), Some(path), None) => {
             let folder = call.project_folder()?.to_path_buf();
-            // A source is read from the project's `sources` folder and from
-            // nowhere else in the project: not its target files, not its
-            // project file, not a hidden file.
-            crate::project::source_path(path).map_err(|why| {
-                codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    format!("The source file of this call is not read: {why}."),
-                    format!(
-                        "Put the file in the project's `{}` folder and give its path from the project folder, such as `{}/items.csv`.",
-                        crate::project::SOURCES_FOLDER,
-                        crate::project::SOURCES_FOLDER
-                    ),
-                )
-            })?;
-            // The size ceiling is the smaller of what a caller may hand in
-            // here and what a source may be at all.
-            let most = a2m_engine::EngineSettings::default().source_limits.bytes;
-            let most = kernel
-                .settings()
-                .int("files.max_upload_bytes")
-                .and_then(|bytes| u64::try_from(bytes).ok())
-                .map_or(most, |allowed| allowed.min(most));
+            let most = most_handed_bytes(kernel);
             let wanted = path.to_owned();
             // Looking at the disk and reading a file wait: off the async
-            // threads. The checked path follows a link only while it stays
-            // inside the project, and what stands at the name must be a
-            // file: a link, a device, or a pipe is not read.
+            // threads.
             let bytes = tokio::task::spawn_blocking(move || {
-                let root = RootName::new("project")?;
-                let mut roots = Roots::none();
-                roots.add(root.clone(), &folder, Access::Read)?;
-                let file = roots.folder(&root, Access::Read)?.join(&wanted)?;
-                match file.entry_kind()? {
-                    EntryKind::File => file.read(most),
-                    EntryKind::Absent => Err(codes::input(
-                        a2m_provider::codes::FILE_UNAVAILABLE,
-                        "The source file is not there.",
-                        "Check the path, from the project folder.",
-                    )),
-                    _ => Err(codes::input(
-                        codes::PATH_NOT_ALLOWED,
-                        "The source file of this call is not read: what stands at its name is not a file.",
-                        "Give the path of a file; a link, a folder, or a device is not read.",
-                    )),
-                }
+                source_file(&folder, &wanted, "The source file of this call")?.read(most)
             })
             .await
             .map_err(|_| {
@@ -290,6 +251,232 @@ async fn given_source(
             }))
         }
     }
+}
+
+/// The most bytes a file a caller names may have: the smaller of what a
+/// caller may hand in (`files.max_upload_bytes`) and what a source may be
+/// at all.
+fn most_handed_bytes(kernel: &Kernel) -> u64 {
+    let most = a2m_engine::EngineSettings::default().source_limits.bytes;
+    kernel
+        .settings()
+        .int("files.max_upload_bytes")
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .map_or(most, |allowed| allowed.min(most))
+}
+
+/// A file of the project's `sources` folder that a call names, by its path
+/// from the project folder as the call wrote it, checked for reading: a
+/// source file of `tool.call`, or a file handed to a discovery. `what`
+/// begins each refusal's sentence. Blocking: it looks at the disk.
+///
+/// A file is taken from the project's `sources` folder and from nowhere
+/// else in the project: not its target files, not its project file, not a
+/// hidden file. The checked path follows a link only while it stays
+/// inside the project, and what stands at the name must be a regular file:
+/// a link, a folder, a device, or a pipe is not taken.
+///
+/// # Errors
+///
+/// `input`/`path_not_allowed` for a path outside `sources/`, with a hidden
+/// part, absolute, with `..`, through a link out of the project, or at
+/// which no regular file stands; `input`/`file_unavailable` when nothing
+/// stands there.
+fn source_file(
+    folder: &std::path::Path,
+    path: &str,
+    what: &str,
+) -> Result<a2m_provider::CheckedPath, Failure> {
+    crate::project::source_path(path).map_err(|why| {
+        codes::input(
+            codes::PATH_NOT_ALLOWED,
+            format!("{what} is not read: {why}."),
+            format!(
+                "Put the file in the project's `{}` folder and give its path from the project folder, such as `{}/items.csv`.",
+                crate::project::SOURCES_FOLDER,
+                crate::project::SOURCES_FOLDER
+            ),
+        )
+    })?;
+    let root = RootName::new("project")?;
+    let mut roots = Roots::none();
+    roots.add(root.clone(), folder, Access::Read)?;
+    let file = roots.folder(&root, Access::Read)?.join(path)?;
+    match file.entry_kind()? {
+        EntryKind::File => Ok(file),
+        EntryKind::Absent => Err(codes::input(
+            a2m_provider::codes::FILE_UNAVAILABLE,
+            format!("{what} is not there."),
+            "Check the path, from the project folder.",
+        )),
+        _ => Err(codes::input(
+            codes::PATH_NOT_ALLOWED,
+            format!("{what} is not read: what stands at its name is not a file."),
+            "Give the path of a file; a link, a folder, or a device is not read.",
+        )),
+    }
+}
+
+/// The files a call names for a discovery (`files` of `discover.run` and
+/// `scout.run`; decision 0263): each name to its path, as the call wrote
+/// it. Each path is checked here, when asked, by the code that checks a
+/// source file of `tool.call`, and must be at most the bytes a caller may
+/// hand in; nothing is read. Empty when the call names none. The engine
+/// checks each path again, under a root of the `sources` folder alone,
+/// before any discoverer runs.
+///
+/// # Errors
+///
+/// `input`/`schema_invalid` for a path that is not text;
+/// `input`/`path_not_allowed` and `input`/`file_unavailable` as
+/// [`source_file`], and the latter for a file larger than allowed.
+pub(crate) async fn discovery_files(
+    kernel: &Kernel,
+    call: &Call,
+    named: Option<&Json>,
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    let mut files = std::collections::BTreeMap::new();
+    let Some(named) = named.and_then(Json::as_object) else {
+        return Ok(files);
+    };
+    if named.is_empty() {
+        return Ok(files);
+    }
+    for (name, path) in named {
+        let Some(path) = path.as_str() else {
+            return Err(codes::input(
+                codes::SCHEMA_INVALID,
+                format!(
+                    "The file named `{}` is not given as a path.",
+                    codes::shown(name)
+                ),
+                "Give each file as its path from the project folder, such as `sources/example-openapi.json`.",
+            ));
+        };
+        files.insert(name.clone(), path.to_owned());
+    }
+    let folder = call.project_folder()?.to_path_buf();
+    let most = most_handed_bytes(kernel);
+    let checking = files.clone();
+    tokio::task::spawn_blocking(move || {
+        for (name, path) in &checking {
+            let what = format!(
+                "The file `{}` named `{}`",
+                codes::shown(path),
+                codes::shown(name)
+            );
+            let file = source_file(&folder, path, &what)?;
+            if file.size()? > most {
+                return Err(codes::input(
+                    a2m_provider::codes::FILE_UNAVAILABLE,
+                    format!("{what} is larger than the {most} bytes a file handed in may be."),
+                    "Hand a smaller file, or ask a person to raise `files.max_upload_bytes`.",
+                ));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| {
+        codes::input(
+            a2m_provider::codes::FILE_UNAVAILABLE,
+            "The files named for the discovery could not be looked at.",
+            "Try again.",
+        )
+    })??;
+    Ok(files)
+}
+
+/// What the discovery of a surface of a plan is about, as the registry
+/// asks which discoverers suit it: the surface's kind and archetype, and
+/// its address in the plan's default environment. `None` when no enabled
+/// provider serves its kind.
+pub(crate) fn surface_described(
+    kernel: &Kernel,
+    plan: &a2m_core::Plan,
+    position: usize,
+) -> Option<a2m_provider::SurfaceDescription> {
+    let surface = plan.surfaces.get(position)?;
+    let entry = kernel.providers().surface_kind(&surface.kind)?;
+    let address = plan
+        .default_environment()
+        .and_then(|environment| {
+            environment
+                .addresses
+                .iter()
+                .find(|over| over.surface.get() == position)
+        })
+        .map_or_else(|| surface.address.clone(), |over| over.address.clone());
+    Some(a2m_provider::SurfaceDescription {
+        kind: surface.kind.clone(),
+        archetype: entry.archetype,
+        address,
+        facts: Values::new(),
+    })
+}
+
+/// The files each observed surface's discovery is handed: of the files a
+/// call names, those under a name a discoverer suiting the surface reads
+/// (`Registry::files_taken`), so that no discovery is handed a file none
+/// of its discoverers reads. One map per surface, in the order given.
+///
+/// # Errors
+///
+/// `input`/`discovery_file_not_taken` when a name is read by no
+/// discoverer of any of the surfaces; the fix lists the names that are.
+pub(crate) fn files_by_surface(
+    kernel: &Kernel,
+    plan: &a2m_core::Plan,
+    surfaces: &[a2m_core::SurfaceName],
+    files: &std::collections::BTreeMap<String, String>,
+    resumed: bool,
+) -> Result<Vec<std::collections::BTreeMap<String, String>>, Failure> {
+    let registry = kernel.providers();
+    let taken: Vec<std::collections::BTreeSet<String>> = surfaces
+        .iter()
+        .map(|name| {
+            plan.surfaces
+                .iter()
+                .position(|surface| &surface.name == name)
+                .and_then(|position| surface_described(kernel, plan, position))
+                .map(|described| registry.files_taken(&described))
+                .unwrap_or_default()
+        })
+        .collect();
+    let every: std::collections::BTreeSet<&str> =
+        taken.iter().flatten().map(String::as_str).collect();
+    if let Some(name) = files.keys().find(|name| !every.contains(name.as_str())) {
+        let names: Vec<&str> = every.iter().copied().collect();
+        let listed = if names.is_empty() {
+            "No discoverer of the surfaces observed reads a file".to_owned()
+        } else {
+            format!("The names read are: {}", names.join(", "))
+        };
+        return Err(codes::input(
+            codes::DISCOVERY_FILE_NOT_TAKEN,
+            format!(
+                "No discoverer suiting the surfaces observed reads a file named `{}`.",
+                codes::shown(name)
+            ),
+            if resumed {
+                format!(
+                    "{listed}. The unfinished scout was started with this file; start a new one with `fresh` and the files it should be handed."
+                )
+            } else {
+                format!("{listed}. Name each file under one of them, or leave it out.")
+            },
+        ));
+    }
+    Ok(taken
+        .iter()
+        .map(|taken| {
+            files
+                .iter()
+                .filter(|(name, _)| taken.contains(name.as_str()))
+                .map(|(name, path)| (name.clone(), path.clone()))
+                .collect()
+        })
+        .collect())
 }
 
 /// One published tool in full, as `tool.describe` returns it and as
@@ -2035,11 +2222,12 @@ pub(crate) async fn submit_discovery(
     plan_hash: a2m_core::Digest,
     environment: &Environment,
     surface: &a2m_core::SurfaceName,
+    files: &std::collections::BTreeMap<String, String>,
 ) -> Result<RunId, Failure> {
     let store = kernel.store()?;
     let principal = &call.caller.principal;
     let tool = OperationName::new(DISCOVER_TOOL)?;
-    let input = Values::new()
+    let mut input = Values::new()
         .with(
             crate::runner::DISCOVERY_SURFACE,
             a2m_core::Value::Text(surface.to_string()),
@@ -2048,6 +2236,19 @@ pub(crate) async fn submit_discovery(
             crate::runner::DISCOVERY_FOCUS,
             a2m_core::Value::Record(Values::new()),
         );
+    // The files the call hands the discovery are part of its stored call,
+    // and so of its input hash: a discovery handed other files is another
+    // call (decision 0263). A discovery handed none stores none, as before.
+    if !files.is_empty() {
+        let mut named = Values::new();
+        for (name, path) in files {
+            named.insert(name.clone(), a2m_core::Value::Text(path.clone()));
+        }
+        input.insert(
+            crate::runner::DISCOVERY_FILES,
+            a2m_core::Value::Record(named),
+        );
+    }
     let stored = store
         .blobs()
         .put(NewBlob {
@@ -2121,6 +2322,9 @@ handler!(
     discover_run,
     |kernel, call| {
         let target = a2m_core::TargetName::new(call.required("target")?)?;
+        // Each file the call names is checked before anything else, and a
+        // file refused starts nothing.
+        let files = discovery_files(kernel, &call, call.input.get("files")).await?;
         let (plan_hash, plan) = plan_to_observe(kernel, &call, &target).await?;
         let surfaces: Vec<a2m_core::SurfaceName> = plan
             .surfaces
@@ -2148,10 +2352,19 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
+        let handed = files_by_surface(kernel, &plan, &surfaces, &files, false)?;
         let mut runs = Vec::new();
-        for surface in &surfaces {
-            let run =
-                submit_discovery(kernel, &call, &target, plan_hash, &environment, surface).await?;
+        for (surface, files) in surfaces.iter().zip(&handed) {
+            let run = submit_discovery(
+                kernel,
+                &call,
+                &target,
+                plan_hash,
+                &environment,
+                surface,
+                files,
+            )
+            .await?;
             runs.push((surface.clone(), run));
         }
         let mut shown = Vec::new();

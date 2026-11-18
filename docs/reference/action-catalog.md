@@ -43,7 +43,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `capture.start` | Begin recording actions and traffic, redacted | Builder | build | 4 |
 | `capture.stop` | End the recording and store it | Builder | build | 4 |
 | `endpoints.infer` | Endpoint templates, schemas, and dependencies from recordings | Builder | build | 4 |
-| `spec.import` | Operations from an OpenAPI, GraphQL, or OData description, or an upstream MCP server | Builder | build | 4 |
+| `spec.import` | A new scout of a target handed one file of the project's `sources` folder, a description the system publishes about itself: `scout.run` with `files` naming it `description`, and nothing more | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
 | `draft.write` | Write a draft file after validation and lint | Builder | build | 5 |
 | `draft.delete` | Remove draft files of the project, one or several, all or none; a published version keeps its copy | Builder | build | 5 |
@@ -66,11 +66,11 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `provider.describe` | One provider's manifest, effects, and requirements | Viewer | No | Stage B |
 | `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B |
 | `component.list` | Outside programs providers need: found or not, with path and digest | Viewer | No | Stage B |
-| `discover.run` | Run the discoverers that suit a target's surfaces; returns findings | Builder | build | Stage E |
+| `discover.run` | Run the discoverers that suit a target's surfaces; returns findings. `files` hands them files of the project's `sources` folder, each under a name a discoverer reads | Builder | build | Stage E |
 | `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
 | `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E |
-| `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable | Builder | build | Stage E |
+| `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable. `files` hands its discoverers files of the project's `sources` folder, as for `discover.run`, and a resumed scout hands the same ones | Builder | build | Stage E |
 | `scout.report` | The last scout's report: found, drafted, proven, open, and what to look at first | Builder | build | Stage E |
 
 ## Publishing and versions

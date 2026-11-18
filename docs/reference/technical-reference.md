@@ -470,6 +470,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `input` | `decision_not_found` | `a2m-policy` | No decision with that identifier is recorded. |  |  |
 | `input` | `description_too_large` | `a2m-pack-http` | A published description that is larger, deeper, or wider once its references are followed than the import reads. |  |  |
 | `input` | `description_unreadable` | `a2m-pack-http` | A published description that cannot be read. |  |  |
+| `input` | `discovery_file_not_taken` | `a2m-actions` | A call names a file for a discovery under a name that no discoverer suiting the target's observed surfaces reads (decision 0263): a file nobody reads is a mistake, never ignored. Nothing starts. |  |  |
 | `input` | `draft_conflict` | `a2m-files` | The drafter would overwrite a file the developer changed. |  |  |
 | `input` | `expression_cost_exceeded` | `a2m-expr` | Evaluation passed its cost limit. | Give the expression less to work over, such as fewer rows, or simplify it. | no |
 | `input` | `expression_invalid` | `a2m-expr` | The text does not parse, or names something the environment does not declare. | Correct the expression at the place the message names, using only names the place declares, and compile again. | no |

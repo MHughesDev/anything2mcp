@@ -89,6 +89,10 @@ pub(crate) struct InProcessControl {
     run: RunRow,
     plan: Arc<Plan>,
     caller: CallerFacts,
+    /// The files a discovery run's stored call hands its discoverers, each
+    /// name to its path as the call wrote it (decision 0263). Empty for
+    /// every other run.
+    discovery_files: std::collections::BTreeMap<String, String>,
 }
 
 impl InProcessControl {
@@ -107,7 +111,18 @@ impl InProcessControl {
             run,
             plan,
             caller,
+            discovery_files: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// The same control, handing a discovery job the files its run's
+    /// stored call names.
+    pub(crate) fn with_discovery_files(
+        mut self,
+        files: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.discovery_files = files;
+        self
     }
 
     fn redacted(&self, failure: Failure) -> Failure {
@@ -658,6 +673,10 @@ impl Control for InProcessControl {
 
     fn project_folder(&self) -> Option<std::path::PathBuf> {
         self.caller.project.clone()
+    }
+
+    fn discovery_files(&self) -> std::collections::BTreeMap<String, String> {
+        self.discovery_files.clone()
     }
 
     fn step_observed(&self, step: &a2m_core::Step, observed: Option<&a2m_core::Values>) {

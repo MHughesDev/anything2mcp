@@ -132,6 +132,7 @@ export interface DelegationRevokeInput {
  */
 export interface DiscoverRunInput {
   target: string;
+  files?: Record<string, unknown>;
   surface?: string;
 }
 
@@ -477,6 +478,7 @@ export interface ScoutReportInput {
  */
 export interface ScoutRunInput {
   target: string;
+  files?: Record<string, unknown>;
   fresh?: boolean;
   wait_seconds?: number;
 }
@@ -556,6 +558,7 @@ export interface ShadowReportInput {
 export interface SpecImportInput {
   file: string;
   target: string;
+  wait_seconds?: number;
 }
 
 /**
@@ -1203,8 +1206,10 @@ export declare abstract class Actions {
   shadowReport(input: ShadowReportInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Operations drafted from a description the system publishes about itself, given as a
-   * file in the project. The engine action is `spec.import`.
+   * A new scout of a target, handed a description the system publishes about itself as
+   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
+   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * `spec.import`.
    */
   specImport(input: SpecImportInput, options?: CallOptions): Promise<Response>;
 

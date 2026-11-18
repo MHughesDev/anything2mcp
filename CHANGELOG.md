@@ -126,6 +126,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - Every command's help says its effect, who may run it, and whether a person is asked; commands that are not built say so first and are marked in the listings; help wraps to the terminal's width.
 - `completion <shell>` prints a completion script for bash, zsh, fish, or PowerShell, generated from the commands themselves, with no engine.
 - Network tools: `anything2mcp net interfaces`, `routes`, `resolvers`, `neighbours`, `listeners`, `proxy`, and `standing` show what this machine already knows of its own networks, and send nothing. Agents see `a2m_net_standing` and reach the rest through `a2m_action_run`; a proxy's credentials never reach a caller (decision 0260).
+- A person can hand the scout a file of the project's `sources` folder: `anything2mcp scout run example --files '{"description": "sources/example-openapi.json"}'` imports an OpenAPI description the system does not serve, and `register_map` hands a device's published register map. `discover run` takes the same files, and `spec import <target> --file <path>` is a scout handed one description. A path outside `sources`, a hidden file, a link, or a name no discoverer reads is refused, and nothing starts (decision 0263).
 
 ### Changed
 

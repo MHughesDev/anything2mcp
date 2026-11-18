@@ -70,6 +70,12 @@ pub const PUBLISH_GATES_NOT_PASSED: FailureCode = FailureCode::fixed("publish_ga
 /// Class `policy`.
 pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
 
+/// A call names a file for a discovery under a name that no discoverer
+/// suiting the target's observed surfaces reads (decision 0263): a file
+/// nobody reads is a mistake, never ignored. Nothing starts. Class
+/// `input`.
+pub const DISCOVERY_FILE_NOT_TAKEN: FailureCode = FailureCode::fixed("discovery_file_not_taken");
+
 /// An offline test asked for something that would store, lease, or clear
 /// a write; its control plane holds nothing and refuses (decision 0177).
 pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");

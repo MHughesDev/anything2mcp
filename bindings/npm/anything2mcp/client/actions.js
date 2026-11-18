@@ -716,8 +716,10 @@ class Actions {
   }
 
   /**
-   * Operations drafted from a description the system publishes about itself, given as a
-   * file in the project. The engine action is `spec.import`.
+   * A new scout of a target, handed a description the system publishes about itself as
+   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
+   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * `spec.import`.
    */
   specImport(input, options = {}) {
     return this.call("spec.import", input, options);

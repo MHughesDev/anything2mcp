@@ -70,6 +70,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "target.probe" => scout::target_probe,
         "auth.detect" => scout::auth_detect,
         "scout.run" => scout::scout_run,
+        "spec.import" => scout::spec_import,
         "scout.report" => scout::scout_report,
         "finding.list" => tools::finding_list,
         "finding.describe" => tools::finding_describe,

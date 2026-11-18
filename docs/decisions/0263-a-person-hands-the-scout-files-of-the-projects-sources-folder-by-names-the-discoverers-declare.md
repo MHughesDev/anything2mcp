@@ -36,3 +36,25 @@ A person often holds a file that describes a system: an HTTP interface's publish
 | --- | --- | --- |
 | A link out of `sources` is refused | Linux | Windows, where the test makes a link only for a user who may, and skips the case otherwise |
 | Paths with forward slashes, joined by `CheckedPath::join` | Linux; the code compiled and linted for Windows and macOS | Both, run |
+
+## The registry's half, as built
+
+Added on 2026-11-18, when `a2m-actions` took the files the consequences above owed it.
+
+1. **`files` on `scout.run` and `discover.run`.** A map from a name a discoverer reads to a file's path from the project folder, as the call writes it: `--files '{"description": "sources/example-openapi.json"}'`. Each path is checked when asked, by the same code that checks a source file of `tool.call`: it must be text, inside `sources/` with no part that starts with a dot, joined under a checked root of the project folder (an absolute path, `..`, and a link out of the project are refused), a regular file (a link is not followed at its end), and at most the smaller of `files.max_upload_bytes` and the engine's source limit. A path that fails is `input`, `path_not_allowed`; a file that is not there or is too large, `input`, `file_unavailable`. Nothing is read.
+2. **A name nobody reads is refused before anything starts.** The names taken are the union of `Registry::files_taken` over the surfaces the call would observe: those whose kind an enabled provider serves and that a discoverer suits. A name outside it is `input`, `discovery_file_not_taken`, a new code of this crate, and the fix lists the names that are taken. Both checks come before a scout is stored or a run is submitted, so a refused call leaves nothing behind.
+3. **Each surface is handed only what it reads.** A target with two surfaces of different kinds may be handed files for both; each surface's discovery is handed the files under the names its own discoverers declare, so the engine's own check never meets a name its surface does not read.
+4. **The files are part of the stored call.** A discovery run's stored input holds them as a record `files`, so they are part of its input hash: a discovery handed other files is another call. A discovery handed none stores none, so its hash is what it was before this change. The runner decodes the record, and `InProcessControl::discovery_files` returns it to the engine unchanged; a record this build cannot read ends the run as unreadable, never as a run with no files.
+5. **A scout keeps its files.** Stage 0 of a scout stores them, and the scout's report shows them under `files`. An unfinished scout goes on with the files it began with, each checked again. A call that names other files than the unfinished scout began with starts a new scout instead of resuming it.
+6. **`spec.import` is a scout.** It is `scout.run` with `fresh` and `files = {description: <file>}`, and has no logic of its own. Its catalog entry now says what `scout.run` says of itself: it observes, runs long, takes `wait_seconds`, and never writes to the system; before, it was defined as a write that no handler served. It reaches only a discoverer that reads `description`, which today is the HTTP pack's description reader; an upstream MCP server's tool list ([section 304](../spec/3-packs/304-the-mcp-pack.md)) is not reached through it.
+
+Weighed and not taken:
+
+- **Resuming the unfinished scout with the call's new files.** Its stages after the first were made from what it was handed then, so the report would mix two inputs. **Refusing the call** instead would make a person pass `fresh` to say what the files already say.
+- **Refusing a name that one observed surface does not read**, rather than one that none reads. A target with an HTTP surface and a device surface could then be handed no file at all.
+- **Checking the names in the engine alone.** The engine checks them, but only once a run exists; the registry refuses before one does, and its refusal can name the names taken.
+
+| Matter | Proven here | Only CI proves |
+| --- | --- | --- |
+| A description handed as a file is read by the scout and drafted from; a register map handed as a file is read by the device scout; `spec.import` drafts the same way | Linux, `scout_files.rs` | Windows and macOS, run |
+| A path outside `sources`, an absolute path, `..`, a hidden file, a link out, and a link to a file of the project are refused, and no run starts | Linux; the code compiled and linted for Windows and macOS | Windows, where the test makes a link only for a user who may, and skips the two link cases otherwise |

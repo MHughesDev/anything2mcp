@@ -203,3 +203,7 @@ A designer who read the code for the command-line package found two statements i
 **Verdict: taken up, small.** One command prints a completion script for a named shell, generated from the registry and answered by the program itself, with no engine. Commands and flags first; values from the engine are left out and said to be. It needs no change to the action registry.
 
 **Next.** Joins the command-line package, in the builder that owns the product crate, after the help changes it sits beside.
+
+## What came of round 20 (2026-11-18)
+
+Built. A person hands the scout files of the project's `sources` folder under names the discoverers declare, through `scout run --files`, `discover run --files`, and `spec import`; product tests import a description and a device's register map through the real command ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).

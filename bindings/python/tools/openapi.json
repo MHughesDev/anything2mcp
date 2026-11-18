@@ -4007,6 +4007,12 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "files": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "surface": {
           "type": "string"
          },
@@ -16759,6 +16765,12 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "files": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "fresh": {
           "type": "boolean"
          },
@@ -19282,6 +19294,11 @@
          },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -19450,7 +19467,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Operations drafted from a description the system publishes about itself, given as a file in the project.",
+    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
     "x-action": "spec.import"
    }
   },
