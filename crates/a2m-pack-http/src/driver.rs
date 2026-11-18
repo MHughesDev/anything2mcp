@@ -1681,7 +1681,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{Answer, Expiry, Origin, Session, taken};
+    use super::{Answer, Expiry, OffThread, Origin, Session, off_thread, taken};
     use crate::codes;
     use crate::json::Json;
     use crate::template::{Built, Method, Take};
@@ -1855,5 +1855,29 @@ mod tests {
             Some(Value::List(vec![Value::from("x"), Value::from("y")]))
         );
         assert_eq!(taken(&json, &path("t.x"), Take::Text), None);
+    }
+
+    /// Work handed off the async threads that does not end by the deadline
+    /// is left there, and told to stop: on a runtime of one thread, the
+    /// deadline still fires while the work runs, so the thread was never
+    /// held (decision 0249).
+    #[tokio::test(flavor = "current_thread")]
+    async fn work_that_outlasts_the_deadline_is_left_and_told_to_stop() {
+        use std::sync::atomic::Ordering;
+        let (told, heard) = std::sync::mpsc::channel();
+        let until = tokio::time::Instant::now() + std::time::Duration::from_millis(50);
+        let outcome = off_thread(until, move |stop| {
+            while !stop.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
+            told.send(()).unwrap();
+        })
+        .await;
+        assert!(matches!(outcome, OffThread::OutOfTime));
+        heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let done = off_thread(until + std::time::Duration::from_secs(30), |_| 7).await;
+        assert!(matches!(done, OffThread::Done(7)));
     }
 }

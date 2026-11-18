@@ -446,7 +446,11 @@ handler!(
             }
             Basis::Drafts => true,
         };
-        if call.presence.is_some() {
+        // A press on the person's page carries the declaration its page
+        // showed, pinned; no other call can, because the action's input
+        // has no such field.
+        let pressed = call.presence.is_some() && call.text("declaration").is_some();
+        if pressed {
             // The person carries out what their page showed them.
             if call.text("declaration") != Some(declared.digest().to_string().as_str()) {
                 return Err(codes::stale(

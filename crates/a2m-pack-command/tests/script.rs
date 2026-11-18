@@ -441,3 +441,116 @@ fn the_pair_is_held_to_its_rules_where_the_files_are_compiled() {
         "command.digest_invalid",
     );
 }
+
+/// The target's files of a pair, with one piece of the `commands/` file
+/// changed, compiled: the codes of the problems found.
+#[cfg(unix)]
+fn problems_with(pair: &Pair, from: &str, to: &str) -> Vec<String> {
+    let folder = Folder::new("pair-changed");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let out = folder.path().join("received.bin");
+    let digest = Digest::of(pair.text.as_bytes());
+    let changed: Vec<(String, String)> = files(pair, "scripts/echo.sh", &digest, &out)
+        .into_iter()
+        .map(|(path, text)| {
+            if path == "commands/echo.yaml" {
+                assert!(text.contains(from), "`{from}` is not in the file");
+                let text = text.replacen(from, to, 1);
+                (path, text)
+            } else {
+                (path, text)
+            }
+        })
+        .collect();
+    match common::compile(&changed, registry.compiler_set()) {
+        Ok(_) => Vec::new(),
+        Err(problems) => problems
+            .iter()
+            .map(|problem| problem.code.as_str().to_owned())
+            .collect(),
+    }
+}
+
+/// The fifth safety audit's PR-1 (decision 0250): an interpreter is a pair's
+/// half only in the one form the closed table gives it. A flag before the
+/// shell's script, and Python without isolation, compiled before.
+#[cfg(unix)]
+#[test]
+fn an_interpreter_in_a_form_other_than_its_own_does_not_compile() {
+    let shell = shell_pair();
+    for flag in ["'-x'", "'-s'", "'-i'"] {
+        let problems = problems_with(
+            &shell,
+            "interpreter: {args: []}",
+            &format!("interpreter: {{args: [{flag}]}}"),
+        );
+        assert!(
+            problems.iter().any(|code| code == "command.shell_program"),
+            "{flag}: {problems:?}"
+        );
+    }
+    match python_pair() {
+        Some(python) => {
+            let problems = problems_with(
+                &python,
+                "interpreter: {args: ['-I']}",
+                "interpreter: {args: []}",
+            );
+            assert!(
+                problems.iter().any(|code| code == "command.shell_program"),
+                "{problems:?}"
+            );
+            assert!(problems_with(&python, "{args: ['-I']}", "{args: ['-I']}").is_empty());
+        }
+        None => println!("skipped: no python3 at /usr/bin or /usr/local/bin on this machine"),
+    }
+}
+
+/// The fifth safety audit's PR-2 (decision 0250): a variable that makes a
+/// program load other code is refused where the files are compiled, set or
+/// passed. They compiled before.
+#[cfg(unix)]
+#[test]
+fn a_variable_that_makes_the_program_load_other_code_does_not_compile() {
+    let shell = shell_pair();
+    for (from, to) in [
+        ("env: {set: {", "env: {set: {LD_PRELOAD: '/x.so', "),
+        ("env: {set: {", "env: {set: {BASH_ENV: '/x.sh', "),
+        ("env: {set: {", "env: {pass: [PYTHONPATH], set: {"),
+        ("env: {set: {", "env: {pass: [DYLD_INSERT_LIBRARIES], set: {"),
+    ] {
+        let problems = problems_with(&shell, from, to);
+        assert!(
+            problems.iter().any(|code| code == "command.loader_variable"),
+            "{to}: {problems:?}"
+        );
+    }
+}
+
+/// The fifth safety audit's PR-4 (decision 0250): the folder the run's copy
+/// of the script is put in, or one above it, that another user may write is
+/// refused before the interpreter starts. Before, the copy was checked by
+/// its digest only, and the interpreter opened it afterwards.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_runs_folder_others_can_write_is_refused_before_the_script_starts() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let pair = shell_pair();
+    let scene = Scene::new(&pair);
+    let runs = scene.folder.path().join("runs");
+    std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let failure = scene.run(&pair).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.class(), failure.failure.code()),
+        (FailureClass::Policy, &codes::PROGRAM_PATH_UNSAFE)
+    );
+    assert!(!scene.out.exists(), "nothing started");
+    // A folder this pack makes is the engine's user's alone.
+    std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_dir_all(&runs).unwrap();
+    each_value_arrives_as_it_was(&pair).await;
+    assert_eq!(
+        std::fs::metadata(&runs).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}

@@ -256,8 +256,10 @@ impl Paths {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OpenFolders {
     /// Each that exists is closed to every other account.
+    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
     Closed,
     /// These may be entered, or listed, by another account.
+    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
     Open(Vec<PathBuf>),
     /// This build does not read who may on this operating system.
     NotChecked,

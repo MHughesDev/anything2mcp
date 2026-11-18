@@ -102,6 +102,7 @@ bindings:
     status: verified
     endpoint: order_search
     query: {status: input.status}
+    extract: {orders: "orders.*"}
 description: >
   Searches the orders of one status, through a search the system serves
   behind POST.

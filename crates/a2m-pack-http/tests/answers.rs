@@ -177,7 +177,6 @@ async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
 async fn a_write_to_a_declared_test_record_is_sent_and_no_other_outside_a_live_run() {
     let app = TestApp::start().await.unwrap();
     let scene = Scene::new("example", &app.url(""));
-    let (store, _vault) = store().await;
     let record_key = key(&["A-102", "L-900"]);
     let inputs = Values::new()
         .with("order_id", "A-102")
@@ -197,6 +196,7 @@ async fn a_write_to_a_declared_test_record_is_sent_and_no_other_outside_a_live_r
         (Posture::Discovery, false),
         (Posture::Sandbox { test_records: true }, true),
     ] {
+        let (store, _vault) = store().await;
         let fence = running(&store, std::slice::from_ref(&record_key)).await;
         let intent = token(&store, fence, 0, &record_key).await;
         let write = Some((&intent, record(&fence, 0), &record_key));

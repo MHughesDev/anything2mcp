@@ -731,6 +731,11 @@ impl Kernel {
         // also as lines: a page prints them once (decision 0199).
         let shown = publish_shown(self, &compiled);
         let mut details = details;
+        // Each sign-in: its provider, its credentials by reference, and
+        // every address a credential or a token goes to, in each
+        // environment. One the keeper would refuse is refused here, before
+        // the person is asked (decision 0248).
+        details.extend(self.sign_ins_shown(&target, &compiled.plan)?);
         if implied_production
             && compiled
                 .plan
@@ -745,6 +750,67 @@ impl Kernel {
         }
         details.extend(gates.lines());
         Ok((input, details, shown, Vec::new()))
+    }
+
+    /// One line for each sign-in `plan` declares in each of its
+    /// environments, for the person who publishes it: the surfaces it
+    /// covers, the provider, each credential by role and reference (never a
+    /// value), and every address a credential or a token of it is sent to.
+    ///
+    /// # Errors
+    ///
+    /// What the session keeper refuses an entry for before anything is
+    /// sent: an address the target does not declare, a credential of
+    /// another target, or a setting the provider does not accept.
+    fn sign_ins_shown(
+        &self,
+        target: &a2m_core::TargetName,
+        plan: &a2m_core::Plan,
+    ) -> Result<Vec<String>, Failure> {
+        if plan.auth.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keeper = self.keeper()?;
+        let mut lines = Vec::new();
+        for auth in &plan.auth {
+            let covered: Vec<String> = auth
+                .surfaces
+                .iter()
+                .filter_map(|index| plan.surface(*index))
+                .map(|surface| surface.name.to_string())
+                .collect();
+            let credentials: Vec<String> = auth
+                .credentials
+                .iter()
+                .map(|credential| format!("{} {}", credential.role, credential.reference))
+                .collect();
+            for environment in &plan.environments {
+                let entry =
+                    crate::control::entry_of(plan, auth, &environment.name, true);
+                let addresses = keeper.sign_in_addresses(target, &entry)?;
+                let sent: Vec<String> = addresses
+                    .iter()
+                    .map(|sent| format!("{} ({})", sent.address, sent.what))
+                    .collect();
+                lines.push(format!(
+                    "Sign-in of {} in the environment {}: through the provider {}; credentials {}; a credential or a token of it is sent to {}, and to no other address.",
+                    covered.join(", "),
+                    environment.name,
+                    auth.provider,
+                    if credentials.is_empty() {
+                        "none stored".to_owned()
+                    } else {
+                        credentials.join(", ")
+                    },
+                    if sent.is_empty() {
+                        "no address".to_owned()
+                    } else {
+                        sent.join(", ")
+                    },
+                ));
+            }
+        }
+        Ok(lines)
     }
 
     /// One line for each verified binding of `plan` that the target's
