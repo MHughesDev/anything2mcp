@@ -50,6 +50,8 @@ session = true
 
 [points]
 driver = ["ui", "page_http"]
+# A sign-in through the application's own sign-in page (decision 0245).
+auth_provider = ["form_login"]
 
 [[file_kinds]]
 name = "screen"
@@ -124,6 +126,10 @@ summary = "No field, action, or table is located by a `css` selector."
 code = "web.no_fingerprint"
 level = "error"
 summary = "Every field, action, and table of a screen states a fingerprint."
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "sign_in_blocked"
 
 [[failure_codes]]
 class = "drift"

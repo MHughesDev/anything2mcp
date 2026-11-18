@@ -9,8 +9,10 @@
 //!
 //! On Linux it is AT-SPI over the session's accessibility bus (decision
 //! 0198); on Windows, UI Automation on a thread of the handle's own
-//! (decision 0209). Elsewhere it is a stand-in whose every method stops
-//! with `system_not_built`.
+//! (decision 0209); on macOS, the system's accessibility interface on a
+//! thread of the handle's own, once the person has allowed the program to
+//! use it (decision 0244). Elsewhere it is a stand-in whose every method
+//! stops with `system_not_built`.
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -22,9 +24,14 @@ mod windows;
 #[cfg(windows)]
 pub(crate) use self::windows::Look;
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::Look;
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 mod none;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub(crate) use none::Look;
 
 use a2m_core::{Failure, FailureClass};
@@ -77,10 +84,10 @@ pub(crate) struct Window {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AxError {
     /// No running application is the program and the name.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     NotRunning,
     /// Several are.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     Ambiguous(usize),
     /// The session's accessibility switch is off.
     #[cfg(target_os = "linux")]
@@ -89,10 +96,14 @@ pub(crate) enum AxError {
     #[cfg(windows)]
     Elevated,
     /// The program runs as another user, or in another session.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     NotOwned,
+    /// The person has not allowed this program to use the system's
+    /// accessibility interface.
+    #[cfg(target_os = "macos")]
+    NotTrusted,
     /// The program's digest is not the one stated.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     NotProven,
     /// Before an act, the application's connection is no longer owned by
     /// the process proven when the run was prepared, or the element is not
@@ -100,19 +111,19 @@ pub(crate) enum AxError {
     #[cfg(target_os = "linux")]
     Replaced,
     /// A control that holds a secret was asked for its value.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     Secret,
     /// A text longer than the bound.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     TooLarge,
     /// The interface, or the application, went away or answered with an
     /// error: what the system said, with no value of the application.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     Lost(String),
     /// The deadline passed.
     Timeout,
     /// This system has no back end.
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     NotBuilt,
 }
 
@@ -120,18 +131,18 @@ impl AxError {
     /// The failure the driver reports, with no value of the application in
     /// it.
     pub(crate) fn failure(&self, program: &str) -> Failure {
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
         let program = codes::shown(program);
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         let _ = program;
         match self {
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::NotRunning => codes::failure(
                 FailureClass::Busy,
                 codes::APPLICATION_NOT_RUNNING,
                 format!(
                     "No application in this session is the program `{program}` with the name the surface states and {}. The desktop pack starts nothing.",
-                    if cfg!(windows) {
+                    if cfg!(any(windows, target_os = "macos")) {
                         "shows a window"
                     } else {
                         "publishes an accessibility tree"
@@ -139,7 +150,7 @@ impl AxError {
                 ),
                 "Start the application as you normally do, then run the tool again.",
             ),
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Ambiguous(count) => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_AMBIGUOUS,
@@ -164,16 +175,25 @@ impl AxError {
                 ),
                 "Start the application as yourself, without administrator rights, then run the tool again.",
             ),
-            #[cfg(windows)]
+            #[cfg(target_os = "macos")]
+            Self::NotTrusted => codes::failure(
+                FailureClass::Busy,
+                codes::ACCESSIBILITY_OFF,
+                "This program may not use the system's accessibility interface: the person has not allowed it, and the desktop pack reads nothing without it. The pack never allows it, and never asks the system to show its prompt.".to_owned(),
+                &trust_next(),
+            ),
+            #[cfg(any(windows, target_os = "macos"))]
             Self::NotOwned => codes::failure(
                 FailureClass::Policy,
                 codes::APPLICATION_NOT_OWNED,
                 format!(
-                    "The program `{program}` runs as another user, or in another session, and the pack reads only the applications of the user the engine runs as, in its own session."
+                    "The program `{program}` runs as another user{}, and the pack reads only the applications of the user the engine runs as{}.",
+                    if cfg!(windows) { ", or in another session" } else { "" },
+                    if cfg!(windows) { ", in its own session" } else { "" },
                 ),
                 "Start the application in your own session, as yourself, then run the tool again.",
             ),
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::NotProven => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_NOT_PROVEN,
@@ -191,21 +211,21 @@ impl AxError {
                 ),
                 "Check which program shows the window, then run the tool again.",
             ),
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Secret => codes::failure(
                 FailureClass::Policy,
                 codes::PASSWORD_READ_REFUSED,
                 "The element is a control that holds a secret; its value is never read.".to_owned(),
                 "Read another field. A secret is never an output of a tool.",
             ),
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::TooLarge => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::READ_TOO_LARGE,
                 "A value of the window is longer than the desktop pack reads.".to_owned(),
                 "Read a field that holds less.",
             ),
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Lost(why) => codes::failure(
                 FailureClass::Transient,
                 a2m_provider::codes::CONNECTION_LOST,
@@ -221,8 +241,22 @@ impl AxError {
                 "The application did not answer in time.".to_owned(),
                 "Run the tool again.",
             ),
-            #[cfg(not(any(target_os = "linux", windows)))]
+            #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
             Self::NotBuilt => codes::system_not_built(),
         }
     }
+}
+
+/// Where the person allows a program to use the accessibility interface,
+/// and which program to allow: the one that started the engine, and, when
+/// that one is allowed already, the engine's own program.
+#[cfg(target_os = "macos")]
+fn trust_next() -> String {
+    let own = std::env::current_exe()
+        .ok()
+        .map(|path| format!(" (`{}`)", codes::shown(&path.to_string_lossy())))
+        .unwrap_or_default();
+    format!(
+        "In System Settings, open Privacy & Security, then Accessibility, and allow the program that started the engine, such as the terminal or the agent application that runs it; if that program is allowed already, allow the engine's own program{own} as well. Then run the tool again, and if it still stops here, quit and start that program again."
+    )
 }

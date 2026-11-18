@@ -2,9 +2,12 @@
 //! the operating system's accessibility interface as a screen reader reads
 //! it.
 //!
-//! This version reads, on Linux and Windows, and does nothing else. Its back
-//! end is a look-only handle, over AT-SPI on Linux (decision 0198) and over
-//! UI Automation on a thread of its own on Windows (decision 0209): it finds
+//! This version reads on Linux, Windows, and macOS, and on Linux also
+//! writes (decision 0218). Its reading back end is a look-only handle, over
+//! AT-SPI on Linux (decision 0198), over UI Automation on a thread of its
+//! own on Windows (decision 0209), and over the system's accessibility
+//! interface on a thread of its own on macOS, once the person has allowed
+//! the program to use it (decision 0244): it finds
 //! the one running application that is the program and the name a surface
 //! declares, in the engine's own session, proves its process by what the
 //! system says of it,
@@ -25,8 +28,10 @@
 //! screen and a `get` read of the values it labels, and a screen and a
 //! `list` read of each table it names.
 //!
-//! Not built, and so not declared in the manifest: writes, the macOS back
-//! end (there the driver stops at prepare with `system_not_built`), keys and clicks, starting an application, the
+//! Not built, and so not declared in the manifest: writes on Windows and
+//! macOS (there a `set` or an `invoke` stops with `writes_not_built`), a back
+//! end for any other system (there the driver stops at prepare with
+//! `system_not_built`), keys and clicks, starting an application, the
 //! discoverer `desktop_probe`, the lint rules of the design, and every
 //! control but `desktop_text`.
 //!

@@ -60,6 +60,10 @@ pub const ANTI_FORGERY_NOT_FOUND: FailureCode = FailureCode::fixed("anti_forgery
 /// sent.
 pub const ANTI_FORGERY_UNREADABLE: FailureCode = FailureCode::fixed("anti_forgery_unreadable");
 
+/// The sign-in page of a form sign-in shows the block the target declares:
+/// a locked account, a check the engine does not get past (decision 0245).
+pub const SIGN_IN_BLOCKED: FailureCode = FailureCode::fixed("sign_in_blocked");
+
 /// Every code of this pack with its one class, as the manifest declares
 /// them. A test holds the two lists together.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -84,6 +88,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Input, "step_not_usable"),
     (FailureClass::Input, "address_invalid"),
     (FailureClass::Input, "address_value_refused"),
+    (FailureClass::EdgeBlocked, "sign_in_blocked"),
 ];
 
 pub(crate) fn failure(

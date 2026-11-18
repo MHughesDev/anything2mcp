@@ -21,12 +21,21 @@
 //!
 //! Not built yet, and so not declared in the pack's manifest: the
 //! `site_tools` mode; `page_http` writes beyond `update` by PUT; the
-//! `form_login`, `sso_oidc`, and `sso_saml` auth providers and the sign-in window; signs of expiry;
+//! `sso_oidc` and `sso_saml` auth providers and the sign-in window in which
+//! a person signs in themself; signs of expiry in `page_http`;
 //! frames; platform profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
 //! identity by a stamp or a search; setting a finding against existing
 //! screen models, and drafting a field that is set or a type from a
 //! snapshot.
+//!
+//! Its auth provider `form_login` signs in through the application's own
+//! sign-in page with a username and password stored for the person, asks
+//! the person for a one-time code when the page asks for one, and keeps
+//! the cookies the browser then holds as the session's sealed state; the
+//! `ui` driver places them into the session's browser, and stops a run as
+//! `session_expired` when the page shows a screen the target declares as a
+//! sign of expiry (decision 0245).
 //!
 //! Its drafting rules turn a snapshot the web pack's discoverers took into
 //! a screen that reads one of the page's tables by its headings and a
@@ -48,6 +57,7 @@ mod model;
 mod page_http;
 mod requests;
 mod screens;
+mod sign_in;
 
 use std::sync::Arc;
 
@@ -61,6 +71,7 @@ pub use lower::{GOTO, INVOKE, READ, SET, WAIT};
 pub use page_http::{PAGE_HTTP_MODE, REQUEST};
 pub use requests::REQUEST_KIND;
 pub use screens::{CONTROLS, PACK, SCREEN_KIND, WEB_SURFACE};
+pub use sign_in::FORM_LOGIN;
 
 /// The name of the mode this pack drives.
 pub const UI_MODE: &str = "ui";
@@ -123,6 +134,7 @@ impl Pack for WebUiPack {
             settings.max_read_chars = most;
         }
         let browsers = self.browsers.get_or_create(cx, settings)?;
+        to.auth_provider(Arc::new(sign_in::FormLogin::new(browsers.clone())))?;
         let page_http = Mode::new(PAGE_HTTP_MODE)?;
         to.driver(
             page_http.clone(),

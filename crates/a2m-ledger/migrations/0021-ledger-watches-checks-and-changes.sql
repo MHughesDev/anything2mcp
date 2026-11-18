@@ -181,7 +181,9 @@ END;
 -- confirmed it, never while another check of it is under way.
 CREATE TRIGGER watches_run_one_check_at_a_time
 BEFORE UPDATE ON watches
-WHEN NEW.state = 'running' AND OLD.state <> 'confirmed'
+WHEN NEW.state = 'running'
+  AND (OLD.state NOT IN ('confirmed', 'running')
+       OR (OLD.state = 'running' AND NEW.running_check IS NOT OLD.running_check))
 BEGIN
     SELECT RAISE(ABORT, 'a2m: a check begins only on a confirmed watch with no check under way');
 END;

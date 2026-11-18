@@ -14,7 +14,8 @@
 //!
 //! Nothing here starts a program, and nothing reaches another application:
 //! the back end asks the system which process owns each application's
-//! connection (the bus daemon on Linux) or window (Windows), and asks an
+//! connection (the bus daemon on Linux) or window (Windows), or which
+//! process runs the program (the process table on macOS), and asks an
 //! application nothing until it is proven to be the program the surface
 //! declares. A `set` or an `invoke` is done only in a posture that may act,
 //! holds the driver's one desktop from its first `set` to the end of its
@@ -1035,7 +1036,7 @@ impl Driver for DesktopDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        if cfg!(any(target_os = "linux", windows)) {
+        if cfg!(any(target_os = "linux", windows, target_os = "macos")) {
             DriverHealth::Ready
         } else {
             DriverHealth::Unavailable(codes::SYSTEM_NOT_BUILT)

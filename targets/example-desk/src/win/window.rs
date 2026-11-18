@@ -61,7 +61,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
-use super::{ORDER_ENV, PREFIX, decode_order};
+use crate::child::{ORDER_ENV, PREFIX, decode_order};
 use crate::{LATE, Order, SECRET, WINDOW};
 
 /// What a control of the stand is, for the names of its counts.
@@ -192,7 +192,7 @@ fn count(id: i32, message: u32) {
 }
 
 /// The control interface's answer to `truth`: one line, tab-separated.
-pub(super) fn truth_line() -> String {
+pub(crate) fn truth_line() -> String {
     let asked: Vec<String> = lock(&ASKED)
         .iter()
         .map(|(member, times)| format!("{member}={times}"))
@@ -575,7 +575,7 @@ fn control_interface() {
 /// Runs the stand: the window, the control interface, and the message loop
 /// until the window closes. Returns the process's exit code.
 #[allow(unsafe_code)] // calls into the system, explained below
-pub(super) fn serve() -> i32 {
+pub(crate) fn serve() -> i32 {
     // SAFETY: sets this process's error mode; touches no memory. No dialog
     // may appear on a machine with no person.
     unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX) };

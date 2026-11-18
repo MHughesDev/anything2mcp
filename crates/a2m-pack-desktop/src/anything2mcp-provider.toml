@@ -1,6 +1,6 @@
 # The manifest of the desktop pack. What is not built is not declared: the
 # verbs `create`, `delete`, `submit`, and `upload`, writes on Windows and
-# macOS, the macOS back end, keys and clicks, starting an application, the
+# macOS, keys and clicks, starting an application, the
 # `desktop_probe` discoverer, the lint rules of the design, and every
 # control but `desktop_text`. No platform list: the compiler side works on every
 # system, and the driver stops at prepare with `system_not_built` where it

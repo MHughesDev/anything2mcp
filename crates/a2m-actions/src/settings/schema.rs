@@ -857,7 +857,7 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "The time one scout may take. A target until measured.",
         ),
-        "A scout has no time budget; its report says `budget_in_force: false`.",
+        "A scout has no time budget, and its report says the budget is not in force.",
         "the scout's budget, roadmap package E5",
     ),
     not_built(
@@ -872,7 +872,7 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "The requests one scout may send. A target until measured.",
         ),
-        "A scout has no budget of requests; its report says `budget_in_force: false`.",
+        "A scout has no budget of requests, and its report says the budget is not in force.",
         "the scout's budget, roadmap package E5",
     ),
     not_built(
@@ -884,7 +884,7 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "How deep one scout follows what it finds. A target until measured.",
         ),
-        "A scout has no budget of depth; its report says `budget_in_force: false`.",
+        "A scout has no budget of depth, and its report says the budget is not in force.",
         "the scout's budget, roadmap package E5",
     ),
     not_built(

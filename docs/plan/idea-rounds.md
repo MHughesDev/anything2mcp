@@ -42,3 +42,15 @@ The owner asked for the ideas the first rounds would most likely reach to be tes
 | 13 | A run leaves more on disk than it should | Looked at the engine's home after a dozen runs | About 3 KB of trace for a run; a store of 0.7 MB. Nothing is ever deleted | **Ruled out** as new: retention that deletes is already known to be missing and is queued from the configurability review |
 
 **Not tested in this batch, and still open for a later round:** whether target files would be clearer with defaults left out; whether `tool describe` could show a worked call from a tool's recorded fixture (it answers only for a published tool, and the scratch engine had none).
+
+## Round 14 (2026-11-18, 03:27 UTC)
+
+**Idea.** Something under the engine's home can be read by another user of the machine that should not be.
+
+**Test.** Listed the permissions of every file and folder under a scratch engine's home after a dozen commands, with the usual default of new files readable by all, and looked inside what was readable. One home, on Linux; Windows and macOS not looked at.
+
+**Result.** Of 111 entries, 107 can be read or entered by group and others: the store, every trace, the vault's salt, the folders for logs and profiles. Only the folder that holds the socket is closed to others (the socket itself is the owner's alone), and the two log files are the owner's alone. What is readable is not in the clear: a trace is sealed (its bytes are ciphertext under the vault's key), and a search of the store for a value a read had returned found nothing. So another user who can reach the home learns that the product is used, when, and how much, and gets ciphertext to keep; they do not get a value. Whether they can reach the home at all rests on the folders above it, which the product does not check.
+
+**Verdict: changed.** Nothing sensitive is readable in the clear, so the idea as stated is wrong. But the product's protection of its own files should not rest on a folder it did not make: taken up as a small change. The engine makes its home and everything in it the owner's alone, as it already does for the socket's folder; where it finds a home that others can enter, `doctor` says so with the fix.
+
+**Next.** Joins the queue for the crates that hold the home's paths, with a test that every entry under a fresh home is closed to group and others.

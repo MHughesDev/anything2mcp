@@ -1341,12 +1341,15 @@ impl PageHttpDriver {
         cx: &PrepareContext<'_>,
         lease: Option<&SessionLease>,
     ) -> Result<Session, StepFailure> {
+        let setup = tab_setup(cx, lease)?;
+        setup.place_state(&self.browsers, cx.deadline).await?;
         let TabSetup {
             origin,
             profile,
             environment,
             origins,
-        } = tab_setup(cx, lease)?;
+            state: _,
+        } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
         for (position, section) in cx.plan.packs.iter().enumerate() {
