@@ -374,6 +374,7 @@ async fn a_wrong_password_is_refused_after_one_attempt_and_never_tried_again() {
     const WRONG: &str = "secret-for-tests-not-the-password";
     let world = World::storing("signin-wrong", true, WRONG).await;
     let refused = world.sign_in().await.unwrap_err();
+    eprintln!("SEEN {:?}", world.app.seen().await.unwrap());
     assert_eq!(refused.class(), FailureClass::SessionExpired);
     assert_eq!(refused.code().as_str(), "credential_refused");
     let report = world.app.auth_report().await.unwrap();
