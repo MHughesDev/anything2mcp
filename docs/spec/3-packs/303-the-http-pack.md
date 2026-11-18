@@ -61,6 +61,7 @@ Endpoints live only in the endpoint catalog (rule eight). There is one catalog, 
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
 | `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum` ([decision 0096](../../decisions/0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md)) |
+| `answer` | The form of the answer: `json`, the default, or `xml`, `text`, or `bytes`, with the content types it takes. An answer that is not JSON declares the values it gives in place of a `response_schema`: paths into an XML document in a closed language, the named groups of a pattern over text, or a body's length and digest ([decision 0217](../../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)) |
 | `responses` | The answers the endpoint declares: `ok` and `absent` statuses, and `refused`, `conflict`, and `unavailable`, each a status with an optional `when` on a field of the body |
 | `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
 | `max_response_bytes` | The most bytes of an answer that are read |
@@ -81,11 +82,11 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 | An idempotency header the service honors | The record's token goes in it, and a write the plan marks idempotent may be retried by the engine |
 | Pagination by page or cursor | The `list` verb with a pager per style |
 | Long-running jobs | `call`, then poll a declared status until done or a time limit |
-| Uploads and downloads | Declared on the step, through a staging folder given as a checked path |
+| Uploads and downloads | Declared on the step, through a staging folder given as a checked path. Not built: an answer of the form `bytes` gives only its length and digest |
 | A declared maintenance answer | `transient`, `upstream_unavailable`, with its retry time |
 | Requests the front end computes or signs | Marked on the endpoint; `http` is refused for it |
 
-**Responses.** A response is accepted when its status is one the endpoint declares and its body fits the response schema. A body that is not JSON fits no schema, `any` included; only an empty body is read as nothing. Values are extracted from it as typed values and normalized by their field types on both sides before any comparison ([section 210](../2-kernel/210-sources-and-value-normalization.md)); no number is compared as a float. A status the endpoint does not declare is `unknown_variant`; a body that does not fit is `drift`.
+**Responses.** A response is accepted when its status is one the endpoint declares, its content type is one its answer's form takes, and its body fits the response schema. For a JSON answer, a body that is not JSON fits no schema, `any` included; only an empty body is read as nothing. An answer in another form is read into the record of the values its endpoint declares, and that record is what fits or does not: an XML path that matches nothing where a value is required, or more than one place where one is declared, a text that does not decode or does not match its pattern, and a document type in an XML answer, which is never read, each stop the read. Reading an XML answer is bounded in depth and in elements as well as in bytes, and no entity a document defines is expanded and nothing it names is fetched ([decision 0217](../../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)). Values are extracted from it as typed values and normalized by their field types on both sides before any comparison ([section 210](../2-kernel/210-sources-and-value-normalization.md)); no number is compared as a float. A status the endpoint does not declare is `unknown_variant`; a body that does not fit is `drift`.
 
 ## Verbs and how they lower
 
@@ -192,13 +193,14 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
 | `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or, for a read, a redirect to another origin |
 | `policy` | `link_not_encrypted` | A request that would carry the session's credential over plain `http` to an address that is not a loopback address, on a surface that does not accept it; nothing was sent |
-| `unknown_variant` | `response_too_large` | An answer to a read over the limit on its size |
+| `unknown_variant` | `response_too_large` | An answer to a read over the limit on its size, or an XML answer past its bound on depth or on elements |
+| `unknown_variant` | `document_type_refused` | An XML answer that declares a document type; nothing of it is read |
 | `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https` surface whose certificate or handshake fails; nothing was sent. The session keeper's codes, passed on |
 | `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read; a description past the bounds of the import |
 
 ## The test stand
 
-The test application's JSON interface ([test application plan](../../plan/test-application.md)), with its control interface for ground truth: cases 1 to 5 and 16 to 24. A published OpenAPI description of it is to be added. GraphQL and OData stands are small additions when package 4.4 needs them.
+The test application's JSON interface ([test application plan](../../plan/test-application.md)), with its control interface for ground truth: cases 1 to 5 and 16 to 24. Its views under `/views/` serve the same data as XML, as plain text in two character sets, and as a binary label, for the answer forms. A published OpenAPI description of it is to be added. GraphQL and OData stands are small additions when package 4.4 needs them.
 
 | Must always hold | Proven by |
 | --- | --- |
