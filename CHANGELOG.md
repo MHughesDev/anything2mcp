@@ -217,6 +217,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - The HTTP pack sends a search behind POST outside a live run only from a published version, judges a method-override header or `_method` entry as the method it names, refuses a read once too many earlier reads are still running past their deadline, bounds text patterns and the text they match, and checks bytes answers for secrets written in UTF-16. The HTTP and MCP packs never send a header whose name begins `a2m-` (decision 0270).
 - On macOS an installation settings file that the administrators' group may write, or whose access list allows another account, no longer loosens a protected setting; the file is checked and read as one opened file. `version.publish` refuses the version 0.0.0, which belongs to the drafts. A draft that calls its environment a test environment no longer gets a test record's treatment (decision 0273).
 - The file pack's folder writes can no longer be led outside the root by a folder swapped for a link; a file is deleted only while it still holds the bytes that were read; a growing file's line that is not text is reported and passed instead of stopping every later read (decision 0272).
+- On macOS and Linux the engine opens its runtime folder without following a link, then checks the folder and makes it private through that open folder; a link put in the folder's place is refused.
 
 ## [0.0.1]
 

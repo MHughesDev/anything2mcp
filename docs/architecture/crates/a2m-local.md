@@ -83,6 +83,8 @@ pub enum Kept { Private, Open(&'static str), NotChecked }
 pub fn kept_by(path: &Path) -> std::io::Result<Kept>;
 // One of the engine's own folders made this user's alone, as the runtime folder is:
 // 0700 on Unix, an access list naming only this user on Windows (decision 0241).
+// On Unix the folder is opened without following a link at its end, and its type,
+// owner, and mode are checked and set through that one handle (decision 0273).
 pub fn keep_folder_private(dir: &Path) -> std::io::Result<()>;
 
 // The client end. Used by commands, the stdio proxy, and the SDK bridge.
