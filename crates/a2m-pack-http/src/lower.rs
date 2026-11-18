@@ -260,6 +260,22 @@ impl<'a> Lower<'a, '_> {
             ..RequestStep::default()
         };
         for entry in part.get("query").map(Located::entries).unwrap_or_default() {
+            // A computed method override would let a value decide whether
+            // a read writes (decision 0270).
+            if crate::template::is_override_field(&entry.key.value) && !found.template.writes {
+                self.refuse(
+                    "effect_method",
+                    Stage::Resolve,
+                    &entry.key.at,
+                    format!(
+                        "The binding sets the query entry `{}`, which a system may read as the request's method, for the endpoint `{}`, which is marked `read`.",
+                        codes::shown(&entry.key.value),
+                        found.name
+                    ),
+                    "Remove the entry; a write is an endpoint marked `write`.",
+                );
+                continue;
+            }
             match self.cx.expr(&entry.value, None) {
                 Ok(index) => {
                     if !self.cx.expr_type(index).is_some_and(|ty| scalar(&ty)) {

@@ -247,11 +247,16 @@ fn the_shortcuts_and_process_commands_are_those_of_the_catalog_and_add_no_action
         .filter(|line| line.starts_with("| `"))
         .flat_map(|line| backticked(line.trim_matches('|').split('|').next().unwrap()))
         .collect();
+    // The table lists the process commands and `completion`, which the
+    // program answers itself without an engine; it is the product crate's,
+    // not a process command, and this crate cannot name its constant.
     assert_eq!(
         named,
         PROCESS_COMMANDS
             .iter()
-            .map(|word| (*word).to_owned())
+            .copied()
+            .chain(["completion"])
+            .map(str::to_owned)
             .collect()
     );
     // A word may be a noun as well (`runner`, `run`, `test`, `docs`): alone

@@ -11,9 +11,11 @@
 //! every folder on the way to where a link leads. Whoever can write one of
 //! them chooses what the path names, whatever the file at its end is.
 //!
-//! On Unix the mode, the owner, and the group are read; access lists beyond
-//! the mode are not. A group's write counts as the administrator's only for
-//! the groups [`ProgramTrust`] holds. On Windows the owner and the
+//! On Unix the mode, the owner, and the group are read. On macOS an access
+//! list beyond the mode is read too, and any entry in it that allows is a
+//! refusal; on Linux the list is read where a group's write was accepted.
+//! A group's write counts as the administrator's only for the groups
+//! [`ProgramTrust`] holds. On Windows the owner and the
 //! discretionary access list of each folder and of the file are read, and a
 //! link, or any other reparse point, on the way is refused rather than
 //! followed.
@@ -49,14 +51,15 @@ pub enum ProgramRefused {
     /// Who may change it, or the folder named, could not be read: an access
     /// list that cannot be read, or holds an entry of a kind this check
     /// does not read, is a refusal, never a pass.
-    #[cfg_attr(unix, allow(dead_code))]
     Unreadable(PathBuf),
     /// A link, or another kind of reparse point, on the way: on Windows
     /// none is followed.
     #[cfg_attr(not(windows), allow(dead_code))]
     Link(PathBuf),
-    /// A path on another machine's share, or a device: its folders are not
-    /// this machine's to vouch for.
+    /// A path on another machine's share or a device, or, on Windows, on a
+    /// drive that is not a disk fixed in this machine, or by a drive letter
+    /// that stands for a folder: its folders are not this machine's to
+    /// vouch for, or not all of them are read.
     #[cfg_attr(not(windows), allow(dead_code))]
     Elsewhere,
 }
@@ -66,7 +69,8 @@ pub enum ProgramRefused {
 pub enum ProgramRole {
     /// A program that takes its arguments as data. A shell, an interpreter,
     /// or a program that starts another is refused by name, and so is a
-    /// file that starts with `#!`.
+    /// file that does not begin as this system's programs do, such as one
+    /// that starts with `#!`.
     Program,
     /// The interpreter of a fixed pair: it is given a script the engine
     /// keeps, and the name list does not refuse it, except for the
@@ -174,110 +178,299 @@ pub fn check_program(
     if role == ProgramRole::Script {
         return os::closed_file(&real, &metadata, trust);
     }
-    let mut start = [0_u8; 2];
-    let read = std::fs::File::open(&real)
-        .and_then(|mut file| file.read(&mut start))
+    // The first bytes, as many of the four as the file holds.
+    let mut start = Vec::with_capacity(4);
+    std::fs::File::open(&real)
+        .and_then(|file| file.take(4).read_to_end(&mut start))
         .map_err(|_| ProgramRefused::Missing)?;
     // A script is never started as a program, nor as an interpreter: an
     // interpreter that is itself a script hands its own text to another.
-    if read == 2 && &start == b"#!" {
+    // A file is a program only when it starts as this system's programs
+    // do; a text file without `#!` is a script too, which the C library
+    // hands to the shell when the system will not run it.
+    if !is_program_header(&start) {
         return Err(ProgramRefused::Script);
     }
     os::owned_by_us(&real, &metadata, trust)
 }
 
-/// The file names a program may not have: shells, interpreters that take
-/// code as an argument, and programs whose work is to start the program
-/// their arguments name. Compared without a `.exe` suffix and without
-/// regard to case.
+/// How a file this system runs as a program begins (decision 0271): an
+/// executable and linkable file on Linux and the other Unix systems, a
+/// Mach-O file, thin in either byte order or universal, on macOS, and a
+/// file with the DOS header that every Windows program has on Windows.
+#[cfg(target_os = "macos")]
+const PROGRAM_HEADERS: &[&[u8]] = &[
+    &[0xfe, 0xed, 0xfa, 0xce],
+    &[0xfe, 0xed, 0xfa, 0xcf],
+    &[0xce, 0xfa, 0xed, 0xfe],
+    &[0xcf, 0xfa, 0xed, 0xfe],
+    &[0xca, 0xfe, 0xba, 0xbe],
+    &[0xca, 0xfe, 0xba, 0xbf],
+];
+#[cfg(windows)]
+const PROGRAM_HEADERS: &[&[u8]] = &[b"MZ"];
+#[cfg(not(any(target_os = "macos", windows)))]
+const PROGRAM_HEADERS: &[&[u8]] = &[&[0x7f, b'E', b'L', b'F']];
+
+/// Whether `start`, the first bytes of a file, is how this system's
+/// programs begin.
+fn is_program_header(start: &[u8]) -> bool {
+    PROGRAM_HEADERS
+        .iter()
+        .any(|header| start.starts_with(header))
+}
+
+/// The file names a program may not have, by kind: shells, interpreters
+/// that take code as an argument or a file, and programs whose work is to
+/// start the program, or run the code, their arguments name. Compared
+/// without a `.exe` or `.com` suffix and without regard to case, as
+/// [`refused_by_name`] says.
 ///
-/// The list is a net for a mistake, and it is not complete: many programs
-/// can be told to run another through some option of their own. What
-/// holds for those is the review of the target's files, where a command's
-/// arguments are shown.
+/// The list is a list of known names, and it can never be complete: any
+/// program can be built to run what its arguments name, and many can be
+/// told to through some option of their own. For a program whose name is
+/// not on it, two things still hold: the digest pins the bytes of the
+/// program that starts, and its arguments are the fixed ones in the
+/// target's files, shown at review, with each typed value given to it as
+/// one element of data. What such a program then loads or fetches because
+/// of those fixed arguments is not pinned (decision 0271).
 const SHELLS_AND_INTERPRETERS: &[&str] = &[
+    // Shells.
     "sh",
     "bash",
     "dash",
     "zsh",
     "ksh",
+    "mksh",
     "csh",
     "tcsh",
     "fish",
     "ash",
     "busybox",
+    "toybox",
     "cmd",
     "command",
     "powershell",
     "pwsh",
+    "eval",
+    "exec",
+    // Interpreters that read code from an argument or a file.
     "wscript",
     "cscript",
+    "mshta",
     "python",
-    "python2",
-    "python3",
+    "pythonw",
+    "ipython",
+    "pypy",
     "perl",
     "ruby",
+    "irb",
     "node",
     "nodejs",
     "deno",
     "bun",
     "php",
     "lua",
+    "luajit",
     "tclsh",
+    "wish",
+    "expect",
     "osascript",
     "awk",
     "gawk",
+    "mawk",
+    "nawk",
     "sed",
-    "env",
-    "xargs",
-    "nohup",
-    "sudo",
-    "su",
-    "ssh",
-    "eval",
-    "exec",
-    // More interpreters.
-    "pythonw",
-    "ipython",
     "rscript",
     "r",
     "java",
     "javaw",
     "jshell",
     "jrunscript",
-    "irb",
-    "wish",
-    "expect",
-    "mshta",
+    "julia",
+    "erl",
+    "escript",
+    "elixir",
+    "iex",
+    "swift",
+    "kotlin",
+    "scala",
+    "groovy",
+    "dart",
+    "raku",
+    "guile",
+    "racket",
+    "sbcl",
+    "clojure",
+    "clj",
+    "runghc",
+    "runhaskell",
+    "ocaml",
+    "mono",
+    "csi",
+    "fsi",
+    "tsx",
+    "ts-node",
+    // Language launchers, package runners, and version managers: they
+    // start an interpreter, or a package they fetch, by argument.
+    "py",
+    "pyw",
+    "uv",
+    "uvx",
+    "pipx",
+    "poetry",
+    "pdm",
+    "hatch",
+    "conda",
+    "mamba",
+    "micromamba",
+    "pixi",
+    "npx",
+    "npm",
+    "pnpm",
+    "pnpx",
+    "yarn",
+    "yarnpkg",
+    "bunx",
+    "corepack",
+    "volta",
+    "fnm",
+    "nvm",
+    "asdf",
+    "mise",
+    "pyenv",
+    "rbenv",
+    "nodenv",
+    "bundle",
+    "jbang",
+    "rustup",
+    "dotnet",
+    // Container, sandbox, and compatibility runners: they start the
+    // program, or the image, their arguments name.
+    "docker",
+    "podman",
+    "nerdctl",
+    "ctr",
+    "kubectl",
+    "flatpak",
+    "snap",
+    "firejail",
+    "bwrap",
+    "proot",
+    "systemd-nspawn",
+    "nix",
+    "nix-shell",
+    "wine",
+    "wine64",
+    "wsl",
+    // Build tools: they run code the project they are pointed at holds.
+    "make",
+    "gmake",
+    "nmake",
+    "cmake",
+    "ninja",
+    "meson",
+    "cargo",
+    "go",
+    "gradle",
+    "gradlew",
+    "mvn",
+    "mvnw",
+    "ant",
+    "sbt",
+    "msbuild",
+    "bazel",
+    "rake",
     // Programs that start the program their arguments name.
+    "env",
+    "xargs",
+    "nohup",
+    "sudo",
+    "su",
+    "doas",
+    "pkexec",
+    "runuser",
+    "sg",
+    "newgrp",
+    "ssh",
     "nice",
     "ionice",
     "timeout",
     "stdbuf",
+    "unbuffer",
     "chroot",
-    "doas",
-    "pkexec",
-    "runuser",
     "setsid",
     "setpriv",
+    "setarch",
+    "linux32",
+    "linux64",
+    "arch",
     "unshare",
     "nsenter",
     "taskset",
+    "numactl",
+    "prlimit",
     "chrt",
     "flock",
     "time",
     "watch",
     "script",
-    "strace",
-    "ltrace",
+    "screen",
+    "tmux",
+    "xterm",
+    "at",
+    "batch",
+    "run-parts",
     "find",
     "parallel",
     "systemd-run",
     "start-stop-daemon",
-    "wsl",
-    "rundll32",
+    "daemonize",
+    "chpst",
+    "faketime",
+    "xdg-open",
+    "gio",
+    "strace",
+    "ltrace",
+    "valgrind",
+    "gdb",
+    "lldb",
+    "perf",
+    "dtruss",
+    "caffeinate",
+    "sandbox-exec",
+    "xcrun",
+    "open",
+    "launchctl",
+    "runas",
+    "start",
+    "explorer",
+    "schtasks",
+    "wmic",
     "forfiles",
+    "pcalua",
+    "conhost",
+    // Windows programs that load or run the code their arguments name.
+    "rundll32",
+    "regsvr32",
+    "regasm",
+    "regsvcs",
+    "installutil",
+    "msiexec",
+    "cmstp",
+    "odbcconf",
+    "control",
+    "mmc",
+    "hh",
+    "msdt",
+    "presentationhost",
+    "infdefaultinstall",
 ];
+
+/// Beginnings of the file names of the dynamic loaders of Linux, which run
+/// the program their first argument names: `ld-linux-x86-64.so.2`,
+/// `ld-musl-x86_64.so.1`, `ld.so`.
+const LOADER_NAMES: &[&str] = &["ld-linux", "ld-musl", "ld.so", "ld64.so"];
 
 /// The file name of a path, lower case, without a `.exe` or `.com` suffix,
 /// and the same with a version taken off its end, as `python3.12` is
@@ -296,13 +489,29 @@ fn stems(path: &str) -> (String, String, String) {
     (lower, stem, base)
 }
 
+/// Whether the file name `stem` is one of `names`: the name itself, the
+/// name with a version at its end (`python3.12`), or, for a name of two
+/// letters or more, the name followed by a version and anything after it
+/// (`python3-dbg`, `perl5.36-thread`).
+fn refused_by_name(names: &[&str], stem: &str, base: &str) -> bool {
+    names.iter().any(|name| {
+        stem == *name
+            || base == *name
+            || (name.len() >= 2
+                && stem
+                    .strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit() || c == '.')))
+    })
+}
+
 /// Whether a program's path names a shell or an interpreter, a program
-/// that starts another, or a script file by its suffix.
+/// that starts another or runs the code its arguments name, or a script
+/// file by its suffix.
 #[must_use]
 pub fn is_shell_or_interpreter(path: &str) -> bool {
     let (lower, stem, base) = stems(path);
-    SHELLS_AND_INTERPRETERS.contains(&stem.as_str())
-        || SHELLS_AND_INTERPRETERS.contains(&base.as_str())
+    refused_by_name(SHELLS_AND_INTERPRETERS, &stem, &base)
+        || LOADER_NAMES.iter().any(|name| stem.starts_with(name))
         || lower.ends_with(".bat")
         || lower.ends_with(".cmd")
         || lower.ends_with(".ps1")
@@ -421,60 +630,174 @@ pub fn interpreter_form(path: &str, fixed: &[String]) -> Result<(), InterpreterR
 }
 
 /// Names of variables that make a program load code other than its own, or
-/// run code at its start: the dynamic loaders' variables, and the start-up
-/// and module-path variables of the language runtimes. Compared without
-/// regard to case: names are so on Windows, and refusing more is the safe
-/// side elsewhere.
+/// run code at its start, or run another program it names. Compared
+/// without regard to case: names are so on Windows, and refusing more is
+/// the safe side elsewhere. Each family says whose documentation it comes
+/// from and why it is here (decision 0271).
 const LOADING_NAMES: &[&str] = &[
-    // The shells: a file each sources at start, functions it imports, and
-    // the options that make it print a prompt that runs code.
+    // The POSIX shell and bash, which the closed table of interpreters
+    // starts: a file each sources at start (`ENV`), the options that make
+    // it print a prompt that runs code, and the field separator, which old
+    // shells took from their environment.
     "ENV",
     "SHELLOPTS",
     "BASHOPTS",
     "PS4",
-    // The C library's character-set converters are loaded from here.
+    "IFS",
+    // The C library of Linux: its character-set converters are shared
+    // objects loaded from `GCONV_PATH`; its tunables are read by the
+    // dynamic loader itself; its locale and message files are data it
+    // trusts as its own.
     "GCONV_PATH",
-    // Node.js.
+    "GLIBC_TUNABLES",
+    "LOCPATH",
+    "NLSPATH",
+    // A program that runs "the shell" or "the command interpreter" runs
+    // the one these name: `system()` of the C runtime on Windows runs
+    // `COMSPEC`, and many programs on Unix run `SHELL`.
+    "COMSPEC",
+    "SHELL",
+    // Helper programs a program runs by a variable: pagers, editors, the
+    // prompts that ask for a password, and the commands of the version
+    // control tool that programs often call.
+    "PAGER",
+    "MANPAGER",
+    "LESSOPEN",
+    "LESSCLOSE",
+    "EDITOR",
+    "VISUAL",
+    "BROWSER",
+    "SSH_ASKPASS",
+    "SUDO_ASKPASS",
+    "GIT_ASKPASS",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_EXEC_PATH",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "GIT_EDITOR",
+    "GIT_SEQUENCE_EDITOR",
+    "GIT_PROXY_COMMAND",
+    "GIT_TEMPLATE_DIR",
+    // Node.js, and an Electron program told to behave as Node.js, which
+    // then honours Node.js's variables.
     "NODE_OPTIONS",
     "NODE_PATH",
     "NODE_REPL_EXTERNAL_MODULE",
+    "ELECTRON_RUN_AS_NODE",
     // Java and the other runtimes of its machine.
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "JDK_JAVA_OPTIONS",
     "CLASSPATH",
-    // Ruby's gems, PHP's settings, Tcl's packages, R's start-up files.
+    // Ruby's gems, PHP's settings, Tcl's and Tk's start-up scripts and
+    // packages, R's installation.
     "GEM_PATH",
     "GEM_HOME",
     "PHPRC",
     "PHP_INI_SCAN_DIR",
     "TCLLIBPATH",
-    "R_PROFILE",
-    "R_PROFILE_USER",
-    // PowerShell's modules, which load by name.
-    "PSMODULEPATH",
-    // The .NET runtime's start-up hooks.
-    "DOTNET_STARTUP_HOOKS",
+    "TCL_LIBRARY",
+    "TK_LIBRARY",
+    "R_HOME",
+    // Windows PowerShell runs on the .NET Framework, which loads assemblies
+    // from `DEVPATH` when its configuration allows development mode.
+    "DEVPATH",
+    // AppleScript's `osascript`, which the closed table starts: the
+    // folders it loads script libraries from.
+    "OSA_LIBRARY_PATH",
+    // Libraries that load modules as shared objects from folders a
+    // variable names: GTK's and GIO's modules, Qt's plug-ins, GStreamer's
+    // plug-ins, the authentication library's plug-ins, the graphics
+    // library's drivers.
+    "QT_PLUGIN_PATH",
+    "QT_QPA_PLATFORM_PLUGIN_PATH",
+    "SASL_PATH",
+    "SASL_CONF_PATH",
+    "LIBGL_DRIVERS_PATH",
+    // Windows applies the compatibility layers this names to the program
+    // and to what it starts.
+    "__COMPAT_LAYER",
 ];
 
-/// Beginnings of names of such variables: every variable of the dynamic
-/// loader of Linux (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`) and of
-/// macOS (`DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`), the shell's
-/// imported functions and its own variables (`BASH_ENV`), every variable of
-/// Python (`PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`), Perl (`PERL5OPT`,
-/// `PERL5LIB`), Ruby (`RUBYOPT`, `RUBYLIB`), and Lua (`LUA_INIT`,
-/// `LUA_PATH`), and the profilers of the .NET runtime (`COR_PROFILER`,
-/// `CORECLR_PROFILER_PATH`).
+/// Beginnings of names of such variables, each a family whose every member
+/// is refused:
+///
+/// - `LD_` and `DYLD_`: the dynamic loaders of Linux and macOS
+///   (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES`);
+///   `__XPC_`: what the system's service launcher hands on as a loader
+///   variable on macOS (`__XPC_DYLD_INSERT_LIBRARIES`).
+/// - `BASH_`: bash's imported functions and its own variables (`BASH_ENV`).
+/// - `PYTHON` and `__PYVENV`: every variable of Python (`PYTHONPATH`,
+///   `PYTHONSTARTUP`, `PYTHONHOME`), and the one that tells it on macOS
+///   which program it is.
+/// - `PERL`, `RUBY`, `LUA_`, `JULIA_`, `ERL_`, `ELIXIR_`: every variable of
+///   those runtimes, among them their module paths and the flags that run
+///   code (`PERL5OPT`, `RUBYOPT`, `LUA_INIT`, `ERL_FLAGS`).
+/// - `R_PROFILE`, `R_ENVIRON`, `R_LIBS`: R's start-up files and libraries.
+/// - `COR_`, `CORECLR_`, `COMPLUS_`, `DOTNET_`, `COREHOST_`, and
+///   `APPDOMAIN_MANAGER_`: the .NET Framework, on which Windows PowerShell
+///   runs, and .NET: their profilers (`COR_PROFILER`,
+///   `CORECLR_PROFILER_PATH`), every setting of the runtime
+///   (`COMPlus_` and `DOTNET_`, among them `DOTNET_STARTUP_HOOKS`,
+///   `DOTNET_ADDITIONAL_DEPS`, and `DOTNET_ROOT`), the host's own, and the
+///   assembly and type the .NET Framework loads into every program as its
+///   application domain manager (`APPDOMAIN_MANAGER_ASM`,
+///   `APPDOMAIN_MANAGER_TYPE`).
+/// - `PSMODULE`: the folders Windows PowerShell loads modules from by name
+///   (`PSModulePath`), and its cache of what they hold.
+/// - `OSA_`: AppleScript's libraries.
+/// - `OPENSSL_`: OpenSSL's configuration, which names engines and
+///   providers it loads as shared objects (`OPENSSL_CONF`,
+///   `OPENSSL_ENGINES`, `OPENSSL_MODULES`), into any program linked with
+///   it.
+/// - `GTK_`, `GIO_`, `GST_PLUGIN`, `VK_`: the module paths of the desktop
+///   toolkit and its input library, the media framework's plug-ins, and
+///   the layers and drivers the graphics loader loads.
+/// - `GIT_CONFIG`: settings given to the version control tool, some of
+///   which name commands it runs.
 const LOADING_PREFIXES: &[&str] = &[
-    "LD_", "DYLD_", "BASH_", "PYTHON", "PERL", "RUBY", "LUA_", "COR_", "CORECLR_",
+    "LD_",
+    "DYLD_",
+    "__XPC_",
+    "BASH_",
+    "PYTHON",
+    "__PYVENV",
+    "PERL",
+    "RUBY",
+    "LUA_",
+    "JULIA_",
+    "ERL_",
+    "ELIXIR_",
+    "R_PROFILE",
+    "R_ENVIRON",
+    "R_LIBS",
+    "COR_",
+    "CORECLR_",
+    "COMPLUS_",
+    "DOTNET_",
+    "COREHOST_",
+    "APPDOMAIN_MANAGER_",
+    "PSMODULE",
+    "OSA_",
+    "OPENSSL_",
+    "GTK_",
+    "GIO_",
+    "GST_PLUGIN",
+    "VK_",
+    "GIT_CONFIG",
 ];
 
 /// Whether a variable's name is one that makes a program load code other
-/// than its own, or run code at its start. The supervisor refuses a start
-/// that names one, and every pack refuses it where the target's files are
-/// compiled. The list is closed and kept here alone; it is a deny list,
-/// because a program's own settings come in variables of every name, and
-/// its reasons and limits are in decision 0250.
+/// than its own, run code at its start, or run another program it names.
+/// The supervisor refuses a start that names one, and every pack refuses it
+/// where the target's files are compiled. The list is closed and kept here
+/// alone; it is a deny list, because a program's own settings come in
+/// variables of every name. It is closed, and it is not complete: a
+/// program can read any variable as the name of code to load. Its reasons
+/// and limits are in decisions 0250 and 0271. `PATH` is not on it: the
+/// supervisor holds each folder a `PATH` names to the check of a folder
+/// instead.
 #[must_use]
 pub fn redirects_loading(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
@@ -553,6 +876,7 @@ mod os {
         if !closed(&top, us, true, trust) {
             return Err(ProgramRefused::Writable(root));
         }
+        beyond_the_mode(&root, &top, trust)?;
         let mut at = root.clone();
         let mut ahead: Vec<OsString> = names(declared).collect();
         let mut links = 0;
@@ -576,6 +900,7 @@ mod os {
                 if !ours(&metadata, us) {
                     return Err(ProgramRefused::Writable(next));
                 }
+                beyond_the_mode(&next, &metadata, trust)?;
                 let target = std::fs::read_link(&next).map_err(|_| ProgramRefused::Missing)?;
                 if target.is_absolute() {
                     at.clone_from(&root);
@@ -585,6 +910,7 @@ mod os {
                 if !closed(&metadata, us, true, trust) {
                     return Err(ProgramRefused::Writable(next));
                 }
+                beyond_the_mode(&next, &metadata, trust)?;
                 at = next;
             } else {
                 // A file is the end of a path.
@@ -620,6 +946,52 @@ mod os {
         if !closed(metadata, us, false, trust) {
             return Err(ProgramRefused::Writable(real.to_path_buf()));
         }
+        beyond_the_mode(real, metadata, trust)
+    }
+
+    /// What an access list beyond the mode grants, on macOS: an entry that
+    /// allows anything, to anyone, is a refusal (decision 0271).
+    #[cfg(target_os = "macos")]
+    fn beyond_the_mode(
+        path: &Path,
+        _metadata: &std::fs::Metadata,
+        _trust: &ProgramTrust,
+    ) -> Result<(), ProgramRefused> {
+        super::macos::no_entry_allows(path)
+    }
+
+    /// What an access list beyond the mode grants, on Linux. There the
+    /// group's bits of the mode are the most any named user or group of
+    /// the list may hold, so a list adds nothing the mode does not show,
+    /// except where the group's write was accepted because `trust` holds
+    /// the group: the write may then be a named user's. A list is then a
+    /// refusal (decision 0271).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn beyond_the_mode(
+        path: &Path,
+        metadata: &std::fs::Metadata,
+        trust: &ProgramTrust,
+    ) -> Result<(), ProgramRefused> {
+        if metadata.mode() & GROUP_WRITE == 0 || !trust.holds(metadata.gid()) {
+            return Ok(());
+        }
+        match rustix::fs::lgetxattr_query(path, POSIX_ACCESS_LIST) {
+            Err(rustix::io::Errno::NODATA | rustix::io::Errno::NOTSUP) => Ok(()),
+            Ok(_) | Err(_) => Err(ProgramRefused::Unreadable(path.to_path_buf())),
+        }
+    }
+
+    /// Where Linux keeps a file's access list beyond the mode.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const POSIX_ACCESS_LIST: &str = "system.posix_acl_access";
+
+    /// Other Unix systems: the mode alone is read.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    fn beyond_the_mode(
+        _path: &Path,
+        _metadata: &std::fs::Metadata,
+        _trust: &ProgramTrust,
+    ) -> Result<(), ProgramRefused> {
         Ok(())
     }
 }
@@ -627,6 +999,10 @@ mod os {
 #[cfg(windows)]
 #[path = "program/windows.rs"]
 mod os;
+
+#[cfg(target_os = "macos")]
+#[path = "program/macos.rs"]
+mod macos;
 
 #[cfg(not(any(unix, windows)))]
 mod os {

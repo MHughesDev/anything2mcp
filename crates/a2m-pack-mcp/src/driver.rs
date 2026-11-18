@@ -259,10 +259,21 @@ struct HeaderSink {
     headers: Vec<(String, Secret)>,
     /// Something was placed that an MCP connection has no place for.
     other: bool,
+    /// The name of the first header placed whose name begins `a2m-`: one
+    /// of the product's own carriers between its parts, never kept and
+    /// never sent (decision 0270).
+    product_header: Option<String>,
 }
 
 impl CredentialSink for HeaderSink {
     fn header(&mut self, name: &str, value: &Secret) {
+        let product = name
+            .get(..4)
+            .is_some_and(|start| start.eq_ignore_ascii_case("a2m-"));
+        if product {
+            self.product_header.get_or_insert_with(|| name.to_owned());
+            return;
+        }
         self.headers
             .push((name.to_owned(), Secret::new(value.expose())));
     }
@@ -387,6 +398,9 @@ impl McpDriver {
         let mut sink = HeaderSink::default();
         if let Some(lease) = lease {
             lease.apply(&mut sink).map_err(unsent)?;
+        }
+        if let Some(name) = &sink.product_header {
+            return Err(unsent(codes::product_header_refused(name)));
         }
         if sink.other {
             return Err(unsent(codes::not_built(

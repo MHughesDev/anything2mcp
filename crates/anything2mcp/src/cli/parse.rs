@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use a2m_actions::{
-    ActionRegistry, CommandArg, CommandFace, PROCESS_COMMANDS, PROGRAM, SHORTCUTS, Shortcut,
-    ShortcutRun, ShortcutStep, codes, command_faces,
+    ActionDef, ActionRegistry, CommandArg, CommandFace, Effect, PROCESS_COMMANDS, PROGRAM,
+    PersonNeed, RunsIn, SHORTCUTS, Shortcut, ShortcutRun, ShortcutStep, codes, command_faces,
 };
 use a2m_core::{Failure, FailureClass};
 
@@ -42,7 +42,162 @@ pub(crate) const GLOBAL_FLAGS: &[(&str, &str)] = &[
 ];
 
 /// The names of the global flags that take a value.
-const GLOBAL_VALUES: &[&str] = &["--project", "--idempotency-key"];
+pub(crate) const GLOBAL_VALUES: &[&str] = &["--project", "--idempotency-key"];
+
+/// The command that prints a completion script for a shell. The program
+/// answers it itself, as it answers `--help`: no engine is started and no
+/// folder is made.
+pub const COMPLETION_COMMAND: &str = "completion";
+
+/// The width help is wrapped to when the environment does not give one.
+pub(crate) const DEFAULT_WIDTH: usize = 80;
+/// The narrowest width help is wrapped to; a narrower `COLUMNS` is not
+/// taken.
+pub(crate) const NARROWEST_WIDTH: usize = 40;
+
+/// The width help is wrapped to: the environment's `COLUMNS` when it is a
+/// whole number of at least [`NARROWEST_WIDTH`], else [`DEFAULT_WIDTH`].
+pub(crate) fn width_of(environment: &BTreeMap<String, String>) -> usize {
+    environment
+        .get("COLUMNS")
+        .and_then(|columns| columns.trim().parse::<usize>().ok())
+        .filter(|columns| *columns >= NARROWEST_WIDTH)
+        .unwrap_or(DEFAULT_WIDTH)
+}
+
+/// The actions the client end carries out itself. An action the registry
+/// marks as the client's and that is not among these is carried out by
+/// nobody in this build, and its help says that it is not built.
+pub(crate) const CARRIED_BY_THE_CLIENT: &[&str] = &["engine.start", "engine.stop", "engine.logs"];
+
+/// What the help of an action says beside its usage and summary, from its
+/// definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Facts {
+    /// Whether a call can be answered with anything but `action_not_built`.
+    pub(crate) built: bool,
+    /// The phase or stage of the plan that builds it.
+    pub(crate) phase: String,
+    /// Its effect class, or the tool's.
+    pub(crate) effect: &'static str,
+    /// Who may run it, in the action catalog's words.
+    pub(crate) who: &'static str,
+    /// Whether a person at this machine is asked.
+    pub(crate) person: &'static str,
+}
+
+impl Facts {
+    pub(crate) fn of(def: &ActionDef) -> Self {
+        let carried =
+            def.runs_in != RunsIn::Client || CARRIED_BY_THE_CLIENT.contains(&def.name.as_str());
+        Self {
+            built: def.built() && carried,
+            phase: def.phase.to_owned(),
+            effect: match def.effect {
+                Effect::Fixed(effect) => effect.as_str(),
+                Effect::OfTool => "the effect of the tool it calls",
+            },
+            who: def.who.as_str(),
+            person: match def.person {
+                PersonNeed::None => "no",
+                PersonNeed::Presence => "always",
+                PersonNeed::PresenceWhenLoosening => "when it loosens something protected",
+            },
+        }
+    }
+
+    /// The first line of the help of an action that is not built.
+    fn not_built(&self) -> String {
+        let when = if self.phase.is_empty() {
+            String::new()
+        } else if self.phase.chars().all(|c| c.is_ascii_digit()) {
+            format!(" (it arrives with Phase {})", self.phase)
+        } else {
+            format!(" (it arrives with {})", self.phase)
+        };
+        format!("Not built yet: a call answers `action_not_built`{when}.")
+    }
+
+    /// The line that says the effect, who may run it, and whether a person
+    /// is asked.
+    fn line(&self) -> String {
+        format!(
+            "Effect: {}. Who may run it: {}. A person at this machine is asked: {}.",
+            self.effect, self.who, self.person
+        )
+    }
+}
+
+/// `text` wrapped at its spaces to `width` columns: the first line begins
+/// with `first`, every other with `hang` spaces. A word longer than a whole
+/// line is cut, so that no line is wider than `width`.
+pub(crate) fn wrap(first: &str, text: &str, hang: usize, width: usize) -> String {
+    fn finish(out: &mut String, line: &str) {
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    let hang = hang.min(width / 2);
+    let indent = " ".repeat(hang);
+    let mut out = String::new();
+    let mut line = first.to_owned();
+    // Whether the line holds its indent and no word yet.
+    let mut fresh = true;
+    for word in text.split_whitespace() {
+        let mut rest = word;
+        while !rest.is_empty() {
+            let used = line.chars().count();
+            let need = rest.chars().count() + usize::from(!fresh);
+            if used + need <= width {
+                if !fresh {
+                    line.push(' ');
+                }
+                line.push_str(rest);
+                fresh = false;
+                break;
+            }
+            if fresh {
+                // Not even alone on a line: as much as fits, then the rest.
+                let room = width.saturating_sub(used);
+                let cut = rest
+                    .char_indices()
+                    .nth(room)
+                    .map_or(rest.len(), |(at, _)| at);
+                line.push_str(&rest[..cut]);
+                rest = &rest[cut..];
+            }
+            finish(&mut out, &line);
+            line.clone_from(&indent);
+            fresh = true;
+        }
+    }
+    if !fresh || out.is_empty() {
+        finish(&mut out, &line);
+    }
+    out
+}
+
+/// One row of a two-column list, wrapped: `left` in a column `column` wide
+/// after `indent`, and `right` beside it. Where the columns would leave too
+/// little room, `right` goes below `left` instead.
+fn row(indent: &str, left: &str, column: usize, right: &str, width: usize) -> String {
+    let at = indent.chars().count() + column + 1;
+    if left.chars().count() < column && at <= width / 2 {
+        return wrap(&format!("{indent}{left:<column$} "), right, at, width);
+    }
+    let below = format!("{indent}    ");
+    let mut out = wrap(indent, left, below.len(), width);
+    if !right.trim().is_empty() {
+        out.push_str(&wrap(&below, right, below.len(), width));
+    }
+    out
+}
+
+/// Each paragraph of `text`, wrapped to `width` with no indent.
+fn paragraphs(text: &str, width: usize) -> String {
+    text.split('\n')
+        .map(|paragraph| wrap("", paragraph, 0, width))
+        .collect()
+}
 /// The names of the global flags that take none.
 const GLOBAL_SWITCHES: &[&str] = &["--json", "--in-process", "--help", "-h"];
 
@@ -100,6 +255,10 @@ pub(crate) struct Tree {
     faces: Vec<CommandFace>,
     /// What each shortcut does on this build, by its word.
     runs: BTreeMap<&'static str, ShortcutRun>,
+    /// What the help of each action says of it, by the action's name.
+    facts: BTreeMap<String, Facts>,
+    /// The width help is wrapped to.
+    width: usize,
 }
 
 fn malformed(message: impl Into<String>, fix: impl Into<String>) -> Failure {
@@ -141,7 +300,18 @@ impl Tree {
                 .iter()
                 .map(|shortcut| (shortcut.word, shortcut.on(registry)))
                 .collect(),
+            facts: registry
+                .iter()
+                .map(|def| (def.name.to_string(), Facts::of(def)))
+                .collect(),
+            width: DEFAULT_WIDTH,
         }
+    }
+
+    /// The same tree, with its help wrapped to `width` columns.
+    pub(crate) fn with_width(mut self, width: usize) -> Self {
+        self.width = width.max(NARROWEST_WIDTH);
+        self
     }
 
     /// A tree with no command, for a failure met before a registry could
@@ -150,7 +320,24 @@ impl Tree {
         Self {
             faces: Vec::new(),
             runs: BTreeMap::new(),
+            facts: BTreeMap::new(),
+            width: DEFAULT_WIDTH,
         }
+    }
+
+    /// What the help says of an action.
+    pub(crate) fn facts(&self, action: &str) -> Option<&Facts> {
+        self.facts.get(action)
+    }
+
+    /// Whether an action is built, as its help says.
+    pub(crate) fn built(&self, action: &str) -> bool {
+        self.facts(action).is_none_or(|facts| facts.built)
+    }
+
+    /// The shortcuts, in order, with what each does.
+    pub(crate) fn shortcuts(&self) -> impl Iterator<Item = &'static Shortcut> {
+        SHORTCUTS.iter()
     }
 
     /// Every command face, in catalog order.
@@ -200,7 +387,7 @@ impl Tree {
         // command of that name when there is one.
         if let Some(face) = second.and_then(|verb| self.face(first, verb)) {
             if help {
-                return Ok(Parsed::Help(help_action(face)));
+                return Ok(Parsed::Help(self.help_action(face)));
             }
             let (input, stdin_for) = parse_args(face, &face.args, None, &rest[2..])?;
             return Ok(Parsed::Invoke(
@@ -238,9 +425,19 @@ impl Tree {
                 stop,
             ));
         }
+        if first == COMPLETION_COMMAND {
+            if help {
+                return Ok(Parsed::Help(self.help_process(COMPLETION_COMMAND)));
+            }
+            return Ok(Parsed::Process(
+                globals,
+                COMPLETION_COMMAND,
+                rest[1..].to_vec(),
+            ));
+        }
         if let Some(word) = PROCESS_COMMANDS.iter().find(|word| *word == first) {
             if help {
-                return Ok(Parsed::Help(help_process(word)));
+                return Ok(Parsed::Help(self.help_process(word)));
             }
             return Ok(Parsed::Process(globals, word, rest[1..].to_vec()));
         }
@@ -262,7 +459,7 @@ impl Tree {
             .nouns()
             .into_iter()
             .chain(SHORTCUTS.iter().map(|shortcut| shortcut.word))
-            .chain(PROCESS_COMMANDS.iter().copied());
+            .chain(process_commands().map(|word| -> &str { word }));
         let close = nearest(first, words);
         Err(malformed(
             format!("There is no command `{}`.", shown(first)),
@@ -338,52 +535,105 @@ impl Tree {
         Ok(steps)
     }
 
-    fn help_top(&self) -> String {
-        let mut out = format!(
-            "{PROGRAM} {}\n\nUsage: {PROGRAM} <noun> <verb> [arguments]\n       {PROGRAM} <shortcut> [argument]\n\nCommands, by noun (`{PROGRAM} <noun> --help` lists a noun's commands):\n",
-            crate::version()
-        );
+    /// A verb as the listings show it: marked when it is not built.
+    fn listed_verb(&self, face: &CommandFace) -> String {
+        if self.built(&face.action) {
+            face.verb.clone()
+        } else {
+            format!("{} (not built)", face.verb)
+        }
+    }
+
+    pub(crate) fn help_top(&self) -> String {
+        let width = self.width;
+        let mut out = format!("{PROGRAM} {}\n\n", crate::version());
+        out.push_str(&row(
+            "",
+            "Usage:",
+            7,
+            &format!("{PROGRAM} <noun> <verb> [arguments]"),
+            width,
+        ));
+        out.push_str(&row(
+            "",
+            "",
+            7,
+            &format!("{PROGRAM} <shortcut> [argument]"),
+            width,
+        ));
+        out.push('\n');
+        out.push_str(&wrap(
+            "",
+            &format!(
+                "Commands, by noun (`{PROGRAM} <noun> --help` lists a noun's commands; a verb marked (not built) answers `action_not_built`):"
+            ),
+            0,
+            width,
+        ));
         for noun in self.nouns() {
-            let verbs: Vec<&str> = self
+            let verbs: Vec<String> = self
                 .of_noun(noun)
                 .iter()
-                .map(|face| face.verb.as_str())
+                .map(|face| self.listed_verb(face))
                 .collect();
-            out.push_str(&format!("  {noun:<12} {}\n", verbs.join(", ")));
+            out.push_str(&row("  ", noun, 12, &verbs.join(", "), width));
         }
         out.push_str("\nShortcuts:\n");
         for shortcut in SHORTCUTS {
-            out.push_str(&format!("  {:<12} {}\n", shortcut.word, shortcut.does));
+            out.push_str(&row("  ", shortcut.word, 12, shortcut.does, width));
         }
-        out.push_str(
-            "\nProcess commands (`<command> --help` says what each does; `runner` is not built):\n",
-        );
-        out.push_str(&format!("  {}\n", PROCESS_COMMANDS.join(", ")));
+        out.push('\n');
+        out.push_str(&wrap(
+            "",
+            "Process commands (`<command> --help` says what each does; `runner` is not built):",
+            0,
+            width,
+        ));
+        let words: Vec<&str> = process_commands().collect();
+        out.push_str(&wrap("  ", &words.join(", "), 2, width));
         out.push_str("\nGlobal flags:\n");
         for (flag, does) in GLOBAL_FLAGS {
-            out.push_str(&format!("  {flag:<24} {does}\n"));
+            out.push_str(&row("  ", flag, 24, does, width));
         }
         out
     }
 
-    fn help_noun(&self, noun: &str) -> String {
-        let mut out = format!("Commands of `{noun}`:\n");
+    pub(crate) fn help_noun(&self, noun: &str) -> String {
+        let width = self.width;
+        let mut out = wrap("", &format!("Commands of `{noun}`:"), 0, width);
         for face in self.of_noun(noun) {
-            out.push_str(&format!("  {}\n      {}\n", face.usage, face.help));
+            let usage = if self.built(&face.action) {
+                face.usage.clone()
+            } else {
+                format!("{} (not built)", face.usage)
+            };
+            out.push_str(&wrap("  ", &usage, 6, width));
+            out.push_str(&wrap("      ", &face.help, 6, width));
         }
         out
     }
 
-    fn help_shortcut(&self, shortcut: &Shortcut) -> String {
-        let mut out = format!(
-            "{PROGRAM} {} [argument]\n\n{}\n",
-            shortcut.word, shortcut.does
+    pub(crate) fn help_shortcut(&self, shortcut: &Shortcut) -> String {
+        let width = self.width;
+        let mut out = wrap(
+            "",
+            &format!("{PROGRAM} {} [argument]", shortcut.word),
+            4,
+            width,
         );
+        out.push('\n');
+        out.push_str(&paragraphs(shortcut.does, width));
         if shortcut.steps.is_empty() {
             out.push_str("\nNo action is beneath it yet.\n");
             return out;
         }
-        out.push_str("\nIt runs, in order, stopping at the first that does not succeed:\n");
+        out.push('\n');
+        out.push_str(&wrap(
+            "",
+            "It runs, in order, stopping at the first that does not succeed:",
+            0,
+            width,
+        ));
         let built = self
             .runs
             .get(shortcut.word)
@@ -392,79 +642,143 @@ impl Tree {
             let usage = self
                 .face_of(step.action)
                 .map_or_else(|| step.action.to_owned(), |face| face.usage.clone());
-            out.push_str(&format!("  {usage}\n"));
+            out.push_str(&wrap("  ", &usage, 6, width));
             if at == built {
-                out.push_str("      Not built yet: the shortcut stops before this step.\n");
+                out.push_str(&wrap(
+                    "      ",
+                    "Not built yet: the shortcut stops before this step.",
+                    6,
+                    width,
+                ));
             }
+        }
+        out
+    }
+
+    /// The help of a process command, or of the completion command. These
+    /// are the only commands written by hand.
+    pub(crate) fn help_process(&self, word: &str) -> String {
+        let width = self.width;
+        let (usage, kind, about) = match word {
+            "serve" => (
+                format!("{PROGRAM} serve [--passphrase-from-stdin]"),
+                "A process command: it starts a long-lived role and is not an action.",
+                "Runs the local engine in the foreground: the one process that holds the store, \
+                 serves commands and MCP clients over the local channel of this machine, and shows \
+                 the page on which a person answers a write that waits.\nIt stops when asked (`anything2mcp engine stop`, the terminal's \
+                 interrupt, or the termination or hang-up signal) and after `engine.idle_stop_minutes` with nothing to do, \
+                 and its last object names what asked it to stop.\nA second engine \
+                 on the same data directory is refused.\nA command that finds no engine starts this \
+                 one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
+                 standard input, to its end, instead of from the environment.",
+            ),
+            "bridge" => (
+                format!("{PROGRAM} bridge [--toolset use|build]"),
+                "A process command: it starts a long-lived role and is not an action.",
+                "The program an MCP client starts: it copies MCP messages between its standard \
+                 input and output and the local engine's MCP endpoint.\nStandard output carries \
+                 protocol messages and nothing else.\nA request that finds no engine starts one; \
+                 where none may be started (`engine.in_process`), it is answered with an error \
+                 that says to run `anything2mcp serve`.\nThe \
+                 project folder is the one it is started in, or the one `--project` names.",
+            ),
+            COMPLETION_COMMAND => (
+                format!(
+                    "{PROGRAM} {COMPLETION_COMMAND} <{}>",
+                    super::complete::SHELLS.join("|")
+                ),
+                "A command the program answers itself: it starts no engine, makes no folder, and is not an action.",
+                "Prints a script that completes this program's commands and flags in the shell named, made from the same command tree as this help.\nValues that live in the engine, such as the names of targets and tools, are not completed.\nThe script is printed as it is, whatever the output is.",
+            ),
+            _ => (
+                format!("{PROGRAM} {word}"),
+                "A process command: it starts a long-lived role and is not an action.",
+                "It is not built in this build.",
+            ),
+        };
+        let mut out = wrap("", &usage, 4, width);
+        out.push('\n');
+        out.push_str(&paragraphs(&format!("{kind}\n{about}"), width));
+        out
+    }
+
+    pub(crate) fn help_action(&self, face: &CommandFace) -> String {
+        let width = self.width;
+        let mut out = String::new();
+        let facts = self.facts(&face.action);
+        if let Some(facts) = facts.filter(|facts| !facts.built) {
+            out.push_str(&wrap("", &facts.not_built(), 0, width));
+        }
+        out.push_str(&wrap("", &face.usage, 4, width));
+        out.push('\n');
+        out.push_str(&paragraphs(&face.help, width));
+        if let Some(facts) = facts {
+            out.push_str(&wrap("", &facts.line(), 0, width));
+        }
+        if !face.args.is_empty() {
+            out.push_str("\nArguments:\n");
+            for arg in &face.args {
+                let name = if arg.positional {
+                    format!("<{}>", arg.field)
+                } else if arg.ty == "flag" {
+                    arg.flag.clone()
+                } else {
+                    format!("{} <{}>", arg.flag, arg.ty)
+                };
+                let mut notes = Vec::new();
+                if arg.required {
+                    notes.push("required".to_owned());
+                }
+                if !arg.choices.is_empty() {
+                    notes.push(format!("one of: {}", arg.choices.join(", ")));
+                }
+                let notes = if notes.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", notes.join("; "))
+                };
+                out.push_str(&row(
+                    "  ",
+                    &name,
+                    28,
+                    &format!("{}{notes}", arg.help),
+                    width,
+                ));
+            }
+        }
+        if face.long_running {
+            out.push('\n');
+            out.push_str(&wrap(
+                "",
+                "It returns a `run_id` at once; follow it with `run get`.",
+                0,
+                width,
+            ));
         }
         out
     }
 }
 
-/// The help of a process command. These three are the only commands
-/// written by hand.
-fn help_process(word: &str) -> String {
-    let (usage, about) = match word {
-        "serve" => (
-            format!("{PROGRAM} serve [--passphrase-from-stdin]"),
-            "Runs the local engine in the foreground: the one process that holds the store, \
-             serves commands and MCP clients over the local channel of this machine, and shows \
-             the page on which a person answers a write that waits.\nIt stops when asked (`anything2mcp engine stop`, or the terminal's \
-             interrupt) and after `engine.idle_stop_minutes` with nothing to do.\nA second engine \
-             on the same data directory is refused.\nA command that finds no engine starts this \
-             one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
-             standard input, to its end, instead of from the environment.",
-        ),
-        "bridge" => (
-            format!("{PROGRAM} bridge [--toolset use|build]"),
-            "The program an MCP client starts: it copies MCP messages between its standard \
-             input and output and the local engine's MCP endpoint.\nStandard output carries \
-             protocol messages and nothing else.\nA request that finds no engine starts one; \
-             where none may be started (`engine.in_process`), it is answered with an error \
-             that says to run `anything2mcp serve`.\nThe \
-             project folder is the one it is started in, or the one `--project` names.",
-        ),
-        _ => (
-            format!("{PROGRAM} {word}"),
-            "It is not built in this build.",
-        ),
-    };
-    format!(
-        "{usage}\n\nA process command: it starts a long-lived role and is not an action.\n{about}\n"
-    )
+/// The process commands, and the completion command, in the order the
+/// help lists them.
+pub(crate) fn process_commands() -> impl Iterator<Item = &'static str> {
+    PROCESS_COMMANDS
+        .iter()
+        .copied()
+        .chain(std::iter::once(COMPLETION_COMMAND))
 }
 
-fn help_action(face: &CommandFace) -> String {
-    let mut out = format!("{}\n\n{}\n", face.usage, face.help);
-    if !face.args.is_empty() {
-        out.push_str("\nArguments:\n");
-        for arg in &face.args {
-            let name = if arg.positional {
-                format!("<{}>", arg.field)
-            } else if arg.ty == "flag" {
-                arg.flag.clone()
-            } else {
-                format!("{} <{}>", arg.flag, arg.ty)
-            };
-            let mut notes = Vec::new();
-            if arg.required {
-                notes.push("required".to_owned());
-            }
-            if !arg.choices.is_empty() {
-                notes.push(format!("one of: {}", arg.choices.join(", ")));
-            }
-            let notes = if notes.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", notes.join("; "))
-            };
-            out.push_str(&format!("  {name:<28} {}{notes}\n", arg.help));
-        }
+/// The flags of a process command, with what each is for. The completion
+/// scripts offer them.
+pub(crate) fn process_flags(word: &str) -> &'static [(&'static str, &'static str)] {
+    match word {
+        "serve" => &[(
+            "--passphrase-from-stdin",
+            "Read the vault's passphrase from standard input, to its end.",
+        )],
+        "bridge" => &[("--toolset", "The built-in toolset to serve: use or build.")],
+        _ => &[],
     }
-    if face.long_running {
-        out.push_str("\nIt returns a `run_id` at once; follow it with `run get`.\n");
-    }
-    out
 }
 
 /// Takes the global flags out of the arguments, wherever they stand before
@@ -763,10 +1077,164 @@ pub(crate) fn command_line(tree: &Tree, action: &str, input: &Json) -> Option<St
 
 #[cfg(test)]
 mod tests {
-    use a2m_actions::{ActionRegistry, SHORTCUTS};
+    use a2m_actions::{
+        ActionDef, ActionRegistry, Effect, PersonNeed, RunsIn, SHORTCUTS, command_faces,
+    };
     use serde_json::json;
 
-    use super::{Parsed, Tree};
+    use super::{CARRIED_BY_THE_CLIENT, Parsed, Tree, process_commands, width_of};
+
+    /// Every action of this build, packs included, with its command face.
+    fn every_action() -> (ActionRegistry, Tree) {
+        let registry = crate::engine::action_registry().unwrap();
+        let tree = Tree::of(&registry);
+        (registry, tree)
+    }
+
+    fn help(tree: &Tree, args: &[&str]) -> String {
+        let mut args = words(args);
+        args.push("--help".to_owned());
+        match tree.parse(&args).unwrap() {
+            Parsed::Help(text) => text,
+            other => panic!("{args:?}: {other:?}"),
+        }
+    }
+
+    /// Help as it reads before it was wrapped.
+    fn flat(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Whether an action is built, from its definition alone: it has a
+    /// handler, and a client's action is one the client end carries out.
+    fn built(def: &ActionDef) -> bool {
+        def.built()
+            && (def.runs_in != RunsIn::Client || CARRIED_BY_THE_CLIENT.contains(&def.name.as_str()))
+    }
+
+    #[test]
+    fn every_actions_help_says_its_effect_who_and_whether_a_person_is_asked() {
+        let (registry, tree) = every_action();
+        let faces = command_faces(&registry);
+        assert!(faces.len() > 80, "{}", faces.len());
+        for face in &faces {
+            let def = registry.find(&face.action).unwrap();
+            let effect = match def.effect {
+                Effect::Fixed(effect) => effect.as_str(),
+                Effect::OfTool => "the effect of the tool it calls",
+            };
+            let person = match def.person {
+                PersonNeed::None => "no",
+                PersonNeed::Presence => "always",
+                PersonNeed::PresenceWhenLoosening => "when it loosens something protected",
+            };
+            let said = flat(&help(&tree, &[&face.noun, &face.verb]));
+            let line = format!(
+                "Effect: {effect}. Who may run it: {}. A person at this machine is asked: {person}.",
+                def.who.as_str()
+            );
+            assert!(said.contains(&line), "{}: {said}", face.action);
+        }
+        // Each of the three answers is met at least once among the actions.
+        let all: String = faces
+            .iter()
+            .map(|face| flat(&help(&tree, &[&face.noun, &face.verb])))
+            .collect();
+        for answer in ["asked: no.", "asked: always.", "asked: when it loosens"] {
+            assert!(all.contains(answer), "{answer}");
+        }
+    }
+
+    #[test]
+    fn the_help_of_an_action_not_built_says_so_on_its_first_line() {
+        let (registry, tree) = every_action();
+        let top = flat(&tree.help_top());
+        let mut not_built = 0;
+        for face in command_faces(&registry) {
+            let def = registry.find(&face.action).unwrap();
+            let text = help(&tree, &[&face.noun, &face.verb]);
+            let first = text.lines().next().unwrap();
+            let noun = flat(&tree.help_noun(&face.noun));
+            let marked = format!("{} (not built)", flat(&face.usage));
+            if built(def) {
+                assert!(
+                    text.starts_with(&face.usage[..20.min(face.usage.len())]),
+                    "{text}"
+                );
+                assert!(!first.starts_with("Not built"), "{}: {text}", face.action);
+                assert!(!noun.contains(&marked), "{}: {noun}", face.action);
+            } else {
+                not_built += 1;
+                assert!(
+                    first.starts_with("Not built yet: a call answers `action_not_built`"),
+                    "{}: {text}",
+                    face.action
+                );
+                assert!(
+                    first.contains(def.phase),
+                    "{}: {first} / {}",
+                    face.action,
+                    def.phase
+                );
+                assert!(noun.contains(&marked), "{}: {noun}", face.action);
+                assert!(
+                    top.contains(&format!("{} (not built)", face.verb)),
+                    "{}",
+                    face.action
+                );
+            }
+        }
+        // The count the readiness section is to give.
+        assert!(not_built > 10, "{not_built}");
+        // An action the registry gives the client end, and the client end
+        // does not carry out, is not built.
+        let update = registry.find("self.update").unwrap();
+        assert_eq!(update.runs_in, RunsIn::Client);
+        assert!(!built(update));
+    }
+
+    #[test]
+    fn no_help_line_is_wider_than_the_width() {
+        let (registry, tree) = every_action();
+        for width in [80, 60, 40] {
+            let tree = tree.clone().with_width(width);
+            let mut texts = vec![tree.help_top()];
+            for noun in tree.nouns() {
+                texts.push(tree.help_noun(noun));
+            }
+            for face in command_faces(&registry) {
+                texts.push(help(&tree, &[&face.noun, &face.verb]));
+            }
+            for shortcut in SHORTCUTS {
+                texts.push(tree.help_shortcut(shortcut));
+            }
+            for word in process_commands() {
+                texts.push(tree.help_process(word));
+            }
+            for text in &texts {
+                for line in text.lines() {
+                    assert!(
+                        line.chars().count() <= width,
+                        "{width}: {} > {width}: {line}",
+                        line.chars().count()
+                    );
+                }
+            }
+        }
+        // The width is the environment's `COLUMNS` when it is a number of
+        // 40 or more, and 80 otherwise.
+        let of = |columns: &str| {
+            width_of(&std::collections::BTreeMap::from([(
+                "COLUMNS".to_owned(),
+                columns.to_owned(),
+            )]))
+        };
+        assert_eq!(of("60"), 60);
+        assert_eq!(of("120"), 120);
+        assert_eq!(of("39"), 80);
+        assert_eq!(of("wide"), 80);
+        assert_eq!(width_of(&std::collections::BTreeMap::new()), 80);
+    }
 
     fn words(text: &[&str]) -> Vec<String> {
         text.iter().map(|word| (*word).to_owned()).collect()

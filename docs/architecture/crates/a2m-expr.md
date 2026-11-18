@@ -189,6 +189,8 @@ None that persists. A loaded `Program` lives as long as the plan that holds it, 
 
 Run-time failures name the host function or operator, never the value that caused them: a value may be business data, and a failure's sentence is shown to callers. The engine, which knows the expression's name in the plan, adds it.
 
+The codes are declared once, each with its meaning and next step, in the crate's `failure_codes!` table, in its module `codes` ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). A failure whose case adds nothing to the next step carries the table's; a compile error with a fix carries the fix.
+
 ## Invariants
 
 | Must always hold | Proven by |

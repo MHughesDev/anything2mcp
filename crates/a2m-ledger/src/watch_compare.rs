@@ -8,8 +8,11 @@
 //! a lock, so a change and a write can be matched. A read whose output is not
 //! a list of keyed records is compared whole, as one record named
 //! [`WatchKey::Whole`]. Each output's value is reduced to a keyed digest of
-//! its canonical bytes under the purpose [`value_purpose`], with the output's
-//! name inside what is digested, so that equal values of two outputs differ.
+//! its canonical bytes under the purpose [`value_purpose`], with the watch,
+//! the record's key, and the output's name inside what is digested, so that
+//! equal values of two outputs, two records, or two watches differ, and a
+//! reader of the store cannot tell which records share a value (decision
+//! 0262).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,22 +21,21 @@ use a2m_core::{
     WorkspaceId,
 };
 
-/// The purpose the digests of a watch's values are made under.
-///
-/// `a2m-core` has no purpose of a watch's own yet, and this crate does not
-/// own that list: until it has one, the nearest, `restricted_value`, is used
-/// here and nowhere else in this crate, and every digest carries the prefix
-/// [`VALUE_DOMAIN`] so that it never equals a digest a trace or a diff makes
-/// of the same value. Adding the purpose is a change of this one line.
+use crate::watch::WatchId;
+
+/// The purpose the digests of a watch's values are made under: its own,
+/// `watch_value`, which no other digest uses (decision 0262). Every digest
+/// also begins with [`VALUE_DOMAIN`].
 #[must_use]
 pub const fn value_purpose() -> DigestPurpose {
-    DigestPurpose::RestrictedValue
+    DigestPurpose::WatchValue
 }
 
-/// What every digest of a watch's value begins with.
-pub const VALUE_DOMAIN: &[u8] = b"anything2mcp watch value 1";
+/// What every digest of a watch's value begins with. The `2` marks the
+/// framing that holds the watch and the record's key.
+pub const VALUE_DOMAIN: &[u8] = b"anything2mcp watch value 2";
 /// What every digest of a watch's whole record begins with.
-const RECORD_DOMAIN: &[u8] = b"anything2mcp watch record 1";
+const RECORD_DOMAIN: &[u8] = b"anything2mcp watch record 2";
 
 /// A record's key appears twice in one check: a named fault of that check,
 /// never a merge. Class `unknown_variant`.
@@ -41,6 +43,11 @@ pub const WATCH_KEY_REPEATED: FailureCode = FailureCode::fixed("watch_key_repeat
 /// A check holds keyed records and a whole result at once, or more than one
 /// whole result. Class `unknown_variant`.
 pub const WATCH_SHAPES_MIXED: FailureCode = FailureCode::fixed("watch_shapes_mixed");
+/// A check's result is not of the shape the watch was asked with: its list
+/// output is missing or not a list of records, or a record lacks a field of
+/// its key. Class `unknown_variant`.
+pub const WATCH_RESULT_NOT_ITS_SHAPE: FailureCode =
+    FailureCode::fixed("watch_result_not_its_shape");
 
 /// How a watch names one record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,21 +97,28 @@ pub struct RecordDigests {
 }
 
 impl RecordDigests {
-    /// The digests of one record's normalized values, leaving out the
-    /// outputs named in `ignore`.
+    /// The digests of one record's normalized values in one watch, leaving
+    /// out the outputs named in `ignore`. The watch and the record's key are
+    /// framed into every digest: comparisons are always within one watch and
+    /// one key, so nothing is lost, and equal values of two records or two
+    /// watches never share a digest.
     #[must_use]
     pub fn of(
         digest: &dyn KeyedDigest,
         workspace: &WorkspaceId,
+        watch: WatchId,
+        key: &WatchKey,
         values: &Values,
         ignore: &BTreeSet<String>,
     ) -> Self {
         let mut outputs = BTreeMap::new();
+        let whose = whose(watch, key);
         for (name, value) in values.iter() {
             if ignore.contains(name) {
                 continue;
             }
             let mut bytes = framed(VALUE_DOMAIN);
+            bytes.extend_from_slice(&whose);
             bytes.extend_from_slice(&framed(name.as_bytes()));
             bytes.extend_from_slice(&value.canonical_bytes());
             outputs.insert(
@@ -112,15 +126,17 @@ impl RecordDigests {
                 digest.keyed_digest(workspace, value_purpose(), &bytes),
             );
         }
-        Self::from_outputs(digest, workspace, outputs)
+        Self::from_outputs(digest, workspace, &whose, outputs)
     }
 
     fn from_outputs(
         digest: &dyn KeyedDigest,
         workspace: &WorkspaceId,
+        whose: &[u8],
         outputs: BTreeMap<String, Digest>,
     ) -> Self {
         let mut bytes = framed(RECORD_DOMAIN);
+        bytes.extend_from_slice(whose);
         for (name, output) in &outputs {
             bytes.extend_from_slice(&framed(name.as_bytes()));
             bytes.extend_from_slice(output.as_bytes());
@@ -144,6 +160,14 @@ impl RecordDigests {
     }
 }
 
+/// The watch and the record's key, framed: what every digest of a value
+/// holds besides the value.
+fn whose(watch: WatchId, key: &WatchKey) -> Vec<u8> {
+    let mut bytes = framed(watch.as_bytes());
+    bytes.extend_from_slice(&framed(key.stored().as_bytes()));
+    bytes
+}
+
 fn framed(bytes: &[u8]) -> Vec<u8> {
     let mut out = (bytes.len() as u64).to_le_bytes().to_vec();
     out.extend_from_slice(bytes);
@@ -157,6 +181,8 @@ pub enum CheckFault {
     KeyRepeated(WatchKey),
     /// The check holds keyed records and a whole result at once.
     ShapesMixed,
+    /// The check's result is not of the shape the watch was asked with.
+    NotItsShape,
 }
 
 impl CheckFault {
@@ -175,6 +201,12 @@ impl CheckFault {
                 WATCH_SHAPES_MIXED,
                 "The read returned keyed records and a whole result at once, so the check cannot be compared.",
                 "Check the operation's outputs; the watch goes on and compares the next check.",
+            ),
+            Self::NotItsShape => Failure::new(
+                FailureClass::UnknownVariant,
+                WATCH_RESULT_NOT_ITS_SHAPE,
+                "The check's result is not of the shape the watch was asked with, so the check cannot be compared.",
+                "Check the operation's outputs and the key it declares; the watch goes on and compares the next check.",
             ),
         }
     }
@@ -443,14 +475,23 @@ mod tests {
         WatchKey::Record(Digest::of(&n.to_le_bytes()))
     }
 
-    fn record(status: &str, total: i64) -> RecordDigests {
+    fn watch() -> WatchId {
+        WatchId::from_bytes([5; 16])
+    }
+
+    fn record_of(key: WatchKey, status: &str, total: i64) -> RecordDigests {
         let values: Values = [
             ("status", a2m_core::Value::from(status)),
             ("total", a2m_core::Value::from(total)),
         ]
         .into_iter()
         .collect();
-        RecordDigests::of(&Plain, &ws(), &values, &BTreeSet::new())
+        RecordDigests::of(&Plain, &ws(), watch(), &key, &values, &BTreeSet::new())
+    }
+
+    /// The record `n`, with its digests, as a check holds it.
+    fn record(n: u64, status: &str, total: i64) -> (WatchKey, RecordDigests) {
+        (key(n), record_of(key(n), status, total))
     }
 
     /// A small generator with no outside crate: the same sequence on every
@@ -474,12 +515,7 @@ mod tests {
             keys.insert(seq.next() % 20);
         }
         keys.into_iter()
-            .map(|n| {
-                (
-                    key(n),
-                    record(["new", "shipped"][(seq.next() % 2) as usize], 1),
-                )
-            })
+            .map(|n| record(n, ["new", "shipped"][(seq.next() % 2) as usize], 1))
             .collect()
     }
 
@@ -528,7 +564,7 @@ mod tests {
                 continue;
             }
             let at = (seq.next() as usize) % records.len();
-            let again = (records[at].0, record("other", 2));
+            let again = (records[at].0, record_of(records[at].0, "other", 2));
             let repeated = again.0;
             records.push(again);
             let fault = CheckDigests::new(true, records).unwrap_err();
@@ -538,23 +574,19 @@ mod tests {
         }
         let mixed = CheckDigests::new(
             true,
-            [(WatchKey::Whole, record("a", 1)), (key(1), record("a", 1))],
+            [
+                (WatchKey::Whole, record_of(WatchKey::Whole, "a", 1)),
+                record(1, "a", 1),
+            ],
         );
         assert_eq!(mixed.unwrap_err(), CheckFault::ShapesMixed);
     }
 
     #[test]
     fn added_changed_and_removed_are_told_by_key_and_output_name() {
-        let older = CheckDigests::new(
-            true,
-            [(key(1), record("new", 5)), (key(2), record("new", 7))],
-        )
-        .unwrap();
-        let newer = CheckDigests::new(
-            true,
-            [(key(1), record("shipped", 5)), (key(3), record("new", 1))],
-        )
-        .unwrap();
+        let older = CheckDigests::new(true, [record(1, "new", 5), record(2, "new", 7)]).unwrap();
+        let newer =
+            CheckDigests::new(true, [record(1, "shipped", 5), record(3, "new", 1)]).unwrap();
         let base = Baseline::first(4, &older);
         let compared = compare(&base, &newer);
         assert_eq!(compared.added, vec![key(3)]);
@@ -580,12 +612,8 @@ mod tests {
 
     #[test]
     fn a_check_cut_short_never_reports_a_removal_and_tells_unseen_once() {
-        let full = CheckDigests::new(
-            true,
-            [(key(1), record("new", 1)), (key(2), record("new", 1))],
-        )
-        .unwrap();
-        let short = CheckDigests::new(false, [(key(1), record("new", 1))]).unwrap();
+        let full = CheckDigests::new(true, [record(1, "new", 1), record(2, "new", 1)]).unwrap();
+        let short = CheckDigests::new(false, [record(1, "new", 1)]).unwrap();
         let base = Baseline::first(0, &full);
         let first = compare(&base, &short);
         assert!(first.removed.is_empty());
@@ -616,14 +644,14 @@ mod tests {
     }
 
     fn short_but_complete() -> CheckDigests {
-        CheckDigests::new(true, [(key(1), record("new", 1))]).unwrap()
+        CheckDigests::new(true, [record(1, "new", 1)]).unwrap()
     }
 
     #[test]
     fn no_complete_check_ever_means_no_removal_ever() {
-        let short = CheckDigests::new(false, [(key(1), record("new", 1))]).unwrap();
+        let short = CheckDigests::new(false, [record(1, "new", 1)]).unwrap();
         let base = Baseline::first(0, &short);
-        let full_without = CheckDigests::new(true, [(key(9), record("new", 1))]).unwrap();
+        let full_without = CheckDigests::new(true, [record(9, "new", 1)]).unwrap();
         let compared = compare(&base, &full_without);
         assert!(compared.removed.is_empty());
         assert_eq!(compared.unseen.len(), 1);
@@ -648,20 +676,36 @@ mod tests {
         .collect();
         let ignore: BTreeSet<String> = ["seen_at".to_owned()].into();
         assert_eq!(
-            RecordDigests::of(&Plain, &ws(), &one, &ignore),
-            RecordDigests::of(&Plain, &ws(), &two, &ignore)
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &one, &ignore),
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &two, &ignore)
         );
         assert_ne!(
-            RecordDigests::of(&Plain, &ws(), &one, &BTreeSet::new()).whole,
-            RecordDigests::of(&Plain, &ws(), &two, &BTreeSet::new()).whole
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &one, &BTreeSet::new()).whole,
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &two, &BTreeSet::new()).whole
         );
         let swapped: Values = [("b", a2m_core::Value::from("x"))].into_iter().collect();
         let first: Values = [("a", a2m_core::Value::from("x"))].into_iter().collect();
         let (a, b) = (
-            RecordDigests::of(&Plain, &ws(), &first, &BTreeSet::new()),
-            RecordDigests::of(&Plain, &ws(), &swapped, &BTreeSet::new()),
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &first, &BTreeSet::new()),
+            RecordDigests::of(&Plain, &ws(), watch(), &key(1), &swapped, &BTreeSet::new()),
         );
         assert_ne!(a.outputs.get("a"), b.outputs.get("b"));
         assert_eq!(a.differing(&b), vec!["a".to_owned(), "b".to_owned()]);
+        // The same values in another record or another watch: other digests.
+        let base = RecordDigests::of(&Plain, &ws(), watch(), &key(1), &first, &BTreeSet::new());
+        let other_record =
+            RecordDigests::of(&Plain, &ws(), watch(), &key(2), &first, &BTreeSet::new());
+        let other_watch = RecordDigests::of(
+            &Plain,
+            &ws(),
+            WatchId::from_bytes([6; 16]),
+            &key(1),
+            &first,
+            &BTreeSet::new(),
+        );
+        for other in [&other_record, &other_watch] {
+            assert_ne!(base.outputs.get("a"), other.outputs.get("a"));
+            assert_ne!(base.whole, other.whole);
+        }
     }
 }

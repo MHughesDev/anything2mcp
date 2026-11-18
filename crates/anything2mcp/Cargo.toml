@@ -48,6 +48,9 @@ serde_json.workspace = true
 # `serve` stops on the operating system's signal; `bridge` copies standard
 # input and output.
 tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
+# The engine's log lines of its own start and stop, through the subscriber
+# the kernel's telemetry installs.
+tracing.workspace = true
 
 [dev-dependencies]
 # The web pack's drafting, from a probe's finding to a compiled read, in

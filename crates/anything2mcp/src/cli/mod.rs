@@ -17,6 +17,7 @@
 //! while an engine runs.
 
 mod client;
+mod complete;
 mod parse;
 mod process;
 mod render;
@@ -36,6 +37,7 @@ use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
+pub use parse::COMPLETION_COMMAND;
 use parse::{Globals, Parsed, Step, Stop, Tree};
 pub use process::READY_LINE;
 use serde_json::Value as Json;
@@ -363,6 +365,10 @@ fn without_engine(tree: &Tree, parsed: Parsed, json: bool) -> Finished {
     match parsed {
         Parsed::Version => plain(format!("{PROGRAM} {}\n", crate::version())),
         Parsed::Help(text) => plain(text),
+        // The program answers it itself, engine or not.
+        Parsed::Process(globals, COMPLETION_COMMAND, rest) => {
+            complete::run(tree, &rest, json || globals.json)
+        }
         // Reached only on an engine that is open already; a process
         // command of the program itself is run by `run_with`.
         Parsed::Process(globals, word, _) => stopped(
@@ -405,7 +411,7 @@ fn without_engine(tree: &Tree, parsed: Parsed, json: bool) -> Finished {
 pub async fn run_with(args: &[String], host: &Host) -> Finished {
     let json = !host.stdout_is_terminal;
     let tree = match tree() {
-        Ok(tree) => tree,
+        Ok(tree) => tree.with_width(parse::width_of(&host.environment)),
         Err(failure) => {
             return stopped(&Tree::empty(), "", &failure, ExitClass::Failed, json);
         }
@@ -447,6 +453,11 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Ok(paths) => paths,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Failed, json),
     };
+    // The engine's log is read where the engine runs, by the client end:
+    // it starts no engine, opens no kernel, and makes nothing.
+    if steps.len() == 1 && steps[0].action == LOGS_ACTION {
+        return engine_logs(&tree, &paths, &steps[0].input, json);
+    }
     let project = match project_of(&globals, host) {
         Ok(project) => project,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Malformed, json),
@@ -602,6 +613,69 @@ fn init(tree: &Tree, globals: &Globals, host: &Host, json: bool) -> Finished {
 /// The action that starts the local engine, carried out here, in the
 /// client end.
 const START_ACTION: &str = "engine.start";
+
+/// The action that reads the engine's recent log lines, carried out here,
+/// in the client end.
+const LOGS_ACTION: &str = "engine.logs";
+
+/// How many lines `engine logs` gives when it is not told, and the most it
+/// gives.
+const LOG_LINES: u64 = 50;
+const LOG_LINES_MOST: u64 = 1_000;
+
+/// `engine logs`: the engine's recent log lines, from the log files of this
+/// machine's data directory, oldest first. Each line is the object the
+/// engine wrote, or its text when it is not one. Whether an engine runs
+/// does not matter, and nothing is made where nothing is.
+fn engine_logs(tree: &Tree, paths: &Paths, input: &Json, json: bool) -> Finished {
+    let asked = match input.get("lines") {
+        None => Some(LOG_LINES),
+        Some(value) => value.as_u64().filter(|n| (1..=LOG_LINES_MOST).contains(n)),
+    };
+    let Some(count) = asked.and_then(|count| usize::try_from(count).ok()) else {
+        return stopped(
+            tree,
+            LOGS_ACTION,
+            &Failure::new(
+                FailureClass::Input,
+                codes::SCHEMA_INVALID,
+                format!("`--lines` takes a whole number from 1 to {LOG_LINES_MOST}."),
+                format!("Write `--lines {LOG_LINES}`, or leave it out for {LOG_LINES}."),
+            ),
+            ExitClass::Malformed,
+            json,
+        );
+    };
+    let file = paths.logs.join(a2m_telemetry::LOG_FILE_NAME);
+    match a2m_telemetry::recent_lines(&paths.logs, count) {
+        Ok(read) => {
+            let lines: Vec<Json> = read
+                .into_iter()
+                .map(|line| match serde_json::from_str::<Json>(&line) {
+                    Ok(object @ Json::Object(_)) => object,
+                    _ => Json::String(line),
+                })
+                .collect();
+            let response = a2m_actions::Response {
+                ok: true,
+                action: LOGS_ACTION.to_owned(),
+                result: Some(serde_json::json!({
+                    "file": file.display().to_string(),
+                    // A look at the file's entry, which makes nothing.
+                    "exists": std::fs::symlink_metadata(&file).is_ok(),
+                    "lines": lines,
+                })),
+                error: None,
+                warnings: Vec::new(),
+                next: None,
+                exit: ExitClass::Succeeded,
+                decision: None,
+            };
+            render::render(&response, tree, json)
+        }
+        Err(failure) => stopped(tree, LOGS_ACTION, &failure, ExitClass::Failed, json),
+    }
+}
 
 /// The actions for which no engine is started on demand: they ask about,
 /// or stop, the engine that runs.

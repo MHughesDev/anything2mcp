@@ -152,3 +152,4 @@ These start a long-lived role and are not actions.
 | `serve` | A server in the configured profile |
 | `runner` | A runner that dials a control plane |
 | `bridge` | The link an SDK or a stdio MCP client uses to reach the local engine |
+| `completion` | Nothing: prints a completion script for a shell, answered by the program itself |

@@ -298,6 +298,13 @@ impl BudgetKey {
         .map(Self)
     }
 
+    /// The budget all watches on one surface share: a share of the surface's
+    /// own budget, which only watches' checks spend (decision 0262).
+    #[must_use]
+    pub fn watch_share(surface: &Self) -> Self {
+        Self(format!("watch_share:{}", surface.0))
+    }
+
     /// The budget of one session.
     #[must_use]
     pub fn session(session: SessionId) -> Self {

@@ -5,13 +5,17 @@ Usage, from the repository root:
 
     python3 tools/failure_codes.py                 # rewrite the table between the markers
     python3 tools/failure_codes.py --check         # exit 1 and name each difference if it is stale
-    python3 tools/failure_codes.py --list          # print the table, and the crates with no table
+    python3 tools/failure_codes.py --list          # print the table, and the crates outside the table form
     python3 tools/failure_codes.py --root DIR      # work on another copy of the repository
 
 The crates hold the knowledge; this tool only reads it, as text, without a build. A code is found in
-five places, strongest first:
+six places, strongest first:
 
-  1. a class table: `(FailureClass::X, "code")`, in an `ALL` list or inside a `codes! { ... }` macro;
+  0. a row of the table form, `a2m_core::failure_codes! { NAME = Class, "code", meaning "...",
+     next "..." [, passes by_itself | not_by_itself] [, then ("noun.verb", "what for")]; ... }`,
+     which alone gives a code its next step and whether it passes by itself;
+  1. an older class table: `(FailureClass::X, "code")`, in an `ALL` list or inside a `codes! { ... }`
+     macro;
   2. a provider manifest's `[[failure_codes]]` entries;
   3. a constant `pub const NAME: FailureCode = FailureCode::fixed("code");` whose doc comment names
      its class (`class `busy`.` or a leading `` `busy`: ``);
@@ -20,7 +24,11 @@ five places, strongest first:
   5. a literal `FailureCode::fixed("code")` inside such a call.
 
 A code that no place gives a class to, or that two places give two classes to, is a fault: the tool
-names it and exits 1 in every mode. Lint codes (`kernel.*`) are another vocabulary and are not read.
+names it and exits 1 in every mode. So is a row of the table form that cannot be read, or that has an
+empty meaning or next step; one code given two answers to whether it passes by itself; and, in a crate
+named in MIGRATED, a code declared anywhere but a `failure_codes!` table or a manifest, so that a crate
+that has moved to the table form cannot slip back. Places 1, 3, 4 and 5 are read until every crate has
+moved; `--list` names the crates that have not. Lint codes (`kernel.*`) are another vocabulary and are not read.
 Standard library only; Python 3.11 or newer.
 """
 import re
@@ -37,6 +45,9 @@ END = "<!-- failure-codes:end -->"
 CLASS_ORDER = ["policy", "input", "session_expired", "edge_blocked", "drift", "unknown_variant",
                "rejected", "mismatch", "possible_commit", "stale", "transient", "busy"]
 CLASSES = set(CLASS_ORDER)
+# The crates whose codes are all in a `failure_codes!` table (or, for a pack, also its manifest).
+MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry"}
+PASSES = {"by_itself": "yes", "not_by_itself": "no"}
 
 CODE = r"[a-z][a-z0-9_]*"
 TABLE_ROW = re.compile(rf'\(\s*FailureClass::(\w+)\s*,\s*"({CODE})"\s*\)')
@@ -45,6 +56,10 @@ CONST = re.compile(rf'((?:[ \t]*///[^\n]*\n)*)[ \t]*(?:pub(?:\([a-z]+\))?\s+)?co
                    rf'(?:FailureCode|Self)::fixed\(\s*"({CODE})"\s*\)\s*;')
 INLINE = re.compile(rf'FailureCode::fixed\(\s*"({CODE})"\s*\)')
 CLASS_USE = re.compile(r"FailureClass::(\w+)")
+STR = r'"((?:[^"\\]|\\.)*)"'
+FC_START = re.compile(r"^[^\n/]*?\bfailure_codes!\s*\{", re.M)
+FC_ROW = re.compile(rf'\s*(\w+)\s*=\s*(\w+)\s*,\s*"({CODE})"\s*,\s*meaning\s*{STR}\s*,\s*next\s*{STR}'
+                    rf'(?:\s*,\s*passes\s+(\w+))?(?:\s*,\s*then\s*\(\s*{STR}\s*,\s*{STR}\s*\))?\s*', re.S)
 TEST_FILE = re.compile(r"(^|/)(tests|benches|examples|target)/|(^|/)(tests|test_\w+|\w+_tests)\.rs$")
 
 
@@ -71,9 +86,110 @@ def split_doc(doc):
     return None, doc
 
 
+def unescape(text):
+    """The value of the inside of a plain Rust string literal."""
+    text = re.sub(r"\\\n\s*", "", text)
+    return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t", "0": "\0"}.get(m.group(1), m.group(1)), text)
+
+
+def block_end(text, start):
+    """The index of the brace that closes the block opened just before `start`, skipping strings
+    and comments; -1 when it is not closed."""
+    depth, i = 1, start
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i)
+            if i < 0:
+                return -1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def split_rows(body):
+    """The rows of a `failure_codes!` block: its text cut at each `;` outside a string, with line
+    comments taken out."""
+    rows, row, i = [], [], 0
+    while i < len(body):
+        c = body[i]
+        if c == '"':
+            j = i + 1
+            while j < len(body) and body[j] != '"':
+                j += 2 if body[j] == "\\" else 1
+            row.append(body[i:j + 1])
+            i = j + 1
+            continue
+        if body.startswith("//", i):
+            j = body.find("\n", i)
+            i = len(body) if j < 0 else j
+            continue
+        if c == ";":
+            rows.append("".join(row))
+            row = []
+        else:
+            row.append(c)
+        i += 1
+    rest = "".join(row)
+    if rest.strip():
+        rows.append(rest)
+    return [r for r in rows if r.strip()]
+
+
+def table_rows(text, rel, faults):
+    """(rows, text with the blocks taken out): each row (code, class, meaning, next, passes, then)."""
+    found, cuts = [], []
+    for m in FC_START.finditer(text):
+        end = block_end(text, m.end())
+        if end < 0:
+            faults.append(f"{rel}: a `failure_codes!` table is not closed")
+            continue
+        cuts.append((m.start(), end + 1))
+        for row in split_rows(text[m.end():end]):
+            r = FC_ROW.fullmatch(row)
+            shown = re.sub(r"\s+", " ", row).strip()[:80]
+            if not r:
+                faults.append(f"{rel}: a row of `failure_codes!` cannot be read: `{shown}`; write it as "
+                              'NAME = Class, "code", meaning "...", next "..." [, passes by_itself | not_by_itself] '
+                              '[, then ("noun.verb", "what for")];')
+                continue
+            _name, cls, code, meaning, nxt, passes, then_action, then_when = r.groups()
+            meaning, nxt = unescape(meaning).strip(), unescape(nxt).strip()
+            cls = snake(cls)
+            if cls not in CLASSES:
+                faults.append(f"{rel}: `{code}` is given the class `{r.group(2)}`, which is not a failure class")
+                continue
+            if not meaning:
+                faults.append(f"{rel}: `{code}` has an empty meaning in its `failure_codes!` row")
+            if not nxt:
+                faults.append(f"{rel}: `{code}` has an empty next step in its `failure_codes!` row")
+            if passes is not None and passes not in PASSES:
+                faults.append(f"{rel}: `{code}` says `passes {passes}`; write `passes by_itself` or `passes not_by_itself`")
+                passes = None
+            if cls == "busy" and passes is None:
+                faults.append(f"{rel}: `{code}` is `busy` and does not say whether it passes by itself")
+            if passes is None:
+                passes = "by_itself" if cls == "transient" else "not_by_itself"
+            then = (unescape(then_action), unescape(then_when)) if then_action is not None else None
+            found.append((code, cls, meaning, nxt, passes, then))
+    for a, b in reversed(cuts):
+        text = text[:a] + text[b:]
+    return found, text
+
+
 class Found:
     def __init__(self):
-        self.by_code = defaultdict(lambda: {"classes": defaultdict(set), "crates": set(), "meanings": {}})
+        self.by_code = defaultdict(lambda: {"classes": defaultdict(set), "crates": set(), "meanings": {},
+                                            "rows": {}})
         self.faults = []
         self.crate_sources = defaultdict(set)   # crate -> kinds of place its codes were found
         self.crate_codes = defaultdict(set)
@@ -146,7 +262,13 @@ def scan(root=repo):
                     f.add(crate, entry["code"], entry["class"], "manifest", entry.get("meaning"))
                 else:
                     f.faults.append(f"{toml.relative_to(root).as_posix()}: a failure_codes entry has no valid class and code: {entry!r}")
-        texts = {p: read_rust(p) for p in source_files(crate_dir)}
+        texts = {}
+        for p in source_files(crate_dir):
+            rows, rest = table_rows(read_rust(p), p.relative_to(root).as_posix(), f.faults)
+            texts[p] = rest
+            for code, cls, meaning, nxt, passes, then in rows:
+                f.add(crate, code, cls, "macro", meaning)
+                f.by_code[code]["rows"].setdefault(crate, (meaning, nxt, passes, then))
         consts = {}  # name -> (code, doc class, meaning), per crate
         helper_of = helpers(texts)
         home = {}
@@ -198,6 +320,19 @@ def scan(root=repo):
                     continue
                 near = CLASS_USE.findall(before)
                 f.add(crate, code, snake(near[-1]) if near and snake(near[-1]) in CLASSES else None, "literal")
+    for crate in sorted(MIGRATED):
+        if "macro" not in f.crate_sources.get(crate, set()):
+            f.faults.append(f"{crate} is named in MIGRATED in tools/failure_codes.py and has no `failure_codes!` table")
+            continue
+        for code in sorted(f.crate_codes[crate]):
+            loose = sorted({how for ss in f.by_code[code]["classes"].values() for c, how in ss
+                            if c == crate and how not in ("macro", "manifest")}
+                           | ({"unclassed"} if crate in f.by_code[code]["crates"]
+                              and not any(c == crate for ss in f.by_code[code]["classes"].values() for c, _ in ss)
+                              else set()))
+            if loose:
+                f.faults.append(f"{crate} has moved to the `failure_codes!` table form, and declares `{code}` outside it "
+                                f"(found as {', '.join(loose)}); declare it in the crate's table")
     return f
 
 
@@ -232,7 +367,7 @@ def resolve(f):
     """(rows, faults): rows are (class, code, crates, meaning), sorted by class then code."""
     rows, faults = [], list(f.faults)
     for code, row in sorted(f.by_code.items()):
-        strong = {c for c, ss in row["classes"].items() if any(how in ("table", "manifest", "doc") for _, how in ss)}
+        strong = {c for c, ss in row["classes"].items() if any(how in ("macro", "table", "manifest", "doc") for _, how in ss)}
         classes = strong or set(row["classes"])
         if len(classes) > 1:
             where = "; ".join(f"`{c}` in " + ", ".join(sorted({f'{cr} ({how})' for cr, how in row['classes'][c]})) for c in sorted(classes))
@@ -243,12 +378,20 @@ def resolve(f):
                           "(no table row, no manifest entry, no class in its doc comment, no failure call that uses it)")
             continue
         cls = next(iter(classes))
-        meaning = ""
-        for crate in sorted(row["meanings"], key=PREFER):
-            meaning = row["meanings"][crate]
-            meaning = meaning[:1].upper() + meaning[1:]
-            break
-        rows.append((cls, code, sorted(row["crates"], key=PREFER), meaning))
+        answers = {passes for _, _, passes, _ in row["rows"].values()}
+        if len(answers) > 1:
+            where = "; ".join(f"`{passes}` in {crate}" for crate, (_, _, passes, _) in sorted(row["rows"].items()))
+            faults.append(f"`{code}` is given two answers to whether it passes by itself: {where}")
+        meaning, nxt, passes = "", "", ""
+        if row["rows"]:
+            meaning, nxt, passes, _ = row["rows"][sorted(row["rows"], key=PREFER)[0]]
+            passes = PASSES[passes]
+        else:
+            for crate in sorted(row["meanings"], key=PREFER):
+                meaning = row["meanings"][crate]
+                break
+        meaning = meaning[:1].upper() + meaning[1:]
+        rows.append((cls, code, sorted(row["crates"], key=PREFER), meaning, nxt, passes))
     rows.sort(key=lambda r: (CLASS_ORDER.index(r[0]), r[1]))
     return rows, faults
 
@@ -258,18 +401,19 @@ def cell(text):
 
 
 def render(rows):
-    out = ["| Class | Code | Declared in | What it says |", "| --- | --- | --- | --- |"]
-    for cls, code, crates, meaning in rows:
-        out.append(f"| `{cls}` | `{code}` | {', '.join(f'`{c}`' for c in crates)} | {cell(meaning)} |")
+    out = ["| Class | Code | Declared in | What it says | What to do | Passes by itself |",
+           "| --- | --- | --- | --- | --- | --- |"]
+    for cls, code, crates, meaning, nxt, passes in rows:
+        out.append(f"| `{cls}` | `{code}` | {', '.join(f'`{c}`' for c in crates)} | {cell(meaning)} | {cell(nxt)} | {passes} |")
     return "\n".join(out)
 
 
-def no_table(f):
-    """Crates whose codes cannot be listed from a class table or a manifest alone."""
+def outside_table_form(f):
+    """Crates that declare a code anywhere but a `failure_codes!` table or a manifest."""
     found = []
     for crate in sorted(f.crate_codes):
-        kinds = f.crate_sources[crate]
-        if not kinds & {"table", "manifest"}:
+        kinds = f.crate_sources[crate] - {"macro", "manifest"}
+        if kinds:
             found.append((crate, len(f.crate_codes[crate]), sorted(kinds)))
     return found
 
@@ -317,8 +461,8 @@ def main():
         print("fault:", fault)
     if "--list" in sys.argv:
         print(render(rows))
-        for crate, n, kinds in no_table(f):
-            print(f"no class table or manifest: {crate}: {n} codes, found as {', '.join(kinds)}")
+        for crate, n, kinds in outside_table_form(f):
+            print(f"outside the failure_codes! form: {crate}: {n} codes, found as {', '.join(kinds)}")
         return 1 if faults else 0
     path = repo / REFERENCE
     text = path.read_text(encoding="utf-8")

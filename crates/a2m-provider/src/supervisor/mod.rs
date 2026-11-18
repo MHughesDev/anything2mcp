@@ -118,8 +118,10 @@ pub struct LaunchSpec {
     pub args: Vec<OsString>,
     /// Its environment.
     pub env: EnvAllowlist,
-    /// Its working folder. Without one it starts in the system's temporary
-    /// folder, never in the engine's own.
+    /// Its working folder. Without one it starts in a folder made for that
+    /// start alone, in the system's temporary folder, which only the
+    /// engine's user may write and which is removed when the program ends
+    /// (decision 0271); never in the engine's own.
     pub cwd: Option<CheckedPath>,
     /// What kind of subsystem it is; running subsystems are counted by
     /// kind.
@@ -362,6 +364,9 @@ struct Entry {
     for_whom: Option<ProviderName>,
     link: &'static str,
     group: Arc<os::Group>,
+    /// The folder made for a link to work in, removed after it ends. Last,
+    /// so that it is dropped after the group. A one-shot run keeps its own.
+    work: Option<WorkFolder>,
 }
 
 #[derive(Default)]
@@ -549,7 +554,13 @@ fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, F
 
 /// The command for a program, with nothing of the engine's environment but
 /// what is listed.
-fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> Command {
+fn command_for(
+    start: &Path,
+    spec: &LaunchSpec,
+    link: &LinkKind,
+    mark: &str,
+    work: Option<&WorkFolder>,
+) -> Command {
     let mut command = Command::new(start);
     command.args(&spec.args);
     // Nothing is inherited from the engine's environment unless listed.
@@ -573,10 +584,17 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
         command.env(name, value);
     }
     command.env(OWNER_MARK_VARIABLE, mark);
-    match &spec.cwd {
-        Some(folder) => command.current_dir(folder.as_path()),
-        None => command.current_dir(std::env::temp_dir()),
-    };
+    match (&spec.cwd, work) {
+        (Some(folder), _) => {
+            command.current_dir(folder.as_path());
+        }
+        (None, Some(work)) => {
+            command.current_dir(work.path());
+        }
+        // `identify_and_start` makes a folder whenever none is given; a
+        // start without either is refused there, so this is not reached.
+        (None, None) => {}
+    }
     match link {
         LinkKind::OneShot(one_shot) => {
             command
@@ -598,9 +616,177 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
     command
 }
 
+/// What a launch gave: its identifier, the group, the pipes of a foreign
+/// link, the digest of the program that runs, whether that digest was
+/// declared, and the folder a one-shot run works in.
+type Launched = (
+    u64,
+    Arc<os::Group>,
+    Option<os::Pipes>,
+    Digest,
+    bool,
+    Option<WorkFolder>,
+);
+
 /// What a start gave: the group, the pipes of a foreign link, the digest of
-/// the program that runs, and whether that digest was declared.
-type Started = (os::Group, Option<os::Pipes>, Digest, bool);
+/// the program that runs, whether that digest was declared, and the folder
+/// made for it to work in.
+type Started = (
+    os::Group,
+    Option<os::Pipes>,
+    Digest,
+    bool,
+    Option<WorkFolder>,
+);
+
+/// A folder made for one start, for the program to work in when its
+/// launch names none: in the system's temporary folder, under a name no
+/// one can guess, the engine's user's alone from the moment it exists, and
+/// held to [`check_program`] as a folder the engine made before anything
+/// starts in it. It is removed when the program ends; where that fails, a
+/// private folder is left behind (finding D5 of the sixth safety audit,
+/// decision 0271).
+pub(crate) struct WorkFolder {
+    path: Option<PathBuf>,
+}
+
+impl WorkFolder {
+    /// Makes the folder. Blocking.
+    fn make() -> Result<Self, Failure> {
+        let failed = |why: &str| {
+            codes::busy(
+                codes::START_FAILED,
+                format!("No working folder of its own could be made for the program: {why}."),
+                "Check that the system's temporary folder is there, has room, and is closed to other users, then try again.",
+            )
+        };
+        let mut bytes = [0_u8; 16];
+        getrandom::fill(&mut bytes).map_err(|_| failed("the system gave no random bytes"))?;
+        let name: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = std::env::temp_dir().join(format!("a2m-work-{name}"));
+        make_private(&path).map_err(|_| failed("the folder could not be made"))?;
+        let made = Self { path: Some(path) };
+        let path = made.path();
+        if check_program(path, &ProgramTrust::default(), ProgramRole::Folder).is_err() {
+            return Err(failed("another user could change it or a folder above it"));
+        }
+        Ok(made)
+    }
+
+    fn path(&self) -> &Path {
+        self.path.as_deref().unwrap_or_else(|| Path::new(""))
+    }
+
+    /// Removes the folder and what the program left in it, off the async
+    /// threads, and waits for that.
+    async fn remove(mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(path)).await;
+        }
+    }
+}
+
+impl Drop for WorkFolder {
+    /// A folder not removed by [`WorkFolder::remove`] is removed here: on a
+    /// blocking thread where a runtime runs, or at once where none does.
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => {
+                    runtime.spawn_blocking(move || std::fs::remove_dir_all(path));
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+        }
+    }
+}
+
+/// Makes the folder at `path`, new, the engine's user's alone: mode `0700`
+/// on Linux and macOS, and on Windows the private access list a folder of
+/// the engine's is given.
+#[cfg(unix)]
+fn make_private(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt as _;
+    std::fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+#[cfg(windows)]
+fn make_private(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(path)?;
+    keep_folder_private(path).inspect_err(|_| {
+        let _ = std::fs::remove_dir(path);
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn make_private(_path: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+}
+
+/// The name of the variable that says where a program, and the libraries it
+/// loads by name on Windows, are searched for.
+const SEARCH_PATH: &str = "PATH";
+
+/// The values of `PATH` a launch would give its program: the engine's own,
+/// where the launch passes it, and the one it sets.
+fn search_paths(spec: &LaunchSpec) -> Vec<OsString> {
+    let passed = spec
+        .env
+        .pass
+        .iter()
+        .filter(|name| name.eq_ignore_ascii_case(SEARCH_PATH))
+        .filter_map(std::env::var_os);
+    let set = spec
+        .env
+        .set
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case(SEARCH_PATH))
+        .map(|(_, value)| value.clone());
+    passed.chain(set).collect()
+}
+
+/// Every folder a `PATH` names must be closed to other users, as a folder
+/// the engine made is: the program finds the programs it starts by name
+/// there, and on Windows the system loads from there the libraries it asks
+/// for by name. A folder that is not there must have, as its nearest folder
+/// that is, one closed to other users, so that no one else can make it. A
+/// name that is not absolute, and on Linux and macOS an empty one, which
+/// stands for the working folder, are refused (finding D1 of the sixth
+/// safety audit, decision 0271). Blocking.
+///
+/// # Errors
+///
+/// The first folder that does not pass.
+fn search_path_closed(value: &std::ffi::OsStr) -> Result<(), PathBuf> {
+    for folder in std::env::split_paths(value) {
+        if folder.as_os_str().is_empty() && cfg!(windows) {
+            // Windows skips an empty name in its search.
+            continue;
+        }
+        if !folder.is_absolute() {
+            return Err(folder);
+        }
+        let mut at = folder.as_path();
+        loop {
+            match check_program(at, &ProgramTrust::default(), ProgramRole::Folder) {
+                Ok(()) => break,
+                Err(ProgramRefused::Missing)
+                    if std::fs::symlink_metadata(at)
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    match at.parent() {
+                        Some(above) if above != at => at = above,
+                        _ => return Err(folder.clone()),
+                    }
+                }
+                Err(_) => return Err(folder.clone()),
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Identifies the program and starts it, in one piece of blocking work:
 /// nothing waits between the check and the start but the lock every start
@@ -611,11 +797,27 @@ fn identify_and_start(
     link: &LinkKind,
     mark: &str,
 ) -> Result<Started, Failure> {
+    for value in search_paths(spec) {
+        if let Err(folder) = search_path_closed(&value) {
+            return Err(codes::policy(
+                codes::VARIABLE_REFUSED,
+                format!(
+                    "A launch gives the program a `PATH` that names the folder `{}`, which another user could change, or which is not named by an absolute path: the program, and on Windows the system, load code from the folders it names.",
+                    codes::shown(&folder.display().to_string())
+                ),
+                "Give the program no `PATH`, or only folders closed to other users, named by their absolute paths.",
+            ));
+        }
+    }
     let Identified {
         program,
         digest,
         verified,
     } = identify(&spec.program, scope)?;
+    let work = match spec.cwd {
+        Some(_) => None,
+        None => Some(WorkFolder::make()?),
+    };
     let foreign = match link {
         LinkKind::Foreign(pipe) => Some(PipeAt::Handles(pipe)),
         LinkKind::Standard => Some(PipeAt::Standard),
@@ -623,13 +825,13 @@ fn identify_and_start(
     };
     let started = os::spawn(
         &program,
-        |start| command_for(start, spec, link, mark),
+        |start| command_for(start, spec, link, mark, work.as_ref()),
         foreign,
     );
     // The handle the program was digested through is held to here.
     drop(program);
     match started {
-        Ok((group, pipes)) => Ok((group, pipes, digest, verified)),
+        Ok((group, pipes)) => Ok((group, pipes, digest, verified, work)),
         Err(StartError::Changed) => Err(codes::policy(
             codes::EFFECT_NOT_DECLARED,
             format!(
@@ -817,13 +1019,15 @@ impl Supervisor {
     }
 
     /// Identifies the program, builds its command, and starts it in a group
-    /// of its own.
+    /// of its own. The folder made for a one-shot run to work in is given
+    /// back, for the run to remove when it has reaped the program; that of a
+    /// link is kept in its entry and removed when it is stopped.
     async fn launch(
         &self,
         spec: &LaunchSpec,
         scope: Option<&Scope>,
         link: &LinkKind,
-    ) -> Result<(u64, Arc<os::Group>, Option<os::Pipes>, Digest, bool), Failure> {
+    ) -> Result<Launched, Failure> {
         self.admit(spec)?;
         if let Some(name) = spec
             .env
@@ -877,7 +1081,7 @@ impl Supervisor {
                 identify_and_start(&spec, scope.as_ref(), &link, &mark)
             })
         };
-        let (group, pipes, digest, verified) = work.await.map_err(|_| {
+        let (group, pipes, digest, verified, mut folder) = work.await.map_err(|_| {
             codes::busy(
                 codes::START_FAILED,
                 "The start of a program was interrupted.",
@@ -885,6 +1089,7 @@ impl Supervisor {
             )
         })??;
         let group = Arc::new(group);
+        let one_shot = matches!(link, LinkKind::OneShot(_));
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let entry = Entry {
             kind: spec.kind.clone(),
@@ -895,27 +1100,31 @@ impl Supervisor {
                 LinkKind::Foreign(_) | LinkKind::Standard => "foreign",
             },
             group: Arc::clone(&group),
+            work: if one_shot { None } else { folder.take() },
         };
-        let stopping = match self.inner.state.lock() {
+        let refused = match self.inner.state.lock() {
             Ok(mut state) => {
                 if state.stopping {
-                    true
+                    Some(entry)
                 } else {
                     state.live.insert(id, entry);
-                    false
+                    None
                 }
             }
-            Err(_) => true,
+            Err(_) => Some(entry),
         };
-        if stopping {
+        if let Some(mut entry) = refused {
             group.reap().await;
+            for folder in [entry.work.take(), folder.take()].into_iter().flatten() {
+                folder.remove().await;
+            }
             return Err(codes::busy(
                 codes::SHUTTING_DOWN,
                 "The engine is stopping and starts nothing.",
                 "Start the engine again.",
             ));
         }
-        Ok((id, group, pipes, digest, verified))
+        Ok((id, group, pipes, digest, verified, folder))
     }
 
     /// Runs a program to completion: its arguments as a list, only the
@@ -943,7 +1152,7 @@ impl Supervisor {
     ) -> Result<Finished, ConnFailure> {
         let kind = spec.kind.clone();
         let link_kind = LinkKind::OneShot(link);
-        let (id, group, _, program_digest, verified) = self
+        let (id, group, _, program_digest, verified, work) = self
             .launch(&spec, scope, &link_kind)
             .await
             .map_err(not_started)?;
@@ -1030,6 +1239,9 @@ impl Supervisor {
             && let Ok(mut state) = self.inner.state.lock()
         {
             state.leftovers.extend(remaining.iter().cloned());
+        }
+        if let Some(folder) = work {
+            folder.remove().await;
         }
         drop(guard);
 
@@ -1119,7 +1331,8 @@ impl Supervisor {
         link: LinkKind,
         scope: Option<&Scope>,
     ) -> Result<ForeignLink, Failure> {
-        let (id, group, pipes, program_digest, verified) = self.launch(&spec, scope, &link).await?;
+        let (id, group, pipes, program_digest, verified, _) =
+            self.launch(&spec, scope, &link).await?;
         let Some((to_child, from_child)) = pipes else {
             self.forget(id);
             group.reap().await;
@@ -1181,9 +1394,10 @@ impl Supervisor {
         }
     }
 
-    async fn end(&self, id: u64, entry: Entry) -> Option<Leftover> {
+    async fn end(&self, id: u64, mut entry: Entry) -> Option<Leftover> {
         if entry.link == "one_shot" {
-            // The run that owns it reaps it; ending the group is enough.
+            // The run that owns it reaps it, and removes its folder; ending
+            // the group is enough.
             return (!entry.group.end().await).then(|| Leftover {
                 kind: Some(entry.kind.clone()),
                 what: format!(
@@ -1193,6 +1407,9 @@ impl Supervisor {
             });
         }
         let (_, ended) = entry.group.reap().await;
+        if let Some(folder) = entry.work.take() {
+            folder.remove().await;
+        }
         (!ended).then(|| Leftover {
             kind: Some(entry.kind.clone()),
             what: format!(

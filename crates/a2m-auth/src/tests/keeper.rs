@@ -9,13 +9,14 @@ use a2m_core::{FailureClass, SessionState};
 use a2m_vault::{ItemId, OwnerRef, SealContext, SealedKind};
 
 use super::support::{
-    HOUR, LEAKED, PERSON_ONLY, PERSON_RENEWING, STORED_HELD, STORED_RENEWING, Sink, Step, World,
-    account_key, fake_entry, person_id, person_key, placed, request, until,
+    HOUR, LEAKED, PERSON_ONLY, PERSON_RENEWING, STORED_HELD, STORED_RENEWING, STORED_SIGNING_IN,
+    Sink, Step, World, account_key, fake_entry, person_id, person_key, placed, reference, request,
+    until,
 };
 use crate::{
-    AuthEntry, EndedBy, ExpirySign, KeeperJob, KeeperSettings, PersonAnswer, PersonAsk,
-    PersonReason, ProbeOutcome, ProviderName, RENEWALS, Returned, SessionKey, SessionLease,
-    SessionRef, Wait, Work, WorkOutcome, codes,
+    AUTOMATIC_SIGN_INS, AuthEntry, EndedBy, ExpirySign, KeeperJob, KeeperSettings, PersonAnswer,
+    PersonAsk, PersonReason, ProbeOutcome, ProviderName, RENEWALS, Returned, SessionKey,
+    SessionLease, SessionRef, SignInBy, Wait, Work, WorkOutcome, codes,
 };
 
 #[tokio::test]
@@ -413,10 +414,20 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     world.keeper.idle().await;
     assert_eq!(world.person.notices(), 1);
 
-    // A person looks at it and asks for a sign-in: one more try, no more.
-    world
+    // A program that asks for a sign-in does not get one: the same
+    // credential would be sent again.
+    let asked = world
         .keeper
         .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap_err();
+    assert_eq!(asked.code(), &codes::CREDENTIAL_REFUSED);
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // The person looks at it and signs in themself: one more try, no more.
+    world
+        .keeper
+        .sign_in_by(&key, Arc::clone(&entry), None, SignInBy::Person)
         .await
         .unwrap();
     world.keeper.idle().await;
@@ -425,7 +436,7 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     *world.fake.on_sign_in.lock().unwrap() = Step::Works;
     world
         .keeper
-        .sign_in(&key, Arc::clone(&entry), None)
+        .sign_in_by(&key, Arc::clone(&entry), None, SignInBy::Person)
         .await
         .unwrap();
     world.keeper.idle().await;
@@ -446,6 +457,254 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     }
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 3));
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+}
+
+/// The count of a refused credential is the session's record's, so a
+/// restart of the engine does not clear it: a program that asks again, and
+/// every lease, is refused without sending. It is cleared when the person
+/// stores the credential again, and the person's own sign-in is tried.
+#[tokio::test]
+async fn a_refused_stored_credential_is_not_sent_again_after_a_restart_until_the_person_acts() {
+    let world = World::on_disk(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = Arc::new(
+        AuthEntry::new(ProviderName::new("fake").unwrap())
+            .credential("password", reference("password"))
+            .published(),
+    );
+    world
+        .store_credential(&key, "password", "secret-for-tests-wrong")
+        .await;
+    *world.fake.on_sign_in.lock().unwrap() = Step::Refused;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // The engine stops when idle and starts again: a second keeper over the
+    // same store. A program asks for the sign-in, and runs ask for the
+    // session: nothing is sent.
+    let world = world.restarted().await;
+    for _ in 0..2 {
+        let asked = world
+            .keeper
+            .sign_in(&key, Arc::clone(&entry), None)
+            .await
+            .unwrap_err();
+        assert_eq!(asked.code(), &codes::CREDENTIAL_REFUSED);
+        let leased = world
+            .keeper
+            .lease(request(&key, &entry, Wait::NoWait))
+            .await
+            .unwrap_err();
+        assert_eq!(leased.code(), &codes::CREDENTIAL_REFUSED);
+    }
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+    // The record names the credential by the mark of its envelope, which
+    // holds nothing of its value.
+    let row = world.store.find(&key).await.unwrap().unwrap();
+    let mark = row.attempted_with.unwrap().to_string();
+    assert!(!mark.contains("secret-for-tests-wrong"));
+    assert_ne!(
+        mark,
+        a2m_core::Digest::of(b"secret-for-tests-wrong").to_string()
+    );
+
+    // The person stores the credential again: it is tried once, and its
+    // refusal is counted again, across the next restart too.
+    world
+        .store_credential(&key, "password", "secret-for-tests-still-wrong")
+        .await;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 2);
+    let world = world.restarted().await;
+    let asked = world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap_err();
+    assert_eq!(asked.code(), &codes::CREDENTIAL_REFUSED);
+    assert_eq!(world.fake.sign_ins(), 2);
+
+    // The person signs in themself: it is tried, and holds.
+    *world.fake.on_sign_in.lock().unwrap() = Step::Works;
+    world
+        .keeper
+        .sign_in_by(&key, Arc::clone(&entry), None, SignInBy::Person)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 3);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+}
+
+/// A sign-in that sent the credential and got an answer no rule covers is
+/// an attempt: at the limit the session waits for its person, and neither
+/// later leases nor a program that asks send the credential again.
+#[tokio::test]
+async fn a_sign_in_whose_answer_nobody_can_read_is_counted_and_not_sent_again() {
+    // By a lease.
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = fake_entry();
+    *world.fake.on_sign_in.lock().unwrap() = Step::Unreadable;
+    // The call that made the sign-in is told how it ended; the calls after
+    // it, that the session waits for its person.
+    for call in 0..3 {
+        let stopped = world
+            .keeper
+            .lease(request(&key, &entry, Wait::NoWait))
+            .await
+            .unwrap_err();
+        if call == 0 {
+            assert_eq!(stopped.code(), &codes::UNEXPECTED_RESPONSE);
+        } else {
+            assert_eq!(stopped.class(), FailureClass::SessionExpired);
+        }
+        world.keeper.idle().await;
+    }
+    assert_eq!(world.fake.sign_ins(), 1);
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    let asked = world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap_err();
+    assert_eq!(asked.code(), &codes::UNEXPECTED_RESPONSE);
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+    assert_eq!(world.person.notices(), 1);
+
+    // By a program that asked: the leases after it do not send it again.
+    let world = World::new(STORED_RENEWING).await;
+    *world.fake.on_sign_in.lock().unwrap() = Step::Unreadable;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    for _ in 0..3 {
+        world
+            .keeper
+            .lease(request(&key, &entry, Wait::NoWait))
+            .await
+            .unwrap_err();
+    }
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // In the renewal's full sign-in.
+    let world = World::new(STORED_SIGNING_IN).await;
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    *world.fake.on_sign_in.lock().unwrap() = Step::Unreadable;
+    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    world.keeper.report(&lease, ExpirySign::Refused).await;
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 2);
+    for _ in 0..3 {
+        world
+            .keeper
+            .lease(request(&key, &entry, Wait::NoWait))
+            .await
+            .unwrap_err();
+    }
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 2);
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+}
+
+/// A system that keeps showing the sign of an expired session, which a
+/// page's content can show on purpose, gets at most four sign-ins without
+/// its person in an hour, counted on the keeper's clock. The fifth waits
+/// for the person, however much later it is asked for, and the person's
+/// own sign-in starts the count again. Sign-ins further apart are not
+/// limited.
+#[tokio::test]
+async fn a_session_signed_in_again_too_often_without_its_person_waits_for_the_person() {
+    let world = World::new(STORED_SIGNING_IN).await;
+    let key = account_key("robot");
+    let entry = fake_entry();
+    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    let expire = |world: &World| {
+        let keeper = world.keeper.clone();
+        let entry = Arc::clone(&entry);
+        let key = key.clone();
+        async move {
+            let lease = keeper.lease(request(&key, &entry, Wait::NoWait)).await?;
+            keeper.report(&lease, ExpirySign::Refused).await;
+            keeper.idle().await;
+            Ok::<_, a2m_core::Failure>(())
+        }
+    };
+    // The first sign-in, by a lease, then three renewals each a full
+    // sign-in, ten minutes apart.
+    for _ in 0..AUTOMATIC_SIGN_INS {
+        expire(&world).await.unwrap();
+        world.clock.advance(Duration::from_secs(600));
+    }
+    assert_eq!(world.fake.sign_ins(), AUTOMATIC_SIGN_INS);
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    let stopped = expire(&world).await.unwrap_err();
+    assert_eq!(stopped.code(), &codes::NEEDS_LOGIN);
+
+    // Hours later, nothing has changed: a program that asks is refused too.
+    world.clock.advance(3 * HOUR);
+    world.keeper.tick().await;
+    world.keeper.idle().await;
+    let asked = world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap_err();
+    assert_eq!(asked.code(), &codes::NEEDS_LOGIN);
+    assert!(
+        asked.message().contains("4 times within 60 minutes"),
+        "{asked:?}"
+    );
+    assert_eq!(world.fake.sign_ins(), AUTOMATIC_SIGN_INS);
+
+    // The person signs in themself, and the count starts again.
+    world
+        .keeper
+        .sign_in_by(&key, Arc::clone(&entry), None, SignInBy::Person)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    for _ in 0..=AUTOMATIC_SIGN_INS {
+        expire(&world).await.unwrap();
+    }
+    assert_eq!(world.fake.sign_ins(), 2 * AUTOMATIC_SIGN_INS + 1);
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+
+    // Sign-ins twenty-five minutes apart are never limited.
+    let world = World::new(STORED_SIGNING_IN).await;
+    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    for _ in 0..10 {
+        world.clock.advance(Duration::from_secs(1500));
+        expire(&world).await.unwrap();
+    }
+    assert_eq!(world.fake.sign_ins(), 11);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
 }
 
 #[tokio::test]
@@ -1092,4 +1351,110 @@ async fn a_providers_failure_is_redacted_before_it_leaves_the_worker() {
         assert!(!text.contains(LEAKED), "{text}");
         assert!(text.contains(a2m_core::REDACTED), "{text}");
     }
+}
+
+/// What a probe that leases through the keeper holds of it.
+#[derive(Default)]
+struct Leasing {
+    strong: std::sync::OnceLock<crate::Keeper>,
+    weak: std::sync::OnceLock<crate::WeakKeeper>,
+}
+
+impl crate::RunProbe for Leasing {
+    fn probe<'a>(&'a self, _session: &'a SessionRef) -> crate::BoxFuture<'a, ProbeOutcome> {
+        Box::pin(async move {
+            let keeper = self
+                .strong
+                .get()
+                .cloned()
+                .or_else(|| self.weak.get().and_then(crate::WeakKeeper::upgrade));
+            if keeper.is_some() {
+                ProbeOutcome::SignedIn
+            } else {
+                ProbeOutcome::Unknown
+            }
+        })
+    }
+}
+
+struct Nobody;
+
+impl crate::AskPerson for Nobody {
+    fn ask<'a>(
+        &'a self,
+        _session: &'a SessionRef,
+        _ask: PersonAsk,
+    ) -> crate::BoxFuture<'a, PersonAnswer> {
+        Box::pin(async { PersonAnswer::Unreachable })
+    }
+}
+
+/// A keeper whose work holds a probe that holds the keeper, as one that
+/// leases through it must. Held weakly, the keeper is freed when the
+/// engine lets go of it; held strongly, the cycle keeps it.
+async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
+    use a2m_ledger::{Store, StoreConfig};
+    use a2m_telemetry::ManualClock;
+    use a2m_vault::{MemoryKeyStore, Vault};
+
+    let clock = Arc::new(ManualClock::starting_at(
+        a2m_core::Timestamp::from_unix_millis(super::support::START),
+    ));
+    let ledger = Store::open(StoreConfig::in_memory().with_clock(clock.clone()))
+        .await
+        .unwrap();
+    let vault = Arc::new(Vault::new(
+        Arc::new(MemoryKeyStore::new()),
+        Arc::new(ledger.key_records()),
+    ));
+    ledger.attach(Arc::clone(&vault)).await.unwrap();
+    let store = crate::SessionStore::new(ledger);
+    let providers = crate::ProviderSet::neutral();
+    let worker = Arc::new(crate::KeeperWorker::new(
+        providers.clone(),
+        Arc::clone(&vault),
+        Arc::new(crate::StoredCredentials::new(store.clone(), vault)),
+        clock.clone(),
+    ));
+    let probe = Arc::new(Leasing::default());
+    let work = Arc::new(crate::InProcessWork::new(
+        Arc::clone(&worker),
+        Arc::new(Nobody),
+        Arc::clone(&probe) as Arc<dyn crate::RunProbe>,
+    ));
+    let keeper = crate::Keeper::builder(store, providers, work, clock)
+        .local_worker(worker)
+        .build();
+    if weakly {
+        assert!(probe.weak.set(keeper.downgrade()).is_ok());
+    } else {
+        assert!(probe.strong.set(keeper.clone()).is_ok());
+    }
+    let session = SessionRef {
+        session: a2m_core::SessionId::from_parts(
+            a2m_core::Timestamp::from_unix_millis(super::support::START),
+            [1; 10],
+        )
+        .unwrap(),
+        key: account_key("robot"),
+        epoch: 0,
+        home: None,
+    };
+    // The probe reaches the keeper while the engine holds it.
+    assert_eq!(
+        crate::RunProbe::probe(probe.as_ref(), &session).await,
+        ProbeOutcome::SignedIn
+    );
+    keeper.idle().await;
+    keeper.downgrade()
+}
+
+#[tokio::test]
+async fn a_closed_engines_keeper_is_freed_when_its_probe_holds_it_weakly() {
+    let freed = engine_with_probe(true).await;
+    assert!(freed.upgrade().is_none());
+    // The shape the check found in a test: a probe that holds the keeper
+    // itself, held by the keeper's own work, is never dropped.
+    let kept = engine_with_probe(false).await;
+    assert!(kept.upgrade().is_some());
 }

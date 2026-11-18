@@ -572,13 +572,26 @@ impl Sessions {
     /// Stores `token` for a dedicated account, signs the account in through
     /// `upstream_mcp`, and leases the session to a run.
     pub async fn lease(&self, account: &str, token: &str) -> SessionLease {
+        let entry = AuthEntry::new(a2m_pack_mcp::auth_provider());
+        self.lease_through(entry, "token", account, token).await
+    }
+
+    /// The same through any provider's entry, whose one credential has the
+    /// role `role`.
+    pub async fn lease_through(
+        &self,
+        entry: AuthEntry,
+        role: &str,
+        account: &str,
+        token: &str,
+    ) -> SessionLease {
         let key = SessionKey {
             workspace: WorkspaceId::from_bytes([7; 16]),
             target: TargetName::new("example").unwrap(),
             environment: Environment::new("test").unwrap(),
             identity: Identity::Account(AccountName::new(account).unwrap()),
         };
-        let reference = CredentialRef::new(&format!("vault://example/{account}/token")).unwrap();
+        let reference = CredentialRef::new(&format!("vault://example/{account}/{role}")).unwrap();
         self.credentials
             .put(
                 &key.workspace,
@@ -590,11 +603,7 @@ impl Sessions {
             .unwrap();
         // As the entry of a published version's plan: only such an entry
         // signs in without its person (decision 0248).
-        let entry = Arc::new(
-            AuthEntry::new(a2m_pack_mcp::auth_provider())
-                .credential("token", reference)
-                .published(),
-        );
+        let entry = Arc::new(entry.credential(role, reference).published());
         self.keeper
             .sign_in(&key, Arc::clone(&entry), None)
             .await

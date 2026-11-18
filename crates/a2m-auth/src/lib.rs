@@ -42,8 +42,9 @@ mod work;
 
 pub use credentials::{Credentials, StoredCredentials};
 pub use keeper::{
-    CHECKS_FAILED, EndedBy, FORCED_SIGN_INS, Keeper, KeeperBuilder, KeeperSettings,
-    RENEWAL_DURATION, RENEWALS, SessionStatus, SignInTicket,
+    AUTOMATIC_SIGN_IN_WINDOW, AUTOMATIC_SIGN_INS, CHECKS_FAILED, EndedBy, FORCED_SIGN_INS, Keeper,
+    KeeperBuilder, KeeperSettings, RENEWAL_DURATION, RENEWALS, SessionStatus, SignInBy,
+    SignInTicket, WeakKeeper,
 };
 pub use key::{AuthEntry, SessionKey, SessionRef};
 pub use lease::{LeaseRequest, Purpose, SessionGrant, SessionLease, Wait};

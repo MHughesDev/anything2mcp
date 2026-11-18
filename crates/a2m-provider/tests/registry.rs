@@ -564,3 +564,52 @@ fn a_refused_provider_never_takes_a_registered_providers_name() {
         .collect();
     assert_eq!(names, [Some("beta".to_owned()), None]);
 }
+
+#[test]
+fn a_manifest_without_files_declares_none_and_one_with_files_is_read() {
+    let kind = a2m_core::SurfaceKind::new("alpha_surface").unwrap();
+    let surface = SurfaceDescription {
+        kind,
+        archetype: Archetype::Request,
+        address: "https://example.test".to_owned(),
+        facts: Values::new(),
+    };
+    // Left out, a discoverer reads no file it is handed.
+    let without = Manifest::parse(&manifest("alpha", "request", "")).unwrap();
+    assert!(without.discoverers[0].files.is_empty());
+    let (registry, problems) = build(&[&TestPack::new("alpha")], ProviderSettings::default());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(registry.files_taken(&surface).is_empty());
+
+    // Listed, each name is read, and the registry gives the names of the
+    // discoverers that suit the surface, and of no other.
+    let listing = |files: &str| {
+        manifest("alpha", "request", "").replace(
+            "bounds = { seconds = 60, bytes = 1000000, depth = 4 }",
+            &format!("bounds = {{ seconds = 60, bytes = 1000000, depth = 4 }}\nfiles = {files}"),
+        )
+    };
+    let with = Manifest::parse(&listing(r#"["description", "register_map"]"#)).unwrap();
+    assert_eq!(
+        with.discoverers[0].files,
+        vec!["description".to_owned(), "register_map".to_owned()]
+    );
+    let pack = TestPack::with_manifest("alpha", listing(r#"["description"]"#));
+    let (registry, problems) = build(&[&pack], ProviderSettings::default());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        registry.files_taken(&surface).into_iter().collect::<Vec<_>>(),
+        vec!["description".to_owned()]
+    );
+    let other = SurfaceDescription {
+        archetype: Archetype::Device,
+        ..surface
+    };
+    assert!(registry.files_taken(&other).is_empty());
+
+    // A name that is not a plain name, or one listed twice, is refused.
+    for files in [r#"["../etc"]"#, r#"["Description"]"#, r#"["a", "a"]"#] {
+        let failure = Manifest::parse(&listing(files)).unwrap_err();
+        assert_eq!(failure.code(), &codes::MANIFEST_INVALID, "{files}");
+    }
+}

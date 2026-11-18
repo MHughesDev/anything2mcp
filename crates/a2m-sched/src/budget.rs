@@ -150,13 +150,30 @@ pub(crate) fn take(
     whole: bool,
     reserve_percent: u32,
 ) -> Result<Take, Failure> {
-    let reserve = i64::from(reserve_percent.min(90));
+    let keys: Vec<(BudgetKey, u32)> = keys
+        .iter()
+        .map(|key| (key.clone(), reserve_percent))
+        .collect();
+    take_each(tx, default, &keys, want, whole)
+}
+
+/// As [`take`], with a reserve of its own for each budget: a watch's check
+/// leaves its reserve of each budget it names, and takes the whole of the
+/// share its surface keeps for watches, which no one else spends.
+pub(crate) fn take_each(
+    tx: &mut Tx<'_>,
+    default: &RateLimit,
+    keys: &[(BudgetKey, u32)],
+    want: u32,
+    whole: bool,
+) -> Result<Take, Failure> {
     if want == 0 {
         return Err(failure::invalid("a grant of no requests"));
     }
     let now = tx.now();
     let mut buckets = Vec::new();
-    for key in keys {
+    for (key, reserve_percent) in keys {
+        let reserve = i64::from((*reserve_percent).min(90));
         let bucket = match load(tx, key, now)? {
             Some(bucket) => bucket,
             None => {
@@ -165,13 +182,13 @@ pub(crate) fn take(
                     .ok_or_else(|| failure::corrupt("a budget that was just made"))?
             }
         };
-        buckets.push((key, bucket));
+        buckets.push((key, bucket, reserve));
     }
     let want = i64::from(want);
-    let keep = |bucket: &Bucket| bucket.capacity * reserve / 100;
+    let keep = |bucket: &Bucket, reserve: i64| bucket.capacity * reserve / 100;
     let available = buckets
         .iter()
-        .map(|(_, bucket)| (bucket.level / bucket.per_ms - keep(bucket)).max(0))
+        .map(|(_, bucket, reserve)| (bucket.level / bucket.per_ms - keep(bucket, *reserve)).max(0))
         .min()
         .unwrap_or(want);
     let granted = if whole && available < want {
@@ -184,9 +201,9 @@ pub(crate) fn take(
         // bucket's capacity is never possible, so it waits for a full one.
         let wait_ms = buckets
             .iter()
-            .map(|(_, bucket)| {
-                let room = (bucket.capacity - keep(bucket)).max(1);
-                let needed = keep(bucket) + if whole { want.min(room) } else { 1 };
+            .map(|(_, bucket, reserve)| {
+                let room = (bucket.capacity - keep(bucket, *reserve)).max(1);
+                let needed = keep(bucket, *reserve) + if whole { want.min(room) } else { 1 };
                 // A bucket counted to a later moment refills from there.
                 (bucket.counted_to - now.as_unix_millis())
                     .max(0)
@@ -200,7 +217,7 @@ pub(crate) fn take(
         });
     }
     let mut over_ms = 0;
-    for (key, bucket) in &buckets {
+    for (key, bucket, _) in &buckets {
         let level = bucket.level - granted * bucket.per_ms;
         tx.tables(Owner::Sched).execute(
             "UPDATE budgets SET level = ?2, updated_at = ?3 WHERE budget_key = ?1",
@@ -216,6 +233,67 @@ pub(crate) fn take(
         requests: u32::try_from(granted).unwrap_or(u32::MAX),
         over: Duration::from_millis(u64::try_from(over_ms).unwrap_or(0)),
     })
+}
+
+/// The limit of the budget all watches on a surface share: `percent` of the
+/// surface budget's own limit, read from the store, or of `default` when
+/// that budget was never set (decision 0262). Its capacity and its rate are
+/// each that share, rounded down, and never below one request.
+pub(crate) fn share_limit(
+    tx: &mut Tx<'_>,
+    default: &RateLimit,
+    surface: &BudgetKey,
+    percent: u32,
+) -> Result<RateLimit, Failure> {
+    let percent = i64::from(percent.clamp(1, 100));
+    let (capacity, refill, per_ms) = match tx.tables(Owner::Sched).query_first(
+        "SELECT capacity, refill, per_ms FROM budgets WHERE budget_key = ?1",
+        &[surface.as_str().into()],
+    )? {
+        Some(row) => (row.int(0)?, row.int(1)?, row.int(2)?),
+        None => limit_parts(default)?,
+    };
+    // `refill` every `per_ms`, a share of it: `refill × percent` every
+    // `per_ms × 100`, then brought within the longest period, rounding
+    // the rate down.
+    let (mut refill, mut per_ms) = (
+        i128::from(refill) * i128::from(percent),
+        i128::from(per_ms) * 100,
+    );
+    let longest = i128::from(LONGEST_PERIOD_MS);
+    if per_ms > longest {
+        refill = refill * longest / per_ms;
+        per_ms = longest;
+    }
+    let small = |number: i128| u32::try_from(number.max(1)).unwrap_or(u32::MAX);
+    Ok(RateLimit {
+        capacity: small(i128::from(capacity) * i128::from(percent) / 100),
+        refill: small(refill),
+        per: Duration::from_millis(u64::try_from(per_ms).unwrap_or(1)),
+    })
+}
+
+/// Sets the limit of a budget when it has none or another one; leaves it,
+/// and what it holds, when it already has this one.
+pub(crate) fn ensure_limit(
+    tx: &mut Tx<'_>,
+    key: &BudgetKey,
+    limit: &RateLimit,
+) -> Result<(), Failure> {
+    let (capacity, refill, per_ms) = limit_parts(limit)?;
+    let held = tx.tables(Owner::Sched).query_first(
+        "SELECT capacity, refill, per_ms FROM budgets WHERE budget_key = ?1",
+        &[key.as_str().into()],
+    )?;
+    let same = match held {
+        Some(row) => (row.int(0)?, row.int(1)?, row.int(2)?) == (capacity, refill, per_ms),
+        None => false,
+    };
+    if same {
+        Ok(())
+    } else {
+        set_limit(tx, key, limit)
+    }
 }
 
 #[cfg(test)]

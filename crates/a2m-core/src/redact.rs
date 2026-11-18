@@ -135,6 +135,12 @@ vocabulary! {
         RecordKey => "record_key",
         /// Matching a caller's idempotency key without keeping it.
         CallerKey => "caller_key",
+        /// Standing in for a watch's normalized value, so that two checks
+        /// can be compared without keeping what either read.
+        WatchValue => "watch_value",
+        /// Naming the input of a shadow comparison, so that distinct inputs
+        /// can be counted without keeping any.
+        ShadowInput => "shadow_input",
     }
 }
 
@@ -507,5 +513,26 @@ mod tests {
             keyed_digest_under(&[7; 32], &workspace(1), DigestPurpose::BlobName, b"x"),
             keyed_digest_under(&[7; 32], &workspace(1), DigestPurpose::RecordKey, b"x")
         );
+    }
+
+    #[test]
+    fn the_digest_purposes_are_six_and_no_two_give_one_digest() {
+        // The names the store keeps and the documents list (decision 0262).
+        assert_eq!(
+            DigestPurpose::NAMES,
+            [
+                "blob_name",
+                "restricted_value",
+                "record_key",
+                "caller_key",
+                "watch_value",
+                "shadow_input"
+            ]
+        );
+        let workspace = WorkspaceId::from_parts(Timestamp::from_unix_millis(1), [1; 10]).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for purpose in DigestPurpose::ALL {
+            assert!(seen.insert(keyed_digest_under(&[7; 32], &workspace, *purpose, b"x")));
+        }
     }
 }

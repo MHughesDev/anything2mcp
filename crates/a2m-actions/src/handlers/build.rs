@@ -238,6 +238,18 @@ pub(crate) async fn chosen_version(
             Version::new(u32::try_from(next).unwrap_or(u32::MAX), 0, 0)
         }
     };
+    // The drafts' own version is never published: a plan that carries it
+    // is a draft's, and a pack tells a draft from a published plan by it
+    // (decisions 0270 and 0273).
+    if version == DRAFT_VERSION {
+        return Err(codes::input(
+            codes::SCHEMA_INVALID,
+            format!(
+                "The version {DRAFT_VERSION} is the one every plan compiled from the drafts carries, so no published version takes it."
+            ),
+            "Publish under a version above it, for example `1.0.0`, or give no version to take the next one.",
+        ));
+    }
     if earlier.iter().any(|row| row.version == version) {
         return Err(codes::input(
             codes::SCHEMA_INVALID,

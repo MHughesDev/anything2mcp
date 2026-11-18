@@ -39,6 +39,10 @@ pub const ARGUMENTS_INVALID: FailureCode = FailureCode::fixed("arguments_invalid
 pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
 /// A part of the pack's design that this build does not carry out.
 pub const NOT_BUILT: FailureCode = FailureCode::fixed("not_built");
+/// A session's provider placed a header whose name begins `a2m-`, one of
+/// the product's own carriers between its parts, which never goes on the
+/// wire. Nothing is sent (decision 0270).
+pub const PRODUCT_HEADER_REFUSED: FailureCode = FailureCode::fixed("product_header_refused");
 /// A local server program another user could change, or that is a shell,
 /// an interpreter, or a script, is not started (decision 0250).
 pub const PROGRAM_PATH_UNSAFE: FailureCode = FailureCode::fixed("program_path_unsafe");
@@ -57,6 +61,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Policy, "not_granted"),
     (FailureClass::Policy, "link_not_encrypted"),
     (FailureClass::Policy, "program_path_unsafe"),
+    (FailureClass::Policy, "product_header_refused"),
     (FailureClass::Input, "arguments_invalid"),
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "not_built"),
@@ -194,6 +199,20 @@ pub(crate) fn tls_not_enabled() -> Failure {
     )
 }
 
+/// A header of the product's own, placed by a session's provider. Its name
+/// is the product's and is said; no value is.
+pub(crate) fn product_header_refused(name: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        PRODUCT_HEADER_REFUSED,
+        format!(
+            "The session's sign-in placed the header `{}`, which belongs to the product and never goes to an upstream server; nothing was sent.",
+            shown(name)
+        ),
+        "Sign in to this surface with `upstream_mcp`, or with a provider made for an HTTP service, such as `bearer_static` or `api_key`.",
+    )
+}
+
 pub(crate) fn not_built(what: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
@@ -257,7 +276,7 @@ pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) ->
         ),
         ProgramRefused::Script => unsafe_path(
             format!(
-                "The local server program `{at}` is a shell, an interpreter, a batch file, or a script that one of them would run."
+                "The local server program `{at}` is a shell, an interpreter, a launcher, package runner, container runner, or build tool that runs code its arguments name, a batch file, or a script that one of them would run."
             ),
             "Name a program that is itself the server. A server that an interpreter runs from a script is not started yet: the pack pins the program's digest, and nothing would pin the script's.",
         ),
@@ -283,7 +302,9 @@ pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) ->
             "Name the program by the path it has with no link on the way.",
         ),
         ProgramRefused::Elsewhere => unsafe_path(
-            format!("The local server program `{at}` is on another machine's share or a device."),
+            format!(
+                "The local server program `{at}` is on another machine's share, a device, a drive that is not fixed in this machine, or a drive letter that stands for a folder."
+            ),
             "Install the program on a local drive and name it by that path.",
         ),
     }

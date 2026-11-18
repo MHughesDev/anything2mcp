@@ -31,7 +31,9 @@ use crate::openapi::{self, DescribedOperation};
 use crate::template::{Method, ProbeStep};
 
 /// The name, among a discovery's checked paths, of a description given as
-/// a file.
+/// a file: the name the manifest's `http_description` declares under
+/// `files`, so the engine hands it a file of the project's `sources`
+/// folder under it (decision 0263).
 pub const DESCRIPTION_FILE: &str = "description";
 /// The name, in a discovery's focus, of the path a description is fetched
 /// from on the surface.
@@ -281,7 +283,7 @@ impl Discoverer for HttpDescription {
                     FailureClass::Input,
                     codes::DESCRIPTION_UNREADABLE,
                     format!("No description could be read: {why}."),
-                    "Give the description as a file, or name the path the system serves it at.",
+                    "Put the description in the project's `sources` folder and run `anything2mcp scout run <target> --files '{\"description\": \"sources/<file>\"}'`.",
                 )
             };
             let bytes = if let Some(file) = scope.paths.get(DESCRIPTION_FILE) {

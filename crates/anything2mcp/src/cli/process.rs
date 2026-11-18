@@ -7,17 +7,17 @@ use std::sync::Arc;
 
 use a2m_actions::{BuiltInToolset, Env, ExitClass, OsFamily, PROGRAM, Paths, Response, codes};
 use a2m_core::{Failure, FailureClass};
-use a2m_local::{ChannelControl, ClientLabel, Connector, StopReason};
+use a2m_local::{ClientLabel, Connector, StopReason};
 use a2m_mcp::stdio_proxy;
 use a2m_policy::ToolsetName;
 use a2m_telemetry::SystemClock;
 use serde_json::json;
 
-use super::parse::{Globals, Tree};
+use super::parse::{COMPLETION_COMMAND, Globals, Tree};
 use super::start::{self, PASSPHRASE_FROM_STDIN, STARTED_ON_DEMAND};
 use super::{Finished, Host, client, project_of, render, stopped};
 use crate::engine::EngineOptions;
-use crate::local::{LocalEngine, program_version};
+use crate::local::{LocalEngine, StopAsk, StopBy, program_version, stop_word};
 use crate::person::{ProcessTerminal, TerminalSurface};
 use crate::wire;
 
@@ -63,6 +63,8 @@ pub(crate) async fn run(
     json: bool,
 ) -> Finished {
     let done = match word {
+        // Answered by the program itself: it starts nothing.
+        COMPLETION_COMMAND => return super::complete::run(tree, rest, json),
         "serve" => serve(tree, globals, rest, host, json).await,
         // Standard output of the bridge carries protocol messages and
         // nothing else, so what stops it is told on standard error alone.
@@ -93,43 +95,103 @@ pub(crate) async fn run(
     }
 }
 
-/// Resolves when the operating system asks the process to stop: the
-/// terminal's interrupt everywhere, and the termination signal where
-/// there is one. Never resolves when the system offers neither.
-async fn asked_to_stop() {
+/// The operating system's ways of asking this process to stop, listened
+/// for from the start of `serve`, before the kernel opens: one that comes
+/// meanwhile is kept, and seen at once when the engine serves. On Unix the
+/// interrupt, the termination signal, and the hang-up, which is taken as a
+/// termination; on Windows the console's interrupt, break, close, and
+/// shutdown events. One the system will not let the process listen for is
+/// left out, and the others still stop it.
+struct Signals {
     #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    interrupted = tokio::signal::ctrl_c() => {
-                        if interrupted.is_err() {
-                            terminate.recv().await;
-                        }
-                    }
-                    _ = terminate.recv() => {}
-                }
-            }
-            Err(_) => {
-                if tokio::signal::ctrl_c().await.is_err() {
-                    std::future::pending::<()>().await;
-                }
+    unix: [(&'static str, Option<tokio::signal::unix::Signal>); 3],
+    #[cfg(windows)]
+    interrupt: Option<tokio::signal::windows::CtrlC>,
+    #[cfg(windows)]
+    broken: Option<tokio::signal::windows::CtrlBreak>,
+    #[cfg(windows)]
+    closed: Option<tokio::signal::windows::CtrlClose>,
+    #[cfg(windows)]
+    shut_down: Option<tokio::signal::windows::CtrlShutdown>,
+}
+
+impl Signals {
+    /// Starts listening. Must run inside the runtime.
+    fn listen() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Self {
+                unix: [
+                    ("SIGINT", signal(SignalKind::interrupt()).ok()),
+                    ("SIGTERM", signal(SignalKind::terminate()).ok()),
+                    ("SIGHUP", signal(SignalKind::hangup()).ok()),
+                ],
             }
         }
+        #[cfg(windows)]
+        {
+            use tokio::signal::windows;
+            Self {
+                interrupt: windows::ctrl_c().ok(),
+                broken: windows::ctrl_break().ok(),
+                closed: windows::ctrl_close().ok(),
+                shut_down: windows::ctrl_shutdown().ok(),
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            Self {}
+        }
     }
-    #[cfg(not(unix))]
-    {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
+
+    /// The name of the first that comes. Never resolves when the process
+    /// listens for none.
+    async fn first(mut self) -> &'static str {
+        #[cfg(unix)]
+        {
+            let [(int, a), (term, b), (hup, c)] = &mut self.unix;
+            tokio::select! {
+                () = came(a.as_mut().map(|s| s.recv())) => *int,
+                () = came(b.as_mut().map(|s| s.recv())) => *term,
+                () = came(c.as_mut().map(|s| s.recv())) => *hup,
+            }
+        }
+        #[cfg(windows)]
+        {
+            tokio::select! {
+                () = came(self.interrupt.as_mut().map(|s| s.recv())) => "CTRL_C_EVENT",
+                () = came(self.broken.as_mut().map(|s| s.recv())) => "CTRL_BREAK_EVENT",
+                () = came(self.closed.as_mut().map(|s| s.recv())) => "CTRL_CLOSE_EVENT",
+                () = came(self.shut_down.as_mut().map(|s| s.recv())) => "CTRL_SHUTDOWN_EVENT",
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            std::future::pending::<&'static str>().await
         }
     }
 }
 
-fn stop_when_asked(control: ChannelControl) -> tokio::task::JoinHandle<()> {
+/// Resolves when the signal a receiver waits on has come. Never resolves
+/// when there is no receiver, or when it can deliver no more.
+async fn came(receiver: Option<impl Future<Output = Option<()>>>) {
+    match receiver {
+        Some(receiver) => {
+            if receiver.await.is_none() {
+                std::future::pending::<()>().await;
+            }
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Once the engine serves: stops it when the first signal comes, and
+/// records which (decision 0266).
+fn stop_when_asked(signals: Signals, ask: StopAsk) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        asked_to_stop().await;
-        control.stop(StopReason::Asked);
+        let name = signals.first().await;
+        ask.ask(StopBy::Signal(name));
     })
 }
 
@@ -169,6 +231,10 @@ async fn serve(
             ExitClass::Malformed,
         ));
     }
+    // Listened for before anything is opened, so that a signal sent while
+    // the kernel opens stops the engine cleanly once it serves, instead of
+    // ending the process with its socket left behind.
+    let signals = Signals::listen();
     let failed = |failure| (failure, ExitClass::Failed);
     let paths = paths_of(host).map_err(failed)?;
     let mut environment = host.environment.clone();
@@ -200,6 +266,15 @@ async fn serve(
         project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
     let local = LocalEngine::start(options, prompt).await.map_err(failed)?;
+    // The kernel's telemetry now receives the process's log lines; the
+    // engine's log says that it started, and how (decision 0266).
+    tracing::info!(
+        pid = std::process::id(),
+        version = crate::version(),
+        on_demand,
+        by = if on_demand { "on_demand" } else { "serve" },
+        "engine.started"
+    );
     // An engine a command started on demand that cannot open its vault
     // ends at once and says why, on a line the command that started it
     // reads; it does not stay up degraded for every later command to meet
@@ -219,7 +294,8 @@ async fn serve(
         let _ = local.serve().await;
         return Err(failed(vault.failure));
     }
-    let signals = stop_when_asked(local.control());
+    let ask = local.stop_ask();
+    let signals = stop_when_asked(signals, ask.clone());
     if let Some(problem) = local.engine().runner_problem() {
         say(&format!(
             "{PROGRAM}: the engine runs no job: {} {}",
@@ -231,10 +307,8 @@ async fn serve(
     say(READY_LINE);
     let reason = local.serve().await;
     signals.abort();
-    let word = match reason {
-        StopReason::Idle => "idle",
-        StopReason::Asked => "asked",
-        StopReason::Restart => "restart",
+    match reason {
+        StopReason::Idle | StopReason::Asked | StopReason::Restart => {}
         StopReason::DataGone => {
             return Err(failed(a2m_local::codes::data_directory_gone()));
         }
@@ -246,11 +320,20 @@ async fn serve(
                 "Start the engine again with `anything2mcp serve`.",
             )));
         }
-    };
+    }
+    let mut stopped = json!({"stopped": stop_word(reason)});
+    // What asked, beside `asked` alone: an engine that stopped by itself
+    // names nothing.
+    if let Some(by) = ask.by().filter(|_| reason == StopReason::Asked) {
+        stopped["by"] = json!(by.word());
+        if let Some(process) = by.process() {
+            stopped["process"] = json!(process);
+        }
+    }
     let response = Response {
         ok: true,
         action: "serve".to_owned(),
-        result: Some(json!({"stopped": word})),
+        result: Some(stopped),
         error: None,
         warnings: Vec::new(),
         next: None,

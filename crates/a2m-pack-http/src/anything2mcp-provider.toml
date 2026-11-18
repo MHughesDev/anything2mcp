@@ -49,6 +49,7 @@ kinds = ["described_operation"]
 sources = ["published_description"]
 max_level = "inferred"
 bounds = { seconds = 60, bytes = 8000000, depth = 1 }
+files = ["description"]
 
 [[file_kinds]]
 name = "endpoint"
@@ -139,6 +140,14 @@ code = "surface_not_declared"
 [[failure_codes]]
 class = "policy"
 code = "link_not_encrypted"
+
+[[failure_codes]]
+class = "policy"
+code = "product_header_refused"
+
+[[failure_codes]]
+class = "busy"
+code = "reads_still_running"
 
 [[failure_codes]]
 class = "input"

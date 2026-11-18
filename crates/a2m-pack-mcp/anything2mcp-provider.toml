@@ -93,6 +93,10 @@ class = "policy"
 code = "program_path_unsafe"
 
 [[failure_codes]]
+class = "policy"
+code = "product_header_refused"
+
+[[failure_codes]]
 class = "input"
 code = "arguments_invalid"
 

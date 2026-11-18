@@ -75,6 +75,9 @@ impl Bare {
             .current_dir(self.project.path())
             .env("A2M_HOME", self.home.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
+            // Help is wrapped to the default width, whatever terminal the
+            // tests run in.
+            .env_remove("COLUMNS")
             // The engine runs inside each command: none is started and
             // left running by a test of the command line.
             .env(common::IN_PROCESS_VARIABLE, "true")
@@ -165,11 +168,12 @@ fn both_names_are_the_same_program() {
     }
 }
 
-/// The nouns and verbs the program's own help lists.
+/// The nouns and verbs the program's own help lists. A row of a list may
+/// be wrapped onto lines indented further, and a verb that is not built is
+/// marked so; neither is part of a word.
 fn listed_commands(bare: &Bare) -> (BTreeSet<(String, String)>, BTreeSet<String>) {
     let help = text(&bare.run(&["--help"]).stdout);
-    let mut commands = BTreeSet::new();
-    let mut words = BTreeSet::new();
+    let mut rows: Vec<(&str, String)> = Vec::new();
     let mut section = "";
     for line in help.lines() {
         if line.starts_with("Commands, by noun") {
@@ -180,25 +184,50 @@ fn listed_commands(bare: &Bare) -> (BTreeSet<(String, String)>, BTreeSet<String>
             section = "process";
         } else if line.starts_with("Global flags") {
             section = "";
+        } else if line.starts_with("   ") && !rows.is_empty() && !section.is_empty() {
+            let last = rows.last_mut().unwrap();
+            last.1.push(' ');
+            last.1.push_str(line.trim());
         } else if let Some(rest) = line.strip_prefix("  ") {
-            match section {
-                "nouns" => {
-                    let (noun, verbs) = rest.split_once(' ').unwrap();
-                    for verb in verbs.split(',') {
-                        commands.insert((noun.to_owned(), verb.trim().to_owned()));
-                    }
+            rows.push((section, rest.to_owned()));
+        }
+    }
+    let mut commands = BTreeSet::new();
+    let mut words = BTreeSet::new();
+    for (section, row) in rows {
+        let row = row.replace("(not built)", "");
+        match section {
+            "nouns" => {
+                let (noun, verbs) = row.split_once(' ').unwrap();
+                for verb in verbs
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|verb| !verb.is_empty())
+                {
+                    commands.insert((noun.to_owned(), verb.to_owned()));
                 }
-                "shortcuts" => {
-                    words.insert(rest.split_whitespace().next().unwrap().to_owned());
-                }
-                "process" => {
-                    words.extend(rest.split(',').map(|word| word.trim().to_owned()));
-                }
-                _ => {}
             }
+            "shortcuts" => {
+                words.insert(row.split_whitespace().next().unwrap().to_owned());
+            }
+            "process" => {
+                words.extend(
+                    row.split(',')
+                        .map(str::trim)
+                        .filter(|word| !word.is_empty())
+                        .map(str::to_owned),
+                );
+            }
+            _ => {}
         }
     }
     (commands, words)
+}
+
+/// Text with every run of spaces and line ends made one space: help as it
+/// reads before it was wrapped to the terminal.
+fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[test]
@@ -220,17 +249,29 @@ fn the_command_tree_is_the_action_registry_and_nothing_else() {
         .iter()
         .map(|shortcut| shortcut.word.to_owned())
         .chain(PROCESS_COMMANDS.iter().map(|word| (*word).to_owned()))
+        .chain(std::iter::once(
+            anything2mcp::cli::COMPLETION_COMMAND.to_owned(),
+        ))
         .collect();
     assert_eq!(words, allowed);
 
     // The help of every command is built from its description: the usage
-    // line, the summary, and every argument.
+    // line, the summary, and every argument; for an action that is not
+    // built, after the line that says so.
     for face in &faces {
         let output = bare.run(&[&face.noun, &face.verb, "--help"]);
         assert!(output.status.success(), "{}", face.action);
-        let help = text(&output.stdout);
-        assert!(help.starts_with(&face.usage), "{}: {help}", face.action);
-        assert!(help.contains(&face.help), "{}", face.action);
+        let whole = text(&output.stdout);
+        let help = match whole.split_once('\n') {
+            Some((first, rest)) if first.starts_with("Not built yet: ") => flat(rest),
+            _ => flat(&whole),
+        };
+        assert!(
+            help.starts_with(&flat(&face.usage)),
+            "{}: {whole}",
+            face.action
+        );
+        assert!(help.contains(&flat(&face.help)), "{}", face.action);
         for arg in &face.args {
             let shown = if arg.positional {
                 format!("<{}>", arg.field)

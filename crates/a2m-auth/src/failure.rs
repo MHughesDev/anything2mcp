@@ -106,6 +106,31 @@ pub(crate) fn credential_refused(by: &'static str) -> Failure {
     )
 }
 
+/// The stored credential was tried as often as the auth file allows and was
+/// refused, or answered with something no rule covers, and the failure of
+/// that attempt is no longer known in this process (decision 0269).
+pub(crate) fn attempts_spent() -> Failure {
+    Failure::new(
+        FailureClass::SessionExpired,
+        CREDENTIAL_REFUSED,
+        "The stored credential was tried as often as the auth file allows, and was refused or answered with something no rule covers. It is not sent again as it is stored.",
+        "Check the stored credential and store it again if it changed, or sign in yourself with `anything2mcp session login`.",
+    )
+}
+
+/// A session was signed in again without its person as often as the keeper
+/// allows in its window (decision 0269). `count` and `minutes` are numbers.
+pub(crate) fn signed_in_too_often(count: u32, minutes: u64) -> Failure {
+    Failure::new(
+        FailureClass::SessionExpired,
+        NEEDS_LOGIN,
+        format!(
+            "The session cannot be used: it was signed in again without its person {count} times within {minutes} minutes, and the system keeps ending it, so it is not signed in again until the person signs in themself."
+        ),
+        "Look at why the system keeps ending the session, then sign in yourself with `anything2mcp session login`.",
+    )
+}
+
 /// The run acts for someone other than the session's person.
 pub(crate) fn identity_not_allowed() -> Failure {
     Failure::new(

@@ -1135,6 +1135,20 @@ impl Registry {
             .collect()
     }
 
+    /// The names under which the discoverers that apply to a surface read
+    /// files a person hands a discovery, each once: what a discovery of the
+    /// surface may be handed, and nothing else (decision 0263). Empty when
+    /// no discoverer of the surface reads a file.
+    #[must_use]
+    pub fn files_taken(&self, surface: &SurfaceDescription) -> BTreeSet<String> {
+        self.inner
+            .discoverers
+            .iter()
+            .filter(|handle| handle.suits(surface))
+            .flat_map(|handle| handle.decl.files.iter().cloned())
+            .collect()
+    }
+
     /// The auth providers packs registered, for the keeper.
     #[must_use]
     pub fn auth_providers(&self) -> Vec<Arc<dyn AuthProvider>> {

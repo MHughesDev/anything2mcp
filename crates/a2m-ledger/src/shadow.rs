@@ -447,17 +447,16 @@ fn write_not_built() -> Failure {
     )
 }
 
-/// The purpose a shadow comparison's input is digested under. `a2m-core`
-/// has no purpose of its own for it yet; the caller's key is the nearest
-/// (matching what a caller asked without keeping it), and the bytes begin
-/// with a label no other digest of that purpose writes, so the two uses can
-/// never be matched against each other.
-const INPUT_PURPOSE: DigestPurpose = DigestPurpose::CallerKey;
+/// The purpose a shadow comparison's input is digested under: its own
+/// (decision 0262). A comparison kept before migration 0023 was digested
+/// under `caller_key`; its row says so in `input_purpose`, and only rows of
+/// this purpose count as distinct inputs.
+const INPUT_PURPOSE: DigestPurpose = DigestPurpose::ShadowInput;
 
 /// What the input's digest is made over: a label, the operation, and the
 /// input's canonical bytes.
 fn input_bytes(operation: &OperationName, input: &Values) -> Vec<u8> {
-    let mut bytes = b"anything2mcp shadow comparison input 1".to_vec();
+    let mut bytes = b"anything2mcp shadow comparison input 2".to_vec();
     bytes.push(0);
     bytes.extend_from_slice(operation.as_str().as_bytes());
     bytes.push(0);
@@ -644,8 +643,8 @@ impl Shadows<'_, '_> {
             "INSERT INTO shadow_comparisons
                 (workspace_id, target, environment, operation, binding_digest, mode, position,
                  against_digest, run_id, writes, outcome, differing, why_class, why_code, at,
-                 input_digest, requests)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 input_digest, requests, input_purpose)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             &[
                 run.workspace.to_string().into(),
                 run.target.as_str().into(),
@@ -663,6 +662,7 @@ impl Shadows<'_, '_> {
                 at.into(),
                 input.into(),
                 comparison.requests.into(),
+                INPUT_PURPOSE.as_str().into(),
             ],
         )?;
         let row = self
@@ -794,6 +794,10 @@ impl Shadows<'_, '_> {
         let mut by_environment = key();
         by_environment.push(since.into());
         by_environment.push(against.to_string().into());
+        // Only inputs digested under the purpose in force are counted: one
+        // input digested under two purposes would be counted twice, and an
+        // older comparison counts as no distinct input (decision 0262).
+        by_environment.push(INPUT_PURPOSE.as_str().into());
         let rows = self.tx.rows(
             "SELECT environment,
                     COUNT(*),
@@ -801,10 +805,10 @@ impl Shadows<'_, '_> {
                     COALESCE(SUM(outcome = 'match' AND seq > ?5), 0),
                     COALESCE(SUM(outcome = 'match' AND seq > ?5 AND against_digest = ?6), 0),
                     COUNT(DISTINCT CASE WHEN outcome = 'match' AND seq > ?5
-                                             AND against_digest = ?6
+                                             AND against_digest = ?6 AND input_purpose = ?7
                                         THEN input_digest END),
                     MAX(CASE WHEN outcome = 'match' AND seq > ?5 AND against_digest = ?6
-                             AND input_digest IS NOT NULL THEN seq END)
+                             AND input_purpose = ?7 AND input_digest IS NOT NULL THEN seq END)
              FROM shadow_comparisons
              WHERE workspace_id = ?1 AND target = ?2 AND operation = ?3 AND binding_digest = ?4
              GROUP BY environment

@@ -121,7 +121,7 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
             FailureClass::Policy,
             PROGRAM_PATH_UNSAFE,
             format!(
-                "The program `{at}` is a shell, an interpreter, or a script that one of them would run."
+                "The program `{at}` is a shell, an interpreter, a program that runs code its arguments name, or a script that one of them would run."
             ),
             "Name a program that takes its arguments as data; a shell or a script is never started.",
         ),
@@ -155,7 +155,9 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
         Refused::Elsewhere => not_sent(
             FailureClass::Policy,
             PROGRAM_PATH_UNSAFE,
-            format!("The program `{at}` is on another machine's share or a device."),
+            format!(
+                "The program `{at}` is on another machine's share, a device, a drive that is not fixed in this machine, or a drive letter that stands for a folder."
+            ),
             "Install the program on a local drive and name it by that path.",
         ),
     }

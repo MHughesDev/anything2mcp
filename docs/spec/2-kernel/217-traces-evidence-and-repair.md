@@ -85,7 +85,7 @@ The audit log is append-only and hash-chained, one chain per workspace, so a rem
 
 ## Logs
 
-The engine also writes ordinary logs for operating it: structured, one JSON object per line, with levels, rotated by size, and passed through the same redactor, in `logs/` in the data directory. Logs say what the engine did as a program. They are never the record of a run; that is the ledger and the trace. `anything2mcp engine logs` shows them. If the log directory cannot be written, the engine keeps running and logs to standard error, redacted.
+The engine also writes ordinary logs for operating it: structured, one JSON object per line, with levels, rotated by size, and passed through the same redactor, in `logs/` in the data directory. Logs say what the engine did as a program. They are never the record of a run; that is the ledger and the trace. `anything2mcp engine logs` shows them: the command reads the files where the engine runs, whether or not an engine runs, and starts nothing and makes nothing. At the default level the log carries one line for each start of the engine, `engine.started`, with its process, its version, and whether a command started it on demand, and one for each stop, `engine.stopped`, with why it stopped and, when it was asked, what asked: a signal by its name, or `engine.stop` with the process that sent it. No line carries a call's input ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)). If the log directory cannot be written, the engine keeps running and logs to standard error, redacted.
 
 ## Metrics and outside monitoring
 

@@ -65,7 +65,7 @@ The response has the same structure for every face: `ok`, `action`, `result` or 
 
 ### Shortcuts and process commands
 
-Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `test`, `publish`, `status`, `call`, `run`, `diff`, `bundle`, `rollback`, `migrate`, `connect`, `doctor`, and `docs`. Each is a fixed sequence of registry actions, held as data, and adds no behavior of its own. Three process commands, `serve`, `runner`, and `bridge`, start a long-lived role and are not actions. The catalog lists what each shortcut does.
+Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `test`, `publish`, `status`, `call`, `run`, `diff`, `bundle`, `rollback`, `migrate`, `connect`, `doctor`, and `docs`. Each is a fixed sequence of registry actions, held as data, and adds no behavior of its own. Three process commands, `serve`, `runner`, and `bridge`, start a long-lived role and are not actions. Beside them, `completion` prints a script that completes commands and flags in a named shell, made from the same command tree; the program answers it itself, with no engine, and it is not an action ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)). The catalog lists what each shortcut does.
 
 ## The command face, as an agent uses it
 
@@ -89,6 +89,8 @@ Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `
 **Large results stay out of the context.** A snapshot, capture, trace, or diff is written to a file under `.anything2mcp/out/` in the project, with a name the engine chose. The command returns the path, the size, and a short summary. The agent reads the parts it needs with its own file tools. Defaults are compact: a screen snapshot is limited to roughly 2,000 tokens, with a flag to widen it and a cursor to page through it.
 
 **No prompts.** When output is not a terminal, a command never waits for typed input. If a person is needed it returns exit code 3 and says exactly what the person must do.
+
+**Help says what a command does to the world.** Help is generated from the registry. An action's help gives its usage, its summary, its effect, who may run it, and whether a person at this machine is asked; the help of an action that is not built says so on its first line, and every listing marks each verb that is not built. Help is wrapped to the terminal's width: `COLUMNS` when it is a whole number of 40 or more, else 80.
 
 **Discovery on demand.** `anything2mcp action search` returns names and one-line summaries only. `anything2mcp docs <topic>` prints reference pages built into the binary, so file formats, verbs, and failure codes are available offline and only when asked for.
 

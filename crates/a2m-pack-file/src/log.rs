@@ -124,7 +124,7 @@ pub(crate) fn read(
     let given = from.map(Position::parse).transpose()?;
     let named = folder.file(&spec.file)?;
     let (mut file, metadata) = named.open()?;
-    let identity = lasting_identity(&metadata)
+    let identity = lasting_identity(&file, &metadata)
         .map(|text| short(Digest::of(text.as_bytes())))
         .ok_or_else(|| StepFailure::not_sent(unavailable("has no identity the system gives")))?;
     let length = metadata.len();

@@ -20,6 +20,8 @@ use crate::name::RootName;
 
 mod place;
 
+pub use place::Removal;
+
 /// What a path is wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Access {
@@ -568,8 +570,11 @@ fn resolve(
 /// Linux and macOS they, [`CheckedPath::open`], and
 /// [`CheckedPath::entry_kind`] reach the folder by opening each folder from
 /// the root down without following a link, so a link put on the way after
-/// the check is refused and never followed, whenever it is put there. The
-/// other methods, and every method on Windows, look once more that the path
+/// the check is refused and never followed, whenever it is put there. On
+/// Windows [`CheckedPath::open`] holds every folder from the root down
+/// while it opens, and opens a link at the name itself and refuses it;
+/// [`CheckedPath::hold_folder`] holds them for as long as it lives. The
+/// other methods, and the rest on Windows, look once more that the path
 /// still resolves inside the root and then use it by name; a link swapped in
 /// between those two moments is followed.
 #[derive(Clone, PartialEq, Eq)]
@@ -776,6 +781,26 @@ impl CheckedPath {
             let folder = self
                 .folder_now(folder)?
                 .ok_or_else(|| self.unavailable("cannot be opened"))?;
+            return match folder.kind(name) {
+                Ok(EntryKind::Link) => Err(self.outside()),
+                _ => folder
+                    .open(name)
+                    .map_err(|_| self.unavailable("cannot be opened")),
+            };
+        }
+        #[cfg(windows)]
+        if let (Some(folder), Some(name)) = (self.full.parent(), self.full.file_name())
+            && !self.relative.is_empty()
+        {
+            // Every folder from the root down to the file is held while it
+            // is opened, so none can be moved or put in the place of
+            // another; a link at the name is opened itself and refused
+            // (decision 0272).
+            let folder = match place::Folder::hold(&self.base, folder) {
+                Ok(folder) => folder,
+                Err(place::Unreached::Outside) => return Err(self.outside()),
+                Err(_) => return Err(self.unavailable("cannot be opened")),
+            };
             return match folder.kind(name) {
                 Ok(EntryKind::Link) => Err(self.outside()),
                 _ => folder
@@ -1114,6 +1139,37 @@ impl CheckedPath {
         Ok(FileIdentity { device, file })
     }
 
+    /// The folder at this path, reached now from the root down with no link
+    /// followed, and held for the calls that follow, so that every one of
+    /// them acts in this one folder whatever is done to the path meanwhile.
+    /// On Linux and macOS it is the folder's own handle, and each call is
+    /// made relative to it. On Windows every folder from the root down to it
+    /// is held open, shared for reading and writing and not for renaming or
+    /// removing, so that none of them can be moved, removed, or replaced by
+    /// a link while it is held, and each call names the entry by its path
+    /// through them (decision 0272).
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_missing` where the folder is not there;
+    /// `input`/`path_not_allowed` where a link, or anything that is not a
+    /// folder, stands on the way; `input`/`file_unavailable` otherwise.
+    pub fn hold_folder(&self) -> Result<HeldFolder, Failure> {
+        match place::Folder::hold(&self.base, &self.full) {
+            Ok(folder) => Ok(HeldFolder {
+                path: self.clone(),
+                folder,
+            }),
+            Err(place::Unreached::Absent) => Err(codes::input(
+                codes::PATH_MISSING,
+                format!("The folder `{self}` is not there."),
+                "Check that the folder exists.",
+            )),
+            Err(place::Unreached::Outside) => Err(self.outside()),
+            Err(place::Unreached::Other) => Err(self.unavailable("cannot be reached")),
+        }
+    }
+
     /// Whether the engine's user may write the file now. Nothing is written,
     /// made, or cut short: the file is opened for writing and closed. `false`
     /// when the user may not, or the file system is read only.
@@ -1216,6 +1272,17 @@ pub struct Temporary {
 }
 
 impl FileIdentity {
+    /// The identity as bytes, the same in every process on this machine for
+    /// as long as the file is that file: for a digest that tells one file
+    /// from another, such as a growing file's position. Never shown.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 24] {
+        let mut bytes = [0_u8; 24];
+        bytes[..8].copy_from_slice(&self.device.to_le_bytes());
+        bytes[8..].copy_from_slice(&self.file.to_le_bytes());
+        bytes
+    }
+
     /// The identity of an open file, from its handle: comparable with
     /// [`CheckedPath::identity`] of the name it was opened by, to tell
     /// whether that name still holds this file.
@@ -1418,6 +1485,176 @@ impl Drop for Temporary {
         if !self.name.is_empty() && self.still_its_own() {
             let _ = self.folder.remove(&self.name);
         }
+    }
+}
+
+/// A folder inside a root, held from the moment [`CheckedPath::hold_folder`]
+/// reached it: each call acts on one name directly in this folder, and in
+/// no other, whatever is done to the folder's path meanwhile. A name is one
+/// name under the roots' rules (no separator, `.` or `..`, colon, control
+/// character, device name, or trailing dot or space); another is refused
+/// with an error of the kind `InvalidInput`. No call follows a link at the
+/// name it acts on.
+///
+/// The calls give the operating system's own answer, `std::io::Error`, so
+/// that a caller can tell "something has that name" from "the file system
+/// gives no second name" from "denied", which mean different things to a
+/// pack; the caller names the failure.
+///
+/// What is left: on Linux and macOS a folder moved away, whole, after it
+/// was held, to a place outside the root on the same file system, is still
+/// the folder the calls act in; [`HeldFolder::still_at_its_path`] tells it.
+/// On Windows that move is refused while the folder is held, and the calls
+/// name the entry by its path through the held folders: one of them made a
+/// mount point while it is held, which needs it empty and the right to
+/// write it, would be followed; [`HeldFolder::still_at_its_path`] tells
+/// that too, since a folder that became a link is not held again.
+pub struct HeldFolder {
+    path: CheckedPath,
+    folder: place::Folder,
+}
+
+impl fmt::Debug for HeldFolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HeldFolder")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The name, where it is one name under the roots' rules.
+fn one_name(name: &str) -> std::io::Result<&OsStr> {
+    match parts(name) {
+        Ok(found) if found.len() == 1 => Ok(OsStr::new(name)),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not one name inside the folder",
+        )),
+    }
+}
+
+/// A name of 128 random bits from the operating system, with `prefix`.
+fn random_name(prefix: &str) -> std::io::Result<std::ffi::OsString> {
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(|_| std::io::Error::other("no random name"))?;
+    let mut name = String::from(prefix);
+    for byte in random {
+        name.push_str(&format!("{byte:02x}"));
+    }
+    Ok(name.into())
+}
+
+impl HeldFolder {
+    /// The folder's checked path, for messages and for the provider's own
+    /// calls by path.
+    #[must_use]
+    pub fn checked(&self) -> &CheckedPath {
+        &self.path
+    }
+
+    /// What stands at `name` now. A link is reported and not followed.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer.
+    pub fn kind(&self, name: &str) -> std::io::Result<EntryKind> {
+        self.folder.kind(one_name(name)?)
+    }
+
+    /// The identity of what stands at `name`, a link's own where one stands
+    /// there.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer; `NotFound` where nothing stands at the name.
+    pub fn identity(&self, name: &str) -> std::io::Result<FileIdentity> {
+        self.folder
+            .identity(one_name(name)?)
+            .map(|(device, file)| FileIdentity { device, file })
+    }
+
+    /// The names the folder holds, in no order.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer.
+    pub fn names(&self) -> std::io::Result<Vec<std::ffi::OsString>> {
+        self.folder.names()
+    }
+
+    /// Makes a new file of that name, for reading and writing and readable
+    /// by the engine's user alone on Linux and macOS; on Windows shared with
+    /// nobody while it is open. It fails where anything stands at the name,
+    /// a link included.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer; `AlreadyExists` where something has the name.
+    pub fn create_new(&self, name: &str) -> std::io::Result<fs::File> {
+        self.folder.create_new(one_name(name)?)
+    }
+
+    /// Gives what stands at `from` the second name `to`. It fails where
+    /// anything stands at `to`, so nothing there is ever replaced.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer; `AlreadyExists` where something has the name
+    /// `to`.
+    pub fn link(&self, from: &str, to: &str) -> std::io::Result<()> {
+        self.folder.link(one_name(from)?, one_name(to)?)
+    }
+
+    /// Removes the file at `name` only where it is the file `expected`
+    /// names, so a file put at the name after the caller's look is never
+    /// the one removed. On Windows the file is opened, its identity read
+    /// from the handle, and removed through that handle. On Linux and macOS
+    /// what stands at the name is moved to a name of 128 random bits, looked
+    /// at there, and removed; anything else is moved back.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer; `NotFound` where nothing stands at the name.
+    pub fn remove_file_if(&self, name: &str, expected: FileIdentity) -> std::io::Result<Removal> {
+        let name = one_name(name)?;
+        let aside = random_name(".a2m-old-")?;
+        self.folder
+            .remove_if(name, (expected.device, expected.file), &aside)
+    }
+
+    /// Removes the empty folder of that name. The system removes only an
+    /// empty folder, so one that gained an entry since the caller's look is
+    /// refused by the call itself.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer.
+    pub fn remove_empty_folder(&self, name: &str) -> std::io::Result<()> {
+        self.folder.remove_dir(one_name(name)?)
+    }
+
+    /// Writes the folder's list of names to the disk. On Windows the file
+    /// system journals the names itself, and this does nothing more.
+    ///
+    /// # Errors
+    ///
+    /// The system's answer.
+    pub fn sync(&self) -> std::io::Result<()> {
+        self.folder.sync()
+    }
+
+    /// Whether the folder at the path, reached afresh from the root, is the
+    /// folder held: `false` where it was moved away, or another put at its
+    /// path, since it was held.
+    #[must_use]
+    pub fn still_at_its_path(&self) -> bool {
+        let Ok(own) = self.folder.own_identity() else {
+            return false;
+        };
+        place::Folder::hold(&self.path.base, &self.path.full)
+            .ok()
+            .and_then(|now| now.own_identity().ok())
+            .is_some_and(|now| now == own)
     }
 }
 

@@ -86,13 +86,27 @@ pub fn key_store() -> Arc<MemoryKeyStore> {
 }
 
 pub async fn open_with(folder: Option<&Path>, keys: Arc<MemoryKeyStore>) -> (Store, Arc<Vault>) {
+    let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    open_clocked(folder, keys, clock).await
+}
+
+/// A store in memory whose clock the test moves.
+pub async fn memory_clocked() -> (Store, Arc<ManualClock>) {
+    let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    let store = open_clocked(None, key_store(), Arc::clone(&clock)).await.0;
+    (store, clock)
+}
+
+pub async fn open_clocked(
+    folder: Option<&Path>,
+    keys: Arc<MemoryKeyStore>,
+    clock: Arc<ManualClock>,
+) -> (Store, Arc<Vault>) {
     let config = match folder {
         Some(folder) => StoreConfig::in_dir(folder),
         None => StoreConfig::in_memory(),
     }
-    .with_clock(Arc::new(ManualClock::starting_at(
-        Timestamp::from_unix_millis(START),
-    )))
+    .with_clock(clock)
     .with_random(Counted::new());
     let store = Store::open(config).await.unwrap();
     let vault = Arc::new(Vault::with_random(

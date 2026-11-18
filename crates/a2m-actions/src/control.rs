@@ -114,6 +114,19 @@ impl InProcessControl {
         self.kernel.redact().redact_failure(&failure)
     }
 
+    /// Whether the run's plan is a draft: a plan a trial or a discovery
+    /// runs from the drafts is kept in memory as a draft; every other plan
+    /// a run holds is a published version's (decision 0248).
+    fn drafted(&self) -> bool {
+        self.kernel
+            .inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|((target, hash), _)| *target == self.run.target && *hash == self.run.target_version)
+    }
+
     /// The identity the run acts as: the person who started it. A dedicated
     /// account comes with toolsets, which are not built.
     fn identity(&self) -> Identity {
@@ -264,20 +277,7 @@ impl Control for InProcessControl {
                         "Declare the surface in the target's auth file, then publish again.",
                     )
                 })?;
-            // A plan a trial or a discovery runs from the drafts is kept in
-            // memory as a draft; every other plan a run holds is a
-            // published version's (decision 0248).
-            let drafted = self
-                .kernel
-                .inner
-                .drafts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .iter()
-                .any(|((target, hash), _)| {
-                    *target == self.run.target && *hash == self.run.target_version
-                });
-            let entry = entry_of(&self.plan, auth, &self.run.environment, !drafted);
+            let entry = entry_of(&self.plan, auth, &self.run.environment, !self.drafted());
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {
@@ -424,14 +424,13 @@ impl Control for InProcessControl {
             let known = hazard.is_some();
             // The test records the run's environment declares, when it is a
             // test environment: the policy engine is told whether every
-            // record of the run is one of them (decision 0145).
-            let test_keys: Option<Vec<a2m_core::RecordKey>> = self
-                .plan
-                .environments
-                .iter()
-                .find(|environment| environment.name == self.run.environment)
-                .filter(|environment| environment.kind == a2m_core::EnvironmentKind::Test)
-                .map(|environment| environment.test_records.clone());
+            // record of the run is one of them (decision 0145). Only a
+            // published version's word counts (decision 0273).
+            let test_keys = test_record_keys(
+                &self.plan.environments,
+                &self.run.environment,
+                self.drafted(),
+            );
             let mut request = a2m_policy::Request {
                 principal: self.caller.principal.clone(),
                 question: Question::WriteWithoutPerson,
@@ -1173,6 +1172,22 @@ impl a2m_provider::OtherRecords for StoredOthers {
     }
 }
 
+/// The test records `environment` declares, when the plan is a published
+/// version's and declares that environment a test copy. A draft's word that
+/// an environment is a test copy counts for nothing: an agent may write a
+/// draft (finding C1 of the sixth audit, decision 0273).
+fn test_record_keys(
+    environments: &[a2m_core::EnvironmentPlan],
+    environment: &a2m_core::Environment,
+    drafted: bool,
+) -> Option<Vec<a2m_core::RecordKey>> {
+    environments
+        .iter()
+        .find(|declared| declared.name == *environment)
+        .filter(|declared| !drafted && declared.kind == a2m_core::EnvironmentKind::Test)
+        .map(|declared| declared.test_records.clone())
+}
+
 #[cfg(test)]
 mod told_tests {
     use super::*;
@@ -1196,5 +1211,26 @@ mod told_tests {
             told(one, two, record),
             a2m_provider::RecordedElsewhere::CannotTell
         );
+    }
+
+    /// Finding C1 of the sixth audit, the registry's half: a draft that
+    /// declares its environment a test copy gets no test-record treatment;
+    /// a published version that declares it so does.
+    #[test]
+    fn a_drafts_test_environment_gives_no_test_records() {
+        let staging = a2m_core::Environment::new("staging").unwrap();
+        let key = a2m_core::RecordKey::new(vec![a2m_core::Value::Text("T-1".to_owned())]).unwrap();
+        let environments = [a2m_core::EnvironmentPlan {
+            name: staging.clone(),
+            kind: a2m_core::EnvironmentKind::Test,
+            addresses: Vec::new(),
+            test_records: vec![key.clone()],
+            approve_writes: None,
+        }];
+        assert_eq!(
+            test_record_keys(&environments, &staging, false),
+            Some(vec![key])
+        );
+        assert_eq!(test_record_keys(&environments, &staging, true), None);
     }
 }

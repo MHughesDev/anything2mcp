@@ -29,6 +29,11 @@
 //! code does not read, is a refusal; so is a list that cannot be read, and
 //! an object with no list at all, which allows everyone everything.
 //!
+//! The path must be on a drive letter that stands for a whole volume of a
+//! disk fixed in this machine: a letter mapped to another machine's share,
+//! a removable disk, and a letter made to stand for a folder are refused
+//! before anything is read.
+//!
 //! A link, a junction, or any other reparse point on the way is refused,
 //! not followed: that is the stricter of the two choices the Unix walk has,
 //! and it leaves no second way of resolving a path to get wrong.
@@ -395,11 +400,14 @@ pub(super) fn walk(
     else {
         return Err(ProgramRefused::NotAbsolute);
     };
-    let verbatim = match prefix.kind() {
-        Prefix::Disk(_) => false,
-        Prefix::VerbatimDisk(_) => true,
+    let (letter, verbatim) = match prefix.kind() {
+        Prefix::Disk(letter) => (letter, false),
+        Prefix::VerbatimDisk(letter) => (letter, true),
         _ => return Err(ProgramRefused::Elsewhere),
     };
+    // A letter mapped to another machine's share, or made to stand for a
+    // folder, is as much elsewhere as a share named outright.
+    fixed_local_disk(letter)?;
     let root: PathBuf = [Component::Prefix(prefix), Component::RootDir]
         .iter()
         .collect();
@@ -456,6 +464,69 @@ pub(super) fn walk(
         at = next;
     }
     Ok(at)
+}
+
+/// `DRIVE_FIXED`, what `GetDriveTypeW` answers for a disk fixed in this
+/// machine (its other answers name a removable disk, another machine's
+/// share, an optical disk, a disk in memory, or none).
+const DRIVE_FIXED: u32 = 3;
+
+/// What a drive letter stands for, as the system's device names give it:
+/// the prefix of the name of a device, which a volume of this machine has
+/// and a substituted letter (`\??\C:\folder`) does not.
+const DEVICE_PREFIX: &str = r"\Device\";
+
+/// Whether the drive `letter` is a disk fixed in this machine, and the
+/// letter stands for the whole volume and not for a folder on one
+/// (finding D4 of the sixth safety audit, decision 0271).
+///
+/// The system is asked twice. `GetDriveTypeW` must say the root is on a
+/// fixed disk: a letter mapped to another machine's share, a removable
+/// disk, and an optical disk are refused. `QueryDosDeviceW` must say the
+/// letter stands for a device by its name alone, such as
+/// `\Device\HarddiskVolume3`: a letter made with `subst`, or defined to
+/// stand for a path below a device, stands for a folder whose folders
+/// above it the walk would never read, and is refused.
+#[allow(unsafe_code)] // two calls into the operating system, explained below
+fn fixed_local_disk(letter: u8) -> Result<(), ProgramRefused> {
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, QueryDosDeviceW};
+    if !letter.is_ascii_alphabetic() {
+        return Err(ProgramRefused::Elsewhere);
+    }
+    let letter = char::from(letter.to_ascii_uppercase());
+    let root: Vec<u16> = format!("{letter}:\\")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: `root` is NUL-terminated and outlives the call, which only
+    // reads it.
+    if unsafe { GetDriveTypeW(root.as_ptr()) } != DRIVE_FIXED {
+        return Err(ProgramRefused::Elsewhere);
+    }
+    let device: Vec<u16> = format!("{letter}:").encode_utf16().chain(Some(0)).collect();
+    let mut target = vec![0_u16; 1024];
+    let room = u32::try_from(target.len()).map_err(|_| ProgramRefused::Elsewhere)?;
+    // SAFETY: `device` is NUL-terminated and outlives the call; `target`
+    // is writable for `room` characters, which is the length the call is
+    // given, and outlives it. It writes NUL-separated names into `target`
+    // and returns how many characters it wrote, or zero.
+    let written = unsafe { QueryDosDeviceW(device.as_ptr(), target.as_mut_ptr(), room) };
+    let written = usize::try_from(written).unwrap_or(0).min(target.len());
+    if written == 0 {
+        return Err(ProgramRefused::Unreadable(PathBuf::from(format!(
+            "{letter}:\\"
+        ))));
+    }
+    // The first name is what the letter stands for now.
+    let first = target[..written]
+        .split(|unit| *unit == 0)
+        .next()
+        .unwrap_or_default();
+    let name = String::from_utf16(first).map_err(|_| ProgramRefused::Elsewhere)?;
+    match name.strip_prefix(DEVICE_PREFIX) {
+        Some(device) if !device.is_empty() && !device.contains('\\') => Ok(()),
+        _ => Err(ProgramRefused::Elsewhere),
+    }
 }
 
 /// The file itself was checked by [`walk`], by the rights over a file.
@@ -734,6 +805,42 @@ mod tests {
             program_check(Path::new(r"\\example\share\example-tool.exe")),
             Err(ProgramRefused::Elsewhere)
         );
+    }
+
+    /// A drive letter made with `subst` to stand for a folder is refused as
+    /// elsewhere, though the folder it stands for passes by its own path;
+    /// the drive the temporary folder is on is a fixed local disk (finding
+    /// D4, decision 0271).
+    #[test]
+    fn a_substituted_drive_letter_is_refused_and_a_fixed_local_disk_is_not() {
+        let place = Place::new("subst");
+        assert_eq!(program_check(&place.program()), Ok(()));
+        let Some(letter) = (b'M'..=b'Z')
+            .rev()
+            .map(char::from)
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())
+        else {
+            println!("skipped: no drive letter is free on this machine");
+            return;
+        };
+        let made = std::process::Command::new("subst")
+            .arg(format!("{letter}:"))
+            .arg(&place.0)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let through = PathBuf::from(format!("{letter}:\\real\\example-tool.exe"));
+        let verdict = program_check(&through);
+        let present = through.exists();
+        let _ = std::process::Command::new("subst")
+            .arg(format!("{letter}:"))
+            .arg("/D")
+            .output();
+        assert!(
+            present,
+            "the substituted letter did not lead to the program"
+        );
+        assert_eq!(verdict, Err(ProgramRefused::Elsewhere));
     }
 
     /// A folder the engine keeps private is closed to other users by its

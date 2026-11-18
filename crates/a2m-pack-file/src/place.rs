@@ -18,7 +18,7 @@ use std::io::{ErrorKind, Read as _};
 use std::path::PathBuf;
 
 use a2m_core::Digest;
-use a2m_provider::{Access, CheckedPath, EntryKind, StepFailure};
+use a2m_provider::{Access, CheckedPath, EntryKind, HeldFolder, StepFailure};
 
 use crate::codes::{self, stop};
 use crate::open::{held_by_another, locked, missing, not_allowed, unavailable};
@@ -33,59 +33,32 @@ pub(crate) fn is_one_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
-/// What tells one file from another that took its name. On Unix it is the
-/// device and the file's number, which no other file has. Elsewhere safe
-/// code is given neither, and the moment the file was made, with its
-/// length, stands in for them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Identity {
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    file: u64,
-    #[cfg(not(unix))]
-    created: std::time::SystemTime,
-    #[cfg(not(unix))]
-    len: u64,
-}
+/// What tells one file from another that took its name: the provider's
+/// identity, the device and the file's number on Linux and macOS, and the
+/// volume's serial number and the file's identifier on Windows, read from
+/// a handle there (decision 0272). No other file has it while this one
+/// exists, whatever is written in it.
+pub(crate) type Identity = a2m_provider::FileIdentity;
 
-impl Identity {
-    /// The identity the metadata shows, where the system gives one.
-    #[cfg(unix)]
-    pub(crate) fn of(metadata: &Metadata) -> Option<Self> {
-        use std::os::unix::fs::MetadataExt as _;
-        Some(Self {
-            device: metadata.dev(),
-            file: metadata.ino(),
-        })
-    }
-
-    /// The identity the metadata shows, where the system gives one.
-    #[cfg(not(unix))]
-    pub(crate) fn of(metadata: &Metadata) -> Option<Self> {
-        metadata.created().ok().map(|created| Self {
-            created,
-            len: metadata.len(),
-        })
-    }
-}
-
-/// What tells one file from another for as long as it grows: the device and
-/// the file's number on Unix, and elsewhere the moment it was made, which
-/// safe code is given and which an append does not change. Text, to be
+/// What tells one file from another for as long as it grows, from its
+/// open handle and what it showed: the device and the file's number on
+/// Unix, and elsewhere the volume and the file's identifier. Text, to be
 /// digested into a position and never shown as it is.
 #[cfg(unix)]
-pub(crate) fn lasting_identity(metadata: &Metadata) -> Option<String> {
+pub(crate) fn lasting_identity(_file: &File, metadata: &Metadata) -> Option<String> {
     use std::os::unix::fs::MetadataExt as _;
     Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
 }
 
 /// See the Unix form.
 #[cfg(not(unix))]
-pub(crate) fn lasting_identity(metadata: &Metadata) -> Option<String> {
-    let made = metadata.created().ok()?;
-    let since = made.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(format!("made:{}", since.as_nanos()))
+pub(crate) fn lasting_identity(file: &File, _metadata: &Metadata) -> Option<String> {
+    let identity = a2m_provider::FileIdentity::of_open(file).ok()?;
+    let mut text = String::from("id:");
+    for byte in identity.to_bytes() {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    Some(text)
 }
 
 /// How many names a file has. Only Unix says; elsewhere it is not known.
@@ -230,6 +203,26 @@ impl Folder {
         self.present()
     }
 
+    /// For a write of a folder's entries: the folder, held for the calls
+    /// that follow, so each acts in this one folder whatever is put at its
+    /// path meanwhile (decision 0272). No part of the way from the root is
+    /// a link as the surface names it, and the folder is reached again from
+    /// the root down with no link followed.
+    pub(crate) fn held(&self) -> Result<HeldFolder, StepFailure> {
+        self.reached_by_no_link()?;
+        self.checked.hold_folder().map_err(|failure| {
+            if failure.code() == &a2m_provider::codes::PATH_MISSING {
+                missing()
+            } else if failure.code() == &a2m_provider::codes::PATH_NOT_ALLOWED {
+                StepFailure::not_sent(not_allowed(
+                    "a link stands in the way to its folder, so a write would land in a folder the surface does not name",
+                ))
+            } else {
+                StepFailure::not_sent(unavailable("is in a folder that cannot be held"))
+            }
+        })
+    }
+
     /// The path of one name in the folder: the name itself, whatever is
     /// there, with no link at it followed.
     pub(crate) fn beside(&self, name: &str) -> Result<PathBuf, StepFailure> {
@@ -367,7 +360,12 @@ impl Named {
             .metadata()
             .map_err(|_| StepFailure::not_sent(unavailable("cannot be looked at once open")))?;
         let named = self.regular()?;
-        if !opened.file_type().is_file() || Identity::of(&opened) != Identity::of(&named) {
+        // The handle's own identity, and the name's, each from the system:
+        // on Windows from a handle, so a file put at the name since, which
+        // may carry the old one's creation time, is told apart.
+        let by_handle = a2m_provider::FileIdentity::of_open(&file).ok();
+        let by_name = self.checked.identity().ok();
+        if !opened.file_type().is_file() || by_handle.is_none() || by_handle != by_name {
             return Err(StepFailure::not_sent(unavailable(
                 "was put under its name while it was being opened, so it was not used",
             )));

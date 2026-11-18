@@ -1235,7 +1235,7 @@ fn every_problem_is_reported_in_one_pass_with_its_position_and_reason() {
             (3, 2, Some("qty"), "value_unparsable"),
             (4, 1, Some("code"), "schema_invalid"),
             (4, 3, Some("day"), "value_unparsable"),
-            (5, 1, None, "key_not_unique"),
+            (5, 1, None, "source_key_not_unique"),
             (7, 2, Some("qty"), "value_out_of_range"),
         ]
     );
@@ -1582,7 +1582,7 @@ fn rows_handed_in_by_a_caller_go_through_the_same_validation() {
     assert_eq!(
         found,
         [
-            (2, None, "key_not_unique"),
+            (2, None, "source_key_not_unique"),
             (3, Some("extra"), "schema_invalid"),
             (3, Some("qty"), "value_unparsable"),
             (4, Some("code"), "schema_invalid"),

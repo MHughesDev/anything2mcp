@@ -7,8 +7,12 @@
 //! and none makes the kernel ask another machine anything (a neighbour dump
 //! lists the cache; it does not refresh it).
 
+use std::os::fd::OwnedFd;
+use std::time::Duration;
+
 use rustix::net::netlink::SocketAddrNetlink;
-use rustix::net::{AddressFamily, RecvFlags, SendFlags, SocketFlags, SocketType};
+use rustix::net::sockopt::{self, Timeout};
+use rustix::net::{AddressFamily, RecvFlags, SendFlags, SocketAddrAny, SocketFlags, SocketType};
 
 use crate::bound::MOST_TABLE_BYTES;
 use crate::error::{Fact, NetError};
@@ -32,6 +36,13 @@ const NLM_F_DUMP: u16 = 0x300;
 const NLM_F_DUMP_INTR: u16 = 0x10;
 const HEADER: usize = 16;
 const SEQUENCE: u32 = 1;
+/// The longest one receive waits. The kernel answers a dump at once; a
+/// receive that waits this long is a failure (`net_read_failed`), never a
+/// thread blocked for good.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// The most datagrams from a sender other than the kernel dropped in one
+/// dump before the reader stops.
+const MOST_FOREIGN_DATAGRAMS: usize = 1024;
 
 /// One message of a dump: its type and its body after the header.
 pub(crate) struct Message {
@@ -77,14 +88,7 @@ fn dump_once(request: u16, fact: Fact) -> Result<Option<Dump>, NetError> {
             what: "a request this reader does not send",
         });
     };
-    let io = |e: rustix::io::Errno| NetError::from_io(fact, &std::io::Error::from(e));
-    let socket = rustix::net::socket_with(
-        AddressFamily::NETLINK,
-        SocketType::RAW,
-        SocketFlags::CLOEXEC,
-        None,
-    )
-    .map_err(io)?;
+    let socket = open(fact, READ_TIMEOUT)?;
     let length = HEADER + body;
     let mut message = Vec::with_capacity(length);
     message.extend_from_slice(&u32::try_from(length).unwrap_or(0).to_ne_bytes());
@@ -97,14 +101,55 @@ fn dump_once(request: u16, fact: Fact) -> Result<Option<Dump>, NetError> {
     message.resize(length, 0);
     // To the kernel: port 0, no multicast groups.
     let kernel = SocketAddrNetlink::new(0, 0);
-    rustix::net::sendto(&socket, &message, SendFlags::empty(), &kernel).map_err(io)?;
+    rustix::net::sendto(&socket, &message, SendFlags::empty(), &kernel).map_err(io(fact))?;
+    read_dump(&socket, fact)
+}
 
+fn io(fact: Fact) -> impl Fn(rustix::io::Errno) -> NetError {
+    move |e| NetError::from_io(fact, &std::io::Error::from(e))
+}
+
+/// A route-netlink socket whose every receive waits at most `timeout`.
+fn open(fact: Fact, timeout: Duration) -> Result<OwnedFd, NetError> {
+    let socket = rustix::net::socket_with(
+        AddressFamily::NETLINK,
+        SocketType::RAW,
+        SocketFlags::CLOEXEC,
+        None,
+    )
+    .map_err(io(fact))?;
+    sockopt::set_socket_timeout(&socket, Timeout::Recv, Some(timeout)).map_err(io(fact))?;
+    Ok(socket)
+}
+
+/// Whether a datagram came from this machine's kernel, which sends from
+/// port 0. Another process in the same namespace may address this socket's
+/// port; what it sends is dropped unread.
+fn from_kernel(sender: Option<SocketAddrAny>) -> bool {
+    sender
+        .and_then(|address| SocketAddrNetlink::try_from(address).ok())
+        .is_some_and(|address| address.pid() == 0)
+}
+
+/// Reads the kernel's answer to the one request sent on `socket`.
+fn read_dump(socket: &OwnedFd, fact: Fact) -> Result<Option<Dump>, NetError> {
     let mut messages = Vec::new();
     let mut total = 0usize;
+    let mut foreign = 0usize;
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let (_, received) =
-            rustix::net::recv(&socket, &mut buffer[..], RecvFlags::TRUNC).map_err(io)?;
+        let (_, received, sender) =
+            rustix::net::recvfrom(socket, &mut buffer[..], RecvFlags::TRUNC).map_err(io(fact))?;
+        if !from_kernel(sender) {
+            foreign += 1;
+            if foreign > MOST_FOREIGN_DATAGRAMS {
+                return Err(NetError::Unreadable {
+                    fact,
+                    what: "many messages from a sender other than the kernel",
+                });
+            }
+            continue;
+        }
         if received > buffer.len() {
             return Err(NetError::Unreadable {
                 fact,
@@ -255,5 +300,68 @@ mod tests {
             dump(16, Fact::Interfaces),
             Err(NetError::Unreadable { .. })
         ));
+    }
+
+    /// A request for the link table, as `dump_once` sends it.
+    fn link_request() -> Vec<u8> {
+        let length = HEADER + 16;
+        let mut message = Vec::new();
+        message.extend_from_slice(&u32::try_from(length).unwrap().to_ne_bytes());
+        message.extend_from_slice(&RTM_GETLINK.to_ne_bytes());
+        message.extend_from_slice(&(NLM_F_REQUEST | NLM_F_DUMP).to_ne_bytes());
+        message.extend_from_slice(&SEQUENCE.to_ne_bytes());
+        message.extend_from_slice(&0u32.to_ne_bytes());
+        message.resize(length, 0);
+        message
+    }
+
+    #[test]
+    fn a_message_from_another_process_is_dropped_unread() {
+        let fact = Fact::Interfaces;
+        let reader = open(fact, READ_TIMEOUT).unwrap();
+        // Take a port now, so that another socket can address it.
+        rustix::net::bind(&reader, &SocketAddrNetlink::new(0, 0)).unwrap();
+        let port = SocketAddrNetlink::try_from(rustix::net::getsockname(&reader).unwrap())
+            .unwrap()
+            .pid();
+        assert_ne!(port, 0);
+        // Another socket, standing for another process, sends this reader a
+        // forged end of the dump before the kernel answers.
+        let forger = open(fact, READ_TIMEOUT).unwrap();
+        let mut forged = Vec::new();
+        forged.extend_from_slice(&20u32.to_ne_bytes());
+        forged.extend_from_slice(&NLMSG_DONE.to_ne_bytes());
+        forged.extend_from_slice(&0u16.to_ne_bytes());
+        forged.extend_from_slice(&SEQUENCE.to_ne_bytes());
+        forged.extend_from_slice(&0u32.to_ne_bytes());
+        forged.extend_from_slice(&0i32.to_ne_bytes());
+        rustix::net::sendto(
+            &forger,
+            &forged,
+            SendFlags::empty(),
+            &SocketAddrNetlink::new(port, 0),
+        )
+        .unwrap();
+        rustix::net::sendto(
+            &reader,
+            &link_request(),
+            SendFlags::empty(),
+            &SocketAddrNetlink::new(0, 0),
+        )
+        .unwrap();
+        // Read as the forged end, the dump would hold nothing; the kernel's
+        // answer holds at least the loopback interface.
+        let dump = read_dump(&reader, fact).unwrap().unwrap();
+        assert!(dump.messages.iter().any(|m| m.kind == 16));
+    }
+
+    #[test]
+    fn a_kernel_that_never_answers_is_a_read_failure_not_a_wait_for_good() {
+        let fact = Fact::Routes;
+        // Nothing was asked, so nothing comes; the receive's limit ends it.
+        let socket = open(fact, Duration::from_millis(50)).unwrap();
+        let error = read_dump(&socket, fact).err().unwrap();
+        assert!(matches!(error, NetError::Failed { .. }), "{error:?}");
+        assert_eq!(a2m_core::Failure::from(error).code(), &NetError::FAILED);
     }
 }

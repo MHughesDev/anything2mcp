@@ -10,11 +10,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_core::{
-    Environment, Failure, FailureClass, FailureCode, Identity, PrincipalId, SessionId,
+    Digest, Environment, Failure, FailureClass, FailureCode, Identity, PrincipalId, SessionId,
     SessionState, TargetName, Timestamp, WorkspaceId,
 };
 use a2m_telemetry::{Clock, Telemetry};
@@ -46,6 +46,35 @@ pub const CHECKS_FAILED: &str = "a2m.session.checks_failed";
 /// How long a renewal took.
 pub const RENEWAL_DURATION: &str = "a2m.session.renewal.duration";
 
+/// How many sign-ins a session may be given without its person within
+/// [`AUTOMATIC_SIGN_IN_WINDOW`], before the next waits for the person
+/// (decision 0269): 4. A sign-in counts when it made the session hold, and
+/// is one a lease made from the stored credential, the renewal's full
+/// sign-in, or one a program asked for. The person's own sign-in starts the
+/// count again. Four in an hour is a session ended every quarter of an
+/// hour, shorter than the idle limit systems commonly set; a target that
+/// declares a shorter maximum age is allowed the sign-ins that age makes.
+pub const AUTOMATIC_SIGN_INS: u32 = 4;
+
+/// The window [`AUTOMATIC_SIGN_INS`] is counted over: one hour.
+pub const AUTOMATIC_SIGN_IN_WINDOW: Duration = Duration::from_secs(60 * 60);
+
+/// The most sign-ins a declared maximum age adds to the window's allowance:
+/// one a minute.
+const AGE_ALLOWANCE_MOST: u32 = 60;
+
+/// The cause of a `signed_in` event of a sign-in a lease made from the
+/// stored credential, and of the `sign_in_started` event before it.
+const BY_LEASE: &str = "stored_credential";
+/// The cause of a sign-in a program asked for on the person's behalf.
+const BY_ASK: &str = "requested";
+/// The cause of a sign-in the person carried out themself.
+const BY_PERSON: &str = "by_person";
+/// The cause of a `renewed` event of the renewal's full sign-in.
+pub(crate) const FULL_SIGN_IN_CAUSE: &str = "full_sign_in";
+/// The cause of a `renewed` event of any other rung.
+const RENEWAL: &str = "renewal";
+
 /// The keeper's own settings. The defaults are the ones spec section 215
 /// names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +90,12 @@ pub struct KeeperSettings {
     pub work_limit: Duration,
     /// How long before a credential's own expiry it is renewed: 30 seconds.
     pub renew_ahead: Duration,
+    /// How many sign-ins without the person a session may be given within
+    /// `automatic_sign_in_window`: [`AUTOMATIC_SIGN_INS`].
+    pub automatic_sign_ins: u32,
+    /// The window those sign-ins are counted over:
+    /// [`AUTOMATIC_SIGN_IN_WINDOW`].
+    pub automatic_sign_in_window: Duration,
 }
 
 impl Default for KeeperSettings {
@@ -70,8 +105,125 @@ impl Default for KeeperSettings {
             probe_every: Duration::from_secs(15 * 60),
             work_limit: Duration::from_secs(10 * 60),
             renew_ahead: Duration::from_secs(30),
+            automatic_sign_ins: AUTOMATIC_SIGN_INS,
+            automatic_sign_in_window: AUTOMATIC_SIGN_IN_WINDOW,
         }
     }
+}
+
+/// Who carries out a sign-in that [`Keeper::sign_in_by`] starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignInBy {
+    /// A program asks for it on the person's behalf: an agent's
+    /// `session.login`. For a provider that works from a stored credential,
+    /// a credential tried up to the attempt limit is not sent again as it
+    /// is stored, and a session signed in too often without its person is
+    /// not signed in again: the call stops at once (decision 0269).
+    Asked,
+    /// The person carries it out themself: from their own page of the
+    /// sign-in, or at their own command line. It is tried, and the count
+    /// of attempts and of sign-ins without the person starts again.
+    Person,
+}
+
+/// Where a sign-in came from, as the keeper counts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// A lease, from the stored credential, with nobody asking.
+    Lease,
+    /// A program, on the person's behalf.
+    Asked,
+    /// The person.
+    Person,
+}
+
+impl Origin {
+    const fn automatic(self) -> bool {
+        matches!(self, Self::Lease)
+    }
+
+    const fn cause(self) -> &'static str {
+        match self {
+            Self::Lease => BY_LEASE,
+            Self::Asked => BY_ASK,
+            Self::Person => BY_PERSON,
+        }
+    }
+}
+
+/// The attempts counted against one stored credential, and which
+/// credential: what a row's `stored_attempts` and `attempted_with` hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Count {
+    attempts: u32,
+    with: Option<Digest>,
+}
+
+impl Count {
+    const NONE: Self = Self {
+        attempts: 0,
+        with: None,
+    };
+
+    const fn kept(row: &SessionRow) -> Self {
+        Self {
+            attempts: row.stored_attempts,
+            with: row.attempted_with,
+        }
+    }
+
+    /// The same count, about the credential `mark` names: an attempt is
+    /// about to be made with it.
+    const fn about(self, mark: Digest) -> Self {
+        Self {
+            attempts: self.attempts,
+            with: Some(mark),
+        }
+    }
+
+    const fn one_more(self) -> Self {
+        Self {
+            attempts: self.attempts.saturating_add(1),
+            with: self.with,
+        }
+    }
+
+    fn write(self, row: &mut SessionRow) {
+        row.stored_attempts = self.attempts;
+        row.attempted_with = if self.attempts == 0 && self.with.is_none() {
+            None
+        } else {
+            self.with
+        };
+    }
+}
+
+/// Whether a sign-in that failed so may have reached the system with the
+/// credential, and ended in an answer nobody could read: an attempt, which
+/// is counted (rule 7, decision 0269). Not counted: a failure that shows
+/// nothing was sent or the engine could not act (`input`, `policy`,
+/// `busy`); a connection refused in its handshake, before anything was
+/// sent; and a `transient` failure to reach the system, which spec section
+/// 215 does not count. A provider that loses the answer after sending says
+/// `possible_commit` or `unknown_variant`, never `transient`.
+fn may_have_sent(failure: &Failure) -> bool {
+    let code = failure.code();
+    let handshake = [
+        &crate::tls::CERTIFICATE_UNTRUSTED,
+        &crate::tls::CERTIFICATE_NAME_MISMATCH,
+        &crate::tls::CERTIFICATE_EXPIRED,
+        &crate::tls::CERTIFICATE_NOT_VERIFIED,
+        &crate::tls::TLS_HANDSHAKE_FAILED,
+    ]
+    .contains(&code);
+    !handshake
+        && !matches!(
+            failure.class(),
+            FailureClass::Input
+                | FailureClass::Policy
+                | FailureClass::Busy
+                | FailureClass::Transient
+        )
 }
 
 /// Who ended a session.
@@ -127,6 +279,29 @@ pub struct SessionStatus {
 #[derive(Clone)]
 pub struct Keeper {
     inner: Arc<Inner>,
+}
+
+/// A way back to a keeper that does not keep it: for what the keeper
+/// itself holds, a probe above all, which leases through the keeper and is
+/// held by the keeper's work. A strong [`Keeper`] there would make a cycle
+/// that keeps a closed engine's keeper, its store, and its worker forever.
+#[derive(Clone)]
+pub struct WeakKeeper {
+    inner: Weak<Inner>,
+}
+
+impl WeakKeeper {
+    /// The keeper, while anything else still holds it.
+    #[must_use]
+    pub fn upgrade(&self) -> Option<Keeper> {
+        self.inner.upgrade().map(|inner| Keeper { inner })
+    }
+}
+
+impl fmt::Debug for WeakKeeper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WeakKeeper").finish_non_exhaustive()
+    }
 }
 
 struct Inner {
@@ -384,7 +559,7 @@ impl Keeper {
             )
             .await;
         if let Ok(Some(suspect)) = moved {
-            inner.count(CHECKS_FAILED);
+            inner.counted_metric(CHECKS_FAILED);
             let inner = Arc::clone(inner);
             tokio::spawn(async move {
                 let _busy = busy;
@@ -393,28 +568,57 @@ impl Keeper {
         }
     }
 
-    /// Starts a sign-in for a session: `session.login`. For a provider that
-    /// needs a person, the person is asked through the work interface; for
-    /// one that works from a stored credential, the credential is tried
-    /// once more, whatever was refused before.
+    /// Starts a sign-in a program asks for on the person's behalf:
+    /// `session.login` from an agent. The same as [`Keeper::sign_in_by`]
+    /// with [`SignInBy::Asked`], which is the safe reading when it is not
+    /// known that the person carries the sign-in out themself.
     ///
     /// # Errors
     ///
-    /// `policy`/`identity_not_allowed`; `input` when the auth entry is not
-    /// usable.
+    /// As [`Keeper::sign_in_by`].
     pub async fn sign_in(
         &self,
         key: &SessionKey,
         entry: Arc<AuthEntry>,
         acting_for: Option<PrincipalId>,
     ) -> Result<SignInTicket, Failure> {
+        self.sign_in_by(key, entry, acting_for, SignInBy::Asked)
+            .await
+    }
+
+    /// Starts a sign-in for a session: `session.login`. For a provider that
+    /// needs a person, the person is asked through the work interface. For
+    /// one that works from a stored credential, the credential is tried
+    /// once more when the person carries the sign-in out themself, or when
+    /// it was stored again since its attempts were counted; a sign-in a
+    /// program asks for with the same credential, at the attempt limit, is
+    /// not started, nor one for a session signed in too often without its
+    /// person (decision 0269). The count is in the session's record, so a
+    /// restart of the engine does not clear it.
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`identity_not_allowed`; `input` when the auth entry is not
+    /// usable; for [`SignInBy::Asked`], `session_expired` with
+    /// `credential_refused` at the attempt limit, or `needs_login` when the
+    /// session was signed in too often without its person; the store's
+    /// failures.
+    pub async fn sign_in_by(
+        &self,
+        key: &SessionKey,
+        entry: Arc<AuthEntry>,
+        acting_for: Option<PrincipalId>,
+        by: SignInBy,
+    ) -> Result<SignInTicket, Failure> {
         let inner = &self.inner;
         owner_only(key, acting_for.as_ref())?;
-        checked(
-            inner.providers.get(&entry.provider)?.as_ref(),
-            &entry,
-            &key.target,
-        )?;
+        let provider = inner.providers.get(&entry.provider)?;
+        checked(provider.as_ref(), &entry, &key.target)?;
+        let needs = provider.needs();
+        let origin = match by {
+            SignInBy::Asked => Origin::Asked,
+            SignInBy::Person => Origin::Person,
+        };
         let surfaces = &entry.surfaces;
         if !surfaces.from_published && !surfaces.shown_to_person {
             return Err(failure::not_published(
@@ -439,15 +643,32 @@ impl Keeper {
                     state: row.state,
                 });
             }
+            let (count, mark) = inner.counted(&row, &entry).await?;
+            let count = match origin {
+                // The person's own sign-in is theirs to try.
+                Origin::Person => Count::NONE,
+                _ if needs.person => count,
+                _ => {
+                    if count.attempts >= entry.attempt_limit {
+                        return Err(inner.spent(row.id));
+                    }
+                    if let Some(failure) = inner.too_often(&row, &entry).await? {
+                        inner.fail(row.id, failure.clone());
+                        return Err(failure);
+                    }
+                    count
+                }
+            }
+            .about(mark);
             let busy = inner.mark_busy(row.id);
             let moved = inner
                 .advance(
                     &row,
                     SessionState::SigningIn,
                     EventKind::SignInStarted,
-                    "requested",
+                    origin.cause(),
                     |next| {
-                        next.stored_attempts = 0;
+                        count.write(next);
                         next.provider = entry.provider.clone();
                     },
                     Saved::Keep,
@@ -458,7 +679,7 @@ impl Keeper {
                     session: signing.id,
                     state: signing.state,
                 };
-                inner.spawn_sign_in(signing, entry, false, busy);
+                inner.spawn_sign_in(signing, entry, origin, busy);
                 return Ok(ticket);
             }
         }
@@ -602,6 +823,15 @@ impl Keeper {
         }
     }
 
+    /// A way back to this keeper that does not keep it alive: what a probe
+    /// the keeper's work holds should hold of the keeper.
+    #[must_use]
+    pub fn downgrade(&self) -> WeakKeeper {
+        WeakKeeper {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+
     /// How many calls are waiting for a session now: for one that is
     /// signing in, being checked, being renewed, or wanting a person.
     #[must_use]
@@ -691,7 +921,7 @@ impl Inner {
             .send_modify(|turn| *turn = turn.wrapping_add(1));
     }
 
-    fn count(&self, name: &'static str) {
+    fn counted_metric(&self, name: &'static str) {
         if let Some(telemetry) = &self.telemetry {
             telemetry.count(name, &[], 1);
         }
@@ -786,6 +1016,74 @@ impl Inner {
         locked(&self.failures).get(&session).cloned()
     }
 
+    /// Why a stored credential at the attempt limit is not sent: the
+    /// failure its last attempt ended with, while this process knows it.
+    fn spent(&self, session: SessionId) -> Failure {
+        self.last_failure(session)
+            .unwrap_or_else(failure::attempts_spent)
+    }
+
+    /// The attempts counted against `entry`'s stored credential as it is
+    /// stored now, and its mark. A count kept with another mark is about a
+    /// credential the person has stored again since, and is none.
+    async fn counted(
+        &self,
+        row: &SessionRow,
+        entry: &AuthEntry,
+    ) -> Result<(Count, Digest), Failure> {
+        let mark = self
+            .store
+            .credential_mark(&row.key, &entry.credentials)
+            .await?;
+        let count = match row.attempted_with {
+            Some(with) if with != mark => Count::NONE,
+            _ => Count::kept(row),
+        };
+        Ok((count, mark))
+    }
+
+    /// The failure that stops a sign-in without the person, when the
+    /// session was given as many as the keeper allows within its window
+    /// since its person last signed in themself (decision 0269); `None`
+    /// when one more may be made.
+    async fn too_often(
+        &self,
+        row: &SessionRow,
+        entry: &AuthEntry,
+    ) -> Result<Option<Failure>, Failure> {
+        let window = self.settings.automatic_sign_in_window;
+        let by_age = entry
+            .absolute
+            .filter(|age| !age.is_zero())
+            .map_or(0, |age| {
+                u32::try_from(window.as_millis().div_ceil(age.as_millis()))
+                    .unwrap_or(u32::MAX)
+                    .min(AGE_ALLOWANCE_MOST)
+            });
+        let allowed = self.settings.automatic_sign_ins.saturating_add(by_age);
+        let minutes = window.as_secs() / 60;
+        if allowed == 0 {
+            return Ok(Some(failure::signed_in_too_often(0, minutes)));
+        }
+        let recent = self.store.sign_ins(row.id, allowed).await?;
+        // Newest first, back to the person's own sign-in.
+        let without: Vec<Timestamp> = recent
+            .iter()
+            .take_while(|(cause, _)| cause != BY_PERSON)
+            .filter(|(cause, _)| [BY_LEASE, BY_ASK, FULL_SIGN_IN_CAUSE].contains(&cause.as_str()))
+            .map(|(_, at)| *at)
+            .collect();
+        let (Some(newest), Some(oldest)) = (without.first(), without.last()) else {
+            return Ok(None);
+        };
+        let full = u32::try_from(without.len()).unwrap_or(u32::MAX) >= allowed;
+        if full && between(*oldest, *newest) < window {
+            Ok(Some(failure::signed_in_too_often(allowed, minutes)))
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn perform(&self, row: &SessionRow, entry: &Arc<AuthEntry>, work: Work) -> WorkOutcome {
         self.work
             .perform(KeeperJob {
@@ -823,6 +1121,7 @@ impl Inner {
             last_used_at: None,
             stored_attempts: 0,
             wants: None,
+            attempted_with: None,
         };
         let event = SessionEvent {
             session: row.id,
@@ -907,19 +1206,30 @@ impl Inner {
     /// Ends a session that could not be kept, and has the home runner drop
     /// what it holds.
     async fn expire(&self, row: &SessionRow, cause: &'static str) -> Result<(), Failure> {
+        // Lost state is not a refusal: the stored credential may be tried
+        // again.
+        let count = if cause == "state_lost" {
+            Count::NONE
+        } else {
+            Count::kept(row)
+        };
+        self.expire_counted(row, cause, count).await
+    }
+
+    /// The same, with `count` as the attempts counted.
+    async fn expire_counted(
+        &self,
+        row: &SessionRow,
+        cause: &'static str,
+        count: Count,
+    ) -> Result<(), Failure> {
         let moved = self
             .advance(
                 row,
                 SessionState::Expired,
                 EventKind::Expired,
                 cause,
-                |next| {
-                    // Lost state is not a refusal: the stored credential may
-                    // be tried again.
-                    if cause == "state_lost" {
-                        next.stored_attempts = 0;
-                    }
-                },
+                |next| count.write(next),
                 Saved::Delete,
             )
             .await?;
@@ -934,7 +1244,7 @@ impl Inner {
         &self,
         row: &SessionRow,
         reason: PersonReason,
-        attempts: u32,
+        count: Count,
     ) -> Result<(), Failure> {
         let moved = self
             .advance(
@@ -944,13 +1254,13 @@ impl Inner {
                 reason.as_str(),
                 |next| {
                     next.wants = Some(reason);
-                    next.stored_attempts = attempts;
+                    count.write(next);
                 },
                 Saved::Keep,
             )
             .await?;
         if let Some(waiting) = moved {
-            self.count(FORCED_SIGN_INS);
+            self.counted_metric(FORCED_SIGN_INS);
             self.work
                 .ask_person(&session_ref(&waiting), PersonAsk::Notify { reason })
                 .await;
@@ -960,13 +1270,20 @@ impl Inner {
 
     /// A stored credential was refused: it is counted, and at the limit the
     /// session waits for a person instead of trying again.
-    async fn refused(&self, row: &SessionRow, entry: &AuthEntry) -> Result<(), Failure> {
+    /// `count` is the attempts counted before this one, about the
+    /// credential that was refused.
+    async fn refused(
+        &self,
+        row: &SessionRow,
+        entry: &AuthEntry,
+        count: Count,
+    ) -> Result<(), Failure> {
         self.fail(
             row.id,
             failure::credential_refused("the side that checks it"),
         );
-        let attempts = row.stored_attempts.saturating_add(1);
-        if attempts >= entry.attempt_limit {
+        let attempts = count.one_more();
+        if attempts.attempts >= entry.attempt_limit {
             return self
                 .want_person(row, PersonReason::CredentialRefused, attempts)
                 .await;
@@ -981,7 +1298,7 @@ impl Inner {
             to,
             kind,
             "credential_refused",
-            |next| next.stored_attempts = attempts,
+            |next| attempts.write(next),
             Saved::Delete,
         )
         .await
@@ -989,14 +1306,17 @@ impl Inner {
     }
 
     /// Records the credentials the home runner now holds, and makes the
-    /// session valid at their epoch.
+    /// session valid at their epoch. `automatic` is, for work nobody asked
+    /// for, the attempts counted before it, about the credential it used;
+    /// `None` for work a person or a program asked for, whose success
+    /// clears the count.
     async fn held(
         &self,
         row: &SessionRow,
         outcome: WorkOutcome,
         kind: EventKind,
         cause: &'static str,
-        automatic: bool,
+        automatic: Option<Count>,
         fresh: bool,
     ) -> Result<(), Failure> {
         let WorkOutcome::Held {
@@ -1010,10 +1330,9 @@ impl Inner {
             return Ok(());
         };
         let now = self.now();
-        let attempts = if confirmed || !automatic {
-            0
-        } else {
-            row.stored_attempts.saturating_add(1)
+        let attempts = match automatic {
+            Some(count) if !confirmed => count.one_more(),
+            _ => Count::NONE,
         };
         let moved = self
             .advance(
@@ -1026,7 +1345,7 @@ impl Inner {
                     next.expires_at = expires_at;
                     next.profile = profile;
                     next.checked_at = Some(now);
-                    next.stored_attempts = attempts;
+                    attempts.write(next);
                     if fresh || next.signed_in_at.is_none() {
                         next.signed_in_at = Some(now);
                     }
@@ -1066,11 +1385,13 @@ impl Inner {
         self.perform(&ended, &entry, Work::Forget).await;
     }
 
+    /// `row` is the session in `signing_in`, its count of attempts about
+    /// the credential this sign-in uses.
     fn spawn_sign_in(
         self: &Arc<Self>,
         row: SessionRow,
         entry: Arc<AuthEntry>,
-        automatic: bool,
+        origin: Origin,
         busy: Busy,
     ) {
         let inner = Arc::clone(self);
@@ -1087,7 +1408,7 @@ impl Inner {
                 drop(drafted);
                 inner.allow(row.id, &entry);
             }
-            if let Err(failure) = inner.signed_in(&row, &entry, automatic, outcome).await {
+            if let Err(failure) = inner.signed_in(&row, &entry, origin, outcome).await {
                 inner.fail(row.id, failure);
             }
             inner.wake();
@@ -1098,47 +1419,48 @@ impl Inner {
         &self,
         row: &SessionRow,
         entry: &AuthEntry,
-        automatic: bool,
+        origin: Origin,
         outcome: WorkOutcome,
     ) -> Result<(), Failure> {
-        let abandon = |cause: &'static str| {
+        let abandon = |cause: &'static str, count: Count| {
             self.advance(
                 row,
                 SessionState::Absent,
                 EventKind::Abandoned,
                 cause,
-                |_| {},
+                move |next| count.write(next),
                 Saved::Delete,
             )
         };
+        let count = Count::kept(row);
+        let automatic = origin.automatic();
         match outcome {
             held @ WorkOutcome::Held { .. } => {
-                self.held(row, held, EventKind::SignedIn, "sign_in", automatic, true)
-                    .await
+                self.held(
+                    row,
+                    held,
+                    EventKind::SignedIn,
+                    origin.cause(),
+                    automatic.then_some(count),
+                    true,
+                )
+                .await
             }
-            WorkOutcome::Refused if automatic => self.refused(row, entry).await,
+            WorkOutcome::Refused if automatic => self.refused(row, entry, count).await,
             WorkOutcome::Refused => {
                 self.fail(
                     row.id,
                     failure::credential_refused("the side that checks it"),
                 );
                 // The refused credential is counted as `refused` counts it,
-                // so that no lease tries it again by itself: a lockout
-                // would count that as a second failure.
-                let attempts = row.stored_attempts.saturating_add(1);
-                self.advance(
-                    row,
-                    SessionState::Absent,
-                    EventKind::Abandoned,
-                    "credential_refused",
-                    |next| next.stored_attempts = attempts,
-                    Saved::Delete,
-                )
-                .await
-                .map(|_| ())
+                // so that no lease, and no program that asks, tries it again:
+                // a lockout would count that as a second failure.
+                abandon("credential_refused", count.one_more())
+                    .await
+                    .map(|_| ())
             }
             WorkOutcome::NeedsPerson(reason) if automatic => {
-                self.want_person(row, reason, row.stored_attempts).await
+                self.want_person(row, reason, count).await
             }
             WorkOutcome::NeedsPerson(reason) => {
                 self.fail(
@@ -1148,13 +1470,24 @@ impl Inner {
                         _ => failure::needs_login("the sign-in was not completed"),
                     },
                 );
-                abandon("not_completed").await.map(|_| ())
+                abandon("not_completed", count).await.map(|_| ())
             }
             WorkOutcome::Failed(failure) => {
+                let unread = may_have_sent(&failure);
                 self.fail(row.id, failure);
-                abandon("sign_in_failed").await.map(|_| ())
+                if !unread {
+                    return abandon("sign_in_failed", count).await.map(|_| ());
+                }
+                // The credential may have been sent and nobody can read the
+                // answer: it is an attempt, and at the limit the session
+                // waits for the person instead of sending it again.
+                let attempts = count.one_more();
+                if automatic && attempts.attempts >= entry.attempt_limit {
+                    return self.want_person(row, PersonReason::SignIn, attempts).await;
+                }
+                abandon("outcome_unknown", attempts).await.map(|_| ())
             }
-            WorkOutcome::Ended => abandon("sign_in_failed").await.map(|_| ()),
+            WorkOutcome::Ended => abandon("sign_in_failed", count).await.map(|_| ()),
         }
     }
 
@@ -1183,7 +1516,7 @@ impl Inner {
                 "probe_passed",
                 |next| {
                     next.checked_at = Some(now);
-                    next.stored_attempts = 0;
+                    Count::NONE.write(next);
                 },
                 Saved::Keep,
             )
@@ -1229,21 +1562,29 @@ impl Inner {
                 failure::not_published("it would renew without its person"),
             );
             return self
-                .want_person(row, PersonReason::SignIn, row.stored_attempts)
+                .want_person(row, PersonReason::SignIn, Count::kept(row))
                 .await;
         }
         let needs = provider.needs();
         let started = self.clock.elapsed();
         let mut reason = PersonReason::SignIn;
+        // The attempts counted against the stored credential as it is
+        // stored now, and its mark.
+        let (count, mark) = self.counted(row, &entry).await?;
+        let count = count.about(mark);
 
         if needs.silent_renewal {
             match self.perform(row, &entry, Work::Renew(Rung::Silent)).await {
                 held @ WorkOutcome::Held { .. } => {
-                    return self.renewed(row, held, started, true, false).await;
+                    return self
+                        .renewed(row, held, started, Some(count), RENEWAL, false)
+                        .await;
                 }
                 // The stored credential itself was refused: it is counted
                 // and never tried a second time on a higher rung.
-                WorkOutcome::Refused if !needs.person => return self.refused(row, &entry).await,
+                WorkOutcome::Refused if !needs.person => {
+                    return self.refused(row, &entry, count).await;
+                }
                 WorkOutcome::NeedsPerson(wanted) => reason = wanted,
                 WorkOutcome::Failed(failure) => {
                     self.fail(row.id, failure);
@@ -1274,12 +1615,13 @@ impl Inner {
                 .await;
             return match outcome {
                 held @ WorkOutcome::Held { .. } => {
-                    self.renewed(&waiting, held, started, false, false).await
+                    self.renewed(&waiting, held, started, None, RENEWAL, false)
+                        .await
                 }
                 // The session stays in `needs_person`: the next rung is a
                 // full sign-in, which the person starts.
                 _ => {
-                    self.count(FORCED_SIGN_INS);
+                    self.counted_metric(FORCED_SIGN_INS);
                     self.work
                         .ask_person(&session_ref(&waiting), PersonAsk::Notify { reason })
                         .await;
@@ -1291,34 +1633,49 @@ impl Inner {
         if needs.person || needs.silent_renewal {
             // A full sign-in by the person. The keeper asks; it does not
             // sign in for them.
-            return self.want_person(row, reason, row.stored_attempts).await;
+            return self.want_person(row, reason, Count::kept(row)).await;
         }
 
         // A stored credential with no silent rung: one full sign-in with
-        // it, if the attempt limit still allows one.
-        if row.stored_attempts >= entry.attempt_limit {
+        // it, if the attempt limit still allows one, and if the session
+        // has not been signed in too often without its person.
+        if count.attempts >= entry.attempt_limit {
             self.fail(
                 row.id,
                 failure::credential_refused("the system it signs in to"),
             );
             return self
-                .want_person(row, PersonReason::CredentialRefused, row.stored_attempts)
+                .want_person(row, PersonReason::CredentialRefused, count)
                 .await;
+        }
+        if let Some(failure) = self.too_often(row, &entry).await? {
+            self.fail(row.id, failure);
+            return self.want_person(row, PersonReason::SignIn, count).await;
         }
         match self
             .perform(row, &entry, Work::Renew(Rung::FullSignIn))
             .await
         {
-            held @ WorkOutcome::Held { .. } => self.renewed(row, held, started, true, true).await,
-            WorkOutcome::Refused => self.refused(row, &entry).await,
-            WorkOutcome::NeedsPerson(wanted) => {
-                self.want_person(row, wanted, row.stored_attempts).await
+            held @ WorkOutcome::Held { .. } => {
+                self.renewed(row, held, started, Some(count), FULL_SIGN_IN_CAUSE, true)
+                    .await
             }
+            WorkOutcome::Refused => self.refused(row, &entry, count).await,
+            WorkOutcome::NeedsPerson(wanted) => self.want_person(row, wanted, count).await,
             WorkOutcome::Failed(failure) => {
+                let unread = may_have_sent(&failure);
                 self.fail(row.id, failure);
-                self.expire(row, "renewal_failed").await
+                if !unread {
+                    return self.expire_counted(row, "renewal_failed", count).await;
+                }
+                // Sent, and nobody can read the answer: an attempt.
+                let attempts = count.one_more();
+                if attempts.attempts >= entry.attempt_limit {
+                    return self.want_person(row, PersonReason::SignIn, attempts).await;
+                }
+                self.expire_counted(row, "outcome_unknown", attempts).await
             }
-            WorkOutcome::Ended => self.expire(row, "renewal_failed").await,
+            WorkOutcome::Ended => self.expire_counted(row, "renewal_failed", count).await,
         }
     }
 
@@ -1327,10 +1684,11 @@ impl Inner {
         row: &SessionRow,
         held: WorkOutcome,
         started: Duration,
-        automatic: bool,
+        automatic: Option<Count>,
+        cause: &'static str,
         fresh: bool,
     ) -> Result<(), Failure> {
-        self.held(row, held, EventKind::Renewed, "renewal", automatic, fresh)
+        self.held(row, held, EventKind::Renewed, cause, automatic, fresh)
             .await?;
         if let Some(telemetry) = &self.telemetry {
             telemetry.count(RENEWALS, &[], 1);
@@ -1501,7 +1859,11 @@ impl Inner {
                 }
                 CallRule::Wait => {
                     let refused = row.wants == Some(PersonReason::CredentialRefused);
-                    if row.state == SessionState::NeedsPerson && refused {
+                    // The work this call started with the stored credential
+                    // ended in wanting the person: the call is given the
+                    // failure that work ended with, as a refusal is.
+                    let spent = acted && !needs.person && self.last_failure(row.id).is_some();
+                    if row.state == SessionState::NeedsPerson && (refused || spent) {
                         // Nobody is on the way: waiting would only delay.
                         return Err(self.last_failure(row.id).unwrap_or_else(|| {
                             failure::credential_refused("the side that checks it")
@@ -1538,30 +1900,42 @@ impl Inner {
                     if needs.person {
                         return Err(failure::needs_login("nobody is signed in"));
                     }
-                    if row.stored_attempts >= req.entry.attempt_limit {
-                        return Err(failure::credential_refused("the side that checks it"));
+                    // The count is the session's record's, so a restart
+                    // does not clear it; a credential stored again since is
+                    // tried afresh (decision 0269).
+                    let (count, mark) = self.counted(&row, &req.entry).await?;
+                    if count.attempts >= req.entry.attempt_limit {
+                        return Err(self.spent(row.id));
                     }
                     if !published {
                         return Err(failure::not_published(
                             "it would sign in with a stored credential without its person",
                         ));
                     }
+                    if let Some(failure) = self.too_often(&row, &req.entry).await? {
+                        self.fail(row.id, failure.clone());
+                        return Err(failure);
+                    }
                     // A stored credential and no person to wait for: the
                     // keeper signs in, once.
                     acted = true;
+                    let count = count.about(mark);
                     let busy = self.mark_busy(row.id);
                     let moved = self
                         .advance(
                             &row,
                             SessionState::SigningIn,
                             EventKind::SignInStarted,
-                            "stored_credential",
-                            |next| next.provider = req.entry.provider.clone(),
+                            BY_LEASE,
+                            |next| {
+                                next.provider = req.entry.provider.clone();
+                                count.write(next);
+                            },
                             Saved::Keep,
                         )
                         .await?;
                     if let Some(signing) = moved {
-                        self.spawn_sign_in(signing, Arc::clone(&req.entry), true, busy);
+                        self.spawn_sign_in(signing, Arc::clone(&req.entry), Origin::Lease, busy);
                     }
                 }
             }
@@ -1624,17 +1998,30 @@ impl Inner {
             let stale = between(row.state_since, now) >= self.settings.work_limit;
             let result = match row.state {
                 SessionState::Valid => self.tick_valid(&row, now).await,
-                SessionState::SigningIn if stale => self
-                    .advance(
+                SessionState::SigningIn if stale => {
+                    // A sign-in that was interrupted may have sent the
+                    // stored credential, and nobody read the answer: an
+                    // attempt, for a provider that works from one.
+                    let stored = self
+                        .providers
+                        .get(&row.provider)
+                        .is_ok_and(|provider| !provider.needs().person);
+                    let count = if stored {
+                        Count::kept(&row).one_more()
+                    } else {
+                        Count::kept(&row)
+                    };
+                    self.advance(
                         &row,
                         SessionState::Absent,
                         EventKind::Abandoned,
                         "interrupted",
-                        |_| {},
+                        |next| count.write(next),
                         Saved::Delete,
                     )
                     .await
-                    .map(|_| ()),
+                    .map(|_| ())
+                }
                 SessionState::Renewing if stale => self.expire(&row, "interrupted").await,
                 SessionState::Suspect if stale => {
                     let moved = self
@@ -1712,7 +2099,7 @@ impl Inner {
                 .await
                 .map(|_| ());
         }
-        self.count(CHECKS_FAILED);
+        self.counted_metric(CHECKS_FAILED);
         let moved = self
             .advance(
                 row,

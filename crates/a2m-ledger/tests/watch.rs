@@ -14,12 +14,13 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, OperationName, RecordKey,
-    RunId, RunState, Timestamp, Value, Values,
+    CanonicalJson, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode,
+    OperationName, RecordKey, RunId, RunState, SurfaceName, Timestamp, Value, Values,
 };
 use a2m_ledger::{
-    ChangeKind, CheckOutcome, Due, Durability, Missed, NewRun, NewWatch, Observed, ObservedRecord,
-    Opened, RetentionClass, Store, ToolKind, WatchId, WatchReason, WatchRow, WatchState, codes,
+    ChangeKind, CheckOutcome, Due, Durability, Missed, NewBlob, NewRun, NewWatch, Opened,
+    RetentionClass, Store, ToolKind, WatchId, WatchKey, WatchReason, WatchRow, WatchShape,
+    WatchState, codes,
 };
 use common::*;
 
@@ -38,6 +39,12 @@ fn new_watch(effect: EffectClass) -> NewWatch {
         input_hash: Digest::of(b"status=open"),
         input: None,
         ignore: BTreeSet::from(["seen_at".to_owned()]),
+        surface: SurfaceName::new("orders").unwrap(),
+        requests_per_check: 1,
+        shape: WatchShape::List {
+            list: "orders".to_owned(),
+            key: vec!["id".to_owned()],
+        },
         interval: Duration::from_secs(300),
         ends_at: Timestamp::from_unix_millis(START + 86_400_000),
         asked_by: principal(7),
@@ -45,6 +52,11 @@ fn new_watch(effect: EffectClass) -> NewWatch {
         client_label: "example-agent".to_owned(),
         retention: RetentionClass::Long,
     }
+}
+
+/// The published version the watches are asked for.
+fn plan() -> Digest {
+    Digest::of(b"plan")
 }
 
 fn the_read(caller: u8, input: &[u8]) -> NewRun {
@@ -68,7 +80,7 @@ async fn confirmed(store: &Store) -> WatchId {
     store
         .write(Durability::Synced, move |tx| {
             tx.watches()
-                .confirm(watch.id, principal(1), Duration::from_secs(7))
+                .confirm(watch.id, principal(1), Duration::from_secs(7), &plan())
         })
         .await
         .unwrap();
@@ -112,7 +124,7 @@ async fn finish(store: &Store, run: RunId, to: RunState, why: Option<Failure>) {
         .unwrap();
 }
 
-fn order(id: &str, status: &str, seen_at: i64) -> ObservedRecord {
+fn order(id: &str, status: &str, seen_at: i64) -> Value {
     let values: Values = [
         ("id", Value::from(id)),
         ("status", Value::from(status)),
@@ -120,37 +132,92 @@ fn order(id: &str, status: &str, seen_at: i64) -> ObservedRecord {
     ]
     .into_iter()
     .collect();
-    ObservedRecord {
-        key: Some(RecordKey::new(vec![Value::from(id)]).unwrap()),
-        values,
-    }
+    Value::Record(values)
 }
 
-/// One whole check: a run of the read that completes with `records`.
-async fn check(
-    store: &Store,
-    watch: WatchId,
-    index: u64,
-    records: Vec<ObservedRecord>,
-    complete: bool,
-) -> a2m_ledger::CheckEnded {
-    let run = begin(store, watch, index, the_read(1, b"status=open"))
+/// A read's result as the engine stores it: canonical JSON of its values,
+/// a list of orders and a total beside it.
+fn result_of(orders: Vec<Value>) -> Vec<u8> {
+    let total = i64::try_from(orders.len()).unwrap();
+    let values: Values = [
+        ("orders", Value::List(orders)),
+        ("total", Value::from(total)),
+    ]
+    .into_iter()
+    .collect();
+    CanonicalJson::encode(&values).unwrap().as_bytes().to_vec()
+}
+
+/// Completes a run with `result` stored as its result, as the engine does.
+async fn complete_with(store: &Store, run: RunId, result: Option<Vec<u8>>) {
+    let stored = match result {
+        Some(plain) => Some(
+            store
+                .blobs()
+                .put(NewBlob {
+                    workspace: workspace(),
+                    owner: a2m_vault::OwnerRef::service("engine").unwrap(),
+                    kind: a2m_ledger::BlobKind::Result,
+                    class: RetentionClass::Long,
+                    plain,
+                })
+                .await
+                .unwrap(),
+        ),
+        None => None,
+    };
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let fence = ledger.new_epoch(run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            ledger.set_state(&fence, RunState::Running, None)?;
+            if let Some(stored) = stored {
+                ledger.store_result(&fence, stored)?;
+            }
+            ledger.set_state(&fence, RunState::Completed, None)
+        })
         .await
         .unwrap();
-    finish(store, run, RunState::Completed, None).await;
-    let seq = store
+}
+
+async fn running_check(store: &Store, watch: WatchId) -> u64 {
+    store
         .read(move |tx| tx.watches().get(watch))
         .await
         .unwrap()
         .running_check
-        .unwrap();
-    let observed = Observed { records, complete };
+        .unwrap()
+}
+
+async fn end_with(
+    store: &Store,
+    watch: WatchId,
+    seq: u64,
+    result: Option<Vec<u8>>,
+) -> Result<a2m_ledger::CheckEnded, Failure> {
     store
         .write(Durability::Synced, move |tx| {
-            tx.watches().end_check(watch, seq, Some(&observed))
+            tx.watches().end_check(watch, seq, result.as_deref())
         })
         .await
-        .unwrap()
+}
+
+/// One whole check: a run of the read that completes with `orders` as its
+/// result, ended with that result's bytes.
+async fn check(
+    store: &Store,
+    watch: WatchId,
+    index: u64,
+    orders: Vec<Value>,
+) -> a2m_ledger::CheckEnded {
+    let run = begin(store, watch, index, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    let result = result_of(orders);
+    complete_with(store, run, Some(result.clone())).await;
+    let seq = running_check(store, watch).await;
+    end_with(store, watch, seq, Some(result)).await.unwrap()
 }
 
 async fn changes(store: &Store, watch: WatchId) -> Vec<a2m_ledger::ChangeRow> {
@@ -222,7 +289,8 @@ async fn a_watch_does_nothing_until_its_own_person_confirms_it() {
     refused(
         store
             .write(Durability::Synced, move |tx| {
-                tx.watches().confirm(id, principal(7), Duration::ZERO)
+                tx.watches()
+                    .confirm(id, principal(7), Duration::ZERO, &plan())
             })
             .await,
         &codes::WATCH_NOT_YOURS,
@@ -238,7 +306,7 @@ async fn a_watch_does_nothing_until_its_own_person_confirms_it() {
     let row = store
         .write(Durability::Synced, move |tx| {
             tx.watches()
-                .confirm(id, principal(1), Duration::from_secs(3))
+                .confirm(id, principal(1), Duration::from_secs(3), &plan())
         })
         .await
         .unwrap();
@@ -331,14 +399,14 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
         watch,
         0,
         vec![order("A-1", "open", 1), order("A-2", "open", 1)],
-        true,
     )
     .await;
-    assert_eq!(first.check.outcome, CheckOutcome::Complete);
+    // Completeness is not recorded, so no check is complete.
+    assert_eq!(first.check.outcome, CheckOutcome::CutShort);
     assert_eq!(first.comparison, None);
     assert_eq!(first.check.records_seen, Some(2));
-    // A record changed, one is new, one is gone; `seen_at` moved too and is
-    // ignored.
+    // A record changed, one is new, one is not seen; `seen_at` moved too
+    // and is ignored.
     let second = check(
         &store,
         watch,
@@ -347,14 +415,13 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
             order("A-1", "shipped-to-the-coast", 2),
             order("A-3", "open", 2),
         ],
-        true,
     )
     .await;
     assert_eq!(second.state, WatchState::Confirmed);
     let counts = second.check.counts.unwrap();
     assert_eq!(
         (counts.added, counts.changed, counts.removed, counts.unseen),
-        (1, 1, 1, 0)
+        (1, 1, 0, 1)
     );
     let told = changes(&store, watch).await;
     let kinds: Vec<ChangeKind> = told.iter().map(|change| change.kind).collect();
@@ -364,7 +431,7 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
             ChangeKind::Confirmed,
             ChangeKind::Added,
             ChangeKind::Changed,
-            ChangeKind::Removed
+            ChangeKind::Unseen
         ]
     );
     let changed = &told[2];
@@ -396,17 +463,17 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
     let baseline: i64 = raw
         .query_row("SELECT COUNT(*) FROM watch_baseline", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(baseline, 2, "the record proven gone left the baseline");
+    assert_eq!(baseline, 3, "a record not seen stays in the baseline");
 }
 
 #[tokio::test]
-async fn quiet_checks_record_no_change_and_a_list_cut_short_never_reports_a_removal() {
+async fn a_completed_check_never_reports_a_removal_while_completeness_is_not_recorded() {
     let store = memory().await;
     let watch = confirmed(&store).await;
     let all = || vec![order("A-1", "open", 1), order("A-2", "open", 1)];
-    check(&store, watch, 0, all(), true).await;
-    for index in 1..=10 {
-        let quiet = check(&store, watch, index, all(), true).await;
+    check(&store, watch, 0, all()).await;
+    for index in 1..=3 {
+        let quiet = check(&store, watch, index, all()).await;
         assert!(quiet.comparison.unwrap().is_quiet());
     }
     assert_eq!(
@@ -414,31 +481,144 @@ async fn quiet_checks_record_no_change_and_a_list_cut_short_never_reports_a_remo
         1,
         "only the confirmation"
     );
-    // Cut short: the record not returned is unseen, never removed, and is
-    // told once.
-    let short = check(&store, watch, 11, vec![order("A-1", "open", 1)], false).await;
-    assert_eq!(short.check.outcome, CheckOutcome::CutShort);
-    check(&store, watch, 12, vec![order("A-1", "open", 1)], false).await;
+    // A completed run that returned one record fewer: the record is unseen,
+    // never removed, and told once, however often the run completes so.
+    for index in 4..=6 {
+        let short = check(&store, watch, index, vec![order("A-1", "open", 1)]).await;
+        assert_eq!(short.check.outcome, CheckOutcome::CutShort);
+        assert_eq!(short.check.counts.unwrap().removed, 0);
+    }
     let told = changes(&store, watch).await;
-    assert_eq!(told.len(), 2);
-    assert_eq!(told[1].kind, ChangeKind::Unseen);
-    // With the full list, it is removed.
-    check(&store, watch, 13, vec![order("A-1", "open", 1)], true).await;
-    let told = changes(&store, watch).await;
-    assert_eq!(told.last().unwrap().kind, ChangeKind::Removed);
+    let kinds: Vec<ChangeKind> = told.iter().map(|change| change.kind).collect();
+    assert_eq!(kinds, vec![ChangeKind::Confirmed, ChangeKind::Unseen]);
+    // An empty list removes nothing either.
+    let empty = check(&store, watch, 7, Vec::new()).await;
+    assert_eq!(empty.check.counts.unwrap().removed, 0);
+    // When it comes back it is not new.
+    let back = check(&store, watch, 8, all()).await;
+    assert!(back.comparison.unwrap().is_quiet());
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    assert!(!row.baseline_complete);
+}
+
+#[tokio::test]
+async fn a_check_whose_result_is_not_its_runs_own_is_refused() {
+    let store = memory().await;
+    let watch = confirmed(&store).await;
+    let run = begin(&store, watch, 0, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    let own = result_of(vec![order("A-1", "open", 1)]);
+    complete_with(&store, run, Some(own.clone())).await;
+    // Other bytes than the run's stored result: refused, and the check stays
+    // under way.
+    let other = result_of(vec![order("A-1", "open", 1), order("A-2", "open", 1)]);
+    refused(
+        end_with(&store, watch, 0, Some(other)).await,
+        &codes::WATCH_RUN_NOT_ITS_OWN,
+    );
+    refused(
+        end_with(&store, watch, 0, None).await,
+        &FailureCode::SCHEMA_INVALID,
+    );
+    assert_eq!(running_check(&store, watch).await, 0);
+    let ended = end_with(&store, watch, 0, Some(own)).await.unwrap();
+    assert_eq!(ended.check.records_seen, Some(1));
+
+    // A completed run that stored no result: nothing it is handed is its own.
+    let run = begin(&store, watch, 1, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    complete_with(&store, run, None).await;
+    refused(
+        end_with(&store, watch, 1, Some(result_of(Vec::new()))).await,
+        &codes::WATCH_RUN_NOT_ITS_OWN,
+    );
+
+    // Its own result, not of the watch's shape: a gap, and the watch goes on.
+    let other_watch = confirmed(&store).await;
+    let run = begin(&store, other_watch, 0, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    let not_a_list = CanonicalJson::encode(&Values::new().with("orders", "none"))
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    complete_with(&store, run, Some(not_a_list.clone())).await;
+    let faulted = end_with(&store, other_watch, 0, Some(not_a_list))
+        .await
+        .unwrap();
+    assert_eq!(faulted.check.outcome, CheckOutcome::Faulted);
+    assert_eq!(
+        faulted.check.why.map(|(_, code)| code),
+        Some(codes::WATCH_RESULT_NOT_ITS_SHAPE)
+    );
+    assert_eq!(faulted.state, WatchState::Confirmed);
+}
+
+#[tokio::test]
+async fn equal_values_of_two_records_have_different_digests() {
+    let store = memory().await;
+    let watch = confirmed(&store).await;
+    check(
+        &store,
+        watch,
+        0,
+        vec![order("A-1", "open", 1), order("A-2", "open", 1)],
+    )
+    .await;
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    let baseline = store
+        .read(move |tx| tx.watches().baseline(&row))
+        .await
+        .unwrap()
+        .unwrap();
+    let statuses: BTreeSet<Digest> = baseline
+        .records
+        .values()
+        .map(|held| held.digests.outputs["status"])
+        .collect();
+    assert_eq!(baseline.records.len(), 2);
+    assert_eq!(statuses.len(), 2, "one status, two records, two digests");
+    // And the same values in another watch have other digests again.
+    let second = confirmed(&store).await;
+    check(
+        &store,
+        second,
+        0,
+        vec![order("A-1", "open", 1), order("A-2", "open", 1)],
+    )
+    .await;
+    let row = store
+        .read(move |tx| tx.watches().get(second))
+        .await
+        .unwrap();
+    let other = store
+        .read(move |tx| tx.watches().baseline(&row))
+        .await
+        .unwrap()
+        .unwrap();
+    let key = RecordKey::new(vec![Value::from("A-1")]).unwrap();
+    let named: WatchKey = store
+        .read(move |tx| tx.watches().key_of(&workspace(), &key))
+        .await
+        .unwrap();
+    assert_ne!(
+        baseline.records[&named].digests.whole,
+        other.records[&named].digests.whole
+    );
 }
 
 #[tokio::test]
 async fn a_key_twice_in_one_check_is_a_gap_and_the_baseline_stays() {
     let store = memory().await;
     let watch = confirmed(&store).await;
-    check(&store, watch, 0, vec![order("A-1", "open", 1)], true).await;
+    check(&store, watch, 0, vec![order("A-1", "open", 1)]).await;
     let twice = check(
         &store,
         watch,
         1,
         vec![order("A-1", "open", 1), order("A-1", "shipped", 1)],
-        true,
     )
     .await;
     assert_eq!(twice.check.outcome, CheckOutcome::Faulted);
@@ -451,7 +631,7 @@ async fn a_key_twice_in_one_check_is_a_gap_and_the_baseline_stays() {
     let gap = changes(&store, watch).await.pop().unwrap();
     assert_eq!(gap.kind, ChangeKind::Gap);
     assert!(
-        check(&store, watch, 2, vec![order("A-1", "open", 1)], true)
+        check(&store, watch, 2, vec![order("A-1", "open", 1)])
             .await
             .comparison
             .unwrap()
@@ -581,7 +761,7 @@ async fn ending_is_always_possible_and_leaves_the_history() {
     let asked = ask(&store, new_watch(EffectClass::Read)).await.unwrap().id;
     // From a check under way.
     let running = confirmed(&store).await;
-    check(&store, running, 0, vec![order("A-1", "open", 1)], true).await;
+    check(&store, running, 0, vec![order("A-1", "open", 1)]).await;
     begin(&store, running, 1, the_read(1, b"status=open"))
         .await
         .unwrap();
@@ -616,9 +796,15 @@ async fn ending_is_always_possible_and_leaves_the_history() {
         .unwrap();
     assert_eq!(checks.len(), 2);
     assert_eq!(checks[1].outcome, CheckOutcome::Failed);
+    // The check that ending closed is a gap, then the end.
+    let told: Vec<ChangeKind> = changes(&store, running)
+        .await
+        .iter()
+        .map(|change| change.kind)
+        .collect();
     assert_eq!(
-        changes(&store, running).await.last().unwrap().kind,
-        ChangeKind::Ended
+        &told[told.len() - 2..],
+        [ChangeKind::Gap, ChangeKind::Ended]
     );
     let raw = folder.raw();
     let digests: i64 = raw
@@ -639,4 +825,198 @@ async fn ending_is_always_possible_and_leaves_the_history() {
     }
     // Nothing the watch holds started a run of its own: one run per check.
     assert_eq!(runs_in(&folder), 2);
+}
+
+#[tokio::test]
+async fn an_asked_watch_confirmed_after_a_publish_is_refused_for_its_old_version() {
+    let store = memory().await;
+    let watch = ask(&store, new_watch(EffectClass::Read)).await.unwrap().id;
+    // The target was published again before its person confirmed.
+    let published = Digest::of(b"plan 2");
+    refused(
+        store
+            .write(Durability::Synced, move |tx| {
+                tx.watches()
+                    .confirm(watch, principal(1), Duration::from_secs(3), &published)
+            })
+            .await,
+        &codes::WATCH_NEEDS_CONFIRMATION,
+    );
+    let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
+    assert_eq!(row.state, WatchState::Asked);
+    assert_eq!(row.confirmed, None);
+}
+
+#[tokio::test]
+async fn a_version_change_ends_an_asked_watch_of_another_version() {
+    let store = memory().await;
+    let asked = ask(&store, new_watch(EffectClass::Read)).await.unwrap().id;
+    let confirmed = confirmed(&store).await;
+    let current = ask(
+        &store,
+        NewWatch {
+            target_version: Digest::of(b"plan 2"),
+            ..new_watch(EffectClass::Read)
+        },
+    )
+    .await
+    .unwrap()
+    .id;
+    store
+        .write(Durability::Synced, move |tx| {
+            tx.watches()
+                .version_changed(&workspace(), &target(), &Digest::of(b"plan 2"))
+        })
+        .await
+        .unwrap();
+    let state = |id: WatchId| {
+        let store = &store;
+        async move { store.read(move |tx| tx.watches().get(id)).await.unwrap() }
+    };
+    let row = state(asked).await;
+    assert_eq!(
+        (row.state, row.reason),
+        (WatchState::Ended, Some(WatchReason::VersionChanged))
+    );
+    let row = state(confirmed).await;
+    assert_eq!(
+        (row.state, row.reason),
+        (WatchState::Paused, Some(WatchReason::VersionChanged))
+    );
+    // A watch asked for the version now published stays asked.
+    assert_eq!(state(current).await.state, WatchState::Asked);
+}
+
+#[tokio::test]
+async fn a_check_is_not_begun_at_or_after_the_end() {
+    let (store, clock) = memory_clocked().await;
+    let watch = confirmed(&store).await;
+    let ends_at = Timestamp::from_unix_millis(START + 86_400_000);
+    let due_at = |at: Timestamp, index: u64| {
+        let store = &store;
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    let id = match tx.ledger().open_run(the_read(1, b"status=open"))? {
+                        Opened::New(fence) => fence.run,
+                        Opened::Existing(id) => id,
+                    };
+                    tx.watches().begin_check(
+                        watch,
+                        Due {
+                            index,
+                            at,
+                            catch_up: false,
+                        },
+                        id,
+                    )
+                })
+                .await
+        }
+    };
+    // A due time at the end, computed before it: refused.
+    refused(due_at(ends_at, 5).await, &codes::WATCH_ENDED);
+    // Once the clock reaches the end, any due time: refused.
+    clock.advance(Duration::from_millis(86_400_000));
+    refused(
+        due_at(Timestamp::from_unix_millis(START), 0).await,
+        &codes::WATCH_ENDED,
+    );
+    let past = store
+        .read(move |tx| {
+            tx.watches()
+                .past_end(Timestamp::from_unix_millis(START + 86_400_000))
+        })
+        .await
+        .unwrap();
+    assert_eq!(past.iter().map(|row| row.id).collect::<Vec<_>>(), [watch]);
+    assert!(
+        store
+            .read(move |tx| tx.watches().past_end(Timestamp::from_unix_millis(START)))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn ask_refuses_an_interval_below_the_floor() {
+    let folder = Folder::new("watch-floor");
+    let store = on_disk(&folder).await;
+    for new in [
+        NewWatch {
+            interval: Duration::from_secs(30),
+            ..new_watch(EffectClass::Read)
+        },
+        NewWatch {
+            ends_at: Timestamp::from_unix_millis(START + 367 * 86_400_000),
+            ..new_watch(EffectClass::Read)
+        },
+        NewWatch {
+            requests_per_check: 0,
+            ..new_watch(EffectClass::Read)
+        },
+        NewWatch {
+            shape: WatchShape::List {
+                list: "orders".to_owned(),
+                key: Vec::new(),
+            },
+            ..new_watch(EffectClass::Read)
+        },
+    ] {
+        let failure = ask(&store, new).await.unwrap_err();
+        assert_eq!(
+            (failure.class(), failure.code()),
+            (FailureClass::Input, &FailureCode::SCHEMA_INVALID)
+        );
+    }
+    // At the floor and the ceiling: taken.
+    ask(
+        &store,
+        NewWatch {
+            interval: Duration::from_secs(60),
+            ends_at: Timestamp::from_unix_millis(START + 366 * 86_400_000),
+            ..new_watch(EffectClass::Read)
+        },
+    )
+    .await
+    .unwrap();
+    // Whoever sends the statement: a watch below the floor, past the
+    // ceiling, with no surface or no cost is refused, and a watch's surface,
+    // cost, and shape never change.
+    let insert = |id: u8, interval: i64, ends_at: i64, surface: &str, requests: i64| {
+        format!(
+            "INSERT INTO watches
+                (id, workspace_id, target, environment, operation, target_version_hash, effect,
+                 input_hash, ignore_outputs, interval_seconds, ends_at, asked_by, acts_for,
+                 client_label, asked_at, retention_class, state, state_since, surface,
+                 requests_per_check, record_shape)
+             VALUES ('watch_{id:032x}', 'w', 'example', 'test', 'example_order_list', 'h', 'read',
+                     'h', '[]', {interval}, {ends_at}, 'p', 'p', 'l', 1000, 'long', 'asked', 1000,
+                     '{surface}', {requests}, '{{\"whole\":true}}')"
+        )
+    };
+    let day = 86_400_000_i64;
+    folder
+        .raw()
+        .execute_batch(&insert(1, 60, 1000 + 366 * day, "orders", 1))
+        .unwrap();
+    for change in [
+        "surface = 'other'",
+        "requests_per_check = 9",
+        "record_shape = '{\"key\":[\"id\"],\"list\":\"orders\"}'",
+    ] {
+        raw_refused(
+            &folder,
+            &format!("UPDATE watches SET {change} WHERE id = 'watch_{:032x}'", 1),
+        );
+    }
+    for planted in [
+        insert(2, 30, 1000 + day, "orders", 1),
+        insert(3, 60, 1000 + 367 * day, "orders", 1),
+        insert(4, 60, 1000 + day, "", 1),
+        insert(5, 60, 1000 + day, "orders", 0),
+    ] {
+        raw_refused(&folder, &planted);
+    }
 }

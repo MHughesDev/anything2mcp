@@ -520,9 +520,11 @@ fn a_packs_group_is_checked_by_the_schema_its_manifest_declares() {
     }
 }
 
-/// Every Rust file of a product crate under `crates/`, with its tests cut
-/// off: a file under a `tests` folder is left out, and a file's text ends
-/// where its first `#[cfg(test)]` or `#[cfg(all(test, ...))]` begins.
+/// Every Rust file of a product crate under `crates/`, with its unit tests
+/// cut off: a file under a `tests` folder is left out, and a file loses its
+/// final unit-test module, read from its `#[cfg(test)]` to its end, and
+/// nothing else (finding B3 of the sixth audit, decision 0273). A
+/// `#[cfg(test)]` on an item inside product code cuts nothing.
 fn product_sources() -> Vec<(PathBuf, String)> {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -547,22 +549,54 @@ fn product_sources() -> Vec<(PathBuf, String)> {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();
-            let end = text
-                .lines()
-                .scan(0, |at, line| {
-                    let start = *at;
-                    *at += line.len() + 1;
-                    Some((start, line.trim_start()))
-                })
-                .find(|(_, line)| {
-                    line.starts_with("#[cfg(test)]") || line.starts_with("#[cfg(all(test")
-                })
-                .map_or(text.len(), |(start, _)| start);
+            let end = final_test_module(&text).unwrap_or(text.len());
             found.push((path, text[..end].to_owned()));
         }
     }
     found.sort();
     found
+}
+
+/// Where a file's final unit-test module begins: a `#[cfg(test)]` (or
+/// `#[cfg(all(test, ...))]`) at the start of a line, then only attributes,
+/// each perhaps over several lines, then `mod <name> {` at the start of a
+/// line, whose first closing brace at the start of a line is the file's
+/// last line. `None` when the file ends in no such module, and it is then
+/// read whole.
+fn final_test_module(text: &str) -> Option<usize> {
+    let mut lines: Vec<(usize, &str)> = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        lines.push((at, line.trim_end_matches(['\n', '\r'])));
+        at += line.len();
+    }
+    let last = lines.iter().rposition(|(_, line)| !line.trim().is_empty())?;
+    if lines[last].1 != "}" {
+        return None;
+    }
+    let opens = lines[..=last]
+        .iter()
+        .rposition(|(_, line)| line.starts_with("mod ") || line.starts_with("pub(crate) mod "))?;
+    if !lines[opens].1.ends_with('{')
+        || lines[opens + 1..last]
+            .iter()
+            .any(|(_, line)| line.starts_with('}'))
+    {
+        return None;
+    }
+    let mut start = opens;
+    let mut tested = false;
+    // Attributes, and the lines an attribute written over several lines
+    // continues on.
+    while start > 0 && {
+        let above = lines[start - 1].1;
+        above.starts_with("#[") || above.starts_with(')') || above.starts_with(' ')
+    } {
+        start -= 1;
+        let attribute = lines[start].1;
+        tested |= attribute.starts_with("#[cfg(test)]") || attribute.starts_with("#[cfg(all(test");
+    }
+    tested.then_some(lines[start].0)
 }
 
 fn named(path: &std::path::Path, tail: &str) -> bool {
@@ -889,8 +923,46 @@ fn no_product_source_takes_an_installation_file_as_an_administrators_but_the_che
                 path.display()
             );
         }
+        // The keeper is set only by the loader and by the test's switch:
+        // neither the field nor the setter is named anywhere else, so no
+        // product source can hand on a verdict about some other file
+        // (finding B3, decision 0273).
+        if text.contains("installation_keeper") {
+            assert!(
+                named(&path, "a2m-actions/src/settings/load.rs")
+                    || named(&path, "anything2mcp/src/engine.rs"),
+                "{} sets the installation's keeper",
+                path.display()
+            );
+        }
     }
     assert_eq!(defined, 1);
+}
+
+/// The scan of product sources reads past a `#[cfg(test)]` on an item
+/// inside product code, and cuts a file's final unit-test module alone
+/// (finding B3, decision 0273).
+#[test]
+fn the_scan_of_product_sources_cuts_only_a_files_final_test_module() {
+    let item = "fn a() {}\n#[cfg(test)]\nconst B: u8 = 1;\nfn c() { read(\"key\") }\n";
+    assert_eq!(final_test_module(item), None);
+    let module = "fn a() {}\n\n#[cfg(test)]\n#[cfg(unix)]\nmod tests {\n    fn t() {}\n}\n";
+    assert_eq!(final_test_module(module), Some(module.find("#[cfg(test)]").unwrap()));
+    // A module that is not the file's end: read whole.
+    let middle = "#[cfg(test)]\nmod tests {\n}\nfn after() {}\n";
+    assert_eq!(final_test_module(middle), None);
+    // A file module declared for tests is a line, not the end of the file's
+    // product code.
+    assert_eq!(final_test_module("fn a() {}\n#[cfg(test)]\nmod tests;\n"), None);
+    // This crate's own `lib.rs` holds a `#[cfg(test)]` item before its end
+    // that the scan once cut at: it is read past now.
+    let lib = product_sources()
+        .into_iter()
+        .find(|(path, _)| named(path, "a2m-actions/src/lib.rs"))
+        .unwrap();
+    let whole = std::fs::read_to_string(&lib.0).unwrap();
+    let first = whole.find("#[cfg(test)]").unwrap();
+    assert!(lib.1.len() > first, "{}", lib.0.display());
 }
 
 /// No outbound proxy is built: a `network.proxy` that is set is refused by

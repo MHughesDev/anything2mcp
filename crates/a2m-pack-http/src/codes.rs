@@ -35,6 +35,14 @@ pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_de
 /// plain `http` to an address that is not a loopback address, from a
 /// surface that does not accept it. Nothing is sent (decision 0188).
 pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
+/// `policy`: the session's provider placed a header whose name begins
+/// `a2m-`, one of the product's own carriers between its parts, which never
+/// goes on the wire. Nothing is sent (decision 0270).
+pub const PRODUCT_HEADER_REFUSED: FailureCode = FailureCode::fixed("product_header_refused");
+/// `busy`: so many reads of answers are still running past their step's
+/// deadline, on this surface or in the pack, that no new one is begun.
+/// Nothing is sent (decision 0270).
+pub const READS_STILL_RUNNING: FailureCode = FailureCode::fixed("reads_still_running");
 /// `input`: a value that cannot stand in one segment of a path.
 pub const PATH_VALUE_REFUSED: FailureCode = FailureCode::fixed("path_value_refused");
 /// `input`: a step this driver cannot carry out as the plan wrote it.
@@ -64,6 +72,8 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "surface_not_declared"),
     (FailureClass::Policy, "link_not_encrypted"),
+    (FailureClass::Policy, "product_header_refused"),
+    (FailureClass::Busy, "reads_still_running"),
     (FailureClass::Input, "path_value_refused"),
     (FailureClass::Input, "step_not_usable"),
     (FailureClass::Input, "tls_not_enabled"),
@@ -108,6 +118,20 @@ pub(crate) fn tls_not_enabled() -> Failure {
         TLS_NOT_ENABLED,
         "The surface is reached over HTTPS, and TLS is not built into this build of the HTTP pack.",
         "Use a surface reached over plain HTTP on this machine, or a build with TLS switched on.",
+    )
+}
+
+/// A header of the product's own, placed by a session's provider. Its name
+/// is the product's and is said; no value is.
+pub(crate) fn product_header_refused(name: &str) -> Failure {
+    failure(
+        FailureClass::Policy,
+        PRODUCT_HEADER_REFUSED,
+        format!(
+            "The session's sign-in placed the header `{}`, which belongs to the product and never goes to a system; nothing was sent.",
+            shown(name)
+        ),
+        "Sign in to this surface with a provider made for an HTTP service, such as `api_key`, `bearer_static`, or `http_basic`.",
     )
 }
 

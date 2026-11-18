@@ -289,26 +289,36 @@ pub struct ShadowPromotion { pub subject: ShadowSubject, pub mode: Mode, pub pro
 ```
 
 ```rust
-// Watches (decision 0247): `tx.watches()`. Migration 0021. No value of what a check read is stored.
+// Watches (decisions 0247, 0262): `tx.watches()`. Migrations 0021, 0023. No value of what a check read is stored.
 impl Watches<'_, '_> {
-    pub fn ask(&mut self, new: &NewWatch) -> Result<WatchRow, Failure>;            // `asked`; a read only (`watch_not_a_read`)
-    pub fn confirm(&mut self, id: WatchId, by: PrincipalId, phase: Duration) -> Result<WatchRow, Failure>;  // `acts_for` only
-    pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId) -> Result<CheckRow, Failure>; // the watch's own read only
-    pub fn end_check(&mut self, id: WatchId, seq: u64, observed: Option<&Observed>) -> Result<CheckEnded, Failure>;
+    pub fn ask(&mut self, new: &NewWatch) -> Result<WatchRow, Failure>;            // `asked`; a read only (`watch_not_a_read`);
+                                                                                   // 60 s to 366 days, a cost, a shape (`schema_invalid`)
+    pub fn confirm(&mut self, id: WatchId, by: PrincipalId, phase: Duration, current: &Digest) -> Result<WatchRow, Failure>;
+                                                // `acts_for` only; `watch_needs_confirmation` when asked under another version
+    pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId) -> Result<CheckRow, Failure>; // the watch's own read only;
+                                                                                   // `watch_ended` at or after the end
+    pub fn end_check(&mut self, id: WatchId, seq: u64, result: Option<&[u8]>) -> Result<CheckEnded, Failure>;
+                                                // the bytes of the run's own stored result (`watch_run_not_its_own`)
     pub fn missed(&mut self, id: WatchId, from: u64, until: u64, missed: Missed) -> Result<u64, Failure>;  // one gap
     pub fn defer(&mut self, id: WatchId, until: Timestamp) -> Result<(), Failure>;
     pub fn pause(&mut self, id: WatchId, reason: WatchReason) -> Result<WatchRow, Failure>;
     pub fn resume(&mut self, id: WatchId) -> Result<WatchRow, Failure>;   // never after `drifted` or `version_changed`
     pub fn end(&mut self, id: WatchId, reason: WatchReason) -> Result<WatchRow, Failure>;   // from any state; history stays
     pub fn version_changed(&mut self, ws, target, current: &Digest) -> Result<Vec<WatchId>, Failure>;
+                                                // pauses confirmed, ends asked; answers running
+    pub fn past_end(&mut self, now: Timestamp) -> Result<Vec<WatchRow>, Failure>;   // not ended, `ends_at <= now`
+    pub fn on_surface(&mut self, ws, target, environment, surface: &SurfaceName) -> Result<Vec<WatchRow>, Failure>; // open
     // Reading: get, list, not_ended, open, check, checks, check_of_run, changes, baseline, key_of.
 }
 pub struct NewWatch { pub workspace, pub target, pub environment, pub operation, pub target_version: Digest,
                       pub effect: EffectClass, pub input_hash: Digest, pub input: Option<BlobRef>,
-                      pub ignore: BTreeSet<String>, pub interval: Duration, pub ends_at: Timestamp,
+                      pub ignore: BTreeSet<String>, pub surface: SurfaceName, pub requests_per_check: u32,
+                      pub shape: WatchShape, pub interval: Duration, pub ends_at: Timestamp,
                       pub asked_by: PrincipalId, pub acts_for: PrincipalId, pub client_label: String,
                       pub retention: RetentionClass }
-pub struct Observed { pub records: Vec<ObservedRecord>, pub complete: bool }   // ObservedRecord { key: Option<RecordKey>, values: Values }
+pub enum WatchShape { Whole, List { list: String, key: Vec<String> } }   // from the plan; stored as canonical JSON
+pub const WATCH_INTERVAL_FLOOR: Duration;   // 60 s
+pub const WATCH_LONGEST: Duration;          // 366 days
 pub enum WatchState { Asked, Confirmed, Running, Paused, Ended }
 pub enum WatchReason { NeedsLogin, NeedsInput, Drifted, VersionChanged, OnHold, PausedByPerson,
                        EndedByPerson, EndedByCaller, EndReached, VersionWithdrawn, Declined }   // a state, not a failure
@@ -316,11 +326,11 @@ pub enum ChangeKind { Confirmed, Added, Changed, Removed, Unseen, Gap, Paused, R
 pub enum CheckOutcome { Running, Complete, CutShort, Failed, Faulted }
 // The comparison, pure: watch_compare.rs.
 pub enum WatchKey { Whole, Record(Digest) }    // the keyed digest under `record_key`, as a record row names a key
-pub struct RecordDigests { pub whole: Digest, pub outputs: BTreeMap<String, Digest> }  // ::of(digest, ws, &Values, ignore)
+pub struct RecordDigests { pub whole: Digest, pub outputs: BTreeMap<String, Digest> }  // ::of(digest, ws, watch, &key, &Values, ignore)
 pub struct CheckDigests { /* complete, records by key */ }   // ::new refuses a key twice and a whole result beside keys
 pub struct Baseline { pub complete: bool, pub through: u64, pub records: BTreeMap<WatchKey, Held> }  // ::first, ::after
 pub fn compare(older: &Baseline, newer: &CheckDigests) -> Comparison;   // added, changed (names), removed, unseen, unchanged count
-pub const fn value_purpose() -> DigestPurpose;   // `restricted_value` until `a2m-core` has `watch_value`
+pub const fn value_purpose() -> DigestPurpose;   // `watch_value`
 ```
 
 Contracts that the signatures do not show:
@@ -340,8 +350,8 @@ Contracts that the signatures do not show:
 - **Wrapped keys are rows, nothing more.** `vault_keys` holds what the vault hands over, already wrapped. The ledger never unwraps, chooses, or rotates a key; the vault does, through `KeyRecords`.
 - **Blobs are sealed before they are written,** with the workspace, the owner, the kind `blob`, and the blob's name as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention. A row that takes a blob reference refuses one that names no blob.
 - **An `Opened::Existing` is not an error.** A second identical call gets the first run's identifier.
-- **Shadow evidence is counted where it is kept, and says what it covers** ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md), [decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)). A comparison is one row, never changed, by the shadow binding's digest: a binding whose steps change starts from nothing. It names the call's input by the workspace's keyed digest (under `caller_key` with a label of its own, behind one function, until `a2m-core` has a purpose for it), never shown; the environment, from the run; the verified binding it was compared against; and its cost in requests. What makes a binding promotable is a query: in every environment the subject names, the distinct inputs that matched the subject's verified binding since the last mismatch, which in any environment and against any binding starts the count again; a comparison not compared neither counts nor resets. The ledger never promotes by itself: `promote` records a person's promotion on the run of matches counted in its own transaction, once per digest. It does not change the binding's status, which is in the target's files; nor can it tell a person from an agent, which its caller checks.
-- **A watch keeps digests, never values** ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)). `end_check` is handed a check's normalized records and reduces them in the transaction to keyed digests (keys under `record_key`, values under `value_purpose()` with a domain prefix); only the digests, counts, output names, and times are written. How a check ends is read from its run's row, never from the caller. The baseline holds, for each record seen, its digests when last seen: `added` is a record never seen, `unseen` is told once when a record leaves the view, and `removed` needs the newer check and the baseline both complete. A watch is made only of a read, a check only of its own read for its own person, one check at a time, never before its person confirmed it; what it reads never changes; an ended watch never changes; changes are append-only; each is a trigger as well as a check in the call. The ledger opens no run for a watch: the scheduler's admission does.
+- **Shadow evidence is counted where it is kept, and says what it covers** ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md), [decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)). A comparison is one row, never changed, by the shadow binding's digest: a binding whose steps change starts from nothing. It names the call's input by the workspace's keyed digest, under `shadow_input`, never shown; a comparison kept before migration 0023 was digested under `caller_key`, says so in `input_purpose`, and counts as no distinct input ([decision 0262](../../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)); the environment, from the run; the verified binding it was compared against; and its cost in requests. What makes a binding promotable is a query: in every environment the subject names, the distinct inputs that matched the subject's verified binding since the last mismatch, which in any environment and against any binding starts the count again; a comparison not compared neither counts nor resets. The ledger never promotes by itself: `promote` records a person's promotion on the run of matches counted in its own transaction, once per digest. It does not change the binding's status, which is in the target's files; nor can it tell a person from an agent, which its caller checks.
+- **A watch keeps digests, never values** ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md), [decision 0262](../../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)). `end_check` is handed the bytes of a check run's result, refuses them unless they are the run's stored result, works out the records itself from the watch's `record_shape`, and reduces them in the transaction to keyed digests (keys under `record_key`, values under `watch_value` with a domain prefix and the watch and the record's key framed in); only the digests, counts, output names, and times are written. How a check ends and what it saw are read from its run's row and result, never from the caller. No check is complete while the engine records no completeness, so no removal is reported. The baseline holds, for each record seen, its digests when last seen: `added` is a record never seen, `unseen` is told once when a record leaves the view, and `removed` needs the newer check and the baseline both complete. A watch is made only of a read, a check only of its own read for its own person, one check at a time, never before its person confirmed it; what it reads never changes; an ended watch never changes; changes are append-only; each is a trigger as well as a check in the call. The ledger opens no run for a watch: the scheduler's admission does.
 - **A finding cannot be stored above `discovered`.** The type refuses to make one or to read one back, and the table refuses the row.
 
 ## Used by, and uses
@@ -388,7 +398,7 @@ The codes are constants in the crate's `codes` module.
 | `busy` | `shadow_write_not_built` | A shadow comparison of an operation that writes: the shadow of a write is not built |
 | `policy` | `watch_not_a_read`, `watch_not_confirmed`, `watch_not_yours`, `watch_ended`, `watch_run_not_its_own`, `watch_needs_confirmation` | A watch of a write; a check before the person confirmed it; a confirmation by another; an ended watch; a run that is not the watch's own read; a resume after a drift or a new version |
 | `busy` | `watch_check_running`, `watch_paused`, `watch_check_unfinished`, `watch_due_missed`, `watch_check_not_completed` | A second check at once; a paused watch; a check whose run has not ended; the code of a gap of missed due times; a check's run that ended without completing and gave no failure |
-| `unknown_variant` | `watch_key_repeated`, `watch_shapes_mixed` | A check whose records repeat a key, or mix a whole result with keyed records: a fault of that check, recorded as a gap |
+| `unknown_variant` | `watch_key_repeated`, `watch_shapes_mixed`, `watch_result_not_its_shape` | A check whose records repeat a key, mix a whole result with keyed records, or are not of the watch's shape: a fault of that check, recorded as a gap |
 
 ## Invariants
 
@@ -409,6 +419,7 @@ The codes are constants in the crate's `codes` module.
 | A migration applied twice changes nothing, and a store from a newer engine is refused | A test that opens twice, then plants a later migration and a changed checksum |
 | A binding is promotable only after the threshold's distinct inputs matched, in each environment its evidence must come from, against the verified binding that will act; one input called again is one input; a mismatch anywhere starts the count again; a changed digest has earned nothing; a comparison is taken only beside a live read under way and names its input; the report and the run's events hold no input and no digest | `tests/shadow.rs`, through the calls and through a second connection |
 | A watch is made only of a read, checks nothing before its person confirms it, runs one check at a time and only its own read, never changes what it reads, keeps no value, and ends from any state leaving its history | `tests/watch.rs`, through the calls and through a second connection |
+| A check's records come from its run's own stored result; no removal is reported while completeness is not recorded; a watch is confirmed only for the published version, never begun at or past its end, and kept to the floor and the ceiling; equal values of two records differ | `tests/watch.rs` (decision 0262) |
 | Comparing a check with itself reports nothing; the order of records does not matter; a repeated key is a named fault | `watch_compare.rs` unit tests over generated checks |
 | Both databases give the same answers | The rule tests run on SQLite and Postgres in CI from Phase 6 |
 
@@ -425,8 +436,9 @@ The codes are constants in the crate's `codes` module.
 8a. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `StoreConfig::throwaway` and `Store::is_throwaway`, an offline test's own store in memory, which keeps its policy key; `WriteClearance::OfflineTest`, taken only there, recorded as a decision of the test's rule so the triggers of rule 3 hold; `PublishedVersion::gate_evidence` and `Versions::gate_evidence`, with migration 0016. Tests: `tests/offline.rs`, `tests/store.rs`.
 8b. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `Ledger::recorded_before_commit`, the values recorded before the save of every record of an operation in a workspace whose write may have landed (`RecordRow::may_have_landed`), of its current attempt alone, after its current intent (`intent_seq`), so that a value an attempt settled as not landed recorded is held by nothing ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md), `tests/acknowledged.rs`); migration 0017, a trigger that keeps a version's `gate_evidence` as written (LE-1); migration 0018, `actions_scouts.project`.
 8c. Done ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)): `Tx::shadow`, migration 0020, the tables `shadow_comparisons` and `shadow_promotions`; comparisons, standings, the promotable question, a person's promotion, and the report. Tests: `tests/shadow.rs`.
-8d. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): `Tx::watches`, migration 0021, the tables `watches`, `watch_checks`, `watch_changes`, `watch_baseline`; the comparison in `watch_compare.rs`. Not built: a watch's condition; the purpose `watch_value` (owed by `a2m-core`; `value_purpose()` is the one line to change); retention of watches, as of runs.
-8e. Done ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)): migration 0022; a comparison's keyed input digest and its cost in requests, a run event per comparison; distinct inputs per environment, against the named verified binding; the promotion row's verified binding and evidence. Not built: a digest purpose of its own (owed by `a2m-core`; `INPUT_PURPOSE` in `src/shadow.rs` is the one line to change). Tests: `tests/shadow.rs`.
+8d. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): `Tx::watches`, migration 0021, the tables `watches`, `watch_checks`, `watch_changes`, `watch_baseline`; the comparison in `watch_compare.rs`. Not built: a watch's condition; retention of watches, as of runs.
+8f. Done ([decision 0262](../../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)): migration 0023; a watch's surface, requests per check, and record shape; the floor and the ceiling in `ask` and a trigger; `confirm` against the current version; asked watches ended by a version change; no check at or past the end; `end_check` from the run's own result, never complete; `past_end`, `on_surface`; the purposes `watch_value` and `shadow_input`, with `input_purpose`. Not built: the engine's completeness flag, which `COMPLETENESS_RECORDED` in `src/watch.rs` waits for. Tests: `tests/watch.rs`, `tests/shadow.rs`.
+8e. Done ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)): migration 0022; a comparison's keyed input digest and its cost in requests, a run event per comparison; distinct inputs per environment, against the named verified binding; the promotion row's verified binding and evidence. Its own digest purpose came with 8f. Tests: `tests/shadow.rs`.
 9. Not built: Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 
 ## Open points

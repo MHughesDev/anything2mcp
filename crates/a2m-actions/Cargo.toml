@@ -27,7 +27,9 @@ toml.workspace = true
 # may change a project folder (`project::others_may_change`). Already in the
 # tree through the local channel; its safe interface only.
 [target.'cfg(unix)'.dependencies]
-rustix.workspace = true
+# `fs`: the installation's settings file is opened without following a
+# link and checked through its handle (decision 0273).
+rustix = { workspace = true, features = ["fs"] }
 
 [features]
 # A way for the tests of the crates above this one to have a published tool

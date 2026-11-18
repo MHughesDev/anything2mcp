@@ -24,13 +24,22 @@
 //!   old name removed, only while it still holds the file that was read;
 //! - delete: a file that is still the one that was read, or a folder that
 //!   is empty.
+//!
+//! Every write acts through the surface's folder held for it (decision
+//! 0272): reached from the root down with no link followed, and then each
+//! call names one entry relative to that folder, so a folder swapped for a
+//! link between the look and the act cannot lead the write elsewhere. A
+//! folder moved away whole meanwhile is told: before the act, nothing is
+//! done; after it, the outcome is unknown. A file is removed, and an old
+//! name taken away, only while the name still holds the file that was read,
+//! by the identity the system gives.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use a2m_core::{Date, Digest, Value, Values};
-use a2m_provider::StepFailure;
+use a2m_provider::{HeldFolder, StepFailure};
 
 use crate::codes::{self, stop};
 use crate::open::{missing, not_allowed, unavailable};
@@ -364,7 +373,12 @@ pub(crate) fn identity(
     depth: u8,
 ) -> Result<Option<Identity>, StepFailure> {
     let (inner, last) = split(folder, name, depth)?;
-    Ok(identity_at(&inner.beside(last)?))
+    let regular = fs::symlink_metadata(inner.beside(last)?)
+        .is_ok_and(|metadata| metadata.file_type().is_file());
+    if !regular {
+        return Ok(None);
+    }
+    Ok(inner.file(last)?.checked().identity().ok())
 }
 
 /// The file an entry is, by its own name, for reading its bytes.
@@ -473,25 +487,65 @@ fn refuses_links(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(INVALID_FUNCTION)
 }
 
-/// The identity at a name, with no link followed.
-fn identity_at(path: &Path) -> Option<Identity> {
-    fs::symlink_metadata(path)
-        .ok()
-        .filter(|metadata| metadata.file_type().is_file())
-        .and_then(|metadata| Identity::of(&metadata))
+/// The names a held folder holds that the pack can use.
+fn held_names(held: &HeldFolder, ceiling: usize) -> Result<Vec<String>, StepFailure> {
+    let all = held
+        .names()
+        .map_err(|_| StepFailure::not_sent(unavailable("cannot be listed")))?;
+    if all.len() > ceiling {
+        return Err(too_many());
+    }
+    Ok(all
+        .into_iter()
+        .filter_map(|name| name.into_string().ok())
+        .filter(|name| is_entry_name(name))
+        .collect())
+}
+
+/// How a name stands in a held folder.
+fn held_now(held: &HeldFolder, name: &str, ceiling: usize) -> Result<Held, StepFailure> {
+    let found = held_names(held, ceiling)?;
+    if found.iter().any(|held| held == name) {
+        return Ok(Held::Exactly);
+    }
+    let folded = name.to_lowercase();
+    if found.iter().any(|held| held.to_lowercase() == folded) {
+        return Ok(Held::OtherCase);
+    }
+    Ok(Held::No)
+}
+
+/// The folder was moved away, or another put at its path, after it was
+/// held and before anything was done. Nothing was written.
+fn moved_before() -> StepFailure {
+    stop(
+        codes::CHANGED_SINCE_PREVIEW,
+        "The surface's folder was moved, or another put in its place, while the write was being made ready. Nothing was written.",
+        "Put the folder back where the surface names it, read it again, and approve again.",
+    )
+}
+
+/// The folder was moved away, or another put at its path, while the write
+/// was made: it was made in the folder that was held, which is no longer
+/// the one the surface names.
+fn moved_during(what: &str) -> StepFailure {
+    StepFailure::unknown(unavailable(&format!(
+        "was {what} in the surface's folder, and the folder was moved, or another put in its place, meanwhile: the change is in the folder that was held, wherever it is now"
+    )))
 }
 
 /// A temporary file the pack made, removed when dropped, only while its
 /// name still holds the file it made.
-struct Made {
-    path: PathBuf,
+struct Made<'a> {
+    held: &'a HeldFolder,
+    name: String,
     identity: Option<Identity>,
 }
 
-impl Drop for Made {
+impl Drop for Made<'_> {
     fn drop(&mut self) {
-        if self.identity.is_some() && identity_at(&self.path) == self.identity {
-            let _ = fs::remove_file(&self.path);
+        if let Some(identity) = self.identity {
+            let _ = self.held.remove_file_if(&self.name, identity);
         }
     }
 }
@@ -510,15 +564,6 @@ fn random_name() -> Result<String, StepFailure> {
     Ok(name)
 }
 
-#[cfg(unix)]
-fn private(options: &mut OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    options.mode(0o600);
-}
-
-#[cfg(not(unix))]
-fn private(_options: &mut OpenOptions) {}
-
 /// Creates a file at `name`, directly in the folder, holding `bytes`, only
 /// where no entry has the name. Blocking; never retried.
 pub(crate) fn create(
@@ -527,35 +572,46 @@ pub(crate) fn create(
     bytes: &[u8],
     ceiling: usize,
 ) -> Result<(), StepFailure> {
-    folder.reached_by_no_link()?;
-    let target = folder.file(name)?;
-    match held(folder, name, ceiling)? {
+    create_with(folder, name, bytes, ceiling, || {})
+}
+
+/// The same, with `before_act` called after the last look and just before
+/// the file is given its name: where a test puts what another program may
+/// do in that moment.
+fn create_with(
+    folder: &Folder,
+    name: &str,
+    bytes: &[u8],
+    ceiling: usize,
+    before_act: impl FnOnce(),
+) -> Result<(), StepFailure> {
+    let held = folder.held()?;
+    // The roots' check sees the name: a device, a form no path may take.
+    folder.file(name)?;
+    match held_now(&held, name, ceiling)? {
         Held::Exactly => return Err(changed()),
         Held::OtherCase => return Err(other_case()),
         Held::No => {}
     }
-    let temporary = folder.beside(&random_name()?)?;
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create_new(true);
-    private(&mut options);
-    let mut file: File = options.open(&temporary).map_err(|error| {
+    let temporary = random_name()?;
+    let mut file = held.create_new(&temporary).map_err(|error| {
         linked(Err(error)).err().unwrap_or_else(|| {
             StepFailure::not_sent(unavailable("cannot have its temporary file made"))
         })
     })?;
-    let made_identity = file
-        .metadata()
-        .ok()
-        .and_then(|metadata| Identity::of(&metadata));
+    // Its identity from its own handle, before anything else can stand at
+    // its name: it is removed only while its name still holds it.
     let mut made = Made {
-        path: temporary,
-        identity: made_identity,
+        held: &held,
+        name: temporary.clone(),
+        identity: Identity::of_open(&file).ok(),
     };
-    if made.identity.is_none() {
+    let Some(identity) = made.identity else {
+        drop(file);
         return Err(StepFailure::not_sent(unavailable(
             "has a temporary file whose identity is not known",
         )));
-    }
+    };
     let written = file
         .write_all(bytes)
         .and_then(|()| file.sync_all())
@@ -570,48 +626,51 @@ pub(crate) fn create(
         .take(bytes.len() as u64 + 1)
         .read_to_end(&mut back)
         .is_ok();
-    // The identity of the file as written. Where the system gives no file
-    // number, the identity holds the file's length, which the write just
-    // changed; the name it is given next must show this one.
-    let written_identity = file
-        .metadata()
-        .ok()
-        .and_then(|metadata| Identity::of(&metadata));
     drop(file);
-    if written_identity.is_some() {
-        made.identity = written_identity;
-    }
     if !read_back || back != bytes {
         return Err(StepFailure::not_sent(unavailable(
             "was not written as it was built; nothing was put in place",
         )));
     }
-    if written_identity.is_none() {
-        return Err(StepFailure::not_sent(unavailable(
-            "has a temporary file whose identity is not known",
-        )));
+    if !held.still_at_its_path() {
+        return Err(moved_before());
     }
+    before_act();
     // The commit point: a second name for the file, which the system gives
-    // only where nothing has the name.
-    let target_path = folder.beside(name)?;
-    linked(fs::hard_link(&made.path, &target_path))?;
-    if identity_at(&target_path) != made.identity {
+    // only where nothing has the name, in the folder that was held.
+    linked(held.link(&temporary, name))?;
+    if held.identity(name).ok() != Some(identity) {
         return Err(StepFailure::unknown(unavailable(
             "was given its name, and the name does not hold the file that was written",
         )));
     }
-    let removed = fs::remove_file(&made.path).is_ok();
+    let removed = matches!(
+        held.remove_file_if(&temporary, identity),
+        Ok(a2m_provider::Removal::Removed)
+    );
+    made.identity = None;
     drop(made);
     if !removed {
         return Err(StepFailure::unknown(unavailable(
             "was created, and its temporary name could not be removed",
         )));
     }
-    target.checked().flush_folder().map_err(|_| {
-        StepFailure::unknown(unavailable(
-            "was created, and its folder could not be written to the disk",
-        ))
-    })
+    finish(&held, "created")
+}
+
+/// After the act: the folder's names written to the disk, and the folder
+/// still the one at the surface's path.
+fn finish(held: &HeldFolder, what: &str) -> Result<(), StepFailure> {
+    held.sync().map_err(|_| {
+        StepFailure::unknown(unavailable(&format!(
+            "was {what}, and its folder could not be written to the disk"
+        )))
+    })?;
+    if held.still_at_its_path() {
+        Ok(())
+    } else {
+        Err(moved_during(what))
+    }
 }
 
 /// Gives the file at `from` the name `to`, both directly in the folder, only
@@ -623,42 +682,59 @@ pub(crate) fn rename(
     read: Identity,
     ceiling: usize,
 ) -> Result<(), StepFailure> {
-    folder.reached_by_no_link()?;
-    let source = folder.file(from)?;
-    let metadata = source.regular().map_err(|failure| {
-        if failure.failure.code() == &codes::FILE_MISSING {
-            changed()
-        } else {
-            failure
-        }
-    })?;
-    if Identity::of(&metadata) != Some(read) {
+    rename_with(folder, from, to, read, ceiling, || {})
+}
+
+/// The same, with `before_act` called after the last look and just before
+/// the new name is given.
+fn rename_with(
+    folder: &Folder,
+    from: &str,
+    to: &str,
+    read: Identity,
+    ceiling: usize,
+    before_act: impl FnOnce(),
+) -> Result<(), StepFailure> {
+    let held = folder.held()?;
+    folder
+        .file(from)?
+        .regular()
+        .map_err(|failure| {
+            if failure.failure.code() == &codes::FILE_MISSING {
+                changed()
+            } else {
+                failure
+            }
+        })?;
+    if held.identity(from).ok() != Some(read) {
         return Err(changed());
     }
-    let target = folder.file(to)?;
-    match held(folder, to, ceiling)? {
+    folder.file(to)?;
+    match held_now(&held, to, ceiling)? {
         Held::Exactly => return Err(changed()),
         Held::OtherCase => return Err(other_case()),
         Held::No => {}
     }
-    let from_path = folder.beside(from)?;
-    let to_path = folder.beside(to)?;
-    linked(fs::hard_link(&from_path, &to_path))?;
-    if identity_at(&to_path) != Some(read) {
+    if !held.still_at_its_path() {
+        return Err(moved_before());
+    }
+    before_act();
+    linked(held.link(from, to))?;
+    if held.identity(to).ok() != Some(read) {
         return Err(StepFailure::unknown(unavailable(
             "was given its new name, and the name does not hold the file that was read",
         )));
     }
-    if identity_at(&from_path) != Some(read) || fs::remove_file(&from_path).is_err() {
+    // The old name goes only while it holds the file that was read.
+    if !matches!(
+        held.remove_file_if(from, read),
+        Ok(a2m_provider::Removal::Removed)
+    ) {
         return Err(StepFailure::unknown(unavailable(
             "has its new name, and its old name could not be removed",
         )));
     }
-    target.checked().flush_folder().map_err(|_| {
-        StepFailure::unknown(unavailable(
-            "was renamed, and its folder could not be written to the disk",
-        ))
-    })
+    finish(&held, "renamed")
 }
 
 /// Removes the entry `name`, directly in the folder: a file that is still
@@ -669,41 +745,84 @@ pub(crate) fn delete(
     kind: Kind,
     read: Option<Identity>,
 ) -> Result<(), StepFailure> {
-    folder.reached_by_no_link()?;
+    delete_with(folder, name, kind, read, || {})
+}
+
+/// The same, with `before_act` called after the last look and just before
+/// the entry is removed.
+fn delete_with(
+    folder: &Folder,
+    name: &str,
+    kind: Kind,
+    read: Option<Identity>,
+    before_act: impl FnOnce(),
+) -> Result<(), StepFailure> {
+    let held = folder.held()?;
     let entry = folder.file(name)?;
     match kind {
         Kind::File => {
-            let metadata = entry.regular().map_err(|failure| {
+            entry.regular().map_err(|failure| {
                 if failure.failure.code() == &codes::FILE_MISSING {
                     changed()
                 } else {
                     failure
                 }
             })?;
-            if read.is_none() || Identity::of(&metadata) != read {
+            let Some(read) = read else {
+                return Err(changed());
+            };
+            if held.identity(name).ok() != Some(read) {
                 return Err(changed());
             }
-            entry
-                .checked()
-                .remove_file()
-                .map_err(StepFailure::not_sent)?;
+            if !held.still_at_its_path() {
+                return Err(moved_before());
+            }
+            before_act();
+            // Removed only while the name holds the file that was read: a
+            // file put there after the look is never the one removed.
+            match held.remove_file_if(name, read) {
+                Ok(a2m_provider::Removal::Removed) => {}
+                Ok(a2m_provider::Removal::NotThatFile { put_back: true }) => {
+                    return Err(changed());
+                }
+                Ok(a2m_provider::Removal::NotThatFile { put_back: false }) => {
+                    return Err(StepFailure::unknown(unavailable(
+                        "was not removed: another file had taken its name, and it was moved aside to be looked at and could not be put back, so it keeps a name that begins `.a2m-old-`",
+                    )));
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => return Err(changed()),
+                Err(_) => {
+                    return Err(StepFailure::not_sent(not_allowed(
+                        "its folder cannot be written to",
+                    )));
+                }
+            }
         }
         Kind::Folder => {
-            let path = folder.beside(name)?;
-            match fs::symlink_metadata(&path) {
-                Ok(found) if found.file_type().is_dir() => {}
-                Ok(_) | Err(_) => return Err(changed()),
+            if !matches!(held.kind(name), Ok(a2m_provider::EntryKind::Folder)) {
+                return Err(changed());
             }
-            let empty = fs::read_dir(&path)
+            // The look is through the folder reached with no link; the
+            // system removes only an empty folder, so one that gained an
+            // entry since is refused by the call itself.
+            let inner = folder.below(name)?.held()?;
+            let empty = inner
+                .names()
                 .map_err(|_| StepFailure::not_sent(unavailable("cannot be listed")))?
-                .next()
-                .is_none();
+                .is_empty();
+            drop(inner);
             if !empty {
                 return Err(not_empty());
             }
-            // The system removes only an empty folder: one that gained an
-            // entry since the look is refused by the call itself.
-            fs::remove_dir(&path).map_err(|_| not_empty())?;
+            if !held.still_at_its_path() {
+                return Err(moved_before());
+            }
+            before_act();
+            held.remove_empty_folder(name).map_err(|error| match error.kind() {
+                ErrorKind::DirectoryNotEmpty | ErrorKind::AlreadyExists => not_empty(),
+                ErrorKind::NotFound | ErrorKind::NotADirectory => changed(),
+                _ => StepFailure::not_sent(not_allowed("its folder cannot be written to")),
+            })?;
         }
         Kind::Link | Kind::Other => {
             return Err(StepFailure::not_sent(not_allowed(
@@ -711,11 +830,7 @@ pub(crate) fn delete(
             )));
         }
     }
-    entry.checked().flush_folder().map_err(|_| {
-        StepFailure::unknown(unavailable(
-            "was removed, and its folder could not be written to the disk",
-        ))
-    })
+    finish(&held, "removed")
 }
 
 fn not_empty() -> StepFailure {

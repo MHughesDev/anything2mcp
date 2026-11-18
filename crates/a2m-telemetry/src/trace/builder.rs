@@ -18,7 +18,7 @@ use super::{
     OfferedArtifact, StepRecord, TraceIdentity, TraceOutcome, TracedValue,
 };
 use crate::clock::micros;
-use crate::failure::TRACE_HOLDS_SECRET;
+use crate::codes::TRACE_HOLDS_SECRET;
 use crate::text::{FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, decode_references, limit_text};
 
 /// The size, in bytes, a trace is cut at unless the engine names another.

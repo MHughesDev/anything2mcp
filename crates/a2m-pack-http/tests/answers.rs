@@ -96,16 +96,28 @@ fn drafts() -> Value {
     Value::List(DRAFTS.iter().map(|id| Value::from(*id)).collect())
 }
 
+/// The same scene, its plan carrying a release version: the plan of a
+/// published version, as the driver sees one. A draft is always compiled
+/// as the draft version, `0.0.0` (decision 0161).
+fn published(mut scene: Scene) -> Scene {
+    scene.plan.header.version = a2m_core::Version::new(1, 0, 0);
+    scene
+}
+
 /// A search behind `POST`, which the developer asserts only reads: sent in
-/// a live run anywhere, and outside one only against an environment of
-/// kind `test`. A discovery sends it nowhere. A request the guard refuses
-/// never reaches the system.
+/// a live run anywhere, and outside one only when the plan is a published
+/// version's and the run's environment is of kind `test` in it. Under the
+/// drafts, whose environment kind and assertion are the drafts' own word,
+/// it is not sent outside a live run anywhere (decision 0270). A discovery
+/// sends it nowhere. A request the guard refuses never reaches the system.
 #[tokio::test]
 async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
     let app = TestApp::start().await.unwrap();
     let search = Values::new().with("status", "draft");
-    let test = scene_in(&app, "test", Arc::new(NoSecrets));
-    let production = scene_in(&app, "production", Arc::new(NoSecrets));
+    let drafted_test = scene_in(&app, "test", Arc::new(NoSecrets));
+    let drafted_production = scene_in(&app, "production", Arc::new(NoSecrets));
+    let test = published(scene_in(&app, "test", Arc::new(NoSecrets)));
+    let production = published(scene_in(&app, "production", Arc::new(NoSecrets)));
     let searched = |seen: Vec<String>| {
         seen.iter()
             .filter(|line| *line == "POST /views/search/orders")
@@ -115,6 +127,8 @@ async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
     for (scene, posture) in [
         (&production, Posture::Live),
         (&test, Posture::Live),
+        (&drafted_production, Posture::Live),
+        (&drafted_test, Posture::Live),
         (
             &test,
             Posture::Sandbox {
@@ -141,6 +155,16 @@ async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
         (&production, Posture::Sandbox { test_records: true }),
         (&production, Posture::Discovery),
         (&test, Posture::Discovery),
+        // The drafts' word that the environment is a test copy, and that
+        // the request only reads, is not enough outside a live run.
+        (
+            &drafted_test,
+            Posture::Sandbox {
+                test_records: false,
+            },
+        ),
+        (&drafted_test, Posture::Sandbox { test_records: true }),
+        (&drafted_test, Posture::Discovery),
     ] {
         app.reset().await.unwrap();
         let failure = read_in(scene, posture, "example_order_search", &search)
@@ -172,6 +196,96 @@ async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
         .unwrap();
         assert_eq!(status.get("orders"), Some(&Value::Int(3)), "{posture:?}");
     }
+}
+
+/// The scene with one entry of the endpoint `status_text_get` changed in
+/// the compiled plan, as a plan the compiler of today refuses would hold
+/// it: `part` is `headers` or `query`.
+fn overridden(mut scene: Scene, part: &str, name: &str, value: &str) -> Scene {
+    for section in &mut scene.plan.packs {
+        if section.pack != a2m_pack_http::PACK {
+            continue;
+        }
+        let mut payload: serde_json::Value = section.payload.decode().unwrap();
+        let entry = payload["status_text_get"][part].as_object_mut().unwrap();
+        entry.insert(name.to_owned(), serde_json::Value::from(value));
+        section.payload = a2m_core::PackPayload::encode(&payload).unwrap();
+    }
+    scene
+}
+
+/// A request by a safe method that carries a method override, in a header
+/// or as the `_method` query entry, is judged by the method the override
+/// names: one that names a method HTTP does not mark safe is not sent
+/// outside a live run, and the system hears nothing of it (decision
+/// 0270). It is sent in a live run, as any request of a published read.
+#[tokio::test]
+async fn a_method_override_is_judged_as_the_method_it_names() {
+    let app = TestApp::start().await.unwrap();
+    let status = |seen: Vec<String>| {
+        seen.iter()
+            .filter(|line| *line == "GET /views/text/status")
+            .count()
+    };
+    for (part, name, value) in [
+        ("headers", "x-http-method-override", "DELETE"),
+        ("headers", "x-http-method", "put"),
+        ("headers", "x-method-override", "PATCH"),
+        ("query", "_method", "DELETE"),
+        ("query", "_METHOD", "POST"),
+    ] {
+        let scene = overridden(
+            published(scene_in(&app, "test", Arc::new(NoSecrets))),
+            part,
+            name,
+            value,
+        );
+        for posture in [
+            Posture::Sandbox {
+                test_records: false,
+            },
+            Posture::Discovery,
+        ] {
+            app.reset().await.unwrap();
+            let failure = read_in(&scene, posture, "example_status_text_get", &Values::new())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                class_and_code(&failure),
+                (FailureClass::Policy, "read_only_posture".to_owned()),
+                "{name} {posture:?}"
+            );
+            assert_eq!(failure.sent, Sent::NotSent, "{name} {posture:?}");
+            assert_eq!(status(app.seen().await.unwrap()), 0, "{name} {posture:?}");
+        }
+        app.reset().await.unwrap();
+        read_in(
+            &scene,
+            Posture::Live,
+            "example_status_text_get",
+            &Values::new(),
+        )
+        .await
+        .unwrap_or_else(|failure| panic!("{name}: {failure:?}"));
+        assert_eq!(status(app.seen().await.unwrap()), 1, "{name}");
+    }
+    // An override that names a safe method changes nothing.
+    let scene = overridden(
+        published(scene_in(&app, "test", Arc::new(NoSecrets))),
+        "headers",
+        "x-http-method-override",
+        "GET",
+    );
+    app.reset().await.unwrap();
+    read_in(
+        &scene,
+        Posture::Discovery,
+        "example_status_text_get",
+        &Values::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status(app.seen().await.unwrap()), 1);
 }
 
 /// The guard is lifted for one step only: the commit point of a write to a

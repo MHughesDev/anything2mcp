@@ -23,6 +23,16 @@ const FORBIDDEN: &[&str] = &[
     "listen(",
     "bind(",
     "accept(",
+    // A socket of any kind other than the one netlink socket, which is
+    // opened with `socket_with`, and a raw write or control call on one.
+    "socket(",
+    "write(",
+    "ioctl",
+    "WSAIoctl",
+    // A process started to read a fact for the reader: a command such as
+    // `arp`, `netsh`, or `scutil` may send, and its output is not typed.
+    "Command::new",
+    "std::process",
     // Sends other than the one to the kernel, below.
     "send(",
     "send_to(",
@@ -93,14 +103,46 @@ fn sources(folder: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// A file's code: comment lines dropped, and the test module cut off.
+/// A file's code: comment lines dropped, and the unit-test module left out.
+/// Only a module written as `#[cfg(test)]` and then `mod tests {` at the
+/// start of a line is left out, up to the first line that is `}` alone, so
+/// any code after it, or after any other test-only item, is still scanned.
+fn code_of(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if line == "#[cfg(test)]" {
+            let mut next = lines.clone();
+            if next.next() == Some("mod tests {") {
+                lines = next;
+                for inner in lines.by_ref() {
+                    if inner == "}" {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+        if !line.trim_start().starts_with("//") {
+            kept.push(line);
+        }
+    }
+    kept.join("\n")
+}
+
 fn code(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}"));
-    let body = text.split("#[cfg(test)]").next().unwrap_or_default();
-    body.lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    code_of(&std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}")))
+}
+
+#[test]
+fn the_scan_leaves_out_only_the_unit_test_module() {
+    let text = "use a;\n#[cfg(test)]\nfn early() {}\nTcpStream\n// UdpSocket in a comment\n#[cfg(test)]\nmod tests {\n    fn f() {\n        lookup_host\n    }\n}\nconnect(\n";
+    let code = code_of(text);
+    assert!(code.contains("TcpStream"), "{code}");
+    assert!(code.contains("fn early"), "{code}");
+    assert!(code.contains("connect("), "{code}");
+    assert!(!code.contains("UdpSocket"), "{code}");
+    assert!(!code.contains("lookup_host"), "{code}");
 }
 
 fn all_sources() -> Vec<PathBuf> {

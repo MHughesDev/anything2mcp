@@ -8,7 +8,8 @@
 use std::str::FromStr;
 
 use a2m_core::{
-    Environment, Failure, FailureClass, Identity, SessionId, TargetName, Timestamp, WorkspaceId,
+    Digest, Environment, Failure, FailureClass, Identity, SessionId, TargetName, Timestamp,
+    WorkspaceId,
 };
 use a2m_ledger::{Owner, Row, SqlValue, Tx};
 use a2m_vault::Sealed;
@@ -25,7 +26,7 @@ macro_rules! columns {
     () => {
         "id, workspace_id, target, environment, identity_ref, provider, state, epoch, \
          home_runner_id, movable, profile, state_since, signed_in_at, expires_at, checked_at, \
-         last_used_at, stored_attempts, wants"
+         last_used_at, stored_attempts, wants, attempted_with"
     };
 }
 
@@ -82,6 +83,10 @@ fn row(row: &Row) -> Result<SessionRow, Failure> {
         wants: row
             .opt_text(17)?
             .map(|text| PersonReason::from_name(text).ok_or_else(|| corrupt("a reason")))
+            .transpose()?,
+        attempted_with: row
+            .opt_text(18)?
+            .map(|text| parsed(text, "a credential's mark"))
             .transpose()?,
     })
 }
@@ -166,9 +171,9 @@ pub(crate) fn create(
         "INSERT INTO sessions
             (id, workspace_id, target, environment, identity_ref, owner_principal_id, provider,
              state, epoch, home_runner_id, movable, profile, state_since, signed_in_at,
-             expires_at, checked_at, last_used_at, stored_attempts, wants)
+             expires_at, checked_at, last_used_at, stored_attempts, wants, attempted_with)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19)",
+                 ?18, ?19, ?20)",
         &[
             SqlValue::from(new.id.to_string()),
             SqlValue::from(new.key.workspace.to_string()),
@@ -189,6 +194,7 @@ pub(crate) fn create(
             SqlValue::from(new.last_used_at),
             SqlValue::from(new.stored_attempts),
             SqlValue::from(new.wants.map(PersonReason::as_str)),
+            SqlValue::from(new.attempted_with.map(|mark| mark.to_string())),
         ],
     )?;
     insert_event(tx, event)?;
@@ -210,7 +216,7 @@ pub(crate) fn advance(
         "UPDATE sessions SET provider = ?4, state = ?5, epoch = ?6, home_runner_id = ?7,
                 movable = ?8, profile = ?9, state_since = ?10, signed_in_at = ?11,
                 expires_at = ?12, checked_at = ?13, last_used_at = ?14, stored_attempts = ?15,
-                wants = ?16
+                wants = ?16, attempted_with = ?17
          WHERE id = ?1 AND state = ?2 AND epoch = ?3",
         &[
             SqlValue::from(seen.id.to_string()),
@@ -229,6 +235,7 @@ pub(crate) fn advance(
             SqlValue::from(next.last_used_at),
             SqlValue::from(next.stored_attempts),
             SqlValue::from(next.wants.map(PersonReason::as_str)),
+            SqlValue::from(next.attempted_with.map(|mark| mark.to_string())),
         ],
     )?;
     if changed == 0 {
@@ -272,7 +279,8 @@ pub(crate) fn note(
     let changed = tx.tables(OWNER).execute(
         "UPDATE sessions SET last_used_at = COALESCE(?2, last_used_at),
                 checked_at = COALESCE(?3, checked_at),
-                stored_attempts = CASE WHEN ?4 = 1 THEN 0 ELSE stored_attempts END
+                stored_attempts = CASE WHEN ?4 = 1 THEN 0 ELSE stored_attempts END,
+                attempted_with = CASE WHEN ?4 = 1 THEN NULL ELSE attempted_with END
          WHERE id = ?1 AND epoch = ?5",
         &[
             SqlValue::from(id.to_string()),
@@ -329,6 +337,65 @@ pub(crate) fn events(tx: &mut Tx<'_>, id: SessionId) -> Result<Vec<SessionEvent>
             })
         })
         .collect()
+}
+
+/// The newest sign-ins of a session that made it hold, newest first, at
+/// most `limit` of them: each `signed_in` event, and each `renewed` event
+/// of a full sign-in. Each is its cause and its time.
+pub(crate) fn sign_ins(
+    tx: &mut Tx<'_>,
+    id: SessionId,
+    limit: u32,
+) -> Result<Vec<(String, Timestamp)>, Failure> {
+    tx.tables(OWNER)
+        .query(
+            "SELECT cause, at FROM session_events
+             WHERE session_id = ?1
+               AND (kind = 'signed_in' OR (kind = 'renewed' AND cause = ?2))
+             ORDER BY seq DESC LIMIT ?3",
+            &[
+                SqlValue::from(id.to_string()),
+                SqlValue::from(crate::keeper::FULL_SIGN_IN_CAUSE),
+                SqlValue::from(limit),
+            ],
+        )?
+        .iter()
+        .map(|found| {
+            Ok((
+                found.text(0)?.to_owned(),
+                Timestamp::from_unix_millis(found.int(1)?),
+            ))
+        })
+        .collect()
+}
+
+/// The mark of the credentials `references` name for one owner, as they
+/// are stored now: a digest of each reference with the digest of its
+/// sealed envelope, or with nothing where nothing is stored. The envelope
+/// is sealed under a key the vault holds, with a random nonce, so the mark
+/// changes whenever the credential is stored again and confirms no guess
+/// of its value. No credential is opened.
+pub(crate) fn credential_mark<'r>(
+    tx: &mut Tx<'_>,
+    workspace: &WorkspaceId,
+    owner: &str,
+    references: impl IntoIterator<Item = (&'r str, &'r CredentialRef)>,
+) -> Result<Digest, Failure> {
+    let mut marked = b"anything2mcp stored credential mark 1\0".to_vec();
+    for (role, reference) in references {
+        marked.extend_from_slice(role.as_bytes());
+        marked.push(0);
+        marked.extend_from_slice(reference.as_str().as_bytes());
+        marked.push(0);
+        match credential(tx, workspace, owner, reference)? {
+            Some(sealed) => {
+                marked.push(1);
+                marked.extend_from_slice(Digest::of(&sealed.to_bytes()).as_bytes());
+            }
+            None => marked.push(0),
+        }
+    }
+    Ok(Digest::of(&marked))
 }
 
 /// Stores a sealed credential under its reference, replacing what was there.

@@ -202,6 +202,94 @@ async fn a_discovery_job_for_a_surface_the_plan_does_not_hold_leaves_the_run_as_
     assert!(scene.hooks.postures.lock().unwrap().is_empty());
 }
 
+// ---- files of the project's `sources` folder (decision 0263) ----
+
+/// A project with a `sources` folder holding one file, set as the folder of
+/// the request, and the files the call hands the discovery.
+fn handing(scene: &Scene, files: &[(&str, &str)]) -> common::Folder {
+    let project = common::Folder::new("handed");
+    std::fs::create_dir_all(project.path().join("sources")).unwrap();
+    std::fs::write(
+        project.path().join("sources").join("example-openapi.json"),
+        b"{\"openapi\": \"3.0.0\"}",
+    )
+    .unwrap();
+    *scene.control.project.lock().unwrap() = Some(project.path().to_path_buf());
+    *scene.control.discovery_files.lock().unwrap() = files
+        .iter()
+        .map(|(name, path)| ((*name).to_owned(), (*path).to_owned()))
+        .collect();
+    project
+}
+
+#[tokio::test]
+async fn a_named_file_of_the_sources_folder_reaches_the_discoverer_under_its_name() {
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    let _project = handing(&scene, &[("description", "sources/example-openapi.json")]);
+    let outcome = scene.discover("app").await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let handed = scene.discoverer.handed.lock().unwrap().clone();
+    assert_eq!(
+        handed,
+        [vec![(
+            "description".to_owned(),
+            b"{\"openapi\": \"3.0.0\"}".to_vec()
+        )]]
+    );
+}
+
+/// Makes a link to a file. `None` where this machine does not let the test
+/// make one, as Windows does without the privilege.
+fn link_file(target: &std::path::Path, link: &std::path::Path) -> Option<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).ok();
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, link).ok();
+}
+
+#[tokio::test]
+async fn a_link_out_of_the_sources_folder_is_refused_and_nothing_is_read() {
+    let outside = common::Folder::new("outside");
+    std::fs::write(outside.path().join("secret.txt"), b"not for discovery").unwrap();
+    // The same refusal for a path that leaves the folder by its text, a
+    // hidden file, a path outside `sources/`, and a name no discoverer of
+    // the surface reads.
+    let mut cases = vec![
+        ("description", "sources/../outside.txt", "path_not_allowed"),
+        ("description", "sources/.hidden.json", "path_not_allowed"),
+        ("description", "target.yaml", "path_not_allowed"),
+        ("description", "sources/missing.json", "path_not_allowed"),
+        ("register_map", "sources/example-openapi.json", "job_invalid"),
+    ];
+    let link = "sources/out.json";
+    cases.push(("description", link, "path_not_allowed"));
+    for (name, path, code) in cases {
+        let scene = Scene::new(ORDER_GET, |_| {}).await;
+        let project = handing(&scene, &[(name, path)]);
+        std::fs::write(project.path().join("outside.txt"), b"not in sources").unwrap();
+        std::fs::write(project.path().join("sources").join(".hidden.json"), b"{}").unwrap();
+        if path == link
+            && link_file(
+                &outside.path().join("secret.txt"),
+                &project.path().join("sources").join("out.json"),
+            )
+            .is_none()
+        {
+            // Without the right to make a link there is nothing to plant.
+            continue;
+        }
+        let outcome = scene.discover("app").await;
+        let JobOutcome::Left(failure) = &outcome else {
+            panic!("{path}: {outcome:?}");
+        };
+        assert_eq!(failure.code().as_str(), code, "{path}: {failure:?}");
+        // No discoverer ran, no driver was prepared, and nothing was read.
+        assert!(discovered(&scene).is_empty(), "{path}");
+        assert!(scene.discoverer.handed.lock().unwrap().is_empty(), "{path}");
+        assert!(scene.hooks.postures.lock().unwrap().is_empty(), "{path}");
+    }
+}
+
 // ---- a try: a draft in the sandbox ----
 
 #[tokio::test]

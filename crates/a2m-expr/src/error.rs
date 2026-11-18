@@ -1,30 +1,20 @@
 //! Errors: a compile error with a place and a fix, and the run-time failures.
 //!
 //! Every error of this crate is a [`Failure`] of class `input` with one of the
-//! codes below. A run-time failure names the host function and the kind of
-//! thing that went wrong. It never carries the value that caused it, because a
-//! value may be business data and a failure's sentence is shown to callers.
+//! codes of its table, [`crate::codes`], whose next step it carries unless
+//! the case gives a better one. A run-time failure names the host function
+//! and the kind of thing that went wrong. It never carries the value that
+//! caused it, because a value may be business data and a failure's sentence
+//! is shown to callers.
 
 use std::fmt;
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// The text does not parse, or names something the environment does not declare.
-pub const EXPRESSION_INVALID: FailureCode = FailureCode::fixed("expression_invalid");
-/// A type does not fit, including any use of a float.
-pub const EXPRESSION_TYPE_ERROR: FailureCode = FailureCode::fixed("expression_type_error");
-/// A host function was given a value it cannot represent.
-pub const VALUE_OUT_OF_RANGE: FailureCode = FailureCode::fixed("value_out_of_range");
-/// A parse function met text it cannot read.
-pub const VALUE_UNPARSABLE: FailureCode = FailureCode::fixed("value_unparsable");
-/// A value was absent where the expression needs one.
-pub const VALUE_ABSENT: FailureCode = FailureCode::fixed("value_absent");
-/// Evaluation passed its cost limit.
-pub const EXPRESSION_COST_EXCEEDED: FailureCode = FailureCode::fixed("expression_cost_exceeded");
-/// A plan's expression names a library this engine does not have, no longer
-/// checks as the type it states, or was run without a name it reads.
-pub const PLAN_EXPRESSION_UNLOADABLE: FailureCode =
-    FailureCode::fixed("plan_expression_unloadable");
+pub use crate::codes::{
+    EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID, EXPRESSION_TYPE_ERROR,
+    PLAN_EXPRESSION_UNLOADABLE, VALUE_ABSENT, VALUE_OUT_OF_RANGE, VALUE_UNPARSABLE,
+};
 
 /// A place inside an expression: byte offsets into the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -109,7 +99,7 @@ impl From<ExprError> for Failure {
         let message = error.to_string();
         let next_step = error
             .fix
-            .unwrap_or_else(|| "Correct the expression and compile again.".to_owned());
+            .unwrap_or_else(|| crate::codes::next_for(&error.code).to_owned());
         Failure::new(FailureClass::Input, error.code, message, next_step)
     }
 }
@@ -160,17 +150,7 @@ impl Fault {
 
     /// The failure a caller sees. `place` names the function or operator.
     pub(crate) fn into_failure(self, place: &str) -> Failure {
-        let next_step = if self.code == VALUE_UNPARSABLE {
-            "Correct the value, or the field type's format, and run again."
-        } else if self.code == VALUE_OUT_OF_RANGE {
-            "Give a value the field type can hold, and run again."
-        } else if self.code == VALUE_ABSENT {
-            "Give the value, or a default with coalesce, and run again."
-        } else if self.code == EXPRESSION_COST_EXCEEDED {
-            "Give the expression less to work over, such as fewer rows, or simplify it."
-        } else {
-            "Compile the target again with this engine."
-        };
+        let next_step = crate::codes::next_for(&self.code);
         let message = if place.is_empty() {
             format!("An expression stopped: {}.", self.what)
         } else {

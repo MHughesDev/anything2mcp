@@ -579,3 +579,74 @@ async fn a_comparison_is_counted_only_beside_a_live_read_under_way() {
     .unwrap_err();
     assert_eq!(refused.code(), &codes::SHADOW_NOT_COUNTED);
 }
+
+#[tokio::test]
+async fn comparisons_kept_under_the_older_purpose_count_no_distinct_input() {
+    let folder = Folder::new("shadow-purpose");
+    let store = on_disk(&folder).await;
+    let fence = reading(&store, "a").await;
+    let binding = shadow_digest();
+    // A store kept before migration 0023: five matches on five inputs, each
+    // input digested under `caller_key`, as a second connection can plant
+    // them beside a read under way.
+    let raw = folder.raw();
+    for n in 0..5 {
+        raw.execute(
+            "INSERT INTO shadow_comparisons
+                (workspace_id, target, environment, operation, binding_digest, mode, position,
+                 against_digest, run_id, writes, outcome, at, input_digest, requests)
+             VALUES (?1, ?2, 'test', ?3, ?4, 'app_json_spare', 1, ?5, ?6, 0, 'match', ?7, ?8, 1)",
+            rusqlite::params![
+                workspace().to_string(),
+                target().as_str(),
+                operation().as_str(),
+                binding.to_string(),
+                verified_digest().to_string(),
+                fence.run.to_string(),
+                START,
+                Digest::of(format!("an older input {n}").as_bytes()).to_string(),
+            ],
+        )
+        .unwrap();
+    }
+    let purposes: Vec<String> = raw
+        .prepare("SELECT input_purpose FROM shadow_comparisons ORDER BY seq")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(purposes, vec!["caller_key"; 5]);
+    // They are matches, and no distinct input: never promotable on their own.
+    assert_eq!(
+        promotable(&store, binding, false).await,
+        Promotable::No(NotPromotable::TooFew {
+            evidence: vec![held("test", 0, 5)],
+            threshold: 5
+        })
+    );
+    // Comparisons kept now are digested under `shadow_input`, and only they
+    // count, each input once.
+    let mut last = 0;
+    for id in ORDERS {
+        last = keep(&store, on(fence, id, ShadowOutcome::Matched))
+            .await
+            .unwrap();
+    }
+    let newest: String = raw
+        .query_row(
+            "SELECT input_purpose FROM shadow_comparisons ORDER BY seq DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(newest, "shadow_input");
+    assert_eq!(
+        promotable(&store, binding, false).await,
+        Promotable::Yes {
+            evidence: vec![held("test", 5, 10)],
+            threshold: 5,
+            through_seq: last,
+        }
+    );
+}

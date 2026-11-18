@@ -252,43 +252,66 @@ impl Paths {
     }
 }
 
-/// Which of the engine's own folders other accounts may enter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OpenFolders {
-    /// Each that exists is closed to every other account.
-    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
-    Closed,
+/// Which of the engine's own folders other accounts may enter, and which the
+/// engine could not close.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct OpenFolders {
     /// These may be entered, or listed, by another account.
-    #[cfg_attr(not(unix), allow(dead_code))] // read on Unix alone
-    Open(Vec<PathBuf>),
+    pub(crate) open: Vec<PathBuf>,
+    /// These are not a folder of this user's: another account owns them,
+    /// or a link or a file stands where the folder should be. The engine
+    /// closes only a folder of its own user's, so it could not close these
+    /// when it started (finding B4 of the sixth audit, decision 0273).
+    pub(crate) not_ours: Vec<PathBuf>,
     /// This build does not read who may on this operating system.
-    NotChecked,
+    pub(crate) not_checked: bool,
+}
+
+impl OpenFolders {
+    /// Whether every folder that exists is this user's and closed.
+    pub(crate) fn closed(&self) -> bool {
+        !self.not_checked && self.open.is_empty() && self.not_ours.is_empty()
+    }
 }
 
 /// Which of the data, configuration, cache, and runtime folders another
-/// account may enter or list: on Unix, any of the group's or others' bits
-/// on the folder. Touches the disk. On Windows the access list is not read
-/// here: the engine sets it when it starts.
+/// account may enter or list, and which are not a folder of this user's: on
+/// Unix, the entry itself, a link not followed, its owner, and any of the
+/// group's or others' bits. Touches the disk. On Windows the access list is
+/// not read here: the engine sets it when it starts.
 pub(crate) fn open_to_others(paths: &Paths) -> OpenFolders {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt as _;
-        let open: Vec<PathBuf> = [&paths.data, &paths.config, &paths.cache, &paths.runtime]
-            .into_iter()
-            .filter(|folder| std::fs::metadata(folder).is_ok_and(|found| found.mode() & 0o077 != 0))
-            .cloned()
-            .collect();
-        if open.is_empty() {
-            OpenFolders::Closed
-        } else {
-            OpenFolders::Open(open)
-        }
+        open_to_others_as(paths, rustix::process::getuid().as_raw())
     }
     #[cfg(not(unix))]
     {
         let _ = paths;
-        OpenFolders::NotChecked
+        OpenFolders {
+            not_checked: true,
+            ..OpenFolders::default()
+        }
     }
+}
+
+/// [`open_to_others`], for the account `me`; a test names another account
+/// to stand for its own.
+#[cfg(unix)]
+fn open_to_others_as(paths: &Paths, me: u32) -> OpenFolders {
+    use std::os::unix::fs::MetadataExt as _;
+    let mut found = OpenFolders::default();
+    for folder in [&paths.data, &paths.config, &paths.cache, &paths.runtime] {
+        let Ok(entry) = std::fs::symlink_metadata(folder) else {
+            // Not there: nothing in it to reach.
+            continue;
+        };
+        if !entry.is_dir() || entry.uid() != me {
+            found.not_ours.push(folder.clone());
+        } else if entry.mode() & 0o077 != 0 {
+            found.open.push(folder.clone());
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -353,5 +376,41 @@ mod tests {
         assert_eq!(windows.config, roaming.join("anything2mcp"));
         assert_eq!(windows.data, local.join("anything2mcp"));
         assert!(Paths::resolve(&Env::with(OsFamily::Linux, &[])).is_err());
+    }
+
+    /// Finding B4 of the sixth audit, decision 0273: a folder the engine
+    /// could not close, because it is not a folder of this user's, is
+    /// named, as well as one open to others. Another account id stands for
+    /// the test's own, so that the test's folders are another account's
+    /// whoever runs it.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_of_another_account_or_a_link_in_its_place_is_named() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = std::env::temp_dir().join(format!("a2m-actions-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = Paths::under(&root);
+        for folder in [&paths.data, &paths.config, &paths.cache, &paths.runtime] {
+            std::fs::create_dir_all(folder).unwrap();
+            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let me = rustix::process::getuid().as_raw();
+        assert!(super::open_to_others_as(&paths, me).closed());
+        // Every folder is another account's.
+        let other = super::open_to_others_as(&paths, me.wrapping_add(1));
+        assert_eq!(other.not_ours.len(), 4, "{other:?}");
+        assert!(!other.closed());
+        // A link in the place of a folder, to a folder of this user's, is
+        // not followed; a folder open to others is named apart.
+        let real = root.join("real-cache");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir(&paths.cache).unwrap();
+        std::os::unix::fs::symlink(&real, &paths.cache).unwrap();
+        std::fs::set_permissions(&paths.config, std::fs::Permissions::from_mode(0o750)).unwrap();
+        let found = super::open_to_others_as(&paths, me);
+        assert_eq!(found.not_ours, vec![paths.cache.clone()]);
+        assert_eq!(found.open, vec![paths.config.clone()]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

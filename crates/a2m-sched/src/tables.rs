@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize};
 use crate::budget::{self, Take};
 use crate::failure;
 use crate::types::{
-    Admitted, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd, JobKind, JobLease,
-    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, Priority, Reconciling,
-    Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings, Slots, Submission,
+    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
+    JobKind, JobLease, JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION,
+    Priority, Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings,
+    Slots, Submission,
 };
 
 /// The most keys a job may name as exclusive, and the most modes.
@@ -732,12 +733,14 @@ fn place(
 /// Admits a run with its first job, or returns the unfinished run the same
 /// call already made, or refuses. One transaction: a refusal leaves nothing.
 /// `reserve` is the share of each budget the submission leaves for others:
-/// 0, except for a watch's check.
+/// 0, except for a watch's check, which also spends `share`, the budget its
+/// surface keeps for watches, with no reserve.
 pub(crate) fn admit(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
     submission: Submission,
     reserve: u32,
+    share: Option<BudgetKey>,
 ) -> Result<Admitted, Failure> {
     let Submission {
         run,
@@ -779,9 +782,10 @@ pub(crate) fn admit(
         &new,
         queue_wait.unwrap_or(settings.queue_wait),
     )?;
-    if !budgets.is_empty()
-        && let Take::Wait { until } =
-            budget::take(tx, &settings.default_rate, &budgets, 1, true, reserve)?
+    let mut keys: Vec<(BudgetKey, u32)> = budgets.into_iter().map(|key| (key, reserve)).collect();
+    keys.extend(share.map(|key| (key, 0)));
+    if !keys.is_empty()
+        && let Take::Wait { until } = budget::take_each(tx, &settings.default_rate, &keys, 1, true)?
     {
         return Err(failure::rate_limited(between(now, until)));
     }

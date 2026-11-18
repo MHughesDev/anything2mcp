@@ -1,0 +1,37 @@
+# 0269. A stored credential's attempts outlive a restart, an answer nobody can read is an attempt, and sign-ins without the person are limited
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-18
+
+**Changes:** the design of [`a2m-auth`](../architecture/crates/a2m-auth.md), and migration `0024` of `a2m-ledger`, which `a2m-auth` owns. Answers findings A2, A3, and A6 of the sixth audit, a second reader's review of [decision 0245](0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md), [decision 0248](0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md), and [decision 0254](0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md). Where this record and decision 0245 differ on what the keeper counts, this record holds.
+
+## Context
+
+A lockout policy counts each failed sign-in. Three gaps let the keeper send a stored credential again without anyone deciding to:
+
+- **A2.** `Keeper::sign_in` set the count of attempts to zero before every sign-in, and the web pack's memory of a refused credential is in the process only. The local engine stops when idle and starts on demand, so after each restart an agent's `session.login` sent a refused password once more.
+- **A3.** A sign-in whose answer showed none of the declared signs was recorded as failed and not counted, so every later lease sent the credential again.
+- **A6.** Nothing limited how often a session was signed in again over time. A page's content can show the sign of an expired session on purpose; each such page led, through a failed probe, to a full sign-in, and on a system that allows one session per account each signed the person out elsewhere.
+
+## Decision
+
+1. **The count names the credential it is about, and lives in the session's record.** The sessions table has a new column, `attempted_with`: the mark of the stored credential the count of attempts is about. The mark is the SHA-256 of a fixed label, each role and reference the auth entry names, and the SHA-256 of each reference's sealed envelope (or a sign that nothing is stored there). The envelope is sealed under a key the vault holds, with a random data key and nonce, so the mark confirms no guess of the value and changes whenever the credential is stored again. No credential is opened to make it. A count with another mark than the credential stored now is about a credential stored again since, and counts as none. The count survives a restart because it is in the store.
+2. **Who carries out a sign-in is said.** `Keeper::sign_in_by(key, entry, acting_for, SignInBy)` replaces the meaning of `sign_in`, which is kept and is `SignInBy::Asked`. For a provider that works from a stored credential, a sign-in a program asks for (`Asked`) is not started when the credential as stored is at the attempt limit (`session_expired`/`credential_refused`), and the count is kept, not cleared. A sign-in the person carries out themself (`Person`: their own page of the sign-in, or their own command line) is tried, and starts the count again. So a refusal is cleared only when the person stores the credential again or signs in themself.
+3. **An answer nobody can read is an attempt** (rule 7). A sign-in, or the renewal's full sign-in, that fails with any class but `input`, `policy`, `busy`, or `transient`, and not with a handshake refusal of the `tls` module, may have sent the credential: it is counted. At the limit, a lease's sign-in and the renewal move the session to `needs_person` (reason `sign_in`) and tell the person once; a sign-in that was asked for leaves the session `absent` with the count, and no lease sends it again. A sign-in interrupted on its way (found by `tick`) is counted the same way. A `transient` failure stays uncounted, as spec section 215 says of failing to reach the identity service: a provider that loses the answer after sending says `possible_commit` or `unknown_variant`, never `transient`.
+4. **Sign-ins without the person are limited over time.** At most `AUTOMATIC_SIGN_INS` = 4 sign-ins that made the session hold, without its person, within `AUTOMATIC_SIGN_IN_WINDOW` = one hour: a lease's sign-in from the stored credential, the renewal's full sign-in, and a sign-in a program asked for. When the last four since the person's own sign-in fall within the window, the next is not made: the renewal moves the session to `needs_person`, and a lease or an ask stops with `session_expired`/`needs_login`, naming the count. It does not lift by itself as time passes; the person's own sign-in starts the count again. A target whose declared maximum age is shorter than the window is allowed the sign-ins that age makes in it, at most sixty more. The count is read from the session's timeline, whose `signed_in` and `renewed` events now name their cause (`stored_credential`, `requested`, `by_person`, `full_sign_in`, `renewal`), so it too survives a restart. The numbers: four in an hour is a session ended every quarter of an hour, shorter than the idle limit systems commonly set, and still a bound of four sign-ins where there was none. Both are `KeeperSettings` fields with these defaults; a setting `sessions.automatic_sign_ins_per_hour` would be `a2m-actions`' to read.
+5. **A probe holds the keeper weakly.** `Keeper::downgrade` gives a `WeakKeeper`. A probe that leases through the keeper is held by the keeper's own work, so a strong `Keeper` in it is a cycle that keeps a closed engine's keeper, store, and worker. The product's probe holds nothing today; the cycle was in a test of the web pack.
+
+## Alternatives weighed
+
+- **A keyed digest of the credential's value**, as the web pack's in-memory set holds it but under the vault's digest key. It would need the decide half of the keeper to open the secret, which it never does, and a new purpose in `a2m-core`'s closed list. It would also keep a refusal when the person stores the same value again, which the person may do on purpose after the account was unlocked. The envelope's mark needs neither, and the web pack's own memory still refuses the same value within one process.
+- **Counting every failure, `transient` included.** Safer against a provider that reports a lost answer as `transient`, but it turns an identity service that is down for a minute into a person's sign-in, which spec section 215 rejects. The rule for providers is written instead (point 3).
+- **A window that slides and lifts by itself.** A system that keeps ending a session would then be signed in four times every hour for ever. The limit stops until the person comes.
+- **Counting failed sign-ins in the window as well.** Those are bounded already by the attempt limit; counting them too made a down service use up the window.
+
+## Not done
+
+- `a2m-actions` still calls `sign_in`, so a person's press on their own page counts as `Asked` until it passes `SignInBy::Person`. Until then a person whose credential is at the limit stores it again on the page to try once more.
+- The web pack's `page_lost` after the press is `transient`; under point 3 it should say `unknown_variant` or `possible_commit` (that pack's change).
+- The OAuth exchange reports an answer cut off after the request was sent as `transient`/`upstream_unavailable`; it is not counted.
+- Not run: anything on Windows and macOS.

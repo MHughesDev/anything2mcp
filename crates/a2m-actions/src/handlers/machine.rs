@@ -148,36 +148,61 @@ handler!(
         let paths = kernel.paths().clone();
         let home = tokio::task::spawn_blocking(move || crate::paths::open_to_others(&paths))
             .await
-            .unwrap_or(crate::paths::OpenFolders::NotChecked);
-        checks.push(match home {
-            crate::paths::OpenFolders::Closed => check(
+            .unwrap_or_else(|_| crate::paths::OpenFolders {
+                not_checked: true,
+                ..crate::paths::OpenFolders::default()
+            });
+        let listed = |folders: &[std::path::PathBuf]| {
+            folders
+                .iter()
+                .map(|folder| format!("`{}`", folder.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        checks.push(if home.not_checked {
+            check(
+                "home",
+                DoctorState::Unknown,
+                "Who may enter the engine's own folders is not read on this operating system yet; the engine gives each an access list that names only this user when it starts.",
+                "",
+            )
+        } else if home.closed() {
+            check(
                 "home",
                 DoctorState::Healthy,
                 "The engine's own folders are this user's alone.",
                 "",
-            ),
-            crate::paths::OpenFolders::Open(folders) => check(
+            )
+        } else if !home.not_ours.is_empty() {
+            // The engine closes only a folder of its own user's: these it
+            // could not close when it started (decision 0273).
+            check(
+                "home",
+                DoctorState::ConfigDrift,
+                format!(
+                    "These of the engine's own folders are not a folder of this user's, so the engine could not close them to other accounts: {}. Another account owns each, or a link or a file stands in its place.{}",
+                    listed(&home.not_ours),
+                    if home.open.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Other accounts may also enter {}.", listed(&home.open))
+                    }
+                ),
+                "Put a folder of this user's own in the place of each, not a link, closed to every other account, then start the engine again.",
+            )
+        } else {
+            check(
                 "home",
                 DoctorState::ConfigDrift,
                 format!(
                     "Other accounts may enter the engine's own folders: {}. What they hold is sealed, and is still not to be left where others can list and copy it.",
-                    folders
-                        .iter()
-                        .map(|folder| format!("`{}`", folder.display()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    listed(&home.open)
                 ),
                 format!(
                     "Close each to every account but this user's ({}), or start the engine, which closes the folders it uses.",
                     if cfg!(unix) { "`chmod 700` on each" } else { "remove every other account from its access list" }
                 ),
-            ),
-            crate::paths::OpenFolders::NotChecked => check(
-                "home",
-                DoctorState::Unknown,
-                "Who may enter the engine's own folders is not read on this operating system yet; the engine gives each an access list that names only this user when it starts.",
-                "",
-            ),
+            )
         });
 
         // The key store.

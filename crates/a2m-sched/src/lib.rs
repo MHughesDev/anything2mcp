@@ -38,8 +38,8 @@ pub use types::{
 };
 pub use waits::LockTicket;
 pub use watch::{
-    CheckAdmission, CheckStarted, DueCheck, DuePlan, SHORTEST_INTERVAL_FLOOR, WatchLimits, due_at,
-    plan,
+    CheckAdmission, CheckStarted, DueCheck, DuePlan, DueWatches, SHORTEST_INTERVAL_FLOOR,
+    WatchLimits, due_at, plan,
 };
 
 /// The failure codes this crate produces. Each belongs to exactly one class.
