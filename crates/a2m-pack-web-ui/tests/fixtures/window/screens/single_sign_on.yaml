@@ -1,0 +1,5 @@
+# The application's page that sends the browser to its identity provider.
+screen: single_sign_on
+surface: app
+reach: {url: "/secure/sso"}
+ready: {visible: {role: heading, name: "Example ID"}}

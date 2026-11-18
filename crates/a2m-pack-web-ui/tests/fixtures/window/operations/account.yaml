@@ -1,0 +1,14 @@
+operation: example_account_get
+title: Who is signed in
+effect: read
+inputs: {}
+outputs:
+  signed_in_as: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: verified
+    screen: account
+description: >
+  Reads which account the application says is signed in. It is the
+  session's probe: it works only while the sign-in holds.

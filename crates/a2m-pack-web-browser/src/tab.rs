@@ -3485,6 +3485,33 @@ impl ActTab {
         }
     }
 
+    /// Waits for `until`, and ends early when the tab refuses something or
+    /// a document of it loads after the count `seen`: `Ok(true)` when the
+    /// condition held, `Ok(false)` when the tab changed first. On a page
+    /// whose origin the tab's helper does not look at, nothing is looked
+    /// at: the wait is for the next change alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Look::wait`] and [`ActTab::changed_since`].
+    pub async fn wait_unless_changed(
+        &self,
+        until: &Primitive,
+        seen: u64,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
+        tokio::select! {
+            waited = self.page.wait(until, deadline) => match waited {
+                Ok(()) => Ok(true),
+                Err(BrowserError::ForeignOrigin(_)) => {
+                    self.changed_since(seen, deadline).await.map(|()| false)
+                }
+                Err(error) => Err(looked(error)),
+            },
+            changed = self.changed_since(seen, deadline) => changed.map(|()| false),
+        }
+    }
+
     /// What this tab refused since the last call, oldest first: a move of
     /// the tab to an origin it was not opened for (`NAVIGATION`), a window
     /// its page opened, which was closed before it fetched anything

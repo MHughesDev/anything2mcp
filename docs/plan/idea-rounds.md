@@ -136,3 +136,15 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: taken up.** The scout is to take, by name, files of the project that the person points it at, each checked as every project path is and offered to the discoverers under the names they declare, and a product test is to import a description from a file and a register map from a file through the real command. Until that is built, the HTTP pack's fix text is to stop naming a step that cannot be taken.
 
 **Next.** A package of its own in the action registry and the engine's discovery job, after the validation in hand. The scope page gains a row for it, marked not yet built.
+
+## Round 21 (2026-11-18, 04:37 UTC)
+
+**Idea.** The help of every command that changes something says what kind of change it makes, who may run it, and whether a person is needed.
+
+**Test.** Asked the built program for every action in its registry and what the registry holds about each (its effect, who may run it, whether it is built), then read the help of each action's command and looked for the same facts there. One debug build from earlier in the day; all 92 actions; a search for words, so a help text that says the fact in other words than the ones searched for would be missed.
+
+**Result.** The registry holds the facts and the help does not print them. Of the 41 actions that change something, the help of none says who may run it, seven say anything about the effect, and twelve mention a person. The larger finding was not the one looked for: 38 of the 92 actions are not built, among them importing a description from a file, starting a capture, moving a toolset to a version, and setting a configuration value. The top-level help marks them. The help of each one does not: it describes the command in full, as if it worked, and a person learns otherwise only from the refusal after running it.
+
+**Verdict: taken up.** A command's help is generated from the registry, so the fix is one change to the generator and no hand-written text: every help gains the action's effect, who may run it, and whether a person at the machine is asked; and the help of an action that is not built says so in its first line, with what the product does today instead where the registry knows it.
+
+**Next.** Joins the package for what a person and an agent meet at the command line. The count of actions not built, 38 of 92, belongs in the readiness section beside the roadmap's counts.

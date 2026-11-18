@@ -1,0 +1,15 @@
+# The person signs in themself, in a window of the engine's own browser, on
+# the application's own sign-in page. The engine fills nothing and reads no
+# field; it waits for the screen `account` to show.
+auth:
+  - surfaces: [app]
+    mode: custom
+    provider: window_login
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: sign_in
+      signed_in: account
+      wait_ms: 20000
+    attempt_limit: 1

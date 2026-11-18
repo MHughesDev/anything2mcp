@@ -50,8 +50,10 @@ session = true
 
 [points]
 driver = ["ui", "page_http"]
-# A sign-in through the application's own sign-in page (decision 0245).
-auth_provider = ["form_login"]
+# A sign-in through the application's own sign-in page with a stored
+# credential (decision 0245), and a sign-in the person carries out in a
+# window, on the application's pages or an identity provider's (decision 0254).
+auth_provider = ["form_login", "window_login", "sso_oidc", "sso_saml"]
 
 [[file_kinds]]
 name = "screen"

@@ -1482,7 +1482,10 @@ impl PageHttpDriver {
                 .iter()
                 .chain(&entry.ok)
                 .chain(entry.ok.is_empty().then_some(&200));
-            if let Some(status) = read_as.into_iter().find(|status| expiry.statuses.contains(status)) {
+            if let Some(status) = read_as
+                .into_iter()
+                .find(|status| expiry.statuses.contains(status))
+            {
                 return Err(codes::not_usable(format!(
                     "the page request `{}` reads the status {status}, which the target also declares as a sign that the session has ended",
                     shown(name)

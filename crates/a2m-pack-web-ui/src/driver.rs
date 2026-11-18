@@ -1017,7 +1017,10 @@ impl Session {
             for (sign, ready) in &self.expiry {
                 if sign != name && self.holds_now(&ready.primitive(), deadline).await? {
                     return Err(StepFailure::not_sent(crate::sign_in::session_ended(
-                        format!("The page shows the screen `{}` in place of {what}", shown(sign)),
+                        format!(
+                            "The page shows the screen `{}` in place of {what}",
+                            shown(sign)
+                        ),
                     )));
                 }
             }

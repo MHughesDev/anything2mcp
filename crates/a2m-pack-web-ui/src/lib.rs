@@ -58,6 +58,7 @@ mod page_http;
 mod requests;
 mod screens;
 mod sign_in;
+mod window;
 
 use std::sync::Arc;
 
@@ -135,6 +136,9 @@ impl Pack for WebUiPack {
         }
         let browsers = self.browsers.get_or_create(cx, settings)?;
         to.auth_provider(Arc::new(sign_in::FormLogin::new(browsers.clone())))?;
+        for name in [window::WINDOW_LOGIN, window::SSO_OIDC, window::SSO_SAML] {
+            to.auth_provider(Arc::new(window::WindowLogin::new(browsers.clone(), name)))?;
+        }
         let page_http = Mode::new(PAGE_HTTP_MODE)?;
         to.driver(
             page_http.clone(),

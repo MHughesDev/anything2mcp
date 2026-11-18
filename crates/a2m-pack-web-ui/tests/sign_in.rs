@@ -547,7 +547,8 @@ async fn a_sign_in_declared_by_drafts_fills_in_and_sends_nothing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_again_once_renewed() {
+async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_again_once_renewed()
+{
     let world = World::new("signin-page-http", true).await;
     assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
     let stored = world.app.stored_order("A-100").await.unwrap().unwrap();
