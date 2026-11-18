@@ -31,18 +31,12 @@ struct Found {
     file: RelPath,
     /// The file's text with the binding's status rewritten to `verified`.
     edited: String,
-    /// The file's text as it was read: the write is refused where the file
-    /// no longer holds it, so that no edit made since is lost.
-    original: String,
     /// The drafts compiled as they are.
     compiled: Compiled,
     /// What the operation does.
     effect: EffectClass,
     /// The binding's status now.
     status: BindingStatus,
-    /// The binding, by its place, mode, and the digest of what it does:
-    /// only evidence that names it is taken (audit finding AC-6).
-    pin: a2m_engine::BindingPin,
 }
 
 fn not_promotable(message: impl Into<String>, next: impl Into<String>) -> Failure {
@@ -93,7 +87,6 @@ fn locate(
     target: &TargetName,
     tool: &OperationName,
     mode: &Mode,
-    position: Option<usize>,
 ) -> Result<Found, Failure> {
     let set = kernel.providers().compiler_set();
     let folder = target_folder(project_folder, target)?;
@@ -124,7 +117,7 @@ fn locate(
         .bindings
         .iter()
         .enumerate()
-        .filter(|(at, binding)| binding.mode == *mode && position.is_none_or(|given| given == *at))
+        .filter(|(_, binding)| binding.mode == *mode)
         .map(|(position, _)| position)
         .collect();
     let position = match of_mode.as_slice() {
@@ -141,11 +134,10 @@ fn locate(
                 format!(
                     "The operation `{tool}` has more than one binding of the mode `{mode}`, and nothing says which is meant."
                 ),
-                "Name it by `position` as well, counted from 1 among the operation's bindings.",
+                "Promote it by writing its status in the operation's file.",
             ));
         }
     };
-    let pin = a2m_engine::BindingPin::of(plan, operation, position).ok_or_else(no_tool)?;
     let status = operation.bindings[position].status;
     match status {
         BindingStatus::Draft | BindingStatus::Verified => {}
@@ -189,13 +181,14 @@ fn locate(
         return Err(no_tool());
     };
     let path = file.path.clone();
-    let in_file = doc.get("bindings").map(Located::items).unwrap_or_default();
-    let at_place: Vec<&Located<Doc>> = in_file
-        .get(position)
+    let of_mode_in_file: Vec<&Located<Doc>> = doc
+        .get("bindings")
+        .map(Located::items)
+        .unwrap_or_default()
+        .iter()
         .filter(|binding| binding.text("mode") == Some(mode.as_str()))
-        .into_iter()
         .collect();
-    let [binding] = at_place.as_slice() else {
+    let [binding] = of_mode_in_file.as_slice() else {
         return Err(not_promotable(
             format!("The binding of `{mode}` of `{tool}` cannot be found once in `{path}`."),
             "Promote it by writing its status in the operation's file.",
@@ -260,46 +253,28 @@ fn locate(
     Ok(Found {
         file: path,
         edited,
-        original: text,
         effect: operation.effect,
         status,
         compiled,
-        pin,
     })
 }
 
-/// The evidence of the operation's offline tests (audit findings AC-6 and
-/// PM-4): every offline test of it, run now with the binding being promoted
-/// standing as the one that would act, must pass; at least one must have
-/// run that binding, with the digest it has now; and, for an operation
-/// that writes, one of those must have sent its save through it and
-/// compared it. A test of another binding is evidence for that one alone.
+/// The evidence of the operation's offline tests: each test of it, which
+/// must all have run and passed, and there must be one.
 async fn offline_evidence(
     kernel: &Kernel,
     call: &Call,
     project_folder: PathBuf,
     target: &TargetName,
-    found: &Found,
+    tool: &OperationName,
+    compiled: &Compiled,
 ) -> Result<Vec<Json>, Failure> {
-    let tool = &found.pin.operation;
     let world = crate::offline::OfflineWorld {
         workspace: call.caller.principal.workspace,
         principal: call.caller.principal.principal.id,
         vault: kernel.inner.vault.clone(),
     };
-    let promoting = crate::offline::Promoting {
-        operation: tool.clone(),
-        position: found.pin.position,
-    };
-    let gates = crate::offline::run_gates(
-        kernel,
-        project_folder,
-        target,
-        &found.compiled,
-        world,
-        Some(promoting),
-    )
-    .await?;
+    let gates = crate::offline::run_gates(kernel, project_folder, target, compiled, world).await?;
     let tests: Vec<Json> = gates
         .gates
         .as_array()
@@ -308,14 +283,7 @@ async fn offline_evidence(
         .filter_map(|gate| gate["tests"].as_array())
         .flatten()
         .filter(|test| test["tool"] == tool.as_str() && test["kind"] == "offline")
-        .map(|test| {
-            json!({
-                "test": test["test"],
-                "state": test["state"],
-                "binding": test["binding"],
-                "path": test["path"],
-            })
-        })
+        .map(|test| json!({"test": test["test"], "state": test["state"]}))
         .collect();
     if tests.is_empty() {
         return Err(codes::input(
@@ -347,115 +315,52 @@ async fn offline_evidence(
             format!("Call `test.run` with the target `{target}` to see what each found."),
         ));
     }
-    let of_this = |test: &&Json| {
-        a2m_engine::BindingPin::from_json(tool, &test["binding"]).as_ref() == Some(&found.pin)
-    };
-    let shown = format!("{} (`{}`)", found.pin.position + 1, found.pin.mode);
-    if !tests.iter().any(|test| of_this(&test)) {
-        return Err(codes::input(
-            codes::PROMOTION_UNPROVEN,
-            format!(
-                "No offline test of `{tool}` ran its binding {shown}: the tests that passed are evidence for the bindings they ran."
-            ),
-            format!(
-                "Write a test of that binding, with `binding: {{mode: {}, position: {}}}` where it is not the one a test that names none runs, run `test.run`, and promote again.",
-                found.pin.mode,
-                found.pin.position + 1
-            ),
-        ));
-    }
-    if found.effect != EffectClass::Read
-        && !tests
-            .iter()
-            .any(|test| of_this(&test) && test["path"] == crate::offline::PATH_SENDS)
-    {
-        return Err(codes::input(
-            codes::PROMOTION_UNPROVEN,
-            format!(
-                "No offline test of `{tool}` sent its save through the binding {shown} and compared it: a write is proven by its save."
-            ),
-            "Add a test of that binding whose fixture records the save's request in `<step>.request.json`, run `test.run`, and promote again.",
-        ));
-    }
     Ok(tests)
 }
 
-/// The proof that a read was tried and proved in this project (audit
-/// findings AC-6 and PM-3): the trial the caller names, which must be the
-/// caller's own completed trial of this tool of this target, made from this
-/// project, of the binding being promoted with the digest it has now; or
-/// the newest finished scout's proof at `executed` of that binding with
-/// that digest.
+/// The proof that a read was tried and proved in this project: the trial
+/// the caller names, which must be the caller's own completed run of this
+/// tool of this target, or the newest finished scout's proof at `executed`.
 async fn trial_evidence(
     kernel: &Kernel,
     call: &Call,
     target: &TargetName,
-    found: &Found,
+    tool: &OperationName,
 ) -> Result<Json, Failure> {
-    let tool = &found.pin.operation;
-    let of_this = |stored: &Json| {
-        a2m_engine::BindingPin::from_json(tool, stored).as_ref() == Some(&found.pin)
-    };
     if let Some(given) = call.text("run_id") {
         let unproven = || {
             codes::input(
                 codes::PROMOTION_UNPROVEN,
                 format!(
-                    "The run named is not a completed trial of the binding {} (`{}`) of `{tool}` of `{target}`, as it is now, made from this project by this caller's person.",
-                    found.pin.position + 1,
-                    found.pin.mode
+                    "The run named is not a completed trial of `{tool}` of `{target}` by this caller's person."
                 ),
-                "Try that binding with `draft.try` (naming it by `mode` and `position`) and pass its `run_id`, or scout the target again.",
+                "Name the run a `draft.try` of the read gave, or scout the target again.",
             )
         };
         let run: a2m_core::RunId = given.parse().map_err(|_| unproven())?;
-        let read = kernel
+        let row = kernel
             .store()?
-            .read(move |tx| {
-                let row = tx.ledger().run(run)?;
-                let stored = crate::runner::run_call(tx, &row)?;
-                Ok((row, stored))
-            })
+            .read(move |tx| tx.ledger().run(run))
             .await
             .map_err(|_| unproven())?;
-        let (row, stored) = read;
         let own = row.workspace == call.caller.principal.workspace
             && call.caller.principal.person() == Some(row.principal);
-        let Some(stored) = stored else {
-            return Err(unproven());
-        };
-        // A trial carries the binding it ran; a call of the published tool
-        // carries none, and is no trial of a draft.
-        let ran_this = stored.caller.binding.as_ref().is_some_and(of_this);
-        let same_project = stored.caller.project.is_some() && stored.caller.project == call.project;
         if !own
-            || !ran_this
-            || !same_project
             || row.tool_name != *tool
             || row.target != *target
             || row.state != a2m_core::RunState::Completed
         {
             return Err(unproven());
         }
-        return Ok(json!({
-            "by": "run",
-            "run_id": run.to_string(),
-            "level": "executed",
-            "binding": found.pin.to_json(),
-        }));
+        return Ok(json!({"by": "run", "run_id": run.to_string(), "level": "executed"}));
     }
     super::scout::proven_by_scout(kernel, call, target, tool.as_str())
         .await?
-        .filter(|proof| of_this(&proof["binding"]))
         .ok_or_else(|| {
             codes::input(
                 codes::PROMOTION_UNPROVEN,
-                format!(
-                    "No trial in this project proved the binding {} (`{}`) of the read `{tool}`, as it is now, at `executed`: the newest finished scout did not, and no run was named.",
-                    found.pin.position + 1,
-                    found.pin.mode
-                ),
-                "Scout the target (`scout.run`), or try that binding (`draft.try` with `mode` and `position`) and pass its `run_id`.",
+                format!("No trial in this project proved the read `{tool}` at `executed`: the newest finished scout did not, and no run was named."),
+                "Scout the target (`scout.run`), or try the read (`draft.try`) and pass its `run_id`.",
             )
         })
 }
@@ -469,10 +374,6 @@ handler!(
         let target = TargetName::new(call.required("target")?)?;
         let tool = OperationName::new(call.required("tool")?)?;
         let mode = Mode::new(call.required("mode")?)?;
-        let position = call
-            .int("position")
-            .and_then(|position| usize::try_from(position).ok())
-            .and_then(|position| position.checked_sub(1));
         let project_folder = call.project_folder()?.to_path_buf();
         let found = {
             let (kernel, folder, target, tool, mode) = (
@@ -482,14 +383,13 @@ handler!(
                 tool.clone(),
                 mode.clone(),
             );
-            off_thread(move || locate(&kernel, &folder, &target, &tool, &mode, position)).await?
+            off_thread(move || locate(&kernel, &folder, &target, &tool, &mode)).await?
         };
         let shown = |promoted: bool, status: &str, evidence: Json| {
             json!({
                 "target": target.as_str(),
                 "tool": tool.as_str(),
                 "mode": mode.as_str(),
-                "position": found.pin.position + 1,
                 "file": found.file.as_str(),
                 "promoted": promoted,
                 "status": status,
@@ -523,29 +423,30 @@ handler!(
             }
             kernel.presence(&call.caller, &def, found.effect).await?;
         }
-        let tests =
-            offline_evidence(kernel, &call, project_folder.clone(), &target, &found).await?;
+        let tests = offline_evidence(
+            kernel,
+            &call,
+            project_folder.clone(),
+            &target,
+            &tool,
+            &found.compiled,
+        )
+        .await?;
         let tried = if found.effect == EffectClass::Read {
-            trial_evidence(kernel, &call, &target, &found).await?
+            trial_evidence(kernel, &call, &target, &tool).await?
         } else {
             json!({"by": "person", "why": "A write is not tried by the scout; its offline tests and the person's act are its evidence."})
         };
-        let evidence = json!({
-            "binding": found.pin.to_json(),
-            "offline_tests": tests,
-            "tried": tried,
-            "was": "draft",
-        });
+        let evidence = json!({"offline_tests": tests, "tried": tried, "was": "draft"});
         // The same checked write as `draft.write`: through the checked path
         // of the project, a new file renamed over the name, never through a
         // link.
         {
-            let (folder, target, path, edited, original) = (
+            let (folder, target, path, edited) = (
                 project_folder.clone(),
                 target.clone(),
                 found.file.clone(),
                 found.edited.clone(),
-                found.original.clone(),
             );
             off_thread(move || {
                 let folder = target_folder(&folder, &target)?;
@@ -554,14 +455,6 @@ handler!(
                     return Err(not_promotable(
                         format!("`{path}` is no longer a file of the target."),
                         "Call `draft.lint`, then promote again.",
-                    ));
-                }
-                // An edit made since the binding was found is never lost.
-                if file.read(a2m_files::LARGEST_TARGET_FILE as u64)? != original.as_bytes() {
-                    return Err(codes::stale(
-                        codes::DRAFTS_CHANGED,
-                        format!("`{path}` changed while the binding was promoted, so nothing was written."),
-                        "Promote again.",
                     ));
                 }
                 file.write(edited.as_bytes())

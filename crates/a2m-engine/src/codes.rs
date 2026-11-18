@@ -85,17 +85,6 @@ pub const CAPTURE_NOT_KEPT: FailureCode = FailureCode::fixed("capture_not_kept")
 /// acknowledgement alone; the record stays `acted`, in doubt.
 pub const ACKNOWLEDGEMENT_NOT_KEPT: FailureCode = FailureCode::fixed("acknowledgement_not_kept");
 
-/// The binding a test or a trial named is no longer the one at its place:
-/// it moved, changed its mode, or changed what it does.
-pub const BINDING_CHANGED: FailureCode = FailureCode::fixed("binding_changed");
-
-/// `busy`: the control plane keeps no shadow comparisons, so no binding is
-/// run in shadow (decision 0207).
-pub const SHADOW_NOT_KEPT: FailureCode = FailureCode::fixed("shadow_not_kept");
-/// `busy`: a shadow binding did not end within the time a shadow may take;
-/// it was cancelled and counted as not compared.
-pub const SHADOW_TIME_EXCEEDED: FailureCode = FailureCode::fixed("shadow_time_exceeded");
-
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -132,9 +121,6 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "argument_masked"),
     (FailureClass::Busy, "capture_not_kept"),
     (FailureClass::Busy, "acknowledgement_not_kept"),
-    (FailureClass::Stale, "binding_changed"),
-    (FailureClass::Busy, "shadow_not_kept"),
-    (FailureClass::Busy, "shadow_time_exceeded"),
 ];
 
 pub(crate) fn fail(

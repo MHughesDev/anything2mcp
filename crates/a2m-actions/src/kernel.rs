@@ -825,15 +825,6 @@ impl Kernel {
         })
     }
 
-    /// Registers a secret a person handed over with the redactor, so that
-    /// it is masked wherever it would appear. With no vault open nothing
-    /// can be sealed either, and the secret is used for nothing.
-    pub(crate) fn register_secret(&self, secret: &a2m_core::Secret) {
-        if let Some(vault) = &self.inner.vault {
-            vault.register(secret);
-        }
-    }
-
     pub(crate) fn keeper(&self) -> Result<&Keeper, Failure> {
         self.inner.keeper.as_ref().ok_or_else(|| {
             codes::busy(

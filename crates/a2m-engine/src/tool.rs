@@ -385,99 +385,86 @@ fn outputs_of(
     observed: &Values,
     all_required: bool,
 ) -> Result<Values, Failure> {
+    let unexpected = |what: String| {
+        codes::fail(
+            FailureClass::UnknownVariant,
+            codes::OUTPUT_UNEXPECTED,
+            what,
+            "Compare the operation's outputs in the target files with what the system returns.",
+        )
+    };
     let mut out = Values::new();
     for output in &operation.outputs {
         let Some(raw) = observed.get(&output.name) else {
             if all_required {
-                return Err(output_unexpected(format!(
+                return Err(unexpected(format!(
                     "The operation `{}` returned no value for its output `{}`.",
                     operation.name, output.name
                 )));
             }
             continue;
         };
-        out.insert(
-            output.name.clone(),
-            output_value(loaded, operation, output, raw)?,
-        );
-    }
-    Ok(out)
-}
-
-fn output_unexpected(what: String) -> Failure {
-    codes::fail(
-        FailureClass::UnknownVariant,
-        codes::OUTPUT_UNEXPECTED,
-        what,
-        "Compare the operation's outputs in the target files with what the system returns.",
-    )
-}
-
-/// One declared output, from the value a step observed for it, normalized
-/// by its field type.
-pub(crate) fn output_value(
-    loaded: &Loaded,
-    operation: &OperationPlan,
-    output: &a2m_core::OutputPlan,
-    raw: &Value,
-) -> Result<Value, Failure> {
-    let unexpected = output_unexpected;
-    if let Value::Text(text) = raw
-        && text.contains(REDACTED)
-        && !matches!(
-            output.ty,
-            a2m_core::ValueType::Text | a2m_core::ValueType::Choice
-        )
-    {
-        // A number, a date, a moment, or a length of time that held a
-        // registered secret reaches the result as the mask's text. It
-        // is the system's value, masked, and no failure of the run.
-        return Ok(Value::Text(REDACTED.to_owned()));
-    }
-    let value = match (raw, &output.ty) {
-        // A list output is normalized one item at a time, each by the
-        // output's field type; a `null` item, a row with no value,
-        // stays `null`. An item that cannot be read fails the read by
-        // its position, never by its value (decision 0180).
-        (Value::List(items), a2m_core::ValueType::List(_)) => {
-            let mut normalized = Vec::with_capacity(items.len());
-            for (at, item) in items.iter().enumerate() {
-                if item.is_null() {
-                    normalized.push(Value::Null);
-                    continue;
+        if let Value::Text(text) = raw
+            && text.contains(REDACTED)
+            && !matches!(
+                output.ty,
+                a2m_core::ValueType::Text | a2m_core::ValueType::Choice
+            )
+        {
+            // A number, a date, a moment, or a length of time that held a
+            // registered secret reaches the result as the mask's text. It
+            // is the system's value, masked, and no failure of the run.
+            out.insert(output.name.clone(), Value::Text(REDACTED.to_owned()));
+            continue;
+        }
+        let value = match (raw, &output.ty) {
+            // A list output is normalized one item at a time, each by the
+            // output's field type; a `null` item, a row with no value,
+            // stays `null`. An item that cannot be read fails the read by
+            // its position, never by its value (decision 0180).
+            (Value::List(items), a2m_core::ValueType::List(_)) => {
+                let mut normalized = Vec::with_capacity(items.len());
+                for (at, item) in items.iter().enumerate() {
+                    if item.is_null() {
+                        normalized.push(Value::Null);
+                        continue;
+                    }
+                    normalized.push(loaded.normalize(output.field_type, item).map_err(
+                        |failure| {
+                            unexpected(format!(
+                                "The item {} of the output `{}` of `{}` cannot be read as its type ({}).",
+                                at + 1,
+                                output.name,
+                                operation.name,
+                                failure.code()
+                            ))
+                        },
+                    )?);
                 }
-                normalized.push(loaded.normalize(output.field_type, item).map_err(|failure| {
+                Value::List(normalized)
+            }
+            _ => loaded
+                .normalize(output.field_type, raw)
+                .map_err(|failure| {
                     unexpected(format!(
-                        "The item {} of the output `{}` of `{}` cannot be read as its type ({}).",
-                        at + 1,
+                        "The output `{}` of `{}` cannot be read as its type ({}).",
                         output.name,
                         operation.name,
                         failure.code()
                     ))
-                })?);
-            }
-            Value::List(normalized)
+                })?,
+        };
+        if !value.is_null() && !value.has_type(&output.ty) {
+            return Err(unexpected(format!(
+                "The output `{}` of `{}` is not a {}.",
+                output.name,
+                operation.name,
+                output.ty.name()
+            )));
         }
-        _ => loaded
-            .normalize(output.field_type, raw)
-            .map_err(|failure| {
-                unexpected(format!(
-                    "The output `{}` of `{}` cannot be read as its type ({}).",
-                    output.name,
-                    operation.name,
-                    failure.code()
-                ))
-            })?,
-    };
-    if !value.is_null() && !value.has_type(&output.ty) {
-        return Err(unexpected(format!(
-            "The output `{}` of `{}` is not a {}.",
-            output.name,
-            operation.name,
-            output.ty.name()
-        )));
+        out.insert(output.name.clone(), value);
     }
-    Ok(value)
+    Ok(out)
 }
 
 /// The fields of what a read returns, for the trace: the outputs that have
@@ -808,9 +795,6 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
             return Ok(Done::Settled { remaining: 0 });
         }
         run.moved(RunState::Running).await?;
-        // A live call of a tool that only reads is where a binding in
-        // shadow runs beside the verified one (decision 0207).
-        run.shadow_allowed = run.job.kind == JobKind::Execute;
         let all = tool.steps.len();
         read_steps_of(run, &loaded, &mut tool, 0, all).await?;
         run.control
@@ -899,13 +883,7 @@ async fn read_operation(
             )
             .await
             {
-                Ok(values) => {
-                    // A binding in shadow runs beside it, within its bound,
-                    // and changes nothing the caller is given.
-                    crate::shadow::beside(run, loaded, found, candidate.binding, &scope, &values)
-                        .await;
-                    return Ok(values);
-                }
+                Ok(values) => return Ok(values),
                 Err((failure, held)) => {
                     // The session ended under the pass: tell the keeper,
                     // and ask for a lease once more.
@@ -976,30 +954,8 @@ async fn read_pass(
         .await
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
-    match observe(run, held, binding, scope, fields).await {
-        Ok(Some(seen)) => outputs_of(loaded, found, &seen, true).map_err(failed),
-        Ok(None) => Err(failed(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::OUTPUT_UNEXPECTED,
-            format!("The operation `{}` found nothing to read.", found.name),
-            "Check the inputs; the record they name does not exist.",
-        ))),
-        Err(failure) => Err(failed(failure)),
-    }
-}
-
-/// The act, confirm, and read-back steps of a binding that only reads, in
-/// a context the job holds: what they observed, or `None` when a step
-/// found nothing.
-pub(crate) async fn observe(
-    run: &mut Run<'_>,
-    held: usize,
-    binding: &BindingPlan,
-    scope: &Scope,
-    fields: &[Field],
-) -> Result<Option<Values>, Failure> {
     let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
-    run.budget(held, steps).await?;
+    run.budget(held, steps).await.map_err(failed)?;
     let mut scope = scope.clone();
     let mut seen = Observed::default();
     for (phase, steps) in [
@@ -1010,16 +966,23 @@ pub(crate) async fn observe(
         let observed = run
             .read_steps(held, phase, steps, &mut scope, None, fields)
             .await
-            .map_err(|failure| failure.failure)?;
+            .map_err(|failure| failed(failure.failure))?;
         match observed {
             Some(observed) => {
                 let mut into = Scope::new(Value::Null);
                 merge(&mut into, &mut seen, observed);
             }
-            None => return Ok(None),
+            None => {
+                return Err(failed(codes::fail(
+                    FailureClass::UnknownVariant,
+                    codes::OUTPUT_UNEXPECTED,
+                    format!("The operation `{}` found nothing to read.", found.name),
+                    "Check the inputs; the record they name does not exist.",
+                )));
+            }
         }
     }
-    Ok(Some(seen.values))
+    outputs_of(loaded, found, &seen.values, true).map_err(failed)
 }
 
 /// A write tool: the preview, the approval check, reconcile on resume, and

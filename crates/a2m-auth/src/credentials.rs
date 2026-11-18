@@ -69,26 +69,6 @@ impl StoredCredentials {
             .put_credential(*workspace, identity.to_string(), reference.clone(), sealed)
             .await
     }
-
-    /// Whether something is stored under `reference` for one identity of
-    /// one workspace. Nothing is opened: what is stored stays sealed, and
-    /// no secret is read to answer.
-    ///
-    /// # Errors
-    ///
-    /// The store's failures.
-    pub async fn holds(
-        &self,
-        workspace: &WorkspaceId,
-        identity: &Identity,
-        reference: &CredentialRef,
-    ) -> Result<bool, Failure> {
-        Ok(self
-            .store
-            .credential(*workspace, identity.to_string(), reference.clone())
-            .await?
-            .is_some())
-    }
 }
 
 impl Credentials for StoredCredentials {

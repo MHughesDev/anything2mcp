@@ -107,29 +107,6 @@ impl Returned {
     pub(crate) fn values(&self) -> impl Iterator<Item = &Secret> {
         self.0.values()
     }
-
-    /// Every named value, in order of name.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Secret)> {
-        self.0.iter().map(|(name, value)| (name.as_str(), value))
-    }
-
-    /// Whether nothing was returned.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// The same values, keeping only those whose name `keep` accepts and
-    /// that are not empty.
-    #[must_use]
-    pub fn only(self, keep: impl Fn(&str) -> bool) -> Self {
-        Self(
-            self.0
-                .into_iter()
-                .filter(|(name, value)| keep(name) && !value.expose().is_empty())
-                .collect(),
-        )
-    }
 }
 
 impl fmt::Debug for Returned {

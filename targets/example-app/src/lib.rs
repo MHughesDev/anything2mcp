@@ -17,7 +17,6 @@ pub mod details;
 mod edges;
 mod escapes;
 pub mod faults;
-pub mod forgery;
 pub mod harness;
 mod leaving;
 mod openapi;
@@ -55,8 +54,6 @@ pub(crate) struct Inner {
     pub(crate) auth: AuthState,
     pub(crate) deliveries: Deliveries,
     pub(crate) trap_writes: BTreeMap<String, u64>,
-    /// Case 5: the notes a write needs the page's anti-forgery token for.
-    pub(crate) notes: forgery::Notes,
     /// The method and path of every request the application received, outside
     /// the control interface, oldest first, up to [`SEEN_KEPT`].
     pub(crate) seen: Vec<String>,
@@ -74,7 +71,6 @@ impl Default for Inner {
             auth: AuthState::default(),
             deliveries: Deliveries::default(),
             trap_writes: BTreeMap::new(),
-            notes: forgery::seeded(),
             seen: Vec::new(),
         }
     }
@@ -102,7 +98,6 @@ pub fn router() -> Router {
         .merge(escapes::routes())
         .merge(leaving::routes())
         .merge(own_requests::routes())
-        .merge(forgery::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

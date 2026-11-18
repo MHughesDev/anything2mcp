@@ -512,7 +512,6 @@ handler!(
             &target,
             &compiled,
             world,
-            None,
         )
         .await?;
         if !gates.passed {

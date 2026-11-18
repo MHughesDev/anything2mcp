@@ -47,8 +47,8 @@ mod tools;
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
 pub use acts::{
-    ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, AskedSecret, PersonActAsk, PersonActId,
-    SHOWN_VALUE_CHARS, ShownField,
+    ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS,
+    ShownField,
 };
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,

@@ -421,63 +421,21 @@ impl Keeper {
             .into_iter()
             .filter(|row| &row.key.workspace == workspace)
             .filter(|row| identity.is_none_or(|identity| &row.key.identity == identity))
-            .map(status_of)
+            .map(|row| SessionStatus {
+                session: row.id,
+                target: row.key.target,
+                environment: row.key.environment,
+                identity: row.key.identity,
+                provider: row.provider,
+                state: row.state,
+                epoch: row.epoch,
+                wants: row.wants,
+                signed_in_at: row.signed_in_at,
+                expires_at: row.expires_at,
+                checked_at: row.checked_at,
+                last_used_at: row.last_used_at,
+            })
             .collect())
-    }
-
-    /// Waits until the sign-in [`Keeper::sign_in`] started for `session`
-    /// has ended, for at most `limit`, and says how it ended: the session
-    /// as `status` shows it once it holds credentials, or the failure the
-    /// sign-in ended with, by name. A session that still signs in when the
-    /// limit is reached is shown as it stands, in `signing_in`.
-    ///
-    /// It only watches: it starts no sign-in and asks no person.
-    ///
-    /// # Errors
-    ///
-    /// The failure the sign-in ended with: `session_expired` with
-    /// `credential_refused`, `needs_login`, or `needs_mfa`, a provider's
-    /// failure, or `input`/`credential_missing`; `needs_login` when the
-    /// session ended without one being recorded; the store's failures.
-    pub async fn signed_in(
-        &self,
-        session: SessionId,
-        limit: Duration,
-    ) -> Result<SessionStatus, Failure> {
-        let inner = &self.inner;
-        let mut changes = inner.changed.subscribe();
-        let until = tokio::time::Instant::now() + limit;
-        loop {
-            let Some(row) = inner.store.get(session).await? else {
-                return Err(failure::needs_login("no such session is kept"));
-            };
-            match row.state {
-                SessionState::Valid | SessionState::Suspect | SessionState::Renewing => {
-                    return Ok(status_of(row));
-                }
-                SessionState::SigningIn => {}
-                SessionState::NeedsPerson => {
-                    return Err(inner.last_failure(row.id).unwrap_or_else(|| {
-                        if row.wants == Some(PersonReason::SecondFactor) {
-                            failure::needs_mfa()
-                        } else {
-                            failure::needs_login("a person must sign in, and none has yet")
-                        }
-                    }));
-                }
-                SessionState::Absent | SessionState::Expired | SessionState::Revoked => {
-                    return Err(inner.last_failure(row.id).unwrap_or_else(|| {
-                        failure::needs_login("the sign-in did not end in a session")
-                    }));
-                }
-            }
-            match tokio::time::timeout_at(until, changes.changed()).await {
-                Ok(Ok(())) => {}
-                // The limit, or a keeper that is gone: the session as it
-                // stands.
-                Ok(Err(_)) | Err(_) => return Ok(status_of(row)),
-            }
-        }
     }
 
     /// A session's timeline: what happened to it, when, and why. No
@@ -589,23 +547,6 @@ fn owner_only(key: &SessionKey, acting_for: Option<&PrincipalId>) -> Result<(), 
             Err(failure::identity_not_allowed())
         }
         _ => Ok(()),
-    }
-}
-
-fn status_of(row: SessionRow) -> SessionStatus {
-    SessionStatus {
-        session: row.id,
-        target: row.key.target,
-        environment: row.key.environment,
-        identity: row.key.identity,
-        provider: row.provider,
-        state: row.state,
-        epoch: row.epoch,
-        wants: row.wants,
-        signed_in_at: row.signed_in_at,
-        expires_at: row.expires_at,
-        checked_at: row.checked_at,
-        last_used_at: row.last_used_at,
     }
 }
 

@@ -588,30 +588,6 @@ pub fn file_kind() -> Arc<dyn FileKind> {
     })
 }
 
-/// The same file kind, `call`, registered for surfaces of another kind, as
-/// a second pack would register a kind of one name for its own surfaces
-/// (decision 0203).
-#[must_use]
-pub fn file_kind_for(kind: SurfaceKind) -> Arc<dyn FileKind> {
-    Arc::new(CallKind {
-        schema: JsonSchema::object()
-            .required("call", JsonSchema::name())
-            .optional("surface", JsonSchema::surface())
-            .required("path", JsonSchema::text())
-            .required("effect", JsonSchema::words(&["read", "write"])),
-        kinds: vec![kind],
-    })
-}
-
-/// A surface kind of another name, as data, for a second pack.
-#[must_use]
-pub fn surface_kind_spec_for(kind: SurfaceKind) -> SurfaceKindSpec {
-    SurfaceKindSpec {
-        kind,
-        ..surface_kind_spec()
-    }
-}
-
 /// The pack's lowering of the mode `stand`, for the verbs of [`verbs`].
 #[must_use]
 pub fn lowering() -> Arc<dyn Lowering> {

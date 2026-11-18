@@ -178,14 +178,6 @@ pub enum BrowserError {
     /// The browser, or the helper in the page, answered in a shape no rule
     /// covers.
     Unexpected(String),
-    /// A write from inside the page was not sent: the page's anti-forgery
-    /// token is not where the entry says, or is not one that can be sent
-    /// (decision 0206).
-    Token(crate::page_write::TokenProblem),
-    /// A write from inside the page was refused by the helper before
-    /// anything left: the page has no origin of its own, or the write was
-    /// not one the helper sends.
-    WriteRefused(String),
     /// No browser was opened.
     LaunchFailed(LaunchReason),
 }
@@ -210,8 +202,6 @@ impl BrowserError {
             | Self::NotLoaded(_)
             | Self::PasswordField
             | Self::ForeignOrigin(_)
-            | Self::Token(_)
-            | Self::WriteRefused(_)
             | Self::LaunchFailed(_) => Dispatch::NotSent,
         }
     }
@@ -273,12 +263,6 @@ impl BrowserError {
                 "The value of a password input is never read.",
                 "Remove the read of this field from the target's files.",
             ),
-            Self::WriteRefused(why) => Some(Failure::new(
-                FailureClass::Input,
-                codes::ADDRESS_INVALID,
-                format!("A write from inside the page was not sent: {why}."),
-                "Look at the page the write is made from, and at the entry's path.",
-            )),
             Self::ForeignOrigin(origin) => Some(Failure::new(
                 FailureClass::Policy,
                 codes::SURFACE_NOT_DECLARED,
@@ -332,10 +316,6 @@ impl fmt::Display for BrowserError {
                 "a request from the page was answered with a redirect, which it does not follow",
             ),
             Self::Unexpected(what) => write!(f, "an answer no rule covers: {what}"),
-            Self::Token(problem) => write!(f, "{problem}; nothing was sent"),
-            Self::WriteRefused(why) => {
-                write!(f, "the write was not sent from the page: {why}")
-            }
             Self::LaunchFailed(reason) => match reason {
                 LaunchReason::NotInstalled => f.write_str("no browser is installed"),
                 LaunchReason::Supervisor(failure) | LaunchReason::DataDirectory(failure) => {

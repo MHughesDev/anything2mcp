@@ -202,15 +202,4 @@ impl Control for Timed<'_> {
     fn step_observed(&self, step: &a2m_core::Step, observed: Option<&a2m_core::Values>) {
         self.inner.step_observed(step, observed);
     }
-
-    fn keeps_shadow(&self) -> bool {
-        self.inner.keeps_shadow()
-    }
-
-    fn shadow<'a>(
-        &'a self,
-        compared: crate::control::ShadowCompared,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(self.within("shadow", self.inner.shadow(compared)))
-    }
 }

@@ -22,7 +22,6 @@ use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
 use crate::page_read::{PageAnswer, PagePath};
-use crate::page_write::{PageWrite, TokenProblem};
 use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
@@ -1874,92 +1873,6 @@ impl Page {
         })
     }
 
-    /// A write from inside the page, with the page's own anti-forgery
-    /// token, which the helper reads and places in the same call that
-    /// sends it, and never hands back (decision 0206). Only an acting tab
-    /// calls it; in an observing tab the browser fails the request.
-    pub(crate) async fn write_from_page(
-        &self,
-        write: &PageWrite,
-        deadline: Deadline,
-    ) -> Result<PageAnswer, BrowserError> {
-        #[derive(Deserialize, Default)]
-        #[serde(default)]
-        struct Answer {
-            refused: Option<String>,
-            failed: bool,
-            too_large: bool,
-            redirected: bool,
-            status: Option<u16>,
-            media_type: String,
-            body: String,
-        }
-        let shape =
-            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
-        let spec = write.spec();
-        let argument = CallArgument::of(&spec).ok_or_else(shape)?;
-        let world = self.world(deadline).await?;
-        // Sent once. From here, a failure leaves the write's fate unknown,
-        // unless the helper says it refused before anything left.
-        let outcome = self
-            .evaluate(
-                On::World(world),
-                "function (spec, limit) { return __a2m.writeFromPage(spec, limit); }",
-                vec![argument, CallArgument::number(self.max_read)],
-                true,
-                true,
-                deadline,
-            )
-            .await;
-        let lost = |why: &str| BrowserError::RequestFailed(why.to_owned());
-        let evaluated = match outcome {
-            Ok(evaluated) => evaluated,
-            // The helper's own text is not quoted: nothing it says while a
-            // write is under way is handed out.
-            Err(CallError::Browser(BrowserError::Unexpected(_))) => {
-                return Err(lost(
-                    "the helper in the page failed while the write was under way",
-                ));
-            }
-            Err(CallError::Browser(error)) => return Err(error),
-            Err(CallError::Gone | CallError::NoHelper) => {
-                return Err(lost("the page was replaced while the write was under way"));
-            }
-        };
-        let answer: Answer = Self::answer(evaluated)?;
-        if let Some(refused) = answer.refused {
-            return Err(match refused.as_str() {
-                "token_missing" => BrowserError::Token(TokenProblem::Missing),
-                "token_several" => BrowserError::Token(TokenProblem::Several),
-                "token_unusable" | "token_place" => BrowserError::Token(TokenProblem::Unusable),
-                "path" => BrowserError::WriteRefused(
-                    "the page has no origin of its own, or the path is not one on it".to_owned(),
-                ),
-                _ => BrowserError::WriteRefused("the helper does not send such a write".to_owned()),
-            });
-        }
-        if answer.failed {
-            return Err(lost("the page could not complete the write"));
-        }
-        if answer.redirected {
-            return Err(BrowserError::Redirected);
-        }
-        let Some(status) = answer.status else {
-            return Err(if answer.too_large {
-                BrowserError::TooLarge {
-                    limit: self.max_read,
-                }
-            } else {
-                BrowserError::Unexpected("the helper answered a write with no status".to_owned())
-            });
-        };
-        Ok(PageAnswer {
-            status,
-            media_type: self.redact.redact(&answer.media_type),
-            body: self.redact.redact(&answer.body),
-        })
-    }
-
     async fn answer_dialog(
         &self,
         how: &DialogAnswer,
@@ -3310,53 +3223,6 @@ impl ActTab {
         deadline: Deadline,
     ) -> Result<PageResponse, BrowserError> {
         self.page.fetch(request, deadline).await
-    }
-
-    /// Writes from inside the page the tab is on, with the page's own
-    /// session and the page's own anti-forgery token, once (decision
-    /// 0206): the write's method from the closed list, to its checked path
-    /// on the page's own origin, which must be one of the tab's, with its
-    /// body, and with the token read from the page by the place the write
-    /// names and sent where it names, in the same call. No other header is
-    /// sent, and no redirect is followed. The token never leaves the page:
-    /// it is not returned, and every copy of it in the answer is replaced
-    /// in the page before the answer is handed back, which then passes the
-    /// redactor.
-    ///
-    /// Only an acting tab has this call. An observing tab has none, and its
-    /// browser fails every request of its page whose method could write:
-    ///
-    /// ```compile_fail
-    /// # async fn no(tab: a2m_pack_web_browser::ObserveTab, write: a2m_pack_web_browser::PageWrite, deadline: a2m_pack_web_browser::Deadline) {
-    /// let _ = tab.write_from_page(&write, deadline).await;
-    /// # }
-    /// ```
-    ///
-    /// ```no_run
-    /// # async fn yes(tab: a2m_pack_web_browser::ActTab, write: a2m_pack_web_browser::PageWrite, deadline: a2m_pack_web_browser::Deadline) {
-    /// let _ = tab.write_from_page(&write, deadline).await;
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Before anything was sent ([`Dispatch::NotSent`]):
-    /// [`BrowserError::ForeignOrigin`] for a page on an origin the tab was
-    /// not opened for; [`BrowserError::Token`] when the page holds no token
-    /// where the write says, two different ones, or one of a form that is
-    /// not sent; [`BrowserError::WriteRefused`] for a page with no origin
-    /// of its own. After the write may have left: [`BrowserError::Redirected`]
-    /// and [`BrowserError::TooLarge`] for an answer that was given and is not
-    /// read; [`BrowserError::RequestFailed`] when the page could not
-    /// complete it, or was replaced under it, and whether it was sent is
-    /// not known; a lost browser or a passed deadline as their dispatch
-    /// says.
-    pub async fn write_from_page(
-        &self,
-        write: &PageWrite,
-        deadline: Deadline,
-    ) -> Result<PageAnswer, BrowserError> {
-        self.page.write_from_page(write, deadline).await
     }
 
     /// Answers the dialog that is open.

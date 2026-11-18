@@ -127,22 +127,6 @@ struct PublishShown {
     warnings: Vec<ActWarning>,
 }
 
-/// One secret a person's act asks its person for on its page, beside the
-/// input: for a sign-in, a credential its provider uses (decision 0205).
-/// The page shows a field for it that is never filled in and never shown
-/// back; what the person types goes to the desk with their press, and to
-/// nothing else. The names are the auth file's, never a value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AskedSecret {
-    /// The role the provider uses it in, such as `token` or `password`.
-    pub role: String,
-    /// Where it is kept once given: the auth file's vault reference.
-    pub reference: String,
-    /// Whether something is stored there already. The person may then
-    /// leave the field empty, and the stored one is used.
-    pub stored: bool,
-}
-
 /// A person's act that an agent asked for, as the person surface is given
 /// it and as [`ApprovalDesk::person_act`](crate::ApprovalDesk::person_act)
 /// reads it back: exactly what will be done.
@@ -172,10 +156,6 @@ pub struct PersonActAsk {
     /// For a publish, every warning the compiler gave for the version;
     /// empty for every other act, and not repeated among `details`.
     pub warnings: Vec<ActWarning>,
-    /// For a sign-in, the secrets the page asks the person for; empty for
-    /// every other act. A press may carry a value for these and for
-    /// nothing else.
-    pub secrets: Vec<AskedSecret>,
     /// Through which door and client the act was asked for.
     pub asked_through: String,
     /// When the act stops waiting, by the kernel's clock. No answer by
@@ -458,8 +438,7 @@ impl Kernel {
 
         // What the act rests on is pinned now, so that the person carries
         // out what they read and nothing changed since.
-        let (pinned, details, publish, secrets) =
-            self.pinned(def, caller, input.clone(), &project).await?;
+        let (pinned, details, publish) = self.pinned(def, caller, input.clone(), &project).await?;
 
         let mut bytes = [0_u8; 16];
         self.inner.random.fill(&mut bytes)?;
@@ -524,14 +503,6 @@ impl Kernel {
                     message: redact.redact(&warning.message),
                 })
                 .collect(),
-            secrets: secrets
-                .into_iter()
-                .map(|secret| AskedSecret {
-                    role: redact.redact(&secret.role),
-                    reference: redact.redact(&secret.reference),
-                    stored: secret.stored,
-                })
-                .collect(),
             asked_through: redact.redact(&format!(
                 "{} ({})",
                 caller.door.as_str(),
@@ -583,14 +554,9 @@ impl Kernel {
         caller: &Caller,
         mut input: Map<String, Json>,
         project: &(Option<PathBuf>, Option<Failure>),
-    ) -> Result<(Map<String, Json>, Vec<String>, PublishShown, Vec<AskedSecret>), Failure> {
-        if def.name.as_str() == "session.login" {
-            let (input, details, secrets) =
-                crate::handlers::sessions::pinned(self, caller, input, project).await?;
-            return Ok((input, details, PublishShown::default(), secrets));
-        }
+    ) -> Result<(Map<String, Json>, Vec<String>, PublishShown), Failure> {
         if def.name.as_str() != "version.publish" {
-            return Ok((input, Vec::new(), PublishShown::default(), Vec::new()));
+            return Ok((input, Vec::new(), PublishShown::default()));
         }
         let folder = match project {
             (Some(folder), _) => folder.clone(),
@@ -634,7 +600,6 @@ impl Kernel {
                 principal: caller.principal.principal.id,
                 vault: self.inner.vault.clone(),
             },
-            None,
         )
         .await?;
         if !gates.passed {
@@ -686,15 +651,12 @@ impl Kernel {
         let shown = publish_shown(self, &compiled);
         let mut details = details;
         details.extend(gates.lines());
-        Ok((input, details, shown, Vec::new()))
+        Ok((input, details, shown))
     }
 
     /// One line for each verified binding of `plan` that the target's
-    /// current version does not hold verified, at the same place of the
-    /// same operation, doing the same: what may act for the first time once
-    /// `plan` is published. A binding verified before whose steps changed
-    /// is named as acting as changed (audit finding PM-2): its digest is
-    /// compared, not only its mode.
+    /// current version does not hold verified for the same operation and
+    /// mode: what may act for the first time once `plan` is published.
     pub(crate) async fn first_to_act(
         &self,
         target: &a2m_core::TargetName,
@@ -705,49 +667,27 @@ impl Kernel {
             .into_iter()
             .find(|(name, _, _)| name == target)
             .map(|(_, _, plan)| plan);
-        // Whether the version in force held a verified binding of this
-        // operation and mode, and whether one of them does the same.
-        let before = |operation: &a2m_core::OperationName,
-                      binding: &a2m_core::BindingPlan|
-         -> (bool, bool) {
-            let Some(current) = current.as_ref() else {
-                return (false, false);
-            };
-            let digest = a2m_engine::binding_digest(plan, binding);
-            let earlier: Vec<&a2m_core::BindingPlan> = current
-                .operations
-                .iter()
-                .filter(|earlier| earlier.name == *operation)
-                .flat_map(|earlier| earlier.bindings.iter())
-                .filter(|earlier| {
-                    earlier.mode == binding.mode
-                        && earlier.status == a2m_core::BindingStatus::Verified
+        let acted_before = |operation: &a2m_core::OperationName, mode: &a2m_core::Mode| {
+            current.as_ref().is_some_and(|current| {
+                current.operations.iter().any(|earlier| {
+                    earlier.name == *operation
+                        && earlier.bindings.iter().any(|binding| {
+                            binding.mode == *mode
+                                && binding.status == a2m_core::BindingStatus::Verified
+                        })
                 })
-                .collect();
-            let same = earlier.iter().any(|earlier| {
-                digest.is_some() && a2m_engine::binding_digest(current, earlier) == digest
-            });
-            (!earlier.is_empty(), same)
+            })
         };
         let mut lines = Vec::new();
         for operation in &plan.operations {
-            for (position, binding) in operation.bindings.iter().enumerate() {
-                if binding.status != a2m_core::BindingStatus::Verified {
-                    continue;
-                }
-                match before(&operation.name, binding) {
-                    (_, true) => {}
-                    (true, false) => lines.push(format!(
-                        "Acts as changed in this version: {} ({}), the binding {} through the mode {}: what it does is not what the version in force verified.",
-                        operation.name,
-                        operation.effect,
-                        position + 1,
-                        binding.mode
-                    )),
-                    (false, false) => lines.push(format!(
+            for binding in &operation.bindings {
+                if binding.status == a2m_core::BindingStatus::Verified
+                    && !acted_before(&operation.name, &binding.mode)
+                {
+                    lines.push(format!(
                         "First to act in this version: {} ({}), through the mode {}.",
                         operation.name, operation.effect, binding.mode
-                    )),
+                    ));
                 }
             }
         }
@@ -799,15 +739,7 @@ impl Kernel {
         &self,
         act: PersonActId,
         proof: PresenceProof,
-        given: Option<a2m_auth::Returned>,
     ) -> Result<Response, Failure> {
-        // What the person typed is registered with the redactor before
-        // anything else is done with it, whatever comes of the press.
-        if let Some(given) = &given {
-            for (_, secret) in given.iter() {
-                self.register_secret(secret);
-            }
-        }
         let now = self.inner.clock.now();
         let refuse = |why: &str| {
             codes::policy(
@@ -816,7 +748,7 @@ impl Kernel {
                 "Open the act's page again and press there yourself.",
             )
         };
-        let (def_name, caller, input, project, project_refused, asked) = {
+        let (def_name, caller, input, project, project_refused) = {
             let mut state = self.inner.acts.state();
             sweep(&mut state, now);
             let Some(pending) = state.pending.get_mut(&act) else {
@@ -838,19 +770,10 @@ impl Kernel {
                 pending.input.clone(),
                 pending.project.clone(),
                 pending.project_refused.clone(),
-                pending.ask.secrets.clone(),
             )
         };
-        // A press carries a value only for a secret the page asked for; a
-        // value under any other name is dropped, and so is an empty one.
-        let given = given
-            .map(|given| {
-                given.only(|name| asked.iter().any(|secret| secret.role == name))
-            })
-            .filter(|given| !given.is_empty())
-            .map(Arc::new);
         let outcome = self
-            .perform_act(&def_name, caller, input, (project, project_refused), proof, given)
+            .perform_act(&def_name, caller, input, project, project_refused, proof)
             .await;
         let kept = match &outcome {
             Ok((output, _)) => Ok(output.clone()),
@@ -887,9 +810,9 @@ impl Kernel {
         name: &ActionName,
         asker: Caller,
         input: Map<String, Json>,
-        (project, project_refused): (Option<PathBuf>, Option<Failure>),
+        project: Option<PathBuf>,
+        project_refused: Option<Failure>,
         proof: PresenceProof,
-        given: Option<Arc<a2m_auth::Returned>>,
     ) -> Result<(Output, DecisionId), Box<Performed>> {
         let none = DecisionId::from_bytes([0; 16]);
         let Some(def) = self.actions().get(name).cloned() else {
@@ -952,7 +875,6 @@ impl Kernel {
             project,
             project_refused,
             presence: Some(proof),
-            given,
             decided: Some((effect, Hazard::None)),
         };
         match self.run_handler(&def, call).await {

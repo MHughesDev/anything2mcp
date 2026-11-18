@@ -42,10 +42,6 @@ pub struct EngineSettings {
     pub plans_kept: usize,
     /// The engine's version, for the trace.
     pub version: Version,
-    /// The longest a binding in shadow may take beside one live read
-    /// (decision 0207). The live call is never held longer by it: a shadow
-    /// that passes it is cancelled and counted as not compared.
-    pub shadow_limit: Duration,
 }
 
 impl Default for EngineSettings {
@@ -65,7 +61,6 @@ impl Default for EngineSettings {
             },
             plans_kept: 16,
             version: Version::new(0, 0, 1),
-            shadow_limit: Duration::from_secs(2),
         }
     }
 }

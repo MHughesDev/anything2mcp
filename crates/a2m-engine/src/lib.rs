@@ -18,7 +18,6 @@
 //! `docs/reference/technical-reference.md`: layers 1 to 5, except the
 //! compiler, the policy engine, and the scheduler.
 
-mod binding;
 pub mod codes;
 mod compare;
 mod control;
@@ -29,7 +28,6 @@ mod job;
 mod loaded;
 mod run;
 mod sandbox;
-mod shadow;
 mod tool;
 mod values;
 
@@ -37,11 +35,10 @@ mod values;
 /// provider contract uses.
 pub use a2m_provider::BoxFuture;
 
-pub use binding::{BindingPin, binding_digest, default_binding};
 pub use compare::Comparison;
 pub use control::{
     Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
-    SessionWant, ShadowCompared,
+    SessionWant,
 };
 pub use diff::{
     Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord, NOW_CANNOT_BE_READ,

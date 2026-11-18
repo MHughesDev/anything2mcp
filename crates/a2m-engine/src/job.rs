@@ -264,11 +264,6 @@ pub struct JobSpec {
     pub conditions: Conditions,
     /// A caller or a setting pinned one mode. Compared by name only.
     pub pin: Option<Mode>,
-    /// A test, a trial, or a recorded fixture runs this one binding of its
-    /// operation and no other: nothing falls back to another binding, and
-    /// a binding that is no longer the one named stops the job as
-    /// `stale`/`binding_changed` (audit finding AC-6).
-    pub binding: Option<crate::binding::BindingPin>,
     /// How many records may be worked on at once.
     pub parallelism: Parallelism,
     /// The lease's remaining time and the latest directive.

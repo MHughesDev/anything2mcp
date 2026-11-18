@@ -25,7 +25,6 @@ mod keys;
 mod ledger;
 mod listing;
 mod migrate;
-mod shadow;
 mod sqlite;
 mod store;
 #[cfg(feature = "testing")]
@@ -48,11 +47,6 @@ pub use listing::{
     CALLER_KEY_LONGEST, CallerKey, CallerKeyRow, IDEMPOTENCY_KEY_INVALID, RUN_PAGE_MOST, RunQuery,
 };
 pub use migrate::{Migration, migrations, table_owner};
-pub use shadow::{
-    Difference, DifferingOutput, LastMismatch, NotPromotable, PromotionRow, Promotable,
-    ShadowComparison, ShadowOutcome, ShadowPromotion, ShadowStanding, ShadowSubject,
-    ShadowThreshold, Shadows,
-};
 pub use store::{
     BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, Store, StoreConfig, StoreHealth,
 };
@@ -67,5 +61,4 @@ pub mod codes {
         STORE_CORRUPT, STORE_UNAVAILABLE, STORE_VERSION_UNSUPPORTED, TABLE_NOT_OWNED,
     };
     pub use crate::listing::IDEMPOTENCY_KEY_INVALID;
-    pub use crate::shadow::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
 }

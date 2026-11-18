@@ -14,7 +14,6 @@ use tokio::task::JoinHandle;
 use crate::auth::{AuthReport, AuthSettings, Credential};
 use crate::details::StoredDelivery;
 use crate::faults::Fault;
-use crate::forgery::NotesReport;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
 
 /// The one account's username. Made up.
@@ -453,16 +452,6 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<Seen>("/__control/seen").await?.seen)
-    }
-
-    /// What the anti-forgery case stored: each order's note, how many writes
-    /// changed it, and how many were refused for their token (case 5).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the control interface could not be asked.
-    pub async fn stored_notes(&self) -> Result<NotesReport, HarnessError> {
-        self.ask::<NotesReport>("/__control/notes").await
     }
 
     /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step
