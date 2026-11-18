@@ -799,12 +799,19 @@ impl Ax {
                         subrole,
                     } = Self::node(&element, depth, place)?;
                     // The test says, for each element, whether it named
-                    // an element as what labels it.
+                    // an element as what labels it, and that element's role.
                     #[cfg(test)]
-                    self.seen.push(format!(
-                        "{role}/{subrole}{}",
-                        if label.is_some() { " titled" } else { "" }
-                    ));
+                    {
+                        let titled = match &label {
+                            Some(by) => format!(
+                                " titled by {}/{}",
+                                text_of(by, "AXRole")?.unwrap_or_default(),
+                                text_of(by, "AXSubrole")?.unwrap_or_default()
+                            ),
+                            None => String::new(),
+                        };
+                        self.seen.push(format!("{role}/{subrole}{titled}"));
+                    }
                     #[cfg(not(test))]
                     let _ = subrole;
                     labelling.extend(label);

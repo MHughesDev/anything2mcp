@@ -118,9 +118,12 @@ const READ_PATTERNS: &[UIA_PATTERN_ID] = &[UIA_ValuePatternId];
 /// not here is [`roles::OTHER`], shown in a snapshot and never matched by a
 /// locator. Two refinements, in [`role_word`]: an edit that says it holds
 /// a password is `password_text`, and a text, an edit, or a custom element
-/// directly under a `table_row` is a `table_cell`. A list view in report
-/// view is a data grid of data items, with a header of header items as its
-/// first row.
+/// directly under a `table_row` is a `table_cell`. And a table by its
+/// shape, in [`Uia::tree`]: a list whose first child is a header, as UI
+/// Automation gives a list view in report view, is a `table`, and each list
+/// item directly in it a `table_row` (the first run on Windows showed a
+/// list view in report view given as a list of list items, not as a data
+/// grid of data items).
 pub(crate) const CONTROL_TYPES: &[(i32, &str)] = &[
     (50000, "push_button"),         // Button
     (50002, "check_box"),           // CheckBox
@@ -152,8 +155,11 @@ pub(crate) const CONTROL_TYPES: &[(i32, &str)] = &[
 ];
 
 const EDIT: i32 = 50004;
+const LIST_ITEM: i32 = 50007;
+const LIST: i32 = 50008;
 const TEXT: i32 = 50020;
 const CUSTOM: i32 = 50025;
+const HEADER: i32 = 50034;
 
 /// The pack's word for an element of control type `control`.
 pub(crate) fn role_word(control: i32, password: bool, in_row: bool) -> &'static str {
@@ -674,6 +680,17 @@ impl Uia {
         }
     }
 
+    /// An element's control type, by number.
+    #[allow(unsafe_code)] // one call into UI Automation, explained below
+    fn control_of(element: &IUIAutomationElement) -> Result<i32, AxError> {
+        // SAFETY: a method of an element this thread made, with no
+        // argument.
+        let control: UIA_CONTROLTYPE_ID = ask("CurrentControlType", || unsafe {
+            element.CurrentControlType()
+        })?;
+        Ok(control.0)
+    }
+
     /// Everything one element says of itself but its value, and what
     /// labels it, when anything does.
     #[allow(unsafe_code)] // calls into UI Automation, explained below
@@ -774,9 +791,13 @@ impl Uia {
                 break;
             }
             let in_row = parent.is_some_and(|at| tree.nodes[at].role == "table_row");
-            let (mut node, label, _control) = Self::node(&element, depth, in_row)?;
+            let (mut node, label, control) = Self::node(&element, depth, in_row)?;
             #[cfg(test)]
-            self.types.push(_control);
+            self.types.push(control);
+            // A list item directly in a list that is a table is its row.
+            if control == LIST_ITEM && parent.is_some_and(|at| tree.nodes[at].role == "table") {
+                node.role = "table_row";
+            }
             let at = tree.nodes.len();
             node.el = El {
                 bus: process.to_string(),
@@ -788,6 +809,13 @@ impl Uia {
                 tree.nodes[parent].children.push(at);
             }
             let children = self.children(&element, process, limits.nodes)?;
+            // A list whose first child is a header is a table.
+            if control == LIST
+                && let Some(first) = children.first()
+                && Self::control_of(first)? == HEADER
+            {
+                tree.nodes[at].role = "table";
+            }
             kept.push(element);
             if depth >= limits.depth {
                 if !children.is_empty() && tree.cut.is_none() {

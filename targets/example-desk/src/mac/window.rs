@@ -48,11 +48,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityPostNotification, NSAccessibilityValueChangedNotification,
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSButton, NSControl,
-    NSControlTextEditingDelegate, NSResponder, NSScrollView, NSSecureTextField, NSTableColumn,
-    NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTextField, NSView, NSWindow,
-    NSWindowStyleMask,
+    NSAccessibility, NSAccessibilityPostNotification, NSAccessibilityUnignoredDescendant,
+    NSAccessibilityValueChangedNotification, NSApplication, NSApplicationActivationPolicy,
+    NSBackingStoreType, NSButton, NSControl, NSControlTextEditingDelegate, NSResponder,
+    NSScrollView, NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource,
+    NSTableViewDelegate, NSTextField, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSInteger, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
@@ -81,6 +81,16 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Counts one request a client made of a control, as `control.request`.
 fn count(member: &str) {
     *lock(&ASKED).entry(member.to_owned()).or_insert(0) += 1;
+}
+
+/// The element AppKit's accessibility gives for a label: the label's view
+/// when that is an element, else the element under it that stands for it,
+/// as AppKit lists a view's children.
+fn as_listed(label: &NSTextField) -> Option<Retained<AnyObject>> {
+    let label: &AnyObject = label;
+    // SAFETY: the label is a live view of the stand's window, on the main
+    // thread, where every request of AppKit's accessibility is answered.
+    unsafe { NSAccessibilityUnignoredDescendant(label) }
 }
 
 /// What a value field keeps: the name its requests are counted under, and
@@ -124,12 +134,15 @@ define_class!(
         }
 
         /// The label that labels the field, as a screen reader asks for it
-        /// (`AXTitleUIElement`). The first run on macOS showed that a text
-        /// field given its label through `setAccessibilityTitleUIElement:`
-        /// alone answers the request with nothing.
+        /// (`AXTitleUIElement`): the element AppKit's accessibility gives
+        /// for the label, which is the one it lists among the window's
+        /// children. The runs on macOS showed that a text field given its
+        /// label through `setAccessibilityTitleUIElement:` alone answers the
+        /// request with nothing, and that one answering with the label's
+        /// view itself names an element that is not the listed static text.
         #[unsafe(method_id(accessibilityTitleUIElement))]
-        fn accessibility_title_ui_element(&self) -> Option<Retained<NSTextField>> {
-            self.ivars().title.clone()
+        fn accessibility_title_ui_element(&self) -> Option<Retained<AnyObject>> {
+            self.ivars().title.as_ref().and_then(|label| as_listed(label))
         }
     }
 );
@@ -178,8 +191,8 @@ define_class!(
 
         /// The label that labels the field, as for a value field.
         #[unsafe(method_id(accessibilityTitleUIElement))]
-        fn accessibility_title_ui_element(&self) -> Option<Retained<NSTextField>> {
-            Some(self.ivars().clone())
+        fn accessibility_title_ui_element(&self) -> Option<Retained<AnyObject>> {
+            as_listed(self.ivars())
         }
     }
 );

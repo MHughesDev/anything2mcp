@@ -333,9 +333,14 @@ mod on_windows {
                 Some(&raw mut result),
             )
         };
+        // What the system said, read at once, before any other call.
+        let why = windows::core::Error::from_thread();
         assert_ne!(
-            sent.0, 0,
-            "the stand's control did not take message {message:#x}"
+            sent.0,
+            0,
+            "the stand's control {control:#x} did not take message {message:#x}: {} ({})",
+            why.message(),
+            why.code()
         );
     }
 
@@ -494,8 +499,9 @@ mod on_macos {
 
         // Each labelled field, the secure one too, names its label as its
         // title element, which is how a screen reader, and the desktop
-        // pack, find what labels it.
-        let titled: Vec<String> = found
+        // pack, find what labels it: the very static text the window lists,
+        // as the system compares elements.
+        let titled: Vec<(String, String, bool)> = found
             .iter()
             .filter(|(role, _, _, _)| role == "AXTextField")
             .filter_map(|(_, _, _, field)| {
@@ -503,7 +509,18 @@ mod on_macos {
                     .downcast::<AXUIElement>()
                     .ok()
             })
-            .map(|label| text(&label, "AXValue"))
+            .map(|label| {
+                let theirs: &CFType = &label;
+                let listed = found.iter().any(|(role, _, _, element)| {
+                    let mine: &CFType = element;
+                    role == "AXStaticText" && theirs == mine
+                });
+                (
+                    text(&label, "AXValue"),
+                    format!("{}/{}", text(&label, "AXRole"), text(&label, "AXSubrole")),
+                    listed,
+                )
+            })
             .collect();
         for name in [
             "Order number",
@@ -514,8 +531,10 @@ mod on_macos {
             "Access code",
         ] {
             assert!(
-                titled.iter().any(|title| title == name),
-                "no field names the label {name:?} as its title element: {titled:?}\n{seen:#?}"
+                titled
+                    .iter()
+                    .any(|(title, _, listed)| title == name && *listed),
+                "no field names as its title element the listed static text {name:?}; each title element as (value, role/subrole, listed): {titled:?}\n{seen:#?}"
             );
         }
 
