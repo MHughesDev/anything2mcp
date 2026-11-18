@@ -30,7 +30,7 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | Field | Meaning |
 | --- | --- |
 | `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's. A field the pack marks as naming a program takes an absolute path, and the plan declares that program for the surface; a relative path is `kernel.program_invalid` |
-| `origin`, `base`, `address`, `app` | The address for the kind: a web origin (`web`), an API base address (`http`), an MCP server address (`mcp`; a local server also names its `program` and `digest`), or a desktop application (`desktop`: `program`, its absolute path, which is its address, with `application` and optionally `digest`, as given [below](#kinds-the-other-packs-bring)). Other kinds have their own, given in their pack's section and listed [below](#kinds-the-other-packs-bring) |
+| `origin`, `base`, `address`, `app` | The address for the kind: a web origin (`web`), an API base address (`http`), an MCP server address (`mcp`; a local server also names its `program` and `digest`), or a desktop application identifier. Other kinds have their own, given in their pack's section and listed [below](#kinds-the-other-packs-bring) |
 | `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
@@ -139,8 +139,6 @@ Tried in order; the first that matches exactly one element and passes the finger
 
 Position alone, and XPath, are not accepted.
 
-A desktop screen uses `{role, name}` alone, both exact, with a role from the desktop pack's closed list of role words; its `control` is `desktop_text` ([decision 0202](../decisions/0202-the-desktop-packs-control-has-a-name-of-its-own.md)). An element with no accessible name cannot be located.
-
 ### Conditions
 
 | Condition | True when |
@@ -190,7 +188,6 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `channels/`, `schemas/` | `channel`, `message_schema` | `broker`: `address`, and `protocol` | [Section 309](../spec/3-packs/309-the-stream-pack.md); [`a2m-pack-stream`](../architecture/crates/a2m-pack-stream.md) |
 | `registers/` | `register` | `device_link`: `address`, `protocol`, `unit`, and `serials`, the serial of the device in each environment, by the environment's name; a write is refused where none is declared for the run's environment; the layout of a published register map that the pack drafts a map from is given in the pack's design ([decision 0137](../decisions/0137-a-device-is-held-to-its-serial-a-write-frame-is-recorded-before-it-is-sent-and-a-run-has-a-frame-ceiling.md)) | [Section 310](../spec/3-packs/310-the-device-pack.md); [`a2m-pack-device`](../architecture/crates/a2m-pack-device.md) |
 | `page_requests/` | `page_request`, [`endpoints/`](#endpointsyaml) in form, for reads, with one more field, `page` | `web`, as for `screens/` | [`a2m-pack-web-ui`](../architecture/crates/a2m-pack-web-ui.md); [decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md) |
-| `screens/` | `screen`, [above](#screensyaml), with `control: desktop_text` | `desktop`: `program`, the absolute path of the application's program, which is its address; `application`, the name it gives itself on the accessibility bus; and optionally `digest`, the SHA-256 of the program. Reads only, on Linux only ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) | [Section 305](../spec/3-packs/305-the-desktop-pack.md); [`a2m-pack-desktop`](../architecture/crates/a2m-pack-desktop.md) |
 | `mappings/` | `mapping` | `mcp`: `address`; a local server also names its `program` and `digest`; `unencrypted_credentials: accepted` as on an `http` surface ([decision 0188](../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)) | [Section 304](../spec/3-packs/304-the-mcp-pack.md); [`a2m-pack-mcp`](../architecture/crates/a2m-pack-mcp.md) |
 
 ## `operations/*.yaml`
