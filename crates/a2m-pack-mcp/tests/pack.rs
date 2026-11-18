@@ -83,10 +83,29 @@ fn every_failure_code_of_the_pack_is_declared_in_its_manifest_with_its_one_class
         .iter()
         .map(|declared| (declared.class, declared.code.as_str().to_owned()))
         .collect();
-    let own: Vec<(FailureClass, String)> = a2m_pack_mcp::codes::ALL
+    // The pack's own codes, which keep the class the crates below give the
+    // same code, then those of other crates it returns as they are.
+    let book = a2m_core::CodeBook::new(&[
+        a2m_pack_mcp::codes::TABLE,
+        a2m_core::codes::TABLE,
+        a2m_provider::codes::TABLE,
+        a2m_auth::codes::TABLE,
+    ])
+    .unwrap();
+    let passed_on = a2m_pack_mcp::codes::PASSED_ON.iter().map(|code| {
+        let entry = book.explain(code.as_str()).unwrap();
+        assert_ne!(entry.declared_in, "a2m-pack-mcp", "{code}");
+        (entry.class, entry.code)
+    });
+    let mut own: Vec<(FailureClass, String)> = a2m_pack_mcp::codes::ALL
         .iter()
-        .map(|(class, code)| (*class, (*code).to_owned()))
+        .copied()
+        .chain(passed_on)
+        .map(|(class, code)| (class, code.to_owned()))
         .collect();
+    let mut declared = declared;
+    own.sort_by(|a, b| a.1.cmp(&b.1));
+    declared.sort_by(|a, b| a.1.cmp(&b.1));
     assert_eq!(declared, own);
 }
 

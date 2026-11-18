@@ -22,8 +22,8 @@ use a2m_core::{
 };
 use a2m_engine::{decode_values, encode_values};
 use a2m_ledger::{
-    BlobKind, ChangeRow, Durability, NewBlob, NewRun, RetentionClass, ToolKind, WatchId, WatchKey,
-    WatchReason, WatchRow, WatchShape, WatchState,
+    BlobKind, ChangeRow, Durability, NewBlob, NewRun, RetentionClass, ToolKind, Tx, WatchId,
+    WatchKey, WatchReason, WatchRow, WatchShape, WatchState,
 };
 use a2m_sched::{
     CheckAdmission, DueCheck, JobKind, JobRequirements, Priority, RateLimit, Scheduler,
@@ -74,6 +74,27 @@ fn person_of(caller: &Caller) -> Result<PrincipalId, Failure> {
             "Call as a person, or as an agent acting for one.",
         )
     })
+}
+
+/// Whether a check's run is left to be cancelled, once the checks in
+/// `stopping` stop waiting on it: a check of a watch opened it, and no check
+/// under way other than those names it (decisions 0285 and 0287). A run no
+/// check opened, such as the person's own call that a check joined, is never
+/// cancelled for a watch; a run another watch's check still rests on is left
+/// for that check, and the last check on it to stop cancels it.
+fn run_left_to_cancel(
+    tx: &mut Tx<'_>,
+    run: RunId,
+    stopping: &BTreeSet<(WatchId, u64)>,
+) -> Result<bool, Failure> {
+    if !tx.watches().run_opened_by_a_check(run)? {
+        return Ok(false);
+    }
+    Ok(tx
+        .watches()
+        .checks_of_run(run)?
+        .iter()
+        .all(|check| stopping.contains(&(check.watch, check.seq))))
 }
 
 fn failure_json((class, code): &(FailureClass, FailureCode)) -> Json {
@@ -338,7 +359,22 @@ impl Kernel {
         let mut changed = false;
         // 1. What is due, and what a watch's end closed.
         if let Ok(due) = sched.due_watches().await {
-            for run in due.cancel {
+            // The checks a watch's end closed are closed already: a run is
+            // cancelled only when no other check rests on it.
+            let closed = due.cancel;
+            let cancel = store
+                .read(move |tx| {
+                    let mut cancel = BTreeSet::new();
+                    for run in closed {
+                        if run_left_to_cancel(tx, run, &BTreeSet::new())? {
+                            cancel.insert(run);
+                        }
+                    }
+                    Ok(cancel)
+                })
+                .await
+                .unwrap_or_default();
+            for run in cancel {
                 let _ = sched.cancel(run).await;
                 changed = true;
             }
@@ -386,19 +422,27 @@ impl Kernel {
                 },
                 _ => None,
             };
+            let run_id = run.id;
             let ended = store
                 .write(Durability::Synced, move |tx| {
-                    tx.watches().end_check(watch, seq, bytes.as_deref())
+                    tx.watches().end_check(watch, seq, bytes.as_deref())?;
+                    // A check's run that rests waits for no watch: each
+                    // check on it recorded why, and paused if a person is
+                    // needed. The run is cancelled after the last check on
+                    // it ended, so that every watch resting on it keeps the
+                    // reason the run rested for; one opened by no check is
+                    // left as it is.
+                    if resting {
+                        run_left_to_cancel(tx, run_id, &BTreeSet::new())
+                    } else {
+                        Ok(false)
+                    }
                 })
                 .await;
-            if ended.is_ok() {
+            if let Ok(cancel) = ended {
                 changed = true;
-                // A check's run that rests waits for nobody: the watch
-                // recorded why, and paused if a person is needed. The run is
-                // cancelled after the check ended, so that the pause keeps
-                // the reason the run rested for.
-                if resting {
-                    let _ = sched.cancel(run.id).await;
+                if cancel {
+                    let _ = sched.cancel(run_id).await;
                 }
             }
         }
@@ -480,6 +524,40 @@ impl Kernel {
                 self.note_budget(&key);
             }
         }
+        match sched
+            .submit_check(check, self.check_submission(watch))
+            .await
+        {
+            Ok(CheckAdmission::Started(_)) => true,
+            Ok(CheckAdmission::Deferred { refused, .. }) => { eprintln!("DEBUG deferred {refused:?}"); false }
+            // A refusal the scheduler does not wait out, such as a check its
+            // ledger refuses, is tried again after a minute at most, and
+            // never at once: the tending task does not spin on it.
+            Err(e) => {
+                eprintln!("DEBUG submit refused {e:?}");
+                if let Ok(store) = self.store() {
+                    let id = watch.id;
+                    let until = Timestamp::from_unix_millis(
+                        self.inner
+                            .clock
+                            .now()
+                            .as_unix_millis()
+                            .saturating_add(60_000),
+                    );
+                    let _ = store
+                        .write(Durability::Relaxed, move |tx| tx.watches().defer(id, until))
+                        .await;
+                }
+                false
+            }
+        }
+    }
+
+    /// The submission of a check of `watch`: a run of its own read, for its
+    /// own person, with its own stored input, as the lowest work. Its
+    /// identity under ledger rule 6 is that of the person's own call of the
+    /// same read and input.
+    pub(crate) fn check_submission(&self, watch: &WatchRow) -> Submission {
         let run = NewRun {
             workspace: watch.workspace,
             principal: watch.acts_for,
@@ -495,7 +573,7 @@ impl Kernel {
             input: watch.input,
             retention: watch.retention,
         };
-        let submission = Submission {
+        Submission {
             job: JobRequirements {
                 kind: JobKind::Canary,
                 target: watch.target.clone(),
@@ -517,36 +595,14 @@ impl Kernel {
             health: super::tools::sched_health(self),
             queue_wait: None,
             budgets: Vec::new(),
-        };
-        match sched.submit_check(check, submission).await {
-            Ok(CheckAdmission::Started(_)) => true,
-            Ok(CheckAdmission::Deferred { .. }) => false,
-            // A refusal the scheduler does not wait out, such as a check its
-            // ledger refuses, is tried again after a minute at most, and
-            // never at once: the tending task does not spin on it.
-            Err(_) => {
-                if let Ok(store) = self.store() {
-                    let id = watch.id;
-                    let until = Timestamp::from_unix_millis(
-                        self.inner
-                            .clock
-                            .now()
-                            .as_unix_millis()
-                            .saturating_add(60_000),
-                    );
-                    let _ = store
-                        .write(Durability::Relaxed, move |tx| tx.watches().defer(id, until))
-                        .await;
-                }
-                false
-            }
         }
     }
 
     /// After a publish of `target` at `current`: every watch tied to
     /// another version pauses or ends (decision 0262), and the runs of
-    /// those whose check is under way are cancelled; their checks end at
-    /// the next pass, and the watch pauses then.
+    /// those whose check is under way are cancelled, each once, when a check
+    /// opened it and no check of a watch that goes on rests on it (decision
+    /// 0287); their checks end at the next pass, and the watch pauses then.
     pub(crate) async fn watches_after_publish(
         &self,
         target: &a2m_core::TargetName,
@@ -565,14 +621,22 @@ impl Kernel {
                 let running = tx
                     .watches()
                     .version_changed(&workspace, &target, &current)?;
-                let mut runs = Vec::new();
+                let mut stopping = BTreeSet::new();
+                let mut runs = BTreeSet::new();
                 for id in running {
                     let watch = tx.watches().get(id)?;
                     if let Some(seq) = watch.running_check {
-                        runs.push(tx.watches().check(id, seq)?.run);
+                        stopping.insert((id, seq));
+                        runs.insert(tx.watches().check(id, seq)?.run);
                     }
                 }
-                Ok(runs)
+                let mut cancel = Vec::new();
+                for run in runs {
+                    if run_left_to_cancel(tx, run, &stopping)? {
+                        cancel.push(run);
+                    }
+                }
+                Ok(cancel)
             })
             .await
             .unwrap_or_default();
@@ -1119,7 +1183,9 @@ handler!(
 
 handler!(
     /// `watch.end`: its person ends it, or the caller that asked for it.
-    /// A check under way is closed and its run cancelled.
+    /// A check under way is closed, and its run cancelled when that check
+    /// or another watch's opened it and no other check rests on it
+    /// (decisions 0285 and 0287).
     watch_end,
     |kernel, call| {
         let id = watch_id(&call)?;
@@ -1148,7 +1214,14 @@ handler!(
                     Some((id, seq)) => Some(tx.watches().check(id, seq)?.run),
                     None => None,
                 };
-                Ok((tx.watches().end(id, reason)?, run))
+                let ended = tx.watches().end(id, reason)?;
+                // The check is closed now: the run is cancelled only when no
+                // other check rests on it.
+                let cancel = match run {
+                    Some(run) if run_left_to_cancel(tx, run, &BTreeSet::new())? => Some(run),
+                    _ => None,
+                };
+                Ok((ended, cancel))
             })
             .await?;
         if let Some(run) = run {

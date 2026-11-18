@@ -1,18 +1,23 @@
 //! Watches through the dispatcher (decision 0283), against the built-in
 //! test application: an agent's ask runs nothing until its person confirms
 //! it on the page; an agent that calls the confirmation is sent to the page;
-//! and a watch, and every change it recorded, is its own person's alone.
+//! a watch, and every change it recorded, is its own person's alone; and
+//! two watches of one read share its run, which ending one never cancels
+//! while the other rests on it (decisions 0285 and 0287).
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use a2m_actions::{
     Caller, CloseReason, ExitClass, FrontDoor, PersonActAsk, PresenceProof, Response,
 };
+use a2m_core::{RunId, RunState};
+use a2m_ledger::{ChangeKind, CheckOutcome, CheckRow, WatchId, WatchReason, WatchRow, WatchState};
 use a2m_policy::{PresenceCheck, Role, RoleBinding, Subject};
 use serde_json::{Value as Json, json};
 
-use super::kernel::World;
 use super::kernel::engine::ORDER_GET;
+use super::kernel::{Options, World, engine, world};
 
 /// How many passes of tending a test waits through for a check to end
 /// before it fails by name. Each pass waits a little for the runner.
@@ -80,6 +85,106 @@ impl World {
         let proof =
             PresenceProof::new(PresenceCheck::OsPrompt, person, self.now()).for_act(ask.act);
         self.surface.desk().carry_out(ask.act, proof).await.unwrap()
+    }
+}
+
+/// A world whose runner is not started: a check's run stays queued, and so
+/// unfinished, until the test starts it. What the watches stored is read
+/// from the ledger itself.
+impl World {
+    async fn held() -> Self {
+        let world = world(Options::default()).await;
+        world
+            .kernel
+            .publish_plan(&engine::plan(&world.app.url("")))
+            .await
+            .unwrap();
+        *world.surface.pages.lock().unwrap() = true;
+        world
+    }
+
+    /// A watch of the one read, asked and confirmed on the page, that ends
+    /// `ends_in` after now.
+    async fn confirmed_watch(&self, ends_in: Duration) -> WatchId {
+        let mut input = self.watch_input();
+        input["ends_at"] =
+            json!(self.now().as_unix_millis() + i64::try_from(ends_in.as_millis()).unwrap());
+        let asked = self.call("watch.create", input).await;
+        let id = asked.result.unwrap()["watch_id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let ask = self.confirmation();
+        assert!(self.confirmed_on_the_page(&ask).await.ok);
+        id
+    }
+
+    async fn stored_watch(&self, id: WatchId) -> WatchRow {
+        let store = self.kernel.store().unwrap();
+        store.read(move |tx| tx.watches().get(id)).await.unwrap()
+    }
+
+    async fn stored_checks(&self, id: WatchId) -> Vec<CheckRow> {
+        let store = self.kernel.store().unwrap();
+        store
+            .read(move |tx| tx.watches().checks(id, None, 100))
+            .await
+            .unwrap()
+    }
+
+    async fn stored_kinds(&self, id: WatchId) -> Vec<ChangeKind> {
+        let store = self.kernel.store().unwrap();
+        store
+            .read(move |tx| tx.watches().changes(id, 0, 100))
+            .await
+            .unwrap()
+            .iter()
+            .map(|change| change.kind)
+            .collect()
+    }
+
+    async fn run_state(&self, run: RunId) -> RunState {
+        let store = self.kernel.store().unwrap();
+        store
+            .read(move |tx| tx.ledger().run(run))
+            .await
+            .unwrap()
+            .state
+    }
+
+    async fn end_watch(&self, id: WatchId) {
+        let ended = self
+            .ok("watch.end", json!({"watch_id": id.to_string()}))
+            .await;
+        assert_eq!(ended["state"], "ended", "{ended}");
+    }
+
+    /// Two watches of the one read, both due in one pass: the first's check
+    /// opens a run and the second's is handed the same one. Gives them as
+    /// (the watch whose check opened the run, the other) and the run.
+    async fn two_watches_on_one_run(&self) -> (WatchId, WatchId, RunId) {
+        let first = self.confirmed_watch(Duration::from_secs(3_600)).await;
+        // Another end: a watch that differs in what it was asked for, and
+        // reads the same thing.
+        let second = self.confirmed_watch(Duration::from_secs(7_200)).await;
+        self.clock.advance(Duration::from_secs(10));
+        self.kernel.tend().await;
+        eprintln!("DEBUG {:?}", self.stored_watch(first).await);
+        eprintln!("DEBUG health {:?}", self.kernel.health());
+        let (one, two) = (
+            self.stored_checks(first).await,
+            self.stored_checks(second).await,
+        );
+        assert_eq!((one.len(), two.len()), (1, 1), "{one:?} {two:?}");
+        assert_eq!(one[0].run, two[0].run, "the two checks share one run");
+        assert_ne!(one[0].opened_run, two[0].opened_run, "{one:?} {two:?}");
+        let run = one[0].run;
+        if one[0].opened_run {
+            (first, second, run)
+        } else {
+            (second, first, run)
+        }
     }
 }
 
@@ -265,5 +370,120 @@ async fn watch_changes_never_names_a_record_from_another_persons_run() {
     for change in changes["changes"].as_array().unwrap() {
         assert!(change.get("record").is_none(), "{change}");
     }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_one_watch_leaves_the_run_another_rests_on_and_it_ends_with_its_result() {
+    let world = World::held().await;
+    let (opener, other, run) = world.two_watches_on_one_run().await;
+    assert_eq!(world.run_state(run).await, RunState::Queued);
+
+    // The watch whose check opened the run ends. Its check closes as a gap,
+    // and the run the other check rests on is not cancelled.
+    world.end_watch(opener).await;
+    assert_eq!(world.run_state(run).await, RunState::Queued);
+    let closed = &world.stored_checks(opener).await[0];
+    assert_eq!(closed.outcome, CheckOutcome::Failed);
+    assert_eq!(
+        world.stored_kinds(opener).await,
+        [ChangeKind::Confirmed, ChangeKind::Gap, ChangeKind::Ended]
+    );
+    assert_eq!(world.stored_watch(other).await.state, WatchState::Running);
+
+    // The run is carried out once; the other watch's check ends with its
+    // result, and records no gap.
+    world.kernel.start_runner_loop(4).await.unwrap();
+    for _ in 0..PASSES {
+        world.kernel.tend().await;
+        if world.stored_watch(other).await.state == WatchState::Confirmed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let check = &world.stored_checks(other).await[0];
+    assert_eq!(check.outcome, CheckOutcome::Complete, "{check:?}");
+    assert_eq!(check.run, run);
+    assert_eq!(world.run_state(run).await, RunState::Completed);
+    assert_eq!(world.stored_kinds(other).await, [ChangeKind::Confirmed]);
+    assert_eq!(world.order_reads().await, 1);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_the_last_watch_on_a_run_its_check_opened_cancels_the_run() {
+    let world = World::held().await;
+    let id = world.confirmed_watch(Duration::from_secs(3_600)).await;
+    world.clock.advance(Duration::from_secs(10));
+    world.kernel.tend().await;
+    let check = world.stored_checks(id).await[0].clone();
+    assert!(check.opened_run, "{check:?}");
+    world.end_watch(id).await;
+    assert_eq!(world.run_state(check.run).await, RunState::Cancelled);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shared_run_that_waits_for_a_sign_in_pauses_every_watch_resting_on_it() {
+    let world = World::held().await;
+    let (opener, other, run) = world.two_watches_on_one_run().await;
+    // The person's session has ended: the run rests at `needs_login`.
+    world.hooks.session_ended.store(true, Ordering::SeqCst);
+    world.kernel.start_runner_loop(4).await.unwrap();
+    for _ in 0..PASSES {
+        world.kernel.tend().await;
+        let (one, two) = (
+            world.stored_watch(opener).await,
+            world.stored_watch(other).await,
+        );
+        if one.state != WatchState::Running && two.state != WatchState::Running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for id in [opener, other] {
+        let watch = world.stored_watch(id).await;
+        assert_eq!(watch.state, WatchState::Paused, "{watch:?}");
+        assert_eq!(watch.reason, Some(WatchReason::NeedsLogin), "{watch:?}");
+        let check = &world.stored_checks(id).await[0];
+        assert_eq!(
+            check.why.as_ref().map(|(_, code)| code.as_str()),
+            Some("needs_login"),
+            "{check:?}"
+        );
+        assert_eq!(
+            world.stored_kinds(id).await,
+            [ChangeKind::Confirmed, ChangeKind::Gap, ChangeKind::Paused]
+        );
+    }
+    // The run waits for no watch once the last check on it has ended.
+    assert_eq!(world.run_state(run).await, RunState::Cancelled);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_check_that_joined_a_run_it_did_not_open_never_cancels_it() {
+    let world = World::held().await;
+    let id = world.confirmed_watch(Duration::from_secs(3_600)).await;
+    // The person's own call of the same read and input is under way, as a
+    // run the scheduler admitted for them, not for a watch.
+    let row = world.stored_watch(id).await;
+    let sched = world.kernel.sched().unwrap();
+    let theirs = match sched
+        .submit(world.kernel.check_submission(&row))
+        .await
+        .unwrap()
+    {
+        a2m_sched::Admitted::New { run, .. } => run,
+        other => panic!("the person's call opened no run: {other:?}"),
+    };
+    world.clock.advance(Duration::from_secs(10));
+    world.kernel.tend().await;
+    let check = world.stored_checks(id).await[0].clone();
+    assert_eq!(check.run, theirs);
+    assert!(!check.opened_run, "{check:?}");
+    // The watch ends: its check closes, and the person's run goes on.
+    world.end_watch(id).await;
+    assert_eq!(world.run_state(theirs).await, RunState::Queued);
     world.kernel.close(CloseReason::Asked).await;
 }

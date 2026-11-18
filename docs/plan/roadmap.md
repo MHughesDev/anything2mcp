@@ -287,7 +287,7 @@ Every crate declares each failure code once, with its meaning, its next step, an
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | FC1 | The `failure_codes!` form in `a2m-core`, the code book, the generator's two new columns, and twenty crates in the form, `a2m-core` among them, as `MIGRATED` in `tools/failure_codes.py` lists them | `a2m-core`, `tools/`, and each crate moved | None | One code declared with two classes is refused (`a_book_refuses_one_code_with_two_classes` in `crates/a2m-core/src/code_book.rs`); a moved crate that declares a code anywhere else is a finding of the documentation audit, which runs the generator's check | done |
-| FC2 | The seven crates still outside the form, as `python3 tools/failure_codes.py --list` names them: `a2m-actions`, `a2m-local`, `a2m-pack-desktop`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-web-browser`, `a2m-pack-web-ui`. One crate at a time, when no other package holds it | Those seven | FC1 | `--list` names no crate outside the form, and the generator no longer reads the older forms | ready |
+| FC2 | The five crates still outside the form, as `python3 tools/failure_codes.py --list` names them: `a2m-actions`, `a2m-local`, `a2m-pack-desktop`, `a2m-pack-web-browser`, `a2m-pack-web-ui`. `a2m-pack-http` and `a2m-pack-mcp` have moved. One crate at a time, when no other package holds it | Those five | FC1 | `--list` names no crate outside the form, and the generator no longer reads the older forms | ready |
 
 ## What can run at once
 

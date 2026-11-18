@@ -620,7 +620,7 @@ impl Scheduler {
                 if row.state != WatchState::Confirmed {
                     return Err(tx
                         .watches()
-                        .begin_check(watch, due, RunId::from_bytes([0; 16]))
+                        .begin_check(watch, due, RunId::from_bytes([0; 16]), false)
                         .err()
                         .unwrap_or_else(|| failure::invalid("a watch that is not confirmed")));
                 }
@@ -637,7 +637,11 @@ impl Scheduler {
                     Admitted::New { run, job } => (run, Some(job)),
                     Admitted::Existing { run } => (run, None),
                 };
-                let check = tx.watches().begin_check(watch, due, run)?;
+                // The check opened its run exactly when admission placed a
+                // job for it; a run handed back by rule 6 is only joined.
+                let check = tx
+                    .watches()
+                    .begin_check(watch, due, run, job.is_some())?;
                 Ok(CheckStarted { run, job, check })
             })
             .await;

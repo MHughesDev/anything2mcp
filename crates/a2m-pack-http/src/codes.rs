@@ -1,92 +1,88 @@
 //! The failure codes this pack produces. Each belongs to exactly one class,
-//! and each is declared in the pack's manifest. `timeout`,
-//! `connection_lost`, and `no_confirmation` are the provider contract's own;
-//! the TLS failures are the session keeper's, in `a2m_auth::tls`.
+//! and each is declared in the pack's manifest; a test holds the two lists
+//! together. `timeout`, `connection_lost`, and `no_confirmation` are the
+//! provider contract's own; the TLS failures are the session keeper's, in
+//! `a2m_auth::tls`, and [`PASSED_ON`] names those the driver passes on.
+//!
+//! Whether a `busy` code passes by itself, and why: `reads_still_running`
+//! does, because each read left running is told to stop, reads an answer of
+//! bounded size, and gives its place back when its thread ends.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
 
-/// `rejected`: the system refused the request in a shape the endpoint
-/// declares as a refusal.
-pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
-/// `stale`: the version sent with a write is no longer the record's.
-pub const VERSION_CONFLICT: FailureCode = FailureCode::fixed("version_conflict");
-/// `stale`: a write that sends a record's version as a precondition, in a
-/// pass that read no version for the record. Nothing is sent.
-pub const VERSION_NOT_READ: FailureCode = FailureCode::fixed("version_not_read");
-/// `drift`: the body of an accepted answer does not fit the declared shape.
-pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
-/// `unknown_variant`: a status the endpoint does not declare.
-pub const UNEXPECTED_STATUS: FailureCode = FailureCode::fixed("unexpected_status");
-/// `unknown_variant`: an answer larger than the limit.
-pub const RESPONSE_TOO_LARGE: FailureCode = FailureCode::fixed("response_too_large");
-/// `unknown_variant`: an XML answer that declares a document type. None is
-/// read, so no entity it defines is expanded and nothing it names is
-/// fetched (decision 0217).
-pub const DOCUMENT_TYPE_REFUSED: FailureCode = FailureCode::fixed("document_type_refused");
-/// `unknown_variant`: a `bytes` answer whose body holds a registered
-/// secret. Neither its length nor its digest is returned (decision 0249).
-pub const ANSWER_HOLDS_SECRET: FailureCode = FailureCode::fixed("answer_holds_secret");
-/// `transient`: an answer the endpoint declares as "not now".
-pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
-/// `policy`: a request, or a redirect, that leaves the declared surfaces.
-pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
-/// `policy`: a request that would carry the session's credential over
-/// plain `http` to an address that is not a loopback address, from a
-/// surface that does not accept it. Nothing is sent (decision 0188).
-pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
-/// `policy`: the session's provider placed a header whose name begins
-/// `a2m-`, one of the product's own carriers between its parts, which never
-/// goes on the wire. Nothing is sent (decision 0270).
-pub const PRODUCT_HEADER_REFUSED: FailureCode = FailureCode::fixed("product_header_refused");
-/// `busy`: so many reads of answers are still running past their step's
-/// deadline, on this surface or in the pack, that no new one is begun.
-/// Nothing is sent (decision 0270).
-pub const READS_STILL_RUNNING: FailureCode = FailureCode::fixed("reads_still_running");
-/// `input`: a value that cannot stand in one segment of a path.
-pub const PATH_VALUE_REFUSED: FailureCode = FailureCode::fixed("path_value_refused");
-/// `input`: a step this driver cannot carry out as the plan wrote it.
-pub const STEP_NOT_USABLE: FailureCode = FailureCode::fixed("step_not_usable");
-/// `input`: the surface is reached over HTTPS, and TLS is not in this build.
-pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
-/// `input`: the session's provider needs a scheme this pack does not carry
-/// out yet.
-pub const AUTH_SCHEME_NOT_BUILT: FailureCode = FailureCode::fixed("auth_scheme_not_built");
-/// `input`: a published description that cannot be read.
-pub const DESCRIPTION_UNREADABLE: FailureCode = FailureCode::fixed("description_unreadable");
-/// `input`: a published description that is larger, deeper, or wider once
-/// its references are followed than the import reads.
-pub const DESCRIPTION_TOO_LARGE: FailureCode = FailureCode::fixed("description_too_large");
+a2m_core::failure_codes! {
+    APP_VALIDATION_ERROR = Rejected, "app_validation_error",
+        meaning "The system refused the request in a shape the endpoint declares as a refusal.",
+        next "Correct the input the system refused, then run the tool again.";
+    VERSION_CONFLICT = Stale, "version_conflict",
+        meaning "The version sent with a write is no longer the record's.",
+        next "Preview the change again, so that it is made against the record as it is now.";
+    VERSION_NOT_READ = Stale, "version_not_read",
+        meaning "A write that sends a record's version as a precondition, in a pass that read no version for the record. Nothing is sent.",
+        next "Preview the change again, so that the record is read before it is written.";
+    RESPONSE_SCHEMA_MISMATCH = Drift, "response_schema_mismatch",
+        meaning "The body of an accepted answer does not fit the declared shape.",
+        next "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs, and correct the one that is wrong.";
+    UNEXPECTED_STATUS = UnknownVariant, "unexpected_status",
+        meaning "A status the endpoint does not declare.",
+        next "Find out what the answer means, and declare it under the endpoint's `responses`.";
+    RESPONSE_TOO_LARGE = UnknownVariant, "response_too_large",
+        meaning "An answer larger than the limit.",
+        next "Raise `max_response_bytes` on the endpoint, or `max_depth` or `max_elements` under its `answer`, if the answer is meant to be that large.";
+    DOCUMENT_TYPE_REFUSED = UnknownVariant, "document_type_refused",
+        meaning "An XML answer that declares a document type. None is read, so no entity it defines is expanded and nothing it names is fetched (decision 0217).",
+        next "Ask the system's owner for the answer without a document type, or read it another way.";
+    ANSWER_HOLDS_SECRET = UnknownVariant, "answer_holds_secret",
+        meaning "A `bytes` answer whose body holds a registered secret. Neither its length nor its digest is returned (decision 0249).",
+        next "Ask the system's owner why the answer carries the credential, or read it another way.";
+    UPSTREAM_UNAVAILABLE = Transient, "upstream_unavailable",
+        meaning "An answer the endpoint declares as \"not now\".",
+        next "Run the tool again later.";
+    SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
+        meaning "A request, or a redirect, that leaves the declared surfaces.",
+        next "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.";
+    LINK_NOT_ENCRYPTED = Policy, "link_not_encrypted",
+        meaning "A request that would carry the session's credential over plain `http` to an address that is not a loopback address, from a surface that does not accept it. Nothing is sent (decision 0188).",
+        next "Reach the surface over `https`. For a system on a private network that offers nothing else, the surface may declare `unencrypted_credentials: accepted` in `target.yaml`.";
+    PRODUCT_HEADER_REFUSED = Policy, "product_header_refused",
+        meaning "The session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270).",
+        next "Sign in to this surface with a provider made for an HTTP service, such as `api_key`, `bearer_static`, or `http_basic`.";
+    READS_STILL_RUNNING = Busy, "reads_still_running",
+        meaning "So many reads of answers are still running past their step's deadline, on this surface or in the pack, that no new one is begun. Nothing is sent (decision 0270).",
+        next "Run the tool again once those reads have ended, or ask the endpoint's owner why its answers take so long to read.",
+        passes by_itself;
+    PATH_VALUE_REFUSED = Input, "path_value_refused",
+        meaning "A value that cannot stand in one segment of a path.",
+        next "Give a value that is one plain name or number, as the system shows it.";
+    STEP_NOT_USABLE = Input, "step_not_usable",
+        meaning "A step this driver cannot carry out as the plan wrote it.",
+        next "Compile the target again with the version of the HTTP pack that is enabled.";
+    TLS_NOT_ENABLED = Input, "tls_not_enabled",
+        meaning "The surface is reached over HTTPS, and TLS is not in this build.",
+        next "Use a surface reached over plain HTTP on this machine, or a build with TLS switched on.";
+    AUTH_SCHEME_NOT_BUILT = Input, "auth_scheme_not_built",
+        meaning "The session's provider needs a scheme this pack does not carry out yet.",
+        next "Use a provider that places a header or a cookie, such as `api_key`, `bearer_static`, or `http_basic`.";
+    DESCRIPTION_UNREADABLE = Input, "description_unreadable",
+        meaning "A published description that cannot be read.",
+        next "Give an OpenAPI 3.0 or 3.1 document, as JSON or YAML, that holds its own schemas.";
+    DESCRIPTION_TOO_LARGE = Input, "description_too_large",
+        meaning "A published description that is larger, deeper, or wider once its references are followed than the import reads.",
+        next "Give a description of the part of the service the tools need, with fewer or smaller schemas.";
+}
 
-/// Every code of this pack with its one class, as the manifest declares
-/// them. A test holds the two lists together.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Rejected, "app_validation_error"),
-    (FailureClass::Stale, "version_conflict"),
-    (FailureClass::Stale, "version_not_read"),
-    (FailureClass::Drift, "response_schema_mismatch"),
-    (FailureClass::UnknownVariant, "unexpected_status"),
-    (FailureClass::UnknownVariant, "response_too_large"),
-    (FailureClass::UnknownVariant, "document_type_refused"),
-    (FailureClass::UnknownVariant, "answer_holds_secret"),
-    (FailureClass::Transient, "upstream_unavailable"),
-    (FailureClass::Policy, "surface_not_declared"),
-    (FailureClass::Policy, "link_not_encrypted"),
-    (FailureClass::Policy, "product_header_refused"),
-    (FailureClass::Busy, "reads_still_running"),
-    (FailureClass::Input, "path_value_refused"),
-    (FailureClass::Input, "step_not_usable"),
-    (FailureClass::Input, "tls_not_enabled"),
-    (FailureClass::Input, "auth_scheme_not_built"),
-    (FailureClass::Input, "description_unreadable"),
-    (FailureClass::Input, "description_too_large"),
-    // The TLS failures of `a2m_auth::tls`, passed on as they are.
-    (FailureClass::Input, "tls_setup_failed"),
-    (FailureClass::UnknownVariant, "certificate_untrusted"),
-    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
-    (FailureClass::UnknownVariant, "certificate_expired"),
-    (FailureClass::UnknownVariant, "certificate_not_verified"),
-    (FailureClass::UnknownVariant, "tls_handshake_failed"),
+/// The session keeper's TLS failures, which the driver passes on as they
+/// are (decision 0157): every code of `a2m_auth::tls` but
+/// `trust_roots_unreadable`, which only the engine's start gives. The
+/// manifest declares them after the pack's own, in this order.
+pub const PASSED_ON: &[FailureCode] = &[
+    a2m_auth::tls::TLS_SETUP_FAILED,
+    a2m_auth::tls::CERTIFICATE_UNTRUSTED,
+    a2m_auth::tls::CERTIFICATE_NAME_MISMATCH,
+    a2m_auth::tls::CERTIFICATE_EXPIRED,
+    a2m_auth::tls::CERTIFICATE_NOT_VERIFIED,
+    a2m_auth::tls::TLS_HANDSHAKE_FAILED,
 ];
 
 pub(crate) fn failure(

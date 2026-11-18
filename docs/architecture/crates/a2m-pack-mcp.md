@@ -102,7 +102,7 @@ Both also propose `untrusted_fields` from the output schema's free-text members,
 pub fn pack() -> McpPack;                  // for `RegistryBuilder::add_pack`
 pub struct McpPack;                        // impl Pack
 pub const MANIFEST: &str;                  // the manifest's text
-pub mod codes;                             // every failure code, with ALL
+pub mod codes;                             // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON
 
 pub struct McpDriver { /* connections, redactor, limits */ }   // impl Driver
 pub struct UpstreamMcp;                    // impl AuthProvider

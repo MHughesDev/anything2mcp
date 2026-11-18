@@ -46,7 +46,7 @@ CLASS_ORDER = ["policy", "input", "session_expired", "edge_blocked", "drift", "u
                "rejected", "mismatch", "possible_commit", "stale", "transient", "busy"]
 CLASSES = set(CLASS_ORDER)
 # The crates whose codes are all in a `failure_codes!` table (or, for a pack, also its manifest).
-MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry", "a2m-vault", "a2m-policy", "a2m-files", "a2m-api", "a2m-mcp", "a2m-netstate", "a2m-sched", "a2m-ledger", "a2m-auth", "a2m-provider", "a2m-engine", "a2m-pack-web-probe", "a2m-pack-stream", "a2m-pack-device", "a2m-pack-data", "a2m-pack-command"}
+MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry", "a2m-vault", "a2m-policy", "a2m-files", "a2m-api", "a2m-mcp", "a2m-netstate", "a2m-sched", "a2m-ledger", "a2m-auth", "a2m-provider", "a2m-engine", "a2m-pack-web-probe", "a2m-pack-stream", "a2m-pack-device", "a2m-pack-data", "a2m-pack-command", "a2m-pack-http", "a2m-pack-mcp"}
 PASSES = {"by_itself": "yes", "not_by_itself": "no"}
 
 CODE = r"[a-z][a-z0-9_]*"

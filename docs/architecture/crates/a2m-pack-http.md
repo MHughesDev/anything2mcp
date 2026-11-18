@@ -95,7 +95,7 @@ pub const WEB_SURFACE: SurfaceKind;                    // "web"
 pub const REQUEST: StepKind;                           // and VALIDATE, EXTRACT, PROBE
 pub const DESCRIPTION_FILE: &str;                      // the checked path a description is given under
 pub const DESCRIPTION_PATH: &str;                      // the focus entry that names where one is served
-pub mod codes;                                         // the pack's failure codes, and ALL
+pub mod codes;                                         // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON
 ```
 
 Everything else is inside the crate: the driver, the template types, the JSON reader, the shape checker, the lowering, the discoverers.

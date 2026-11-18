@@ -454,6 +454,11 @@ pub struct CheckRow {
     pub due: Due,
     /// The run of the read.
     pub run: RunId,
+    /// Whether this check's admission opened the run. `false` for a check
+    /// handed a run that already existed for the same read, input, and
+    /// person (ledger rule 6): another watch's check, or the person's own
+    /// call (decision 0285).
+    pub opened_run: bool,
     /// When it began.
     pub started_at: Timestamp,
     /// How it ended.
@@ -723,7 +728,7 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
 macro_rules! check_columns {
     () => {
         "watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome, ended_at,
-         why_class, why_code, records_seen, added, changed, removed, unseen, unchanged"
+         why_class, why_code, records_seen, added, changed, removed, unseen, unchanged, opened_run"
     };
 }
 
@@ -754,6 +759,7 @@ fn check_row(row: &Row) -> Result<CheckRow, Failure> {
             catch_up: row.int(4)? != 0,
         },
         run: parse(row.text(5)?)?,
+        opened_run: row.int(17)? != 0,
         started_at: moment(row.int(6)?),
         outcome: parse(row.text(7)?)?,
         ended_at: row.opt_int(8)?.map(moment),
@@ -1066,14 +1072,24 @@ impl Watches<'_, '_> {
     /// Begins a check for `due`, on `run`, which the scheduler admitted in
     /// the same transaction. The run must be the watch's own read: its
     /// operation, version, and input, for the person it acts for.
+    /// `opened` says whether that admission opened the run, or handed back
+    /// one that already existed (ledger rule 6); only the check that opened
+    /// a run may end up cancelling it (decisions 0285 and 0287).
     ///
     /// # Errors
     ///
     /// The refusal of the watch's state unless it is `confirmed`;
     /// `policy`/`watch_ended` at or after its end, or for a due time at or
     /// after it; `policy`/`watch_run_not_its_own`; `input`/`schema_invalid`
-    /// for a due time handled already.
-    pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId) -> Result<CheckRow, Failure> {
+    /// for a due time handled already, or for a run said to be opened that
+    /// a check names already.
+    pub fn begin_check(
+        &mut self,
+        id: WatchId,
+        due: Due,
+        run: RunId,
+        opened: bool,
+    ) -> Result<CheckRow, Failure> {
         let watch = self.load(id)?;
         if watch.state != WatchState::Confirmed {
             return Err(state_refusal(watch.state));
@@ -1101,6 +1117,11 @@ impl Watches<'_, '_> {
                 "Nothing to do; a watch runs nothing else.",
             ));
         }
+        if opened && self.named_by_a_check(run)? {
+            return Err(failure::invalid(
+                "a run said to be opened by a check that another check names already",
+            ));
+        }
         let seq = watch.checks;
         let next = due
             .index
@@ -1121,8 +1142,9 @@ impl Watches<'_, '_> {
         )?;
         self.tx.exec(
             "INSERT INTO watch_checks
-                (watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running')",
+                (watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome,
+                 opened_run)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
             &[
                 id.to_string().into(),
                 stored(seq)?.into(),
@@ -1131,6 +1153,7 @@ impl Watches<'_, '_> {
                 due.catch_up.into(),
                 run.to_string().into(),
                 now.into(),
+                opened.into(),
             ],
         )?;
         self.check(id, seq)
@@ -1879,7 +1902,10 @@ impl Watches<'_, '_> {
         check_row(&row)
     }
 
-    /// The check a run is, when it is one under way.
+    /// The check a run is, when it is one under way. A run two watches
+    /// share names two checks, and this gives one of them: enough to tell
+    /// that a run is a check's and which surface it reads, which both share.
+    /// [`Watches::checks_of_run`] gives every one.
     ///
     /// # Errors
     ///
@@ -1892,6 +1918,53 @@ impl Watches<'_, '_> {
             )?
             .map(|row| Ok((parse(row.text(0)?)?, count(row.int(1)?)?)))
             .transpose()
+    }
+
+    /// Every check under way that names `run`, by watch and number. Two
+    /// watches of one read and input for one person share a run (decision
+    /// 0285), so a run can rest under more than one check.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn checks_of_run(&mut self, run: RunId) -> Result<Vec<CheckRow>, Failure> {
+        let rows = self.tx.rows(
+            concat!(
+                "SELECT ",
+                check_columns!(),
+                " FROM watch_checks WHERE run_id = ?1 AND outcome = 'running'
+                  ORDER BY watch_id, seq"
+            ),
+            &[run.to_string().into()],
+        )?;
+        rows.iter().map(check_row).collect()
+    }
+
+    /// Whether a check of any watch opened `run`, whether or not that check
+    /// has ended since. A run no check opened is someone else's: the
+    /// person's own call, which a check only joined (decision 0287).
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn run_opened_by_a_check(&mut self, run: RunId) -> Result<bool, Failure> {
+        Ok(self
+            .tx
+            .row(
+                "SELECT 1 FROM watch_checks WHERE run_id = ?1 AND opened_run = 1 LIMIT 1",
+                &[run.to_string().into()],
+            )?
+            .is_some())
+    }
+
+    fn named_by_a_check(&mut self, run: RunId) -> Result<bool, Failure> {
+        Ok(self
+            .tx
+            .row(
+                "SELECT 1 FROM watch_checks WHERE run_id = ?1 LIMIT 1",
+                &[run.to_string().into()],
+            )?
+            .is_some())
     }
 
     /// The watch's checks after `after`, oldest first, at most `limit`.
