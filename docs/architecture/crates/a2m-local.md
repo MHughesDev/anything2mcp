@@ -193,6 +193,10 @@ The client's check matters as much as the server's. Without it another program c
 
 On Windows the pipe's name also carries a short digest of the runtime directory's path, so that two homes of one account do not share a pipe. The engine reads the client's user from the token of the client's process, which the pipe names, because impersonating the client needs a byte to have been read first.
 
+A pipe has no queue of connections as a socket has. The engine always has one instance of the pipe waiting, from the moment it binds, and makes the next before it hands a connection on; an instance a client left before it was taken is replaced by a new one, made first. Between the bind and the first accept, while the engine opens its store, the one waiting instance takes one client and the pipe is busy for the rest. A client that finds the pipe busy waits on the system's own wait for a free instance (`WaitNamedPipeW`), in waits of at most 200 ms, until its patience (the hello's) ends, and then is told `engine_unreachable` with the engine's log, as for a hello that is not answered; a pipe that is not there is no engine. Anything else the system refuses is `channel_unavailable`, with the system's error by its number and its words.
+
+On macOS and Linux the socket's path must fit the system's address of a socket: at most 103 bytes on macOS and the BSDs, 107 on Linux, which the standard library's own check of `sockaddr_un` gives. Both ends check it before anything else: the engine before it takes a lock or makes a folder, a client before it connects or starts an engine; a path too long is `input`/`socket_path_too_long`, which names the path, its length, the limit, and `A2M_HOME` as the way to a shorter one.
+
 **Client label.** The command line, a named MCP client (from what the client says of itself), or an SDK. It goes into the audit log and fair queuing and nowhere else. Every local client is the same principal, the operating-system user, and an agent: the product's layer makes no caller a person for what its label or a header says ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)).
 
 ## Lifecycle
@@ -323,8 +327,9 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | `policy` | `peer_not_allowed` | An engine owned by another user. A connection from another user is closed unread, so that client sees `connection_lost` |
 | `policy` | `presence_failed` | The person dismissed or failed the prompt, or none can be raised on this machine; the message gives the reason |
 | `busy` | `prompt_busy` | A presence prompt is already up, and one is raised at a time |
-| `busy` | `engine_unreachable` | Nothing answers on the channel; or an engine started on demand ended before it answered, or did not answer within the deadline, with the log to read; the command exits with code 4 |
-| `busy` | `channel_unavailable` | A directory, a lock file, the channel, or the loopback listener cannot be opened |
+| `busy` | `engine_unreachable` | Nothing answers on the channel; or an engine started on demand ended before it answered, or did not answer within the deadline, or on Windows kept every instance of its pipe taken for as long, with the log to read; the command exits with code 4 |
+| `busy` | `channel_unavailable` | A directory, a lock file, the channel, or the loopback listener cannot be opened; the message gives the system's error by its number and words, or its kind where it has no number |
+| `input` | `socket_path_too_long` | The engine's socket would have a path longer than the system takes for a socket's address: the path, its length, and the limit are named, and `A2M_HOME` set to a shorter folder is the way out |
 | `input` | `hello_invalid` | A connection's first request was not a well-formed hello |
 | `input` | `local_api_mismatch` | The client and the engine speak different versions of the local API |
 | `busy` | `surface_unavailable` | The surface holds no approval desk, so it shows no page |

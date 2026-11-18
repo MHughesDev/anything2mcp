@@ -377,6 +377,10 @@ impl Roots {
     pub fn holds(&self, root: &RootName, access: Access) -> bool;   pub fn is_project(&self, root: &RootName) -> bool;
     // check and folder refuse such a root with input/project_folder_missing; check_in resolves it in paths.project_folder()
 }
+/// A path that exists, every link followed, in the one form every root holds its folder in: on Windows the
+/// ordinary form `C:\...` where it names the same thing, else the verbatim one; elsewhere as `canonicalize` gives.
+/// Whatever compares a path with a root's folder resolves it by this, and by nothing else.
+pub fn resolved_path(path: &Path) -> std::io::Result<PathBuf>;
 pub enum Access { Read, Write }
 pub enum EntryKind { Absent, File, Folder, Link, Other }
 #[derive(Clone)]

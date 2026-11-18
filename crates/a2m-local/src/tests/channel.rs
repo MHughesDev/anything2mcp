@@ -488,6 +488,60 @@ fn ends_at_once(paths: &Paths) -> crate::Launch {
     }
 }
 
+/// A data directory so deep that its socket's path is longer than the
+/// system takes: the engine stops by name before it makes anything, and a
+/// client is told the same, at once, and starts no engine.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_socket_path_longer_than_the_system_takes_is_a_named_stop_at_both_ends() {
+    let (folder, _) = home("deep");
+    let longest = crate::os::unix_longest_socket_path();
+    // Enough to pass the limit by a few bytes, whatever the test's folder.
+    let deep = folder
+        .path()
+        .join("d".repeat(longest.saturating_sub(folder.path().as_os_str().len())));
+    let paths = Paths::under(&deep);
+    let socket = paths.runtime.join("engine.sock");
+    let length = socket.as_os_str().len();
+    assert!(length > longest, "{length}");
+    let told = |failure: &Failure| {
+        assert_eq!(failure.code(), &codes::SOCKET_PATH_TOO_LONG, "{failure:?}");
+        assert_eq!(failure.class(), FailureClass::Input, "{failure:?}");
+        let message = failure.message();
+        assert!(
+            message.contains(&format!("{length} bytes long")),
+            "{message}"
+        );
+        assert!(
+            message.contains(&format!("no more than {longest} bytes")),
+            "{message}"
+        );
+        assert!(message.contains(&socket.display().to_string()), "{message}");
+        assert!(failure.next_step().contains("A2M_HOME"), "{failure:?}");
+        assert!(!message.contains("invalid input"), "{message}");
+    };
+
+    let refused = Channel::bind(&paths, VERSION).await.unwrap_err();
+    told(&refused);
+    // Nothing was made: not the folders, not the lock.
+    assert!(!deep.exists());
+
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    told(
+        &within("a connect to a socket too long", connector.connect())
+            .await
+            .unwrap_err(),
+    );
+    let failure = within(
+        "a start beside a socket too long",
+        connector.connect_or_start(&paths, ends_at_once(&paths), Duration::from_secs(5)),
+    )
+    .await
+    .unwrap_err();
+    told(&failure);
+    assert!(!deep.exists());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patience() {
     let (_folder, paths) = home("s");

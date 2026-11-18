@@ -475,7 +475,7 @@ mod os {
     impl Folder {
         /// Resolves `folder` now. It must lie inside `base`.
         pub(in super::super) fn reach(base: &Path, folder: &Path) -> Result<Self, Unreached> {
-            let real = match super::super::canonical(folder) {
+            let real = match super::super::resolved_path(folder) {
                 Ok(real) => real,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Err(Unreached::Absent);

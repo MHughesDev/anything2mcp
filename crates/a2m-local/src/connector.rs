@@ -128,8 +128,12 @@ impl Connector {
     /// went away, which for a hello means it stopped while starting;
     /// `busy`/`engine_unreachable`, pointing at the engine's log, when an
     /// engine holds the channel and does not answer the hello within
-    /// [`HELLO_PATIENCE`]; `busy`/`channel_unavailable` for anything else
-    /// the operating system refused.
+    /// [`HELLO_PATIENCE`], or, on Windows, keeps every instance of the
+    /// pipe taken for as long; `input`/`socket_path_too_long`, before any
+    /// connection, when the socket's path is longer than the system takes;
+    /// `busy`/`channel_unavailable`, with the
+    /// system's error by its number, for anything else the operating system
+    /// refused.
     pub async fn connect(&self) -> Result<Link, Failure> {
         match tokio::time::timeout(self.hello_patience, self.say_hello()).await {
             Ok(said) => said,
@@ -188,7 +192,15 @@ impl Connector {
     /// Opens a connection and checks the engine's owner, without the
     /// hello.
     pub(crate) async fn open(&self) -> Result<Link, Failure> {
-        let stream = os::connect(&self.place, self.expected.as_str())
+        // A socket of a path the system does not take cannot be reached:
+        // told by name, and no engine is started for it.
+        if let Some((socket, length, longest)) = self.place.too_long() {
+            return Err(codes::socket_path_too_long(socket, length, longest));
+        }
+        // The same patience as the hello's: a pipe whose every instance is
+        // taken is waited for no longer than an engine that does not answer.
+        let deadline = tokio::time::Instant::now() + self.hello_patience;
+        let stream = os::connect(&self.place, self.expected.as_str(), deadline)
             .await
             .map_err(|error| match error {
                 ConnectError::NotRunning => codes::busy(
@@ -201,6 +213,10 @@ impl Connector {
                     "What listens on the local channel does not belong to this user, so nothing was sent to it.",
                     "Check who owns the engine's runtime directory, remove what is not yours to trust, and start the engine again.",
                 ),
+                // Every instance of the pipe stayed taken: an engine holds
+                // the channel and does not answer, as a stalled hello.
+                #[cfg(windows)]
+                ConnectError::Busy => hello_unanswered(&self.log),
                 ConnectError::Io(error) => codes::unavailable("The local channel", &error),
             })?;
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))

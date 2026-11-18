@@ -50,12 +50,34 @@ pub enum EntryKind {
 /// The longest relative path, in bytes.
 const LONGEST_RELATIVE: usize = 1024;
 
-/// Names that open a device on Windows, whatever follows the first dot.
-const DEVICE_NAMES: &[&str] = &[
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9", "conin$",
-    "conout$",
-];
+/// Whether a part of a path names a device on Windows, wherever it stands
+/// in a path and whatever follows its first dot: `con`, `prn`, `aux`,
+/// `nul`, `conin$`, `conout$`, and `com` or `lpt` with one digit, `0` to
+/// `9` or a superscript one, two, or three, with spaces before the dot
+/// ignored, as Windows ignores them.
+fn names_a_device(part: &str) -> bool {
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches(' ')
+        .to_lowercase();
+    let numbered = stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt"))
+        .is_some_and(|number| {
+            let mut chars = number.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        });
+    numbered
+        || matches!(
+            stem.as_str(),
+            "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
+        )
+}
 
 #[derive(Debug, Clone)]
 struct Root {
@@ -125,8 +147,7 @@ fn parts(relative: &str) -> Result<Vec<&str>, Failure> {
                 "a part ends with a dot or a space, which one operating system drops",
             ));
         }
-        let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
-        if DEVICE_NAMES.contains(&stem.as_str()) {
+        if names_a_device(part) {
             return Err(refuse(
                 relative,
                 "a part names a device on one operating system",
@@ -137,33 +158,73 @@ fn parts(relative: &str) -> Result<Vec<&str>, Failure> {
     Ok(found)
 }
 
-/// Resolves a path that exists, following every link in it.
-fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+/// A path that exists, with every link in it followed, in the one form in
+/// which every root holds its folder and every checked path is made: so a
+/// path resolved by this function and the folder of a root compare like
+/// with like, and one lies under the other exactly when it is inside it.
+///
+/// On Windows the system gives a resolved path in the verbatim form,
+/// `\\?\C:\...`, which a person does not write and many programs do not
+/// take as an argument or as a working folder. This gives the ordinary
+/// form, `C:\...` (`\\?\UNC\server\share\...` as `\\server\share\...`),
+/// wherever that names the same thing, and the verbatim form where it would
+/// not: a part that is `.` or `..`, ends with a dot or a space, holds a
+/// `/`, or names a device. Elsewhere a path has no prefix, and this is
+/// what [`std::fs::canonicalize`] gives. Touches the disk.
+///
+/// # Errors
+///
+/// As [`std::fs::canonicalize`]: the path does not exist, or a folder on
+/// the way to it cannot be read.
+pub fn resolved_path(path: &Path) -> std::io::Result<PathBuf> {
     fs::canonicalize(path).map(|real| plain(&real))
 }
 
-/// On Windows a resolved path comes back in the verbatim form, which many
-/// programs do not take as an argument or as a working folder. This gives
-/// the ordinary form of the same path where there is one. Elsewhere a path
-/// has no prefix and comes back unchanged.
+/// The ordinary form of a resolved path, as [`resolved_path`] says. Off
+/// Windows a path is never changed.
 fn plain(path: &Path) -> PathBuf {
-    use std::path::{Component, Prefix};
-    let mut components = path.components();
-    let start = match components.next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(letter) => format!("{}:\\", char::from(letter)),
-            Prefix::VerbatimUNC(server, share) => format!(
-                "\\\\{}\\{}\\",
-                server.to_string_lossy(),
-                share.to_string_lossy()
-            ),
-            _ => return path.to_path_buf(),
-        },
-        _ => return path.to_path_buf(),
+    if !cfg!(windows) {
+        return path.to_path_buf();
+    }
+    path.to_str()
+        .and_then(plain_text)
+        .map_or_else(|| path.to_path_buf(), PathBuf::from)
+}
+
+/// The ordinary form of a path written in Windows' verbatim form, worked
+/// out on the text alone so that it is the same on every system:
+/// `\\?\C:\x` is `C:\x`, and `\\?\UNC\server\share\x` is
+/// `\\server\share\x`. `None` when the text is not in one of those two
+/// forms, or when its ordinary form would name something else: a part that
+/// is `.` or `..`, ends with a dot or a space (both dropped from an ordinary
+/// path), holds a `/` (a separator in an ordinary path), or names a device.
+fn plain_text(text: &str) -> Option<String> {
+    let rest = text.strip_prefix(r"\\?\")?;
+    let (start, parts) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        let mut split = unc.splitn(3, '\\');
+        let server = split.next().filter(|part| !part.is_empty())?;
+        let share = split.next().filter(|part| !part.is_empty())?;
+        (format!(r"\\{server}\{share}\"), split.next().unwrap_or(""))
+    } else {
+        let bytes = rest.as_bytes();
+        let disk = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\';
+        if !disk {
+            return None;
+        }
+        (format!("{}\\", &rest[..2]), &rest[3..])
     };
-    let mut out = PathBuf::from(start);
-    out.extend(components.filter(|part| !matches!(part, Component::RootDir)));
-    out
+    let names_the_same = parts.is_empty()
+        || parts.split('\\').all(|part| {
+            !part.is_empty()
+                && !part.ends_with('.')
+                && !part.ends_with(' ')
+                && !part.contains('/')
+                && !names_a_device(part)
+        });
+    names_the_same.then(|| format!("{start}{parts}"))
 }
 
 impl Roots {
@@ -194,7 +255,7 @@ impl Roots {
         if self.roots.contains_key(&name) {
             return Err(unusable("a root of that name exists"));
         }
-        let path = canonical(folder).map_err(|_| unusable("its folder does not exist"))?;
+        let path = resolved_path(folder).map_err(|_| unusable("its folder does not exist"))?;
         if !path.is_dir() {
             return Err(unusable("it is not a folder"));
         }
@@ -435,7 +496,7 @@ fn resolve(
         match fs::symlink_metadata(&named) {
             Ok(_) => {
                 // It exists: resolve it, link or not, and stay inside.
-                let real = canonical(&named)
+                let real = resolved_path(&named)
                     .map_err(|_| refuse(relative, "a link in it leads nowhere"))?;
                 if !real.starts_with(base) {
                     return Err(refuse(relative, "a link in it leads outside the root"));
@@ -563,7 +624,7 @@ impl CheckedPath {
             .ancestors()
             .find(|ancestor| fs::symlink_metadata(ancestor).is_ok())
             .unwrap_or(&self.base);
-        let real = canonical(deepest).map_err(|_| self.unavailable("cannot be resolved"))?;
+        let real = resolved_path(deepest).map_err(|_| self.unavailable("cannot be resolved"))?;
         if real.starts_with(&self.base) && (deepest != self.full || real == self.full) {
             Ok(())
         } else {
@@ -1364,9 +1425,143 @@ mod tests {
     )]
 
     use std::ffi::OsStr;
+    use std::path::Path;
 
-    use super::{Access, RootName, Roots};
+    use super::{Access, RootName, Roots, names_a_device, plain, plain_text, resolved_path};
     use crate::codes;
+
+    #[test]
+    fn a_verbatim_path_is_given_back_in_its_ordinary_form_where_that_names_the_same() {
+        for (verbatim, ordinary) in [
+            (r"\\?\C:\Users\pat\work", r"C:\Users\pat\work"),
+            (r"\\?\d:\", r"d:\"),
+            (r"\\?\C:\Users\pat\.drafts\a.b", r"C:\Users\pat\.drafts\a.b"),
+            (r"\\?\C:\Users\Zoë Ann\work", r"C:\Users\Zoë Ann\work"),
+            (r"\\?\C:\console\nullish.txt", r"C:\console\nullish.txt"),
+            (r"\\?\UNC\server\share\work", r"\\server\share\work"),
+            (r"\\?\UNC\server\share", r"\\server\share\"),
+        ] {
+            assert_eq!(
+                plain_text(verbatim).as_deref(),
+                Some(ordinary),
+                "{verbatim}"
+            );
+        }
+        // Not in either form: left as it is.
+        for other in [
+            r"C:\Users\pat",
+            "/home/pat",
+            r"\\server\share\x",
+            r"\\?\Volume{0000}\x",
+            r"\\?\GLOBALROOT\Device\x",
+            r"\\?\C:",
+            r"\\?\CC:\x",
+            r"\\?\UNC\server",
+            r"\\?\UNC\\share\x",
+            r"\\.\C:\x",
+        ] {
+            assert_eq!(plain_text(other), None, "{other}");
+        }
+        // In the form, but the ordinary form would name something else.
+        for other in [
+            r"\\?\C:\a\..\b",
+            r"\\?\C:\a\.\b",
+            r"\\?\C:\a\b.",
+            r"\\?\C:\a\b ",
+            r"\\?\C:\a\\b",
+            r"\\?\C:\a\b/c",
+            r"\\?\C:\a\CON",
+            r"\\?\C:\a\nul.txt",
+            r"\\?\C:\a\Com1 .log",
+            "\\\\?\\C:\\a\\lpt\u{b9}",
+            r"\\?\UNC\server\share\aux",
+        ] {
+            assert_eq!(plain_text(other), None, "{other}");
+        }
+        // On every system but Windows a path is never changed.
+        if !cfg!(windows) {
+            let odd = Path::new(r"\\?\C:\x");
+            assert_eq!(plain(odd), odd);
+        }
+    }
+
+    #[test]
+    fn a_device_name_is_known_wherever_it_stands_and_whatever_follows_it() {
+        for device in [
+            "con",
+            "NUL",
+            "aux.txt",
+            "Prn.tar.gz",
+            "com0",
+            "COM9.log",
+            "lpt1",
+            "com\u{b9}",
+            "lpt\u{b3}.x",
+            "conin$",
+            "CONOUT$",
+            "nul .txt",
+            "com1  .log",
+        ] {
+            assert!(names_a_device(device), "{device}");
+        }
+        for name in [
+            "console",
+            "nullish.txt",
+            "com",
+            "com10",
+            "lpt",
+            "lpt12",
+            "comx",
+            "auxiliary",
+            "a.con",
+            "com\u{b4}",
+        ] {
+            assert!(!names_a_device(name), "{name}");
+        }
+    }
+
+    /// The one property every comparison with a root rests on: a path
+    /// resolved by [`resolved_path`], given in any form the system takes,
+    /// lies under the folder of a root added at the same folder, given in
+    /// any other form.
+    #[test]
+    fn a_resolved_path_lies_under_the_folder_of_its_root_whatever_form_each_was_given_in() {
+        let folder =
+            std::env::temp_dir().join(format!("a2m-provider-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("certs")).unwrap();
+        std::fs::write(folder.join("certs").join("a.pem"), b"x").unwrap();
+        // The system's own resolved form: on Windows, the verbatim one.
+        let system = std::fs::canonicalize(&folder).unwrap();
+        let resolved = resolved_path(&folder).unwrap();
+        assert_eq!(resolved_path(&system).unwrap(), resolved);
+        if cfg!(windows) {
+            assert!(
+                !resolved.to_string_lossy().starts_with(r"\\?\"),
+                "{resolved:?}"
+            );
+        } else {
+            assert_eq!(resolved, system);
+        }
+        let name = RootName::new("here").unwrap();
+        for given in [&folder, &system, &resolved] {
+            let mut roots = Roots::none();
+            roots.add(name.clone(), given, Access::Read).unwrap();
+            let root = roots.folder(&name, Access::Read).unwrap();
+            assert_eq!(root.as_path(), resolved);
+            for file in [
+                folder.join("certs").join("a.pem"),
+                system.join("certs").join("a.pem"),
+            ] {
+                let file = resolved_path(&file).unwrap();
+                let inside = file.strip_prefix(root.as_path()).unwrap();
+                assert_eq!(inside, Path::new("certs").join("a.pem"));
+                let checked = roots.check(&name, "certs/a.pem", Access::Read).unwrap();
+                assert_eq!(checked.as_path(), file);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&folder);
+    }
 
     /// Makes a link to a file. `None` where this machine does not let the
     /// test make one, as Windows does without the privilege.

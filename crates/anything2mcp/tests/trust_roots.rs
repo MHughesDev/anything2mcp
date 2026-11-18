@@ -115,8 +115,17 @@ async fn a_read_over_https_is_trusted_through_the_authority_the_installation_nam
     // name, and nothing was read.
     let untrusted = run(&machine, &read).await;
     let response = object(&untrusted);
-    assert_eq!(
-        response["error"]["code"], "certificate_untrusted",
+    // On macOS the system's verifier refuses an unknown authority without
+    // saying which check failed; everywhere else it names it.
+    let untrusted_codes: &[&str] = if cfg!(target_vendor = "apple") {
+        &["certificate_untrusted", "certificate_not_verified"]
+    } else {
+        &["certificate_untrusted"]
+    };
+    assert!(
+        untrusted_codes
+            .iter()
+            .any(|code| response["error"]["code"] == *code),
         "{response}"
     );
 

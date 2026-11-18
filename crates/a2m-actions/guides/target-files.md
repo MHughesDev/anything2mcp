@@ -82,7 +82,7 @@ description: >
 - The tool name is `{target}_{module}_{object}_{verb}`. The module part is left out when the target declares no `modules`.
 - `drift_risk` is `low`, `medium`, or `high`.
 - Every operation needs `effect`, `inputs`, `outputs`, `bindings`, and `description`. A write also needs an identity (see `identity`) and a read-back.
-- `status` of a binding is `draft`, `shadow`, `verified`, or `retired`. A drafted binding is `draft`. The first binding of an operation is made `verified` by `binding.promote`, on its passing offline tests and, for a read, a trial that proved it, each of which must have run that binding as it is now; for a write, a person does it. `draft.write` refuses a binding written `verified` by hand. A binding beside a verified one is promoted from `shadow`, on its exact matches, by a person.
+- `status` of a binding is `draft`, `shadow`, `verified`, or `retired`. A drafted binding is `draft`. The first binding of an operation is made `verified` by `binding.promote`, on its passing offline tests and, for a read, a trial that proved it; for a write, a person does it. A binding beside a verified one is promoted from `shadow`, on its exact matches, by a person.
 - A key that means nothing for a field type's base is refused, not ignored.
 - `types.yaml` says units and formats. An operation does not.
 - A secret is never a value in these files. `auth.yaml` holds a reference such as `vault://example/service/password`.

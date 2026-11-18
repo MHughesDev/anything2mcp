@@ -57,7 +57,9 @@ pub use manifest::{
 };
 pub use name::{ActionName, DiscovererName, ProviderName, RootName, SubsystemKind};
 pub use pack::{CompilerRegistrations, Pack, PackContext, Registrar};
-pub use path::{Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, Roots, Temporary};
+pub use path::{
+    Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, Roots, Temporary, resolved_path,
+};
 pub use registry::{
     FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
     RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,

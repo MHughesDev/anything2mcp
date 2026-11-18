@@ -1154,10 +1154,7 @@ impl Ledger<'_, '_> {
     /// Every value set a step recorded before the commit point of a record
     /// of `operation`, in any run of `workspace`: each `need` event of such
     /// a record marked `before_commit`, with its evidence, in order of run,
-    /// record, and event, of the record's current attempt alone: those
-    /// recorded after its current intent (`RecordRow::intent_seq`), since an
-    /// earlier attempt's values name what that attempt took, which was
-    /// settled as not landed (audit finding OR-1). What answers a driver's
+    /// record, and event, every attempt's alike. What answers a driver's
     /// question whether another record holds a value (decision 0196): the
     /// caller opens each blob and compares, and never hands a value out.
     /// Only records that [`RecordRow::may_have_landed`] are given.
@@ -1180,7 +1177,6 @@ impl Ledger<'_, '_> {
              WHERE r.workspace_id = ?1 AND rr.operation = ?2 AND e.kind = 'need'
                  AND json_extract(e.payload, '$.before_commit') = 1
                  AND e.evidence_ref IS NOT NULL
-                 AND rr.intent_seq IS NOT NULL AND e.seq > rr.intent_seq
              ORDER BY e.run_id, rr.step_seq, rr.record_seq, e.seq",
             &[workspace.to_string().into(), operation.as_str().into()],
         )?;

@@ -600,7 +600,6 @@ impl Kernel {
                 principal: caller.principal.principal.id,
                 vault: self.inner.vault.clone(),
             },
-            None,
         )
         .await?;
         if !gates.passed {
@@ -656,11 +655,8 @@ impl Kernel {
     }
 
     /// One line for each verified binding of `plan` that the target's
-    /// current version does not hold verified, at the same place of the
-    /// same operation, doing the same: what may act for the first time once
-    /// `plan` is published. A binding verified before whose steps changed
-    /// is named as acting as changed (audit finding PM-2): its digest is
-    /// compared, not only its mode.
+    /// current version does not hold verified for the same operation and
+    /// mode: what may act for the first time once `plan` is published.
     pub(crate) async fn first_to_act(
         &self,
         target: &a2m_core::TargetName,
@@ -671,49 +667,27 @@ impl Kernel {
             .into_iter()
             .find(|(name, _, _)| name == target)
             .map(|(_, _, plan)| plan);
-        // Whether the version in force held a verified binding of this
-        // operation and mode, and whether one of them does the same.
-        let before = |operation: &a2m_core::OperationName,
-                      binding: &a2m_core::BindingPlan|
-         -> (bool, bool) {
-            let Some(current) = current.as_ref() else {
-                return (false, false);
-            };
-            let digest = a2m_engine::binding_digest(plan, binding);
-            let earlier: Vec<&a2m_core::BindingPlan> = current
-                .operations
-                .iter()
-                .filter(|earlier| earlier.name == *operation)
-                .flat_map(|earlier| earlier.bindings.iter())
-                .filter(|earlier| {
-                    earlier.mode == binding.mode
-                        && earlier.status == a2m_core::BindingStatus::Verified
+        let acted_before = |operation: &a2m_core::OperationName, mode: &a2m_core::Mode| {
+            current.as_ref().is_some_and(|current| {
+                current.operations.iter().any(|earlier| {
+                    earlier.name == *operation
+                        && earlier.bindings.iter().any(|binding| {
+                            binding.mode == *mode
+                                && binding.status == a2m_core::BindingStatus::Verified
+                        })
                 })
-                .collect();
-            let same = earlier.iter().any(|earlier| {
-                digest.is_some() && a2m_engine::binding_digest(current, earlier) == digest
-            });
-            (!earlier.is_empty(), same)
+            })
         };
         let mut lines = Vec::new();
         for operation in &plan.operations {
-            for (position, binding) in operation.bindings.iter().enumerate() {
-                if binding.status != a2m_core::BindingStatus::Verified {
-                    continue;
-                }
-                match before(&operation.name, binding) {
-                    (_, true) => {}
-                    (true, false) => lines.push(format!(
-                        "Acts as changed in this version: {} ({}), the binding {} through the mode {}: what it does is not what the version in force verified.",
-                        operation.name,
-                        operation.effect,
-                        position + 1,
-                        binding.mode
-                    )),
-                    (false, false) => lines.push(format!(
+            for binding in &operation.bindings {
+                if binding.status == a2m_core::BindingStatus::Verified
+                    && !acted_before(&operation.name, &binding.mode)
+                {
+                    lines.push(format!(
                         "First to act in this version: {} ({}), through the mode {}.",
                         operation.name, operation.effect, binding.mode
-                    )),
+                    ));
                 }
             }
         }

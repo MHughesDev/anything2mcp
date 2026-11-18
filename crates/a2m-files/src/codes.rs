@@ -78,7 +78,6 @@ kernel_codes! {
     PROBE_INVALID = "probe_invalid": "A sign-in's probe is a read that can be made as the file gives it, and no surface is signed in to twice.",
     OPERATION_WITHOUT_TEST = "operation_without_test": "Every operation and pipeline has an offline test.",
     FIXTURE_NOT_SCRUBBED = "fixture_not_scrubbed": "A fixture a test names exists and carries the scrubbed marker.",
-    TEST_BINDING_UNKNOWN = "test_binding_unknown": "A test that names the binding it tests names one binding of its operation, by mode and, where two share the mode, by position, and not a retired one.",
     TOOL_NAME_SCHEME = "tool_name_scheme": "A tool name starts with the target's name, then its module where the target has modules.",
     TOOL_NAMES_TOO_ALIKE = "tool_names_too_alike": "No two tools differ only by a suffix.",
     DESCRIPTION_WEAK = "description_weak": "A description says what the tool does, within the length limits.",

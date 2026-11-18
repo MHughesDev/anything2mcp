@@ -92,7 +92,11 @@ struct Desk {
 
 impl Desk {
     fn new() -> Self {
-        let home = Folder::new("first-home");
+        // The name the other tests' homes have: the engine's socket is
+        // `run/engine.sock` inside it, and macOS takes the path of a socket
+        // of no more than 103 bytes, which its deep folder for temporary
+        // files leaves little room under.
+        let home = Folder::new("home");
         // The vault takes its key from a passphrase, which only the engine
         // is given: a command holds none.
         let installation = Paths::under(home.path()).installation_config;

@@ -89,12 +89,6 @@ pub struct Compiled {
     pub warnings: Diagnostics,
     /// What each tool may do, ordered by risk.
     pub review: ReviewSummary,
-    /// For each test of the plan, in the plan's order: the place, from 0,
-    /// of the binding of its operation the test names with `binding:`, or
-    /// `None` where it names none and tests the binding that would act
-    /// live. The plan's test does not carry it; the test file does, and
-    /// its digest is among the plan's sources.
-    pub test_bindings: Vec<Option<usize>>,
 }
 
 /// Compiles a target's files into a plan.
@@ -129,7 +123,6 @@ pub fn compile(
         source_plans: BTreeMap::new(),
         tools: Vec::new(),
         tests: Vec::new(),
-        test_bindings: Vec::new(),
         tool_names: BTreeMap::new(),
     };
     compiler.run(version)
@@ -181,7 +174,6 @@ struct Compiler<'a> {
     source_plans: BTreeMap<String, (SourcePlan, ValueType)>,
     tools: Vec<ToolPlan>,
     tests: Vec<TestPlan>,
-    test_bindings: Vec<Option<usize>>,
     tool_names: BTreeMap<String, Place>,
 }
 
@@ -517,7 +509,6 @@ impl<'a> Compiler<'a> {
                 encoded,
                 warnings,
                 review,
-                test_bindings: std::mem::take(&mut self.test_bindings),
             }),
             Err(failure) => Err(Diagnostics::from(Diagnostic::error(
                 kernel(codes::PLAN_NOT_ENCODABLE),
@@ -3678,78 +3669,6 @@ impl<'a> Compiler<'a> {
 
     // ---- tests/ and fixtures/ ----
 
-    /// The place, from 0, of the binding a test names with `binding:`
-    /// (audit finding AC-6): of its operation's bindings, the one of that
-    /// mode, or, where `position` is given, the one at that place, counted
-    /// from 1, which must be of that mode. A retired binding never runs, so
-    /// no test of one is taken. `None`, with an error, otherwise.
-    fn tested_binding(&mut self, tool: usize, named: &Located<Doc>) -> Option<usize> {
-        let refuse = |this: &mut Self, message: String| {
-            this.error(
-                codes::TEST_BINDING_UNKNOWN,
-                Stage::Resolve,
-                &named.at,
-                message,
-                "Name the binding by its `mode`, and by its `position` among the operation's bindings, counted from 1, where two share the mode.".to_owned(),
-            );
-            None
-        };
-        let ToolRuns::Operation(operation) = self.tools[tool].runs else {
-            return refuse(
-                self,
-                "A test of a pipeline names no binding: each of its operations is chosen for as it would be live.".to_owned(),
-            );
-        };
-        let mode = named.text("mode").unwrap_or_default().to_owned();
-        let position = named
-            .get("position")
-            .and_then(|position| position.as_int())
-            .and_then(|position| usize::try_from(position).ok())
-            .and_then(|position| position.checked_sub(1));
-        let bindings = &self.op_plans[operation.get()].0.bindings;
-        let of_mode: Vec<usize> = bindings
-            .iter()
-            .enumerate()
-            .filter(|(at, binding)| {
-                binding.mode.as_str() == mode && position.is_none_or(|position| position == *at)
-            })
-            .map(|(at, _)| at)
-            .collect();
-        let found = match of_mode.as_slice() {
-            [one] => *one,
-            [] => {
-                return refuse(
-                    self,
-                    format!(
-                        "The operation has no binding of the mode `{}`{}.",
-                        shown(&mode),
-                        position.map_or_else(String::new, |at| format!(" at position {}", at + 1))
-                    ),
-                );
-            }
-            _ => {
-                return refuse(
-                    self,
-                    format!(
-                        "The operation has more than one binding of the mode `{}`, and the test does not say which by `position`.",
-                        shown(&mode)
-                    ),
-                );
-            }
-        };
-        if bindings[found].status == BindingStatus::Retired {
-            return refuse(
-                self,
-                format!(
-                    "The binding {} of the mode `{}` is retired, and a retired binding never runs.",
-                    found + 1,
-                    shown(&mode)
-                ),
-            );
-        }
-        Some(found)
-    }
-
     fn tests(&mut self) {
         let Some(schema) = k::schema_of(k::TEST) else {
             return;
@@ -3915,20 +3834,12 @@ impl<'a> Compiler<'a> {
                 ) else {
                     continue;
                 };
-                let binding = match doc.get("binding") {
-                    Some(named) => match self.tested_binding(tool, named) {
-                        Some(position) => Some(position),
-                        None => continue,
-                    },
-                    None => None,
-                };
                 if !fine {
                     continue;
                 }
                 if kind == TestKind::Offline {
                     tested.insert(tool_name.to_owned());
                 }
-                self.test_bindings.push(binding);
                 self.tests.push(TestPlan {
                     name,
                     tool: ToolIndex::new(index(tool)),

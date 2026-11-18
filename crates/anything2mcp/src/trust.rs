@@ -77,7 +77,11 @@ fn read(path: &Path, allowed: &[(RootName, Roots)], index: usize) -> Result<Vec<
     if !path.is_absolute() {
         return Err(unreadable(index, "its path is not a full path"));
     }
-    let real = std::fs::canonicalize(path).map_err(|_| unreadable(index, "it cannot be read"))?;
+    // In the form the roots hold their folders in, so that the file and
+    // each folder compare like with like on every system (on Windows the
+    // system's own resolved form is the verbatim one, which no root holds).
+    let real =
+        a2m_provider::resolved_path(path).map_err(|_| unreadable(index, "it cannot be read"))?;
     for (name, roots) in allowed {
         let Ok(folder) = roots.folder(name, Access::Read) else {
             continue;
@@ -169,6 +173,9 @@ mod tests {
                 .join(format!("anything2mcp-trust-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
+            // The system's own resolved form, which on Windows is the
+            // verbatim one and not the form the roots hold: a file named
+            // in it is still found inside its folder.
             Self(std::fs::canonicalize(&path).unwrap())
         }
     }

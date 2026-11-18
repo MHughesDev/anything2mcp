@@ -311,7 +311,9 @@ async fn each_run_is_handed_the_project_folder_of_the_request_that_started_it() 
             .unwrap()
             .0
     };
-    let canonical = |path: &std::path::Path| Some(std::fs::canonicalize(path).unwrap());
+    // The form the roots hold a folder in, which on Windows is not the
+    // system's own resolved form.
+    let canonical = |path: &std::path::Path| Some(a2m_provider::resolved_path(path).unwrap());
 
     let read = json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}});
     assert!(call(read.clone(), Some(&one)).await.ok);
@@ -618,7 +620,9 @@ async fn slot_written(world: &World, length: &str) -> RunId {
 async fn a_discovery_and_a_provider_action_resolve_the_project_of_their_own_call() {
     let world = World::ready().await;
     let (one, two) = (world.project("one"), world.project("two"));
-    let canonical = |path: &std::path::Path| std::fs::canonicalize(path).unwrap();
+    // The form the roots hold a folder in, which on Windows is not the
+    // system's own resolved form.
+    let canonical = |path: &std::path::Path| a2m_provider::resolved_path(path).unwrap();
     let in_project = |action: &str, input: Json, project: &std::path::Path| {
         world
             .kernel

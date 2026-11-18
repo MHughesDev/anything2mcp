@@ -52,7 +52,6 @@ export interface BindingPromoteInput {
   mode: string;
   target: string;
   tool: string;
-  position?: number;
   run_id?: string;
 }
 
@@ -173,8 +172,6 @@ export interface DraftTryInput {
   target: string;
   tool: string;
   input?: Record<string, unknown>;
-  mode?: string;
-  position?: number;
 }
 
 /**
@@ -240,9 +237,7 @@ export interface FixtureRecordInput {
   target: string;
   tool: string;
   input?: Record<string, unknown>;
-  mode?: string;
   name?: string;
-  position?: number;
 }
 
 /**

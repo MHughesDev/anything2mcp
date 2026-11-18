@@ -90,7 +90,10 @@ impl Places {
 /// exist, its nearest folder that does is resolved and the rest is joined
 /// as written. Every comparison of two paths in this file is between two
 /// paths in this form, so that a path in one form is never compared with
-/// one in another.
+/// one in another: the system gives every resolved path in it, so no path
+/// that lies inside a folder this file refuses can seem to lie outside it.
+/// The folder is handed on in the form the roots hold
+/// ([`a2m_provider::resolved_path`]).
 fn real(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut at = path;
@@ -110,89 +113,15 @@ fn real(path: &Path) -> PathBuf {
     }
 }
 
-/// The ordinary form of a resolved path, for handing on: on Windows a
-/// resolved path comes back in the verbatim form, which a person does not
-/// write and many programs do not take. Elsewhere a path has no prefix and
-/// comes back unchanged.
-fn plain(path: &Path) -> PathBuf {
-    if !cfg!(windows) {
-        return path.to_path_buf();
-    }
-    path.to_str()
-        .and_then(plain_text)
-        .map_or_else(|| path.to_path_buf(), PathBuf::from)
-}
-
-/// Whether a part of a path names a device on Windows, wherever it stands
-/// in a path and whatever follows its first dot.
-fn names_a_device(part: &str) -> bool {
-    let stem = part
-        .split('.')
-        .next()
-        .unwrap_or(part)
-        .trim_end_matches(' ')
-        .to_lowercase();
-    let numbered = stem
-        .strip_prefix("com")
-        .or_else(|| stem.strip_prefix("lpt"))
-        .is_some_and(|number| {
-            let mut chars = number.chars();
-            matches!(
-                (chars.next(), chars.next()),
-                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
-            )
-        });
-    numbered
-        || matches!(
-            stem.as_str(),
-            "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
-        )
-}
-
-/// The ordinary form of a path written in Windows' verbatim form, worked
-/// out on the text alone so that it is the same on every system:
-/// `\\?\C:\x` is `C:\x`, and `\\?\UNC\server\share\x` is
-/// `\\server\share\x`. `None` when the text is not in one of those two
-/// forms, or when its ordinary form would name something else: a part that
-/// is `.` or `..`, ends with a dot or a space (both dropped from an ordinary
-/// path), holds a `/` (a separator in an ordinary path), or names a device.
-fn plain_text(text: &str) -> Option<String> {
-    let rest = text.strip_prefix(r"\\?\")?;
-    let (start, parts) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
-        let mut split = unc.splitn(3, '\\');
-        let server = split.next().filter(|part| !part.is_empty())?;
-        let share = split.next().filter(|part| !part.is_empty())?;
-        (format!(r"\\{server}\{share}\"), split.next().unwrap_or(""))
-    } else {
-        let bytes = rest.as_bytes();
-        let disk = bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && bytes[2] == b'\\';
-        if !disk {
-            return None;
-        }
-        (format!("{}\\", &rest[..2]), &rest[3..])
-    };
-    let names_the_same = parts.is_empty()
-        || parts.split('\\').all(|part| {
-            !part.is_empty()
-                && !part.ends_with('.')
-                && !part.ends_with(' ')
-                && !part.contains('/')
-                && !names_a_device(part)
-        });
-    names_the_same.then(|| format!("{start}{parts}"))
-}
-
 /// Whether a part of a path is hidden: its name starts with a dot.
 fn hidden(part: &std::ffi::OsStr) -> bool {
     part.to_string_lossy().starts_with('.')
 }
 
 /// Checks a project folder a front door stated, and gives it with every
-/// link followed, in its ordinary form (see [`plain`]). Touches the disk:
-/// call it off the async threads.
+/// link followed, in the form every root holds its folder in
+/// ([`a2m_provider::resolved_path`]). Touches the disk: call it off the
+/// async threads.
 ///
 /// # Errors
 ///
@@ -311,7 +240,7 @@ pub(crate) fn check(
     if !allowed {
         return Err("it is not inside a folder the setting `files.allowed_roots` allows");
     }
-    Ok(plain(&folder))
+    a2m_provider::resolved_path(&folder).map_err(|_| "there is no such folder")
 }
 
 /// Why an account other than this process's user may change the file or
@@ -375,7 +304,7 @@ pub(crate) fn source_path(path: &str) -> Result<(), &'static str> {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{Places, check, plain, plain_text, real, source_path};
+    use super::{Places, check, real, source_path};
     use crate::paths::{Env, OsFamily, Paths};
     use crate::settings::{Settings, SourceFile, Sources};
 
@@ -389,7 +318,7 @@ mod tests {
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
             // Resolved and in the ordinary form, as `check` gives a folder.
-            Self(plain(&std::fs::canonicalize(&path).unwrap()))
+            Self(a2m_provider::resolved_path(&path).unwrap())
         }
 
         /// A folder below this one that holds a project file.
@@ -587,61 +516,6 @@ mod tests {
         .unwrap();
         assert_eq!(check(&inside, &paths, &one, &places).unwrap(), inside);
         assert!(check(&outside, &paths, &one, &places).is_err());
-    }
-
-    #[test]
-    fn a_verbatim_path_is_given_back_in_its_ordinary_form_where_that_names_the_same() {
-        for (verbatim, ordinary) in [
-            (r"\\?\C:\Users\pat\work", r"C:\Users\pat\work"),
-            (r"\\?\d:\", r"d:\"),
-            (r"\\?\C:\Users\pat\.drafts\a.b", r"C:\Users\pat\.drafts\a.b"),
-            (r"\\?\C:\Users\Zoë Ann\work", r"C:\Users\Zoë Ann\work"),
-            (r"\\?\C:\console\nullish.txt", r"C:\console\nullish.txt"),
-            (r"\\?\UNC\server\share\work", r"\\server\share\work"),
-            (r"\\?\UNC\server\share", r"\\server\share\"),
-        ] {
-            assert_eq!(
-                plain_text(verbatim).as_deref(),
-                Some(ordinary),
-                "{verbatim}"
-            );
-        }
-        // Not in either form: left as it is.
-        for other in [
-            r"C:\Users\pat",
-            "/home/pat",
-            r"\\server\share\x",
-            r"\\?\Volume{0000}\x",
-            r"\\?\GLOBALROOT\Device\x",
-            r"\\?\C:",
-            r"\\?\CC:\x",
-            r"\\?\UNC\server",
-            r"\\?\UNC\\share\x",
-            r"\\.\C:\x",
-        ] {
-            assert_eq!(plain_text(other), None, "{other}");
-        }
-        // In the form, but the ordinary form would name something else.
-        for other in [
-            r"\\?\C:\a\..\b",
-            r"\\?\C:\a\.\b",
-            r"\\?\C:\a\b.",
-            r"\\?\C:\a\b ",
-            r"\\?\C:\a\\b",
-            r"\\?\C:\a\b/c",
-            r"\\?\C:\a\CON",
-            r"\\?\C:\a\nul.txt",
-            r"\\?\C:\a\Com1 .log",
-            "\\\\?\\C:\\a\\lpt\u{b9}",
-            r"\\?\UNC\server\share\aux",
-        ] {
-            assert_eq!(plain_text(other), None, "{other}");
-        }
-        // On every system but Windows a path is never changed.
-        if !cfg!(windows) {
-            let odd = Path::new(r"\\?\C:\x");
-            assert_eq!(plain(odd), odd);
-        }
     }
 
     #[test]

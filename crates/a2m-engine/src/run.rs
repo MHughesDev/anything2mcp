@@ -323,25 +323,12 @@ impl<'a> Run<'a> {
                 best = Some(failure);
             }
         };
-        // A test or a trial names the binding it is evidence for: that one
-        // runs, and no other (audit finding AC-6).
-        let named = self
-            .job
-            .binding
-            .as_ref()
-            .filter(|pin| pin.operation == operation.name);
-        if let Some(pin) = named
-            && !pin.holds_in(&self.loaded.plan, operation)
-        {
-            return Err(crate::binding::changed(pin));
-        }
         for (position, binding) in operation.bindings.iter().enumerate() {
             if self
                 .job
                 .pin
                 .as_ref()
                 .is_some_and(|pin| pin != &binding.mode)
-                || named.is_some_and(|pin| pin.position != position)
             {
                 continue;
             }
@@ -453,7 +440,7 @@ impl<'a> Run<'a> {
                 pass_over(&binding.mode, no_binding(why), &mut passed_over);
                 continue;
             }
-            let reason = if self.job.pin.is_some() || named.is_some() {
+            let reason = if self.job.pin.is_some() {
                 ChoiceReason::Pinned
             } else if !qualified.is_empty() {
                 ChoiceReason::FellBack

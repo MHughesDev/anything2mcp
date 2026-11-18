@@ -225,7 +225,9 @@ async fn a_driver_is_prepared_with_the_project_folder_of_the_request_and_none_wi
     let given = scene.hooks.prepared_with.lock().unwrap().last().cloned();
     assert_eq!(
         given.unwrap().0,
-        Some(std::fs::canonicalize(folder.path()).unwrap())
+        // The form the roots hold a folder in, which on Windows is not the
+        // system's own resolved form.
+        Some(a2m_provider::resolved_path(folder.path()).unwrap())
     );
 }
 

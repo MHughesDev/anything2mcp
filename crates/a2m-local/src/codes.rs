@@ -39,6 +39,10 @@ pub const LOCAL_API_MISMATCH: FailureCode = FailureCode::fixed("local_api_mismat
 /// the request and stops; the next client starts a new engine. Class
 /// `busy`.
 pub const DATA_DIRECTORY_GONE: FailureCode = FailureCode::fixed("data_directory_gone");
+/// The engine's socket would have a path longer than the system takes for
+/// a socket's address, so the channel can be neither made nor reached
+/// there. Class `input`.
+pub const SOCKET_PATH_TOO_LONG: FailureCode = FailureCode::fixed("socket_path_too_long");
 /// The person surface cannot show a page: it holds no approval desk. Class
 /// `busy`.
 pub const SURFACE_UNAVAILABLE: FailureCode = FailureCode::fixed("surface_unavailable");
@@ -91,15 +95,64 @@ pub(crate) fn answer_lost() -> Failure {
 }
 
 /// A problem of this machine: a directory, a lock file, or a listener that
-/// cannot be opened. Only the kind of the error is told, never its text.
+/// cannot be opened. The error's own text is never told, because it may
+/// hold a path. What is told is the system's error by its number and the
+/// system's fixed words for that number, which name no path, so that a
+/// person can look it up; for an error that has no number, its kind.
 pub(crate) fn unavailable(what: &str, error: &std::io::Error) -> Failure {
     busy(
         CHANNEL_UNAVAILABLE,
         format!(
             "{what} cannot be opened on this machine ({}).",
-            error.kind()
+            error_words(error)
         ),
         "Check that the engine's runtime and data directories exist and belong to you, then try again.",
+    )
+}
+
+/// The words for an error of the operating system, as [`unavailable`] tells
+/// them: `system error 231: All pipe instances are busy.`, or the kind.
+fn error_words(error: &std::io::Error) -> String {
+    match error.raw_os_error() {
+        // Made again from the number alone, so that nothing the error
+        // carried besides it is told.
+        Some(number) => {
+            let said = std::io::Error::from_raw_os_error(number).to_string();
+            let words = said
+                .strip_suffix(&format!(" (os error {number})"))
+                .unwrap_or(&said)
+                .trim();
+            if words.is_empty() {
+                format!("system error {number}")
+            } else {
+                format!("system error {number}: {words}")
+            }
+        }
+        None => error.kind().to_string(),
+    }
+}
+
+/// The socket at `socket` is `length` bytes long and the system takes no
+/// more than `longest`: the engine cannot make its channel there, and no
+/// client can reach one.
+pub(crate) fn socket_path_too_long(
+    socket: &std::path::Path,
+    length: usize,
+    longest: usize,
+) -> Failure {
+    // The socket is `run/engine.sock` inside the folder `A2M_HOME` names.
+    let inside = "/run/engine.sock".len();
+    input(
+        SOCKET_PATH_TOO_LONG,
+        format!(
+            "The engine's socket would be `{}`, which is {length} bytes long, and this system takes the path of a socket of no more than {longest} bytes, so the local channel cannot be made there.",
+            crate::connector::shown(socket)
+        ),
+        format!(
+            "Set `{}` to a folder whose full path is at most {} bytes long, so that the engine's folders, and its socket, `run/engine.sock` inside it, lie there; then run the command again.",
+            a2m_actions::HOME_VARIABLE,
+            longest.saturating_sub(inside)
+        ),
     )
 }
 
@@ -118,7 +171,40 @@ pub fn data_directory_gone() -> Failure {
 mod tests {
     use a2m_core::FailureClass;
 
-    use super::{ANSWER_LOST, answer_lost};
+    use super::{ANSWER_LOST, CHANNEL_UNAVAILABLE, answer_lost, unavailable};
+
+    #[test]
+    fn a_refusal_of_the_system_is_told_by_its_number_and_never_as_uncategorized() {
+        // 231 is a busy pipe on Windows, and a number with no kind of its
+        // own on every system: the case that was told as "uncategorized".
+        for number in [231, 2, 13] {
+            let failure = unavailable(
+                "The local channel",
+                &std::io::Error::from_raw_os_error(number),
+            );
+            assert_eq!(failure.code(), &CHANNEL_UNAVAILABLE);
+            let message = failure.message();
+            assert!(
+                message.starts_with(&format!(
+                    "The local channel cannot be opened on this machine (system error {number}"
+                )),
+                "{message}"
+            );
+            assert!(message.ends_with(")."), "{message}");
+            assert!(!message.contains("uncategorized"), "{message}");
+            assert!(!message.contains("os error"), "{message}");
+        }
+        // Nothing an error carries besides its number is told: a path in
+        // it stays out.
+        let carried = std::io::Error::other("C:\\Users\\pat\\secret");
+        let failure = unavailable("The start lock's file", &carried);
+        assert!(!failure.message().contains("pat"), "{}", failure.message());
+        assert!(
+            failure.message().contains("(other error)"),
+            "{}",
+            failure.message()
+        );
+    }
 
     #[test]
     fn a_lost_answer_says_both_ways_to_go_on_and_never_that_sending_again_is_safe() {

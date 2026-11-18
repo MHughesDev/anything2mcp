@@ -230,7 +230,6 @@ class Actions:
         mode: str,
         target: str,
         tool: str,
-        position: Optional[int] = None,
         run_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -246,7 +245,6 @@ class Actions:
                 "mode": mode,
                 "target": target,
                 "tool": tool,
-                "position": position,
                 "run_id": run_id,
             },
             idempotency_key,
@@ -480,8 +478,6 @@ class Actions:
         target: str,
         tool: str,
         input: Optional[Dict[str, Any]] = None,
-        mode: Optional[str] = None,
-        position: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Run one draft binding in the sandbox, where writes go only to declared
@@ -495,8 +491,6 @@ class Actions:
                 "target": target,
                 "tool": tool,
                 "input": input,
-                "mode": mode,
-                "position": position,
             },
             idempotency_key,
         )
@@ -620,9 +614,7 @@ class Actions:
         target: str,
         tool: str,
         input: Optional[Dict[str, Any]] = None,
-        mode: Optional[str] = None,
         name: Optional[str] = None,
-        position: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Record an offline test's fixture from one real read, every value
@@ -636,9 +628,7 @@ class Actions:
                 "target": target,
                 "tool": tool,
                 "input": input,
-                "mode": mode,
                 "name": name,
-                "position": position,
             },
             idempotency_key,
         )

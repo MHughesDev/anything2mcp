@@ -53,6 +53,33 @@ pub(crate) fn prepare_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The longest path, in bytes, that this system's address of a socket
+/// holds: the size of the path in its `sockaddr_un`, less the one byte that
+/// ends it (103 on macOS and the BSDs, 107 on Linux). It is found by the
+/// standard library's own check of that address, the check that binding
+/// and connecting make, and never written down here.
+pub(crate) fn longest_socket_path() -> usize {
+    static LONGEST: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *LONGEST.get_or_init(|| {
+        let fits = |length: usize| {
+            let path = format!("/{}", "x".repeat(length.saturating_sub(1)));
+            std::os::unix::net::SocketAddr::from_pathname(path).is_ok()
+        };
+        // A path of one byte fits every system's address, and one of a
+        // page fits none; between them, the longest that fits.
+        let (mut fits_up_to, mut too_long) = (1_usize, 4096_usize);
+        while too_long - fits_up_to > 1 {
+            let middle = fits_up_to + (too_long - fits_up_to) / 2;
+            if fits(middle) {
+                fits_up_to = middle;
+            } else {
+                too_long = middle;
+            }
+        }
+        fits_up_to
+    })
+}
+
 /// The engine's listener. The socket's file is removed when it is dropped.
 pub(crate) struct Listener {
     inner: UnixListener,
@@ -125,8 +152,13 @@ fn check_owner(place: &Place, expected: &str) -> Result<(), ConnectError> {
 }
 
 /// Connects to the engine, after checking that what listens is the
-/// expected user's. Nothing is sent.
-pub(crate) async fn connect(place: &Place, expected: &str) -> Result<ClientStream, ConnectError> {
+/// expected user's. Nothing is sent. A socket queues a connection the
+/// engine has not taken yet, so nothing here waits for `_deadline`.
+pub(crate) async fn connect(
+    place: &Place,
+    expected: &str,
+    _deadline: tokio::time::Instant,
+) -> Result<ClientStream, ConnectError> {
     let checked = {
         let place = place.clone();
         let expected = expected.to_owned();
@@ -209,4 +241,40 @@ pub(crate) fn spawn_detached(
         });
     }
     command.spawn()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::net::SocketAddr;
+    use std::path::PathBuf;
+
+    use super::super::Place;
+    use super::longest_socket_path;
+
+    #[test]
+    fn a_socket_path_is_as_long_as_the_systems_address_holds_and_no_longer() {
+        let longest = longest_socket_path();
+        // What the system's own `sockaddr_un` holds, on every Unix this
+        // runs on: 104 bytes on macOS and the BSDs, 108 on Linux, each
+        // less the byte that ends the path.
+        if cfg!(target_os = "linux") {
+            assert_eq!(longest, 107);
+        } else if cfg!(target_vendor = "apple") {
+            assert_eq!(longest, 103);
+        }
+        let of = |length: usize| format!("/{}", "x".repeat(length - 1));
+        assert!(SocketAddr::from_pathname(of(longest)).is_ok());
+        assert!(SocketAddr::from_pathname(of(longest + 1)).is_err());
+
+        // A place whose socket fits is not too long; one byte more is.
+        let fits = longest - "/engine.sock".len();
+        let place = Place::new(PathBuf::from(of(fits)), "", "");
+        assert_eq!(place.socket.as_os_str().len(), longest);
+        assert_eq!(place.too_long(), None);
+        let place = Place::new(PathBuf::from(of(fits + 1)), "", "");
+        assert_eq!(
+            place.too_long(),
+            Some((place.socket.as_path(), longest + 1, longest))
+        );
+    }
 }

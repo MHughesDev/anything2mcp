@@ -342,11 +342,14 @@ pub(crate) fn place(paths: &Paths, user: &OsUser) -> os::Place {
 impl Channel {
     /// Takes the engine lock, removes a stale socket, and binds the
     /// channel so that only this process's user can open it. The engine
-    /// calls this after `Kernel::open` has returned. `version` is this
-    /// program's, which the hello answers with.
+    /// calls this before `Kernel::open`, so that it holds the lock before
+    /// it opens the store, and serves only once the kernel is open.
+    /// `version` is this program's, which the hello answers with.
     ///
     /// # Errors
     ///
+    /// `input`/`socket_path_too_long`, before anything is made, when the
+    /// socket's path is longer than the system takes;
     /// `busy`/`engine_running` when another engine holds the lock, or
     /// another process made the pipe first; `busy`/`channel_unavailable`
     /// when the directories, the lock files, or the channel cannot be
@@ -366,6 +369,10 @@ impl Channel {
     ) -> Result<Self, Failure> {
         let me = OsUser::current()?;
         let place = place(paths, &me);
+        // Before anything is made: a socket of that path cannot be bound.
+        if let Some((socket, length, longest)) = place.too_long() {
+            return Err(codes::socket_path_too_long(socket, length, longest));
+        }
         let paths = paths.clone();
         let bound = tokio::task::spawn_blocking(move || {
             let lock = EngineLock::take(&paths)?;

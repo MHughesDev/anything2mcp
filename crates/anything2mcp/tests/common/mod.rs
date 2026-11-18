@@ -45,22 +45,25 @@ pub struct Folder(PathBuf, bool);
 impl Folder {
     pub fn new(name: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
+        // A short name: the engine's socket lives under this folder, and
+        // macOS takes a socket path of 103 bytes at most, under a temporary
+        // folder that is itself about 60.
         let path = std::env::temp_dir().join(format!(
-            "anything2mcp-{name}-{}-{}",
+            "a2m-{name}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         // The roots resolve a folder once; a test compares paths with the
-        // resolved form.
-        Self(path.canonicalize().unwrap(), true)
+        // form they hold it in, which on Windows is not the system's own.
+        Self(a2m_provider::resolved_path(&path).unwrap(), true)
     }
 
     /// A folder that exists and belongs to somebody else, such as a test
     /// stand's own root.
     pub fn of_another(path: &Path) -> Self {
-        Self(path.canonicalize().unwrap(), false)
+        Self(a2m_provider::resolved_path(path).unwrap(), false)
     }
 
     pub fn path(&self) -> &Path {

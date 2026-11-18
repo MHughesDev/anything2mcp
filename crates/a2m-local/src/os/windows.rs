@@ -11,14 +11,13 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::Path;
 use std::ptr;
-use std::time::Duration;
 
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, HANDLE, HANDLE_FLAG_INHERIT,
-    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT, HANDLE,
+    HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
@@ -36,7 +35,9 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
-use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
+use windows_sys::Win32::System::Pipes::{
+    GetNamedPipeClientProcessId, GetNamedPipeServerProcessId, WaitNamedPipeW,
+};
 use windows_sys::Win32::System::Threading::{
     CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, GetCurrentProcess,
     OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -48,12 +49,6 @@ use super::{ConnectError, PeerId, Place};
 pub(crate) type ServerStream = NamedPipeServer;
 /// The client's end of one connection.
 pub(crate) type ClientStream = NamedPipeClient;
-
-/// How often a client tries again while every instance of the pipe is
-/// taken, and how long it lets the engine reach its next accept between
-/// tries. The operating system offers no handle to wait on for this.
-const BUSY_TRIES: u32 = 40;
-const BUSY_PAUSE: Duration = Duration::from_millis(25);
 
 /// The text form of the security identifier of the user a token is for.
 #[allow(unsafe_code)] // four calls into the operating system; each is explained where it is made
@@ -422,7 +417,11 @@ fn instance(name: &str, user: &str, first: bool) -> io::Result<NamedPipeServer> 
 }
 
 /// The engine's listener: always one instance of the pipe that waits for
-/// the next client.
+/// the next client, from the moment the pipe is made. A pipe has no queue
+/// of connections as a socket has: while that one instance is taken and the
+/// engine has not yet made the next, as while it opens its store after it
+/// bound the channel, a client finds the pipe busy, and waits for a free
+/// instance as long as its patience lasts.
 pub(crate) struct Listener {
     name: String,
     user: String,
@@ -446,7 +445,15 @@ impl Listener {
     /// is read from the connection. The instance that takes the following
     /// client exists before this one is handed on.
     pub(crate) async fn accept(&mut self) -> io::Result<(ServerStream, PeerId)> {
-        self.next.connect().await?;
+        if let Err(error) = self.next.connect().await {
+            // A client that left before its connection was taken leaves the
+            // instance unusable: a new one is made first and then takes its
+            // place, so that the pipe never goes without an instance that
+            // waits, and a client never finds it busy, or gone, for good.
+            let fresh = instance(&self.name, &self.user, false)?;
+            self.next = fresh;
+            return Err(error);
+        }
         let following = instance(&self.name, &self.user, false)?;
         let stream = std::mem::replace(&mut self.next, following);
         let peer = client_of(&stream);
@@ -486,24 +493,64 @@ fn server_user(pipe: &NamedPipeClient) -> io::Result<String> {
     user_of_process(Some(id))
 }
 
+/// The system's own wait for a free instance of the pipe `name`, for
+/// `millis` milliseconds at most, on a thread that may block. `Ok` when an
+/// instance is free or the time ran out: either way the caller tries again.
+#[allow(unsafe_code)] // one call into the operating system, explained below
+async fn wait_for_instance(name: &str, millis: u32) -> io::Result<()> {
+    let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    let waited = tokio::task::spawn_blocking(move || {
+        // SAFETY: `wide` is NUL-terminated, owned by this closure, and
+        // outlives the call, which only reads it. `millis` is never zero
+        // (`next_wait`), so the call waits for the caller's time and not
+        // the pipe's default.
+        let ok = unsafe { WaitNamedPipeW(wide.as_ptr(), millis) };
+        if ok == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|_| io::Error::other("the wait for the pipe stopped"))?;
+    match waited {
+        Err(error) if error.raw_os_error() == Some(ERROR_SEM_TIMEOUT as i32) => Ok(()),
+        other => other,
+    }
+}
+
 /// Connects to the engine, then checks that the process which serves the
 /// pipe runs as the expected user. Nothing is sent before that.
-pub(crate) async fn connect(place: &Place, expected: &str) -> Result<ClientStream, ConnectError> {
-    let mut tries = 0;
+///
+/// A pipe that is not there is no engine, told at once. A pipe whose every
+/// instance is taken is an engine that does not take this connection yet:
+/// the client waits on the system's own wait for a free instance, until
+/// `deadline`, the caller's patience, and then tells it as an engine that
+/// does not answer. Anything else the system refuses is told with its
+/// error.
+pub(crate) async fn connect(
+    place: &Place,
+    expected: &str,
+    deadline: tokio::time::Instant,
+) -> Result<ClientStream, ConnectError> {
     let pipe = loop {
         match ClientOptions::new().open(&place.pipe) {
             Ok(pipe) => break pipe,
             Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => {
                 return Err(ConnectError::NotRunning);
             }
-            Err(error)
-                if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && tries < BUSY_TRIES =>
-            {
-                // Every instance is taken until the engine reaches its
-                // next accept. This is a pause before trying again, with a
-                // limit, because the system gives nothing to wait on.
-                tries += 1;
-                tokio::time::sleep(BUSY_PAUSE).await;
+            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                let Some(millis) = super::next_wait(tokio::time::Instant::now(), deadline) else {
+                    return Err(ConnectError::Busy);
+                };
+                match wait_for_instance(&place.pipe, millis).await {
+                    Ok(()) => {}
+                    // The engine ended while this client waited.
+                    Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => {
+                        return Err(ConnectError::NotRunning);
+                    }
+                    Err(error) => return Err(ConnectError::Io(error)),
+                }
             }
             Err(error) => return Err(ConnectError::Io(error)),
         }
@@ -568,6 +615,11 @@ mod tests {
     use super::super::{ConnectError, Place};
     use super::{Listener, connect, current_user, is_sid};
 
+    /// A patience long enough for any of these tests.
+    fn soon() -> tokio::time::Instant {
+        tokio::time::Instant::now() + std::time::Duration::from_secs(30)
+    }
+
     fn place(tag: &str) -> Place {
         let user = current_user().unwrap();
         Place::new(
@@ -596,7 +648,7 @@ mod tests {
         let client = tokio::spawn({
             let place = place.clone();
             let user = user.clone();
-            async move { connect(&place, &user).await }
+            async move { connect(&place, &user, soon()).await }
         });
         let (server, peer) = listener.accept().await.unwrap();
         assert_eq!(peer.user.as_deref(), Some(user.as_str()));
@@ -620,12 +672,12 @@ mod tests {
         assert_eq!(&got, b"ping");
 
         // A client that expects another user refuses this engine.
-        let other = connect(&place, "S-1-0-0").await;
+        let other = connect(&place, "S-1-0-0", soon()).await;
         assert!(matches!(other, Err(ConnectError::NotOurs)), "{other:?}");
         // With no engine, nothing answers.
         drop(listener);
         drop(server);
-        let gone = connect(&place, &user).await;
+        let gone = connect(&place, &user, soon()).await;
         assert!(matches!(gone, Err(ConnectError::NotRunning)), "{gone:?}");
     }
 }
@@ -639,12 +691,19 @@ mod kept_to_the_user {
 
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::{
-        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-        SE_FILE_OBJECT,
+        ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT,
     };
-    use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION,
+        EqualSid, GetAce, GetSecurityDescriptorControl, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR,
+        PSID, SE_DACL_PROTECTED,
+    };
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 
     use super::{current_user, open_guarded, open_output, prepare_dir};
+
+    /// The type of an entry that allows, `ACCESS_ALLOWED_ACE_TYPE`.
+    const ALLOWED: u8 = 0;
 
     fn fresh(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("a2m-local-{name}-{}", std::process::id()));
@@ -653,13 +712,36 @@ mod kept_to_the_user {
         path
     }
 
-    /// The access list of what is at `path`, in the system's own text.
-    #[allow(unsafe_code)] // two calls into the operating system and one free; each is explained
-    fn access_list(path: &Path) -> String {
+    /// One entry of an access list.
+    #[derive(Debug)]
+    struct Entry {
+        kind: u8,
+        flags: u8,
+        rights: u32,
+        /// Whether the entry names this process's user, by the system's
+        /// own comparison of identifiers.
+        ours: bool,
+    }
+
+    /// An access list, read as entries and never as text: the system's
+    /// text names some accounts by an alias (`LA` for the built-in
+    /// administrator, `BA`, `SY`, a domain's) and not by the identifier
+    /// this process's user reads as, so text says nothing of who it is.
+    #[derive(Debug)]
+    struct Listed {
+        protected: bool,
+        entries: Vec<Entry>,
+    }
+
+    /// The access list of what is at `path`.
+    #[allow(unsafe_code)] // calls into the operating system and reads what they give; each is explained
+    fn access_list(path: &Path) -> Listed {
         let file = open_guarded(path, 0).unwrap();
+        let mut list: *mut ACL = ptr::null_mut();
         let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: the handle is open for `READ_CONTROL`; the call writes
-        // one pointer, ours, and is asked for nothing else.
+        // two pointers, both ours, the list's pointing into the descriptor
+        // it allocates.
         let error = unsafe {
             GetSecurityInfo(
                 file.as_raw_handle(),
@@ -667,47 +749,82 @@ mod kept_to_the_user {
                 DACL_SECURITY_INFORMATION,
                 ptr::null_mut(),
                 ptr::null_mut(),
-                ptr::null_mut(),
+                &raw mut list,
                 ptr::null_mut(),
                 &raw mut descriptor,
             )
         };
         assert_eq!(error, 0);
-        let mut text: *mut u16 = ptr::null_mut();
-        // SAFETY: `descriptor` is the one the call above allocated; the
-        // call writes one pointer, ours; the length is not asked for.
+        assert!(!list.is_null() && !descriptor.is_null());
+        let mut control = 0_u16;
+        let mut revision = 0_u32;
+        // SAFETY: `descriptor` is the one the call above allocated, still
+        // allocated; the call writes two numbers, both ours.
         let ok = unsafe {
-            ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                descriptor,
-                SDDL_REVISION_1,
-                DACL_SECURITY_INFORMATION,
-                &raw mut text,
-                ptr::null_mut(),
-            )
+            GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision)
         };
         assert_ne!(ok, 0);
-        // SAFETY: `text` is a NUL-terminated string the system allocated,
-        // read up to its NUL; it and `descriptor` are each freed once, with
-        // the call the system documents, and not used again.
-        unsafe {
-            let mut length = 0;
-            while *text.add(length) != 0 {
-                length += 1;
+        let user: Vec<u16> = current_user()
+            .unwrap()
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut sid: PSID = ptr::null_mut();
+        // SAFETY: `user` is NUL-terminated and outlives the call, which
+        // writes one pointer, ours, to an identifier it allocates.
+        let ok = unsafe { ConvertStringSidToSidW(user.as_ptr(), &raw mut sid) };
+        assert_ne!(ok, 0);
+        // SAFETY: `list` points into `descriptor`, still allocated; its
+        // header says how many entries it holds, and `GetAce` gives a
+        // pointer to each, inside the list. Every entry starts with an
+        // `ACE_HEADER`; one of type `ALLOWED` is an `ACCESS_ALLOWED_ACE`,
+        // whose identifier starts at `SidStart` and lies inside the entry.
+        // `sid` is the identifier converted above. Both blocks are freed
+        // once, after their last use, with the call the system documents.
+        let entries = unsafe {
+            let count = (*list).AceCount;
+            let mut entries = Vec::with_capacity(usize::from(count));
+            for index in 0..u32::from(count) {
+                let mut ace: *mut c_void = ptr::null_mut();
+                assert_ne!(GetAce(list, index, &raw mut ace), 0);
+                let header = *ace.cast::<ACE_HEADER>();
+                let (rights, ours) = if header.AceType == ALLOWED {
+                    let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+                    let trustee: PSID = (&raw mut (*allowed).SidStart).cast::<c_void>();
+                    ((*allowed).Mask, EqualSid(trustee, sid) != 0)
+                } else {
+                    (0, false)
+                };
+                entries.push(Entry {
+                    kind: header.AceType,
+                    flags: header.AceFlags,
+                    rights,
+                    ours,
+                });
             }
-            let said = String::from_utf16_lossy(std::slice::from_raw_parts(text, length));
-            LocalFree(text.cast::<c_void>());
+            LocalFree(sid);
             LocalFree(descriptor);
-            said
+            entries
+        };
+        Listed {
+            protected: control & SE_DACL_PROTECTED != 0,
+            entries,
         }
     }
 
-    /// A protected list with one entry, which allows this user.
-    fn only_the_user(list: &str) {
-        let user = current_user().unwrap();
-        assert!(list.starts_with("D:P"), "{list}");
-        assert_eq!(list.matches('(').count(), 1, "{list}");
-        assert!(list.contains(&format!(";;;{user})")), "{list}");
-        assert!(list.contains("(A;"), "{list}");
+    /// A protected list with one entry, which allows this user every
+    /// right; with `inherit`, files and folders made inside take it.
+    fn only_the_user(list: &Listed, inherit: bool) {
+        assert!(list.protected, "{list:?}");
+        let [entry] = list.entries.as_slice() else {
+            panic!("not one entry: {list:?}");
+        };
+        assert_eq!(entry.kind, ALLOWED, "{list:?}");
+        assert!(entry.ours, "{list:?}");
+        assert_eq!(entry.rights, FILE_ALL_ACCESS, "{list:?}");
+        let both = u8::try_from(OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE).unwrap_or(u8::MAX);
+        let expected = if inherit { both } else { 0 };
+        assert_eq!(entry.flags & both, expected, "{list:?}");
     }
 
     #[test]
@@ -715,12 +832,10 @@ mod kept_to_the_user {
         // Made, and made again over itself: both times one entry, the user's.
         let dir = fresh("runtime");
         prepare_dir(&dir).unwrap();
-        only_the_user(&access_list(&dir));
-        prepare_dir(&dir).unwrap();
-        let list = access_list(&dir);
-        only_the_user(&list);
         // What is made inside takes it.
-        assert!(list.contains("OICI"), "{list}");
+        only_the_user(&access_list(&dir), true);
+        prepare_dir(&dir).unwrap();
+        only_the_user(&access_list(&dir), true);
 
         // The output file has a list of its own, and is appended to.
         let output = dir.join("engine-output.log");
@@ -735,7 +850,7 @@ mod kept_to_the_user {
             file.write_all(b"two\n").unwrap();
         }
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "one\ntwo\n");
-        only_the_user(&access_list(&output));
+        only_the_user(&access_list(&output), false);
 
         // A file where the directory should be is not a runtime directory.
         let not_a_dir = fresh("not-a-dir");
