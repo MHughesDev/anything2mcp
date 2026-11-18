@@ -12,9 +12,9 @@ use a2m_core::{
     ValueType, Verb,
 };
 use a2m_files::{
-    CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, OperationView, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
-    SurfaceView,
+    BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
+    LintRule, Located, LowerContext, Lowered, Lowering, OperationView, Possible, ResolvedBinding,
+    ResolvedView, Sends, Stage, Statement, StepCommits, SurfaceView,
 };
 
 use crate::codes;
@@ -43,6 +43,16 @@ pub const FORMAT_READ_ONLY: LintCode = LintCode::fixed("file.format_read_only");
 pub(crate) const STEP_TIMEOUT_MS: u32 = 30_000;
 /// How many rows a list returns when its binding states no limit.
 pub(crate) const LIST_LIMIT: u32 = 1_000;
+
+/// Whether a surface's folder names another machine: a path that begins
+/// with two separators, `\\host\share` or `//host/share`.
+fn names_another_machine(folder: &str) -> bool {
+    let mut chars = folder.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('/' | '\\'), Some('/' | '\\'))
+    )
+}
 
 /// The lowering of the `file` mode.
 pub struct FileLowering {
