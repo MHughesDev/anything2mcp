@@ -32,6 +32,7 @@ use a2m_provider::{
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use serde_json::json;
+#[cfg(target_os = "linux")]
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
@@ -54,6 +55,7 @@ pub(crate) struct DesktopDriver {
     /// two runs never type into one desktop at once. The scheduler's
     /// exclusive key (`exclusive = "screen"`) serializes writes on one
     /// surface first; this holds where two surfaces share one desktop.
+    #[cfg(target_os = "linux")]
     desk: Arc<Mutex<()>>,
 }
 
@@ -62,6 +64,7 @@ impl DesktopDriver {
         Self {
             session,
             limits,
+            #[cfg(target_os = "linux")]
             desk: Arc::new(Mutex::new(())),
         }
     }
@@ -81,8 +84,10 @@ struct Held {
     /// before every act.
     #[cfg(target_os = "linux")]
     proof: crate::backend::Proof,
+    #[cfg(target_os = "linux")]
     desk: Arc<Mutex<()>>,
     /// The desktop, while this binding's write holds it.
+    #[cfg(target_os = "linux")]
     holding: Option<OwnedMutexGuard<()>>,
 }
 
@@ -397,6 +402,7 @@ impl Held {
 
     /// Takes the driver's one desktop for this binding's write, waiting
     /// for another write to end until the step's deadline.
+    #[cfg(target_os = "linux")]
     async fn hold(&mut self, deadline: Deadline) -> Result<(), StepFailure> {
         if self.holding.is_some() {
             return Ok(());
@@ -441,6 +447,7 @@ impl Held {
 
     /// The first variant of the screen the walk shows, with what the
     /// element its condition names says: the application's own words.
+    #[cfg(target_os = "linux")]
     async fn variant_shown(
         &self,
         tree: &Tree,
@@ -877,6 +884,7 @@ fn condition_reads(cond: &Cond, node: &Node) -> bool {
 }
 
 /// The first locator a condition names: where a variant's words are.
+#[cfg(target_os = "linux")]
 fn first_locator(cond: &Cond) -> Option<&crate::model::Locator> {
     match cond {
         Cond::Visible(locator)
@@ -985,7 +993,9 @@ impl Driver for DesktopDriver {
                 posture: cx.posture,
                 #[cfg(target_os = "linux")]
                 proof,
+                #[cfg(target_os = "linux")]
                 desk: Arc::clone(&self.desk),
+                #[cfg(target_os = "linux")]
                 holding: None,
             }))
         })

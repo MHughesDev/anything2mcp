@@ -3050,6 +3050,9 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     let read = || {
         let world = &world;
         async move {
+            // The surface allows ten requests a second, and a shadow read is
+            // a request: a second passes between calls.
+            world.clock.advance(std::time::Duration::from_secs(1));
             let called = world
                 .call(
                     &world.person,

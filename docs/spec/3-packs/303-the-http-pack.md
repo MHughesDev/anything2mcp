@@ -60,7 +60,7 @@ Endpoints live only in the endpoint catalog (rule eight). There is one catalog, 
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum` ([decision 0096](../../decisions/0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md)) |
+| `request_schema`, `response_schema` (response required for a JSON answer) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum` ([decision 0096](../../decisions/0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md)) |
 | `answer` | The form of the answer: `json`, the default, or `xml`, `text`, or `bytes`, with the content types it takes. An answer that is not JSON declares the values it gives in place of a `response_schema`: paths into an XML document in a closed language, the named groups of a pattern over text, or a body's length and digest ([decision 0217](../../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)) |
 | `responses` | The answers the endpoint declares: `ok` and `absent` statuses, and `refused`, `conflict`, and `unavailable`, each a status with an optional `when` on a field of the body |
 | `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |

@@ -912,7 +912,7 @@ impl Control for InProcessControl {
     /// The engine asks only for a live read that is not a try, a test, or a
     /// pinned call; the ledger refuses anything else on its own.
     fn keeps_shadow(&self) -> bool {
-        std::env::var_os("DBG_NO_SHADOW").is_none()
+        true
     }
 
     fn shadow<'a>(&'a self, compared: ShadowCompared) -> BoxFuture<'a, Result<(), Failure>> {
@@ -927,16 +927,13 @@ impl Control for InProcessControl {
                 writes: compared.writes,
                 outcome: compared.outcome,
             };
-            eprintln!("DBG shadow start {:?}", comparison.outcome);
-            let r = self.kernel
+            self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.shadow().record(&comparison).map(|_| ())
                 })
                 .await
-                .map_err(|failure| self.redacted(failure));
-            eprintln!("DBG shadow end {r:?}");
-            r
+                .map_err(|failure| self.redacted(failure))
         })
     }
 }

@@ -2,6 +2,8 @@
 
 Everything known about Anything2MCP: the design, the reasons, the evidence, and the plan. The design came first and the code is being built to it, so most of what is described here does not run yet; the [changelog](../CHANGELOG.md) says what does.
 
+The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says what the product does and answers for, and what it does not, with each limit marked as a rule, a design choice, or not built yet.
+
 ## Contents
 
 | Folder | What it holds | Files |

@@ -184,7 +184,7 @@ mod on_linux {
         let Some(session) = session() else { return };
         let mut desk = Desk::start(&session, Order::example()).await.unwrap();
         let conn = a11y(&session).await;
-        let ours = ours(&conn).await;
+        let app = ours(&conn).await;
         let (customer, new_customer, new_status, message, problem) = (
             "/org/a11y/atspi/accessible/6",
             "/org/a11y/atspi/accessible/37",
@@ -194,7 +194,7 @@ mod on_linux {
         );
         let role: u32 = call(
             &conn,
-            &ours,
+            &app,
             new_customer,
             "org.a11y.atspi.Accessible",
             "GetRole",
@@ -207,53 +207,53 @@ mod on_linux {
 
         // Typed is not stored: the labelled value shows the store until
         // Save.
-        assert!(set(&conn, &ours, new_customer, "Example Traders").await);
+        assert!(set(&conn, &app, new_customer, "Example Traders").await);
         let truth = desk.truth();
         assert_eq!(truth.stored["customer"], "Example Supplies");
-        assert_eq!(text(&conn, &ours, customer).await, "Example Supplies");
+        assert_eq!(text(&conn, &app, customer).await, "Example Supplies");
         assert_eq!(truth.sets.len(), 1);
         assert_eq!(truth.sets[0].field, "New customer");
         assert_eq!(truth.sets[0].value, "Example Traders");
-        press(&conn, &ours).await;
+        press(&conn, &app).await;
         let truth = desk.truth();
         assert_eq!((truth.writes, truth.stores), (1, 1));
         assert_eq!(truth.stored["customer"], "Example Traders");
-        assert_eq!(text(&conn, &ours, customer).await, "Example Traders");
-        assert_eq!(text(&conn, &ours, message).await, example_desk::SAVED);
+        assert_eq!(text(&conn, &app, customer).await, "Example Traders");
+        assert_eq!(text(&conn, &app, message).await, example_desk::SAVED);
 
         // The field cuts a long value; the application refuses a status
         // it does not know, says so, and stores nothing.
-        assert!(set(&conn, &ours, new_customer, &"x".repeat(40)).await);
+        assert!(set(&conn, &app, new_customer, &"x".repeat(40)).await);
         assert_eq!(
-            text(&conn, &ours, new_customer).await.chars().count(),
+            text(&conn, &app, new_customer).await.chars().count(),
             example_desk::CUSTOMER_MOST
         );
-        assert_eq!(text(&conn, &ours, message).await, "");
-        assert!(set(&conn, &ours, new_status, "lost").await);
-        press(&conn, &ours).await;
+        assert_eq!(text(&conn, &app, message).await, "");
+        assert!(set(&conn, &app, new_status, "lost").await);
+        press(&conn, &app).await;
         let truth = desk.truth();
         assert_eq!((truth.writes, truth.stores), (2, 1));
-        assert!(text(&conn, &ours, problem).await.contains("Status must be"));
+        assert!(text(&conn, &app, problem).await.contains("Status must be"));
 
         // A read-only field takes nothing, and no set of it is recorded.
         desk.fault(&Fault::ReadOnly("New status".to_owned()))
             .unwrap();
-        assert!(!set(&conn, &ours, new_status, "held").await);
+        assert!(!set(&conn, &app, new_status, "held").await);
         assert_eq!(desk.truth().sets.len(), 3);
 
         // Save that stores nothing and says nothing.
         desk.fault(&Fault::SaveSilently).unwrap();
-        press(&conn, &ours).await;
+        press(&conn, &app).await;
         let truth = desk.truth();
         assert_eq!((truth.writes, truth.stores), (3, 1));
 
         // Save that stores and then exits; started again, the application
         // shows what it stored, in its fields too.
         desk.fault(&Fault::ExitAfterSave).unwrap();
-        assert!(set(&conn, &ours, new_customer, "Example Holdings").await);
+        assert!(set(&conn, &app, new_customer, "Example Holdings").await);
         let _ = conn
             .call_method(
-                Some(ours.as_str()),
+                Some(app.as_str()),
                 "/org/a11y/atspi/accessible/35",
                 Some("org.a11y.atspi.Action"),
                 "DoAction",
@@ -263,7 +263,7 @@ mod on_linux {
         assert_eq!(desk.truth().stores, 1, "the status `lost` is still refused");
         desk.restart().await.unwrap();
         let again = ours(&conn).await;
-        assert_ne!(again, ours);
+        assert_ne!(again, app);
         assert_eq!(text(&conn, &again, new_customer).await, "Example Traders");
         assert_eq!(text(&conn, &again, message).await, "");
     }

@@ -137,6 +137,7 @@ Today, only from source, as above. A release will bring one binary by three rout
 
 | You want to | Read |
 | --- | --- |
+| See the scope, both sides | [SCOPE.md](SCOPE.md): what it does and answers for, and what it does not, with each limit marked as a rule, a choice, or not built yet |
 | Understand what this is | [Summary](docs/spec/1-product/101-summary.md) and [what it latches onto](docs/spec/1-product/106-what-it-latches-onto.md) |
 | Know what "best" is being held to | [The bar](docs/spec/1-product/107-the-bar.md) |
 | Configure it | [Configuration](docs/spec/2-kernel/226-configuration.md) |

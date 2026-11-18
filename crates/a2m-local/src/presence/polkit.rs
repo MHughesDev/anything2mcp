@@ -29,6 +29,7 @@
 //! [`SystemBus`].
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -47,6 +48,15 @@ pub(crate) const ACTION_ID: &str = "io.github.mhughesdev.anything2mcp.presence";
 pub(crate) const POLICY_FILE: &str = "io.github.mhughesdev.anything2mcp.presence.policy";
 /// Where an administrator installs the policy file.
 pub(crate) const POLICY_DIR: &str = "/usr/share/polkit-1/actions";
+/// The policy file as it ships, in the binary, so that the engine can put
+/// a copy where an administrator can install it from (decision 0220).
+pub(crate) const POLICY: &[u8] =
+    include_bytes!("../../polkit/io.github.mhughesdev.anything2mcp.presence.policy");
+/// The folder of the engine's data directory that the copy is written to.
+pub(crate) const COPY_FOLDER: &str = "polkit";
+/// The copy's mode: the user writes it, and anyone, the administrator
+/// among them, reads it.
+const COPY_MODE: u32 = 0o644;
 
 /// The longest a call that asks nobody may take. A call that raises the
 /// prompt is bounded by its deadline instead.
@@ -121,10 +131,99 @@ pub(crate) trait Authority: Send + Sync {
     fn registered(&self) -> BoxFuture<'_, Result<bool, Fault>>;
 }
 
+/// What to do when no copy of the policy file could be named: the file
+/// and where it goes, and where it is in the product's source.
 fn installing() -> String {
     format!(
-        "An administrator copies `{POLICY_FILE}` into `{POLICY_DIR}`. The file ships with the product; in its source it is under `crates/a2m-local/polkit`."
+        "An administrator installs the file `{POLICY_FILE}` into `{POLICY_DIR}`, with mode 0644. The engine could not write a copy of it to install from; in the product's source it is under `crates/a2m-local/polkit`."
     )
+}
+
+/// Whether `path` can stand in a shell command as it is, with no quoting:
+/// an absolute path of letters, digits, and `/._-+,@`. Any other path is
+/// not put in a command, so that nothing in a folder's name can change
+/// what an administrator runs.
+fn plain_for_a_shell(path: &str) -> bool {
+    path.starts_with('/')
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+' | b',' | b'@'))
+}
+
+/// The script an administrator runs, as root, to install the copy at
+/// `copy` into `into`: it copies the file to a temporary file of root's,
+/// checks that file's SHA-256 against the policy this binary carries, and
+/// installs it with mode 0644 only when they match. The bytes checked are
+/// the bytes installed, so a copy changed in the user's folder, before or
+/// while the command runs, is refused and nothing is installed. `None`
+/// when a path is not plain enough to stand in a command.
+pub(crate) fn install_script(copy: &Path, into: &str) -> Option<String> {
+    let copy = copy.to_str().filter(|copy| plain_for_a_shell(copy))?;
+    if !plain_for_a_shell(into) {
+        return None;
+    }
+    let digest = a2m_core::Digest::of(POLICY);
+    Some(format!(
+        "f=$(mktemp) && cat {copy} > \"$f\" && echo \"{digest}  $f\" | sha256sum --check --quiet && install -m 0644 \"$f\" {into}/{POLICY_FILE}; s=$?; rm -f \"$f\"; exit $s"
+    ))
+}
+
+/// The remedy for a policy file that is not installed, when the engine
+/// holds a copy at `copy`: the one command, which only a person with
+/// administrator rights runs. The engine never runs it.
+pub(crate) fn installing_from(copy: &Path) -> String {
+    match install_script(copy, POLICY_DIR) {
+        Some(script) => format!(
+            "A person with administrator rights installs the policy file with this one command, which copies the engine's copy `{}` into `{POLICY_DIR}` only when it is the file this build carries: `sudo sh -c '{script}'`. The engine never runs it; polkit reads the file within a moment, or when it is restarted.",
+            copy.display()
+        ),
+        None => format!(
+            "A person with administrator rights installs the file `{POLICY_FILE}` into `{POLICY_DIR}`, with mode 0644. The engine wrote a copy into its data directory, in the folder `{COPY_FOLDER}`, whose path cannot be put in a command as it is; compare the copy's SHA-256 with `{}` before installing it.",
+            a2m_core::Digest::of(POLICY)
+        ),
+    }
+}
+
+/// Writes the copy of the policy file into `folder`, unless the file there
+/// already holds its bytes, and gives its path. The folder is made, or
+/// checked to be this user's and closed to others, as the runtime
+/// directory is. The copy is written whole under another name, never
+/// through a link, and moved into place, so that an administrator never
+/// installs half a file; its mode is 0644. Nothing is written outside
+/// `folder`.
+pub(crate) fn write_copy(folder: &Path) -> std::io::Result<PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
+
+    crate::os::prepare_dir(folder)?;
+    let file = folder.join(POLICY_FILE);
+    let ours = rustix::process::getuid().as_raw();
+    if let Ok(found) = std::fs::symlink_metadata(&file)
+        && found.is_file()
+        && found.uid() == ours
+        && found.mode() & 0o777 == COPY_MODE
+        && std::fs::read(&file).is_ok_and(|bytes| bytes == POLICY)
+    {
+        return Ok(file);
+    }
+    let partial = folder.join(format!("{POLICY_FILE}.new"));
+    match std::fs::remove_file(&partial) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut writing = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(COPY_MODE)
+        .open(&partial)?;
+    writing.write_all(POLICY)?;
+    // The mode asked for is narrowed by the process's mask; it is set.
+    writing.set_permissions(std::fs::Permissions::from_mode(COPY_MODE))?;
+    writing.sync_all()?;
+    drop(writing);
+    std::fs::rename(&partial, &file)?;
+    Ok(file)
 }
 
 /// What a fault means for a person who wants to approve.
@@ -264,6 +363,10 @@ pub(crate) struct PolkitPrompt {
     /// Counts the asks, so that each check has a cancellation id of its
     /// own.
     asked: AtomicU64,
+    /// The folder of the engine's own home that a copy of the policy file
+    /// is written to when polkit does not know the action. `None` writes
+    /// nothing, and the remedy names the file in the product's source.
+    copy_folder: Option<PathBuf>,
 }
 
 impl PolkitPrompt {
@@ -277,6 +380,35 @@ impl PolkitPrompt {
         Self {
             bus,
             asked: AtomicU64::new(0),
+            copy_folder: None,
+        }
+    }
+
+    /// The same prompt, which writes a copy of the policy file into
+    /// `folder` when polkit does not know the action, and names it in the
+    /// remedy (decision 0220).
+    pub(crate) fn copying_into(mut self, folder: PathBuf) -> Self {
+        self.copy_folder = Some(folder);
+        self
+    }
+
+    /// What a policy file that is not installed means here: with the
+    /// engine's copy written and named, when it has a folder for one.
+    async fn not_installed(&self) -> Availability {
+        let base = unavailable(&Fault::NotRegistered);
+        let Some(folder) = self.copy_folder.clone() else {
+            return base;
+        };
+        let written = tokio::task::spawn_blocking(move || write_copy(&folder))
+            .await
+            .ok()
+            .and_then(Result::ok);
+        match written {
+            Some(copy) => Availability {
+                remedy: installing_from(&copy),
+                ..base
+            },
+            None => base,
         }
     }
 
@@ -296,6 +428,9 @@ impl PolkitPrompt {
                 Ok(true) => Err(Fault::Refused),
                 Err(fault) => Err(fault),
             };
+        }
+        if answer == Err(Fault::NotRegistered) {
+            return Err(self.not_installed().await);
         }
         standing(answer).map(|()| authority)
     }

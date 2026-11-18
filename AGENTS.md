@@ -73,6 +73,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 - **Small changes.** One concern per commit. Every commit builds and passes tests. Add a line to [CHANGELOG.md](CHANGELOG.md) for anything a user of the product would notice.
 - **Spikes are thrown away.** Experiments live in `spikes/`, answer one question, and are never promoted into the product; real code is written fresh.
 - **Say what you did not do.** When you stop, report what is finished, what is stubbed, what failed, and what you could not verify.
+- **A "does not" describes; it does not rule.** [SCOPE.md](SCOPE.md) shows both sides of the scope: what the product does and answers for, and what it does not. Only the ten rules below and the owner's decisions bind. Never turn an idea down because a document says the product "is not" that: find out whether the line is a rule, a design choice, or simply not built yet ([decision 0230](docs/decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)). When you write a limit down, give its reason and its kind, and keep SCOPE.md true in the same change.
 
 ## What an agent does not do alone
 
@@ -149,4 +150,5 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `spikes/` | Throwaway experiments; never part of the product |
 | `docs/assets/` | Diagrams |
 | `tools/docs_audit.py` | Checks the documents for broken links and contradictions, and the crates against the layering table |
+| `SCOPE.md` | What the product does and answers for, and what it does not, each "does not" marked as a rule, a choice, or not built yet |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `RELEASING.md` | How to contribute, report a vulnerability, behave, see what changed, and cut a release |
