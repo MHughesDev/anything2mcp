@@ -67,7 +67,7 @@ pub use faces::{
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
-pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
+pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, PASSPHRASE_VARIABLE, Paths};
 pub use person::{
     ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, MAY_NOT_BE_READ_BACK, NOT_READ_BACK,
     NOW_CANNOT_BE_READ, PRESENCE_WINDOW_MS, PREVIEW_RECORDS, PREVIEW_VALUE_CHARS, PersonSurface,

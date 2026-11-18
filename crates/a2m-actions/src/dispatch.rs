@@ -692,19 +692,37 @@ impl Kernel {
         let effect = self.effect_of(&def, &input).await;
         let effect_class = effect.as_ref().map_or(EffectClass::Read, |found| found.0);
         if !health.allows(def.needs, effect_class) {
-            return Err(Refused::new(
-                codes::busy(
+            // The refusal carries its cause's own fix (decision 0220). A
+            // cause that is something the person gives and did not, such
+            // as the vault's passphrase, is the refusal itself: it is
+            // named by its own code, and running `doctor.run` would not
+            // help.
+            let cause = health
+                .reasons
+                .iter()
+                .find(|reason| reason.part.when_impaired() == health.state);
+            let refusal = match cause {
+                Some(cause) if cause.failure.class() == a2m_core::FailureClass::Input => {
+                    cause.failure.clone()
+                }
+                _ => codes::busy(
                     codes::ENGINE_DEGRADED,
                     format!(
                         "The engine is {}: {}.",
                         health.state.as_str(),
                         health.cause()
                     ),
-                    "Call `doctor.run` for the fix, then try again.",
+                    match cause {
+                        Some(cause) => format!(
+                            "{} Then try again; `doctor.run` lists every cause.",
+                            cause.failure.next_step()
+                        ),
+                        None => "Call `doctor.run` for the fix, then try again.".to_owned(),
+                    },
                 ),
-                effect_class,
-            )
-            .then(Next::new("doctor.run", json!({}), "now")));
+            };
+            return Err(Refused::new(refusal, effect_class)
+                .then(Next::new("doctor.run", json!({}), "now")));
         }
 
         // The `Nothing` actions report on the engine and must answer when

@@ -34,7 +34,7 @@ use crate::packs;
 /// The environment variable that holds the vault's passphrase, when the
 /// installation's settings choose the passphrase route. It is read once at
 /// start and never shown.
-pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
+pub const PASSPHRASE_VARIABLE: &str = a2m_actions::PASSPHRASE_VARIABLE;
 
 /// The warning a client gives when the engine that answers it was started
 /// with other settings variables than its own (decision 0192).

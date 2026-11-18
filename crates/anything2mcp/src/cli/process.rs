@@ -7,14 +7,14 @@ use std::sync::Arc;
 
 use a2m_actions::{BuiltInToolset, Env, ExitClass, OsFamily, PROGRAM, Paths, Response, codes};
 use a2m_core::{Failure, FailureClass};
-use a2m_local::{ChannelControl, ClientLabel, Connector, StopReason, system_prompt};
+use a2m_local::{ChannelControl, ClientLabel, Connector, StopReason};
 use a2m_mcp::stdio_proxy;
 use a2m_policy::ToolsetName;
 use a2m_telemetry::SystemClock;
 use serde_json::json;
 
 use super::parse::{Globals, Tree};
-use super::start::{self, PASSPHRASE_FROM_STDIN};
+use super::start::{self, PASSPHRASE_FROM_STDIN, STARTED_ON_DEMAND};
 use super::{Finished, Host, client, project_of, render, stopped};
 use crate::engine::EngineOptions;
 use crate::local::{LocalEngine, program_version};
@@ -145,15 +145,23 @@ async fn serve(
     json: bool,
 ) -> Result<Finished, Stopped> {
     let mut passphrase_on_stdin = false;
+    let mut on_demand = false;
     for word in rest {
         if word == PASSPHRASE_FROM_STDIN && !passphrase_on_stdin {
             passphrase_on_stdin = true;
             continue;
         }
+        // Said by the command that started this engine on demand, and by
+        // nothing else; it changes only what happens when the vault does
+        // not open (decision 0220).
+        if word == STARTED_ON_DEMAND && !on_demand {
+            on_demand = true;
+            continue;
+        }
         return Err((
             malformed(
                 format!(
-                    "`{PROGRAM} serve` takes no argument but `{PASSPHRASE_FROM_STDIN}`, and `{}` was given.",
+                    "`{PROGRAM} serve` takes no argument but `{PASSPHRASE_FROM_STDIN}` and `{STARTED_ON_DEMAND}`, and `{}` was given.",
                     super::shown(word)
                 ),
                 format!("Run `{PROGRAM} serve`. Its settings are in the settings files."),
@@ -178,6 +186,7 @@ async fn serve(
     let clock = Arc::new(SystemClock::new());
     // The person surface of the options is replaced by the local engine's
     // own; the terminal's stands here only because the options need one.
+    let prompt = a2m_local::system_prompt_for(&paths);
     let mut options = EngineOptions::of_machine(
         paths,
         environment,
@@ -190,9 +199,28 @@ async fn serve(
     options.project =
         project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
-    let local = LocalEngine::start(options, system_prompt())
+    let local = LocalEngine::start(options, prompt)
         .await
         .map_err(failed)?;
+    // An engine a command started on demand that cannot open its vault
+    // ends at once and says why, on a line the command that started it
+    // reads; it does not stay up degraded for every later command to meet
+    // (decision 0220). One started by hand stays, so that `doctor` can
+    // reach it.
+    if on_demand
+        && let Some(vault) = local
+            .engine()
+            .kernel()
+            .health()
+            .reasons
+            .into_iter()
+            .find(|reason| reason.part == a2m_actions::Part::Vault)
+    {
+        say(&a2m_local::stopped_line(&vault.failure));
+        local.control().stop(StopReason::Asked);
+        let _ = local.serve().await;
+        return Err(failed(vault.failure));
+    }
     let signals = stop_when_asked(local.control());
     if let Some(problem) = local.engine().runner_problem() {
         say(&format!(

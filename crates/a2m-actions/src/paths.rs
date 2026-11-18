@@ -16,6 +16,11 @@ pub const APP_FOLDER: &str = "anything2mcp";
 /// The variable that puts everything under one directory.
 pub const HOME_VARIABLE: &str = "A2M_HOME";
 
+/// The environment variable a person sets the vault's passphrase in, for a
+/// machine whose vault takes its root key from one. Only the command that
+/// starts the engine reads it, and hands it to the engine on a pipe.
+pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
+
 /// The family of operating system, which decides the conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OsFamily {
