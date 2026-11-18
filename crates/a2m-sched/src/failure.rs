@@ -9,46 +9,11 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 
 use crate::types::Reconciling;
 
-/// The target's queue is full. Class `busy`.
-pub const QUEUE_FULL: FailureCode = FailureCode::fixed("queue_full");
-/// The caller has as many jobs waiting as it may. Class `busy`.
-pub const CALLER_QUEUE_FULL: FailureCode = FailureCode::fixed("caller_queue_full");
-/// No runner can serve the job. Class `busy`.
-pub const RUNNER_UNAVAILABLE: FailureCode = FailureCode::fixed("runner_unavailable");
-/// The kernel is degraded and takes no writes, or has stopped. Class `busy`.
-pub const ENGINE_DEGRADED: FailureCode = FailureCode::fixed("engine_degraded");
-/// A wait for a record lock ran out. Class `busy`. The same code the ledger
-/// answers with when the lock is held.
-pub const RECORD_LOCKED: FailureCode = a2m_ledger::codes::RECORD_LOCKED;
-/// A wait for a place on a session ran out. Class `busy`.
-pub const SESSION_IN_USE: FailureCode = FailureCode::fixed("session_in_use");
-/// A wait for an exclusive resource ran out. Class `busy`.
-pub const RESOURCE_IN_USE: FailureCode = FailureCode::fixed("resource_in_use");
-/// A job asked for an exclusive resource that sorts before one it holds.
-/// Class `busy`.
-pub const RESOURCE_ORDER: FailureCode = FailureCode::fixed("resource_order");
-/// A rate budget is spent and does not refill inside the lease. Class `busy`.
-pub const RATE_LIMITED: FailureCode = FailureCode::fixed("rate_limited");
-/// The work is covered by a hold, such as the stop-everything switch. Class
-/// `busy`.
-pub const ON_HOLD: FailureCode = FailureCode::fixed("on_hold");
-/// A call carries a lease that is not the job's current one, or one that has
-/// run out. Class `policy`.
-pub const LEASE_SUPERSEDED: FailureCode = FailureCode::fixed("lease_superseded");
-/// A runner that never said `hello` asked for work. Class `policy`.
-pub const RUNNER_NOT_ENROLLED: FailureCode = FailureCode::fixed("runner_not_enrolled");
-/// Written on a run whose lease was lost. Class `possible_commit`. The same
-/// code the ledger answers with to a call under an old lease.
-pub const RUNNER_LOST: FailureCode = a2m_ledger::codes::RUNNER_LOST;
-/// A runner speaks a protocol version this scheduler does not. Class
-/// `unknown_variant`.
-pub const RUNNER_PROTOCOL_UNSUPPORTED: FailureCode =
-    FailureCode::fixed("runner_protocol_unsupported");
-/// A resume found the run's reconcile as its one job: what is in doubt is
-/// settled first. Class `busy`.
-pub const RUN_RECONCILING: FailureCode = FailureCode::fixed("run_reconciling");
-/// There is no such job. Class `input`.
-pub const NOT_FOUND: FailureCode = a2m_ledger::codes::NOT_FOUND;
+pub use crate::codes::{
+    CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, ON_HOLD, QUEUE_FULL,
+    RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
+    RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SESSION_IN_USE,
+};
 
 /// "in about N seconds", rounded up to a whole second and never zero.
 fn about(wait: Duration) -> String {
@@ -70,6 +35,7 @@ pub(crate) fn queue_full(length: u32, retry: Duration) -> Failure {
         format!("The queue of this target is full: {length} jobs are waiting."),
         format!("Try again {}.", about(retry)),
     )
+    .with_retry_after(retry)
 }
 
 pub(crate) fn caller_queue_full(cap: u32) -> Failure {
@@ -110,6 +76,7 @@ pub(crate) fn record_locked(retry: Duration) -> Failure {
             about(retry)
         ),
     )
+    .with_retry_after(retry)
 }
 
 pub(crate) fn session_in_use() -> Failure {
@@ -126,6 +93,7 @@ pub(crate) fn resource_in_use(retry: Duration) -> Failure {
         "Another job still holds a resource this job must hold alone.",
         format!("Try again {}.", about(retry)),
     )
+    .with_retry_after(retry)
 }
 
 pub(crate) fn resource_order() -> Failure {
@@ -142,6 +110,7 @@ pub(crate) fn rate_limited(retry: Duration) -> Failure {
         "The request budget is spent.",
         format!("Try again {}.", about(retry)),
     )
+    .with_retry_after(retry)
 }
 
 pub(crate) fn on_hold(scope: &str) -> Failure {
@@ -260,4 +229,27 @@ pub(crate) fn stopped() -> Failure {
         "The scheduler has stopped.",
         "Try again; if it lasts, run `anything2mcp doctor run`.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn a_computed_wait_is_carried_as_data_as_well_as_in_words() {
+        let wait = Duration::from_millis(2_500);
+        for failure in [
+            super::queue_full(3, wait),
+            super::record_locked(wait),
+            super::resource_in_use(wait),
+            super::rate_limited(wait),
+        ] {
+            assert_eq!(failure.retry_after_ms(), Some(2_500), "{failure}");
+            assert!(
+                failure.next_step().contains("in about 3 seconds"),
+                "{failure}"
+            );
+        }
+        assert_eq!(super::session_in_use().retry_after_ms(), None);
+    }
 }

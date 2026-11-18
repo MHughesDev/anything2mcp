@@ -10,7 +10,7 @@ The MCP pack: the `mcp` driver, which reaches an MCP server that a system alread
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (registration), `a2m-auth` (`AuthProvider`, `SessionLease`, `CredentialSink`), `a2m-provider` (`Driver`, `Discoverer`, `Describer`, `SandboxPort`, `ScopedSupervisor`, registration), `a2m-telemetry` (the clock a finding is dated with). Outside: `reqwest` with its default features off, so with no TLS back end; `serde`, `serde_json`; and `tokio` with its `io-util` feature. No protocol SDK: the client is the pack's own ([decision 0108](../../decisions/0108-an-upstream-mcp-server-is-reached-only-through-a-pinned-mapping-by-a-client-of-the-packs-own.md)), as the service side is ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)) |
-| Roadmap packages | Package 8.2. Package E6, the optional discovery provider, comes after it |
+| Roadmap packages | Package 8.2. Package E6, the optional discovery provider, is withdrawn (decision 0279) |
 | Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`mcp`), [203](../../spec/2-kernel/203-the-provider-contract.md) (an upstream MCP server as a provider), [204](../../spec/2-kernel/204-supervising-subsystems.md) (starting a server program), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (untrusted text), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (drafting from a tool list) |
 
 ## Owns
@@ -102,7 +102,7 @@ Both also propose `untrusted_fields` from the output schema's free-text members,
 pub fn pack() -> McpPack;                  // for `RegistryBuilder::add_pack`
 pub struct McpPack;                        // impl Pack
 pub const MANIFEST: &str;                  // the manifest's text
-pub mod codes;                             // every failure code, with ALL
+pub mod codes;                             // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON
 
 pub struct McpDriver { /* connections, redactor, limits */ }   // impl Driver
 pub struct UpstreamMcp;                    // impl AuthProvider
@@ -267,7 +267,8 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 5. Done: no credential crosses plain `http` to another machine unless the surface accepts it; the lint rule `mcp.unencrypted_credentials` warns in every mode ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). Proven by `a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts_it`, in `tests/driver.rs`. The surface kind registers the notice `SurfaceNotice::UnencryptedCredentials` for that field (`with_notice`), so a door shows it (`a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_does`). An address with a user name or a password is refused at prepare, unsent, `input`/`payload_unreadable`: the HTTP client would send it as a credential by itself, past the link check ([decision 0194](../../decisions/0194-the-packs-the-product-and-the-local-surface-take-up-the-kernels-second-pass.md); `an_address_that_holds_a_user_name_or_a_password_is_refused_unsent`).
 6. Done: `mapping::plain_to_another_machine` asks `ScopedHost::may_leave_this_machine` of `a2m-core` of the host the URL parser writes, the one question every check of a plain link asks, and counts an address the parser cannot read as plain to another machine whatever it starts with, a tightening; pinned over the shared corpus of address spellings ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 7. Done: a local server program on Windows, over its standard streams, in a job object, with no console window, and the provider's check of who may change a program before every start on every system ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). Written from Linux and linted for Windows and macOS there; its tests run on all three systems through one harness in CI, which is their first run on Windows and macOS.
-8. Package E6: a `discovery` mapping, whose results are stored as findings at `inferred` and never bound. Hypothesis H-27.
+8. Not built: a `discovery` mapping's results taken as findings at `inferred`. A binding to its tools already does not compile (`mcp.discovery_bound`), and the driver refuses to call one. Package E6, which was to build this for the outside project of research note 16 and test hypothesis H-27, is withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)); the step has no package of its own.
+9. Done ([decision 0264](../../decisions/0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md)): `Lowering::statement` for the review summary: on a remote server a binding starts nothing and sends only to its surface's address (the client follows no redirect and uses no proxy); on a local server it starts the surface's program by path and digest, with each `environment` entry as set and each `pass_environment` name as passed, and where the program sends is not stated. Test: `the_review_states_what_the_mcp_pack_runs_and_where_it_sends` (`tests/pack.rs`).
 
 Not built:
 

@@ -139,6 +139,10 @@ pub(crate) enum ConnectError {
     /// yet, or holds as many as it can.
     #[cfg(windows)]
     Busy,
+    /// The connection was made and the engine closed it before taking it:
+    /// an engine that stopped serving. Nothing was sent.
+    #[cfg(unix)]
+    Lost,
     /// The operating system refused for another reason.
     Io(io::Error),
 }

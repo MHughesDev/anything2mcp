@@ -1353,3 +1353,156 @@ async fn a_sign_in_that_asks_for_a_code_asks_on_the_persons_own_page_and_keeps_i
     assert!(!shown.contains(RIGHT_CODE), "{shown}");
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// The page a person publishes from shows the sign-ins before the tools,
+/// a sign-in whose read is not drafted as not confirmed, where each sign-in
+/// sends in each environment, and for each tool where it sends, what it
+/// starts, and what it sets. Every text is escaped, a character that
+/// reorders text is shown as its escape, and a secret variable is named and
+/// never valued (decisions 0252 and 0264).
+#[test]
+fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_value() {
+    use crate::surface::review_shown::review_html;
+    use a2m_files::{
+        BindingReview, BindingStates, CredentialShown, EnvironmentVariable, PROBE_PENDING,
+        ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary,
+        RunReview, SCRIPT_NOTICE, SentAddress, SentGroup, SentTo, SentToReview, SignInReview,
+        VariableValue,
+    };
+    let surface = || a2m_core::SurfaceName::new("api").unwrap();
+    let sign_in = |entry: usize, probe: ProbeReview| SignInReview {
+        entry,
+        surfaces: vec![surface()],
+        provider: "bearer_static".parse().unwrap(),
+        mode: a2m_core::SignInMode::Custom,
+        credentials: vec![CredentialShown {
+            role: "token".to_owned(),
+            reference: "vault://example/api/token".parse().unwrap(),
+        }],
+        probe,
+        sent_to: vec![SentToReview {
+            environment: "test".parse().unwrap(),
+            sent_to: SentTo::Addresses {
+                groups: vec![SentGroup {
+                    scope: a2m_core::AddressScope::Name,
+                    addresses: vec![SentAddress {
+                        address: "https://api.example.com/<i>v1</i>".to_owned(),
+                        what: "the surface `api`".to_owned(),
+                    }],
+                }],
+                leaves_this_machine: true,
+            },
+        }],
+    };
+    let review = ReviewSummary {
+        items: vec![ReviewItem {
+            tool: a2m_core::OperationName::new("example_report_run").unwrap(),
+            effect: EffectClass::Write,
+            hazard: a2m_core::Hazard::None,
+            commit_points: 1,
+            surfaces: vec![surface()],
+            destinations: Vec::new(),
+            uploads: Vec::new(),
+            downloads: Vec::new(),
+            place: None,
+            bindings: vec![BindingReview {
+                operation: a2m_core::OperationName::new("example_report_run").unwrap(),
+                mode: a2m_core::Mode::new("cli").unwrap(),
+                surface: surface(),
+                surface_programs: Vec::new(),
+                states: BindingStates::Stated {
+                    runs: vec![RunReview {
+                        run: ProgramRun::Script {
+                            interpreter: "/usr/bin/example-interpreter".to_owned(),
+                            interpreter_digests: vec![Digest::of(b"interpreter")],
+                            arguments: vec!["-I".to_owned()],
+                            script: "scripts/<run>.example\u{202e}".to_owned(),
+                            script_digest: Digest::of(b"script"),
+                        },
+                        notice: Some(SCRIPT_NOTICE),
+                    }],
+                    environment: vec![
+                        EnvironmentVariable {
+                            name: "EXAMPLE_MODE".to_owned(),
+                            value: VariableValue::Set("a&b".to_owned()),
+                        },
+                        EnvironmentVariable {
+                            name: "EXAMPLE_KEY".to_owned(),
+                            value: VariableValue::Secret,
+                        },
+                    ],
+                },
+            }],
+            reach: Reach::Partly {
+                known: vec![ReachGroup {
+                    scope: a2m_core::AddressScope::ThisMachine,
+                    addresses: vec!["http://127.0.0.1:8080".to_owned()],
+                }],
+                says: REACH_NOT_STATED,
+            },
+        }],
+        sign_ins: vec![
+            sign_in(
+                1,
+                ProbeReview::Pending {
+                    name: "example_session_check".to_owned(),
+                    says: PROBE_PENDING,
+                },
+            ),
+            sign_in(
+                0,
+                ProbeReview::Declared {
+                    name: "example_report_get".to_owned(),
+                },
+            ),
+        ],
+    };
+    let page = review_html(&review);
+    let at = |text: &str| page.find(text).unwrap_or_else(|| panic!("{text}: {page}"));
+    // Sign-ins first, the one not confirmed first among them; then tools.
+    assert!(
+        at("How it signs in") < at("What each tool may do"),
+        "{page}"
+    );
+    assert!(at("Not confirmed") < at("example_report_get"), "{page}");
+    assert!(at("Not confirmed") < at("example_report_run"), "{page}");
+    assert!(page.contains(&escape_like_page(PROBE_PENDING)), "{page}");
+    // Where the credential goes, off this machine, in bold, escaped.
+    assert!(
+        page.contains(
+            "<code>https://api.example.com/&lt;i&gt;v1&lt;/i&gt;</code>, the surface `api`"
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains("<strong>it may leave this machine</strong>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>vault://example/api/token</code>"),
+        "{page}"
+    );
+    // The tool: where it sends first, what it starts, what it sets.
+    assert!(
+        at(&escape_like_page(REACH_NOT_STATED)) < at("Starts the interpreter"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>scripts/&lt;run&gt;.example\\u{202e}</code>"),
+        "{page}"
+    );
+    assert!(page.contains(&escape_like_page(SCRIPT_NOTICE)), "{page}");
+    assert!(page.contains(&Digest::of(b"script").to_string()), "{page}");
+    assert!(
+        page.contains("<code>EXAMPLE_MODE</code>: set to <code>a&amp;b</code>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>EXAMPLE_KEY</code>: secret, not shown"),
+        "{page}"
+    );
+    // Nothing a target wrote is markup on the page.
+    for raw in ["<i>", "<run>", "a&b", "\u{202e}"] {
+        assert!(!page.contains(raw), "{raw}: {page}");
+    }
+}

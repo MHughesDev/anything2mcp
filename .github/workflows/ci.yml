@@ -89,6 +89,13 @@ jobs:
     name: Wheel and npm packages on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Waits for the sign-in window job, a Linux job of some minutes, so that
+    # the release check's two macOS wheels are given runners first: in the
+    # tenth run of one pull request every job here passed and both wheels
+    # were cancelled after fifteen minutes in the queue. Ordering only; it
+    # runs whatever that job found.
+    needs: web-window
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -237,6 +244,11 @@ jobs:
     name: Rust without TLS on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # Waits for the wheel-and-npm jobs for the reason the macOS desktop job
+    # gives: fewer macOS jobs ask for a runner at once. It runs whatever
+    # they found.
+    needs: bindings
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -409,6 +421,14 @@ jobs:
     # image changes.
     runs-on: macos-15
     timeout-minutes: 40
+    # Six macOS jobs start with a pull request (three here besides this one,
+    # two wheels in the release check). In three runs of one pull request a
+    # macOS job was cancelled fifteen minutes after it was queued, with no
+    # log, which reads as never having been given a runner. This one waits
+    # for the wheel-and-npm jobs, as the job without TLS does, so four ask at
+    # once; it runs whatever they found.
+    needs: bindings
+    if: ${{ !cancelled() }}
     env:
       # A test program that may not use the accessibility interface fails each
       # test, naming itself, instead of skipping it.

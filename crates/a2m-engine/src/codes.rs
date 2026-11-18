@@ -1,141 +1,153 @@
 //! The failure codes the engine itself produces. Each belongs to exactly
-//! one class.
+//! one class. Some are also declared by the crates whose work they report,
+//! with the same class: `needs_login`, `read_back_differs`,
+//! `changed_since_preview`, `approval_stale`, `no_confirmation`, and
+//! `engine_degraded`.
+//!
+//! Whether a `busy` code passes by itself, and why:
+//!
+//! - `engine_degraded` does not: what degraded the kernel is repaired by a
+//!   person, as `anything2mcp doctor run` names it.
+//! - `no_binding` does not: a provider is enabled, or a binding's status is
+//!   changed, by a person.
+//! - `run_time_exceeded` does not: the same run takes as long again; it is
+//!   resumed, which keeps what it verified.
+//! - `blocked_by_parent` does not: the parent record failed, and is settled
+//!   first.
+//! - `job_kind_not_built` does not: it is a part not built yet.
+//! - `evidence_not_stored` does not: a person frees space in the store.
+//! - `no_rate_budget` does: the surface's budget refills.
+//! - `control_unanswered` does: the control plane may answer the next call
+//!   in time.
+//! - `capture_not_kept`, `acknowledgement_not_kept`, and `shadow_not_kept`
+//!   do not: the control plane does not keep them, and does not start to.
+//! - `shadow_time_exceeded` does: a later call runs the shadow binding
+//!   again, and it may end in time.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// `policy`: the plan's bytes do not give the hash the job names.
-pub const PLAN_UNVERIFIED: FailureCode = FailureCode::fixed("plan_unverified");
-/// `busy`: a write was asked of a kernel that takes reads only.
-pub const ENGINE_DEGRADED: FailureCode = FailureCode::fixed("engine_degraded");
-/// `busy`: no binding qualifies, for a reason that is not a session, an
-/// edge block, or drift.
-pub const NO_BINDING: FailureCode = FailureCode::fixed("no_binding");
-/// `unknown_variant`: an `expect` does not hold.
-pub const EXPECT_FAILED: FailureCode = FailureCode::fixed("expect_failed");
-/// `input`: the job names a tool, an environment, or a surface the plan
-/// does not hold, or a job of a kind the tool cannot run as.
-pub const JOB_INVALID: FailureCode = FailureCode::fixed("job_invalid");
-/// `input`: an input is missing, is not declared, or is not of its type.
-pub const INPUT_INVALID: FailureCode = FailureCode::fixed("input_invalid");
-/// `policy`: the run would touch more records than its limit allows.
-pub const RECORD_LIMIT: FailureCode = FailureCode::fixed("record_limit_exceeded");
-/// `unknown_variant`: reading a record gave no value for a field the
-/// operation writes.
-pub const FIELD_NOT_READ_BACK: FailureCode = FailureCode::fixed("field_not_read_back");
-/// `busy`: the run passed the longest time its pipeline allows.
-pub const RUN_TIME_EXCEEDED: FailureCode = FailureCode::fixed("run_time_exceeded");
-/// `session_expired`: the session ended and could not be had again.
-pub const NEEDS_LOGIN: FailureCode = FailureCode::fixed("needs_login");
-/// `edge_blocked`: the surface is blocked at the edge.
-pub const EDGE_BLOCKED: FailureCode = FailureCode::fixed("edge_blocked");
-/// `drift`: every binding that could carry the call out has drifted.
-pub const BINDING_DRIFTED: FailureCode = FailureCode::fixed("binding_drifted");
-/// `mismatch`: the value read back differs from the value intended.
-pub const READ_BACK_DIFFERS: FailureCode = FailureCode::fixed("read_back_differs");
-/// `stale`: a record no longer holds what the preview saw.
-pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
-/// `possible_commit`: a record in doubt cannot be read, so a person must
-/// settle it.
-pub const CANNOT_RECONCILE: FailureCode = FailureCode::fixed("cannot_reconcile");
-/// `possible_commit`: a write was sent and the system's answer is not known.
-pub const NO_CONFIRMATION: FailureCode = FailureCode::fixed("no_confirmation");
-/// `unknown_variant`: a binding has no steps that read the record, so
-/// nothing it writes can be verified.
-pub const NO_READ_BACK: FailureCode = FailureCode::fixed("no_read_back");
-/// `unknown_variant`: a step returned a value the plan gives no place to.
-pub const OUTPUT_UNEXPECTED: FailureCode = FailureCode::fixed("output_unexpected");
-/// `busy`: a record waits on a parent record that failed.
-pub const BLOCKED_BY_PARENT: FailureCode = FailureCode::fixed("blocked_by_parent");
-/// `policy`: a write was asked for where nothing may be written.
-pub const SANDBOX_READ_ONLY: FailureCode = FailureCode::fixed("sandbox_read_only");
-/// `busy`: the job is of a kind this engine does not carry out yet.
-pub const JOB_KIND_NOT_BUILT: FailureCode = FailureCode::fixed("job_kind_not_built");
-/// `busy`: evidence could not be stored, so nothing can be marked verified.
-pub const EVIDENCE_NOT_STORED: FailureCode = FailureCode::fixed("evidence_not_stored");
-/// `policy`: the binding that would write a record is not one the approved
-/// diff names for it, or the stored diff is not the approved one.
-pub const APPROVAL_STALE: FailureCode = FailureCode::fixed("approval_stale");
-
-/// `transient`: a driver was not ready within the time preparing may take.
-pub const PREPARE_TIMED_OUT: FailureCode = FailureCode::fixed("prepare_timed_out");
-/// `busy`: no rate budget was granted for a surface.
-pub const NO_RATE_BUDGET: FailureCode = FailureCode::fixed("no_rate_budget");
-/// `policy`: an intent was stored and no token came back for it.
-pub const NO_TOKEN: FailureCode = FailureCode::fixed("intent_token_missing");
-/// `unknown_variant`: a binding ended without sending its write.
-pub const COMMIT_SKIPPED: FailureCode = FailureCode::fixed("commit_skipped");
-
-/// `busy`: a call to the control plane was not answered within the time the
-/// engine waits for one.
-pub const CONTROL_UNANSWERED: FailureCode = FailureCode::fixed("control_unanswered");
-/// `unknown_variant`: a provider's code panicked. The engine goes on; the
-/// step does not.
-pub const DRIVER_PANICKED: FailureCode = FailureCode::fixed("driver_panicked");
-
-/// `unknown_variant`: a condition gave a value that is neither true nor
-/// false.
-pub const CONDITION_NOT_BOOLEAN: FailureCode = FailureCode::fixed("condition_not_boolean");
-/// `unknown_variant`: an argument of a step holds the mask of a value the
-/// redactor removed.
-pub const ARGUMENT_MASKED: FailureCode = FailureCode::fixed("argument_masked");
-
-/// `busy`: the control plane keeps no captures; the capture was dropped.
-pub const CAPTURE_NOT_KEPT: FailureCode = FailureCode::fixed("capture_not_kept");
-/// `busy`: the control plane cannot end a record on the system's
-/// acknowledgement alone; the record stays `acted`, in doubt.
-pub const ACKNOWLEDGEMENT_NOT_KEPT: FailureCode = FailureCode::fixed("acknowledgement_not_kept");
-
-/// The binding a test or a trial named is no longer the one at its place:
-/// it moved, changed its mode, or changed what it does.
-pub const BINDING_CHANGED: FailureCode = FailureCode::fixed("binding_changed");
-
-/// `busy`: the control plane keeps no shadow comparisons, so no binding is
-/// run in shadow (decision 0207).
-pub const SHADOW_NOT_KEPT: FailureCode = FailureCode::fixed("shadow_not_kept");
-/// `busy`: a shadow binding did not end within the time a shadow may take;
-/// it was cancelled and counted as not compared.
-pub const SHADOW_TIME_EXCEEDED: FailureCode = FailureCode::fixed("shadow_time_exceeded");
-
-/// Every code of this crate with its class, for the test that holds them to
-/// the technical reference.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Policy, "plan_unverified"),
-    (FailureClass::Busy, "engine_degraded"),
-    (FailureClass::Busy, "no_binding"),
-    (FailureClass::UnknownVariant, "expect_failed"),
-    (FailureClass::Input, "job_invalid"),
-    (FailureClass::Input, "input_invalid"),
-    (FailureClass::Policy, "record_limit_exceeded"),
-    (FailureClass::UnknownVariant, "field_not_read_back"),
-    (FailureClass::Busy, "run_time_exceeded"),
-    (FailureClass::SessionExpired, "needs_login"),
-    (FailureClass::EdgeBlocked, "edge_blocked"),
-    (FailureClass::Drift, "binding_drifted"),
-    (FailureClass::Mismatch, "read_back_differs"),
-    (FailureClass::Stale, "changed_since_preview"),
-    (FailureClass::PossibleCommit, "cannot_reconcile"),
-    (FailureClass::PossibleCommit, "no_confirmation"),
-    (FailureClass::UnknownVariant, "no_read_back"),
-    (FailureClass::UnknownVariant, "output_unexpected"),
-    (FailureClass::Busy, "blocked_by_parent"),
-    (FailureClass::Policy, "sandbox_read_only"),
-    (FailureClass::Busy, "job_kind_not_built"),
-    (FailureClass::Busy, "evidence_not_stored"),
-    (FailureClass::Policy, "approval_stale"),
-    (FailureClass::Transient, "prepare_timed_out"),
-    (FailureClass::Busy, "no_rate_budget"),
-    (FailureClass::Policy, "intent_token_missing"),
-    (FailureClass::UnknownVariant, "commit_skipped"),
-    (FailureClass::Busy, "control_unanswered"),
-    (FailureClass::UnknownVariant, "driver_panicked"),
-    (FailureClass::UnknownVariant, "condition_not_boolean"),
-    (FailureClass::UnknownVariant, "argument_masked"),
-    (FailureClass::Busy, "capture_not_kept"),
-    (FailureClass::Busy, "acknowledgement_not_kept"),
-    (FailureClass::Stale, "binding_changed"),
-    (FailureClass::Busy, "shadow_not_kept"),
-    (FailureClass::Busy, "shadow_time_exceeded"),
-];
+a2m_core::failure_codes! {
+    PLAN_UNVERIFIED = Policy, "plan_unverified",
+        meaning "The plan's bytes do not give the hash the job names.",
+        next "Publish the target again from its stored sources.";
+    ENGINE_DEGRADED = Busy, "engine_degraded",
+        meaning "A write was asked of a kernel that takes reads only, or the kernel has stopped.",
+        next "Run `anything2mcp doctor run`, repair what it names, then call again.",
+        passes not_by_itself;
+    NO_BINDING = Busy, "no_binding",
+        meaning "No binding qualifies, for a reason that is not a session, an edge block, or drift.",
+        next "Check the binding's status and its provider with `anything2mcp engine status`, and enable a provider that drives a mode of the surface.",
+        passes not_by_itself;
+    EXPECT_FAILED = UnknownVariant, "expect_failed",
+        meaning "An `expect` does not hold.",
+        next "Look at the record in the system; the tool runs only when its expectation holds.";
+    JOB_INVALID = Input, "job_invalid",
+        meaning "The job names a tool, an environment, or a surface the plan does not hold, or a job of a kind the tool cannot run as.",
+        next "Submit the job again for a tool, environment, and surface the published plan holds.";
+    INPUT_INVALID = Input, "input_invalid",
+        meaning "An input is missing, is not declared, or is not of its type.",
+        next "Call the tool with every input it declares, each of its type.";
+    RECORD_LIMIT = Policy, "record_limit_exceeded",
+        meaning "The run would touch more records than its limit allows.",
+        next "Split the source, or raise the pipeline's limit and publish again.";
+    FIELD_NOT_READ_BACK = UnknownVariant, "field_not_read_back",
+        meaning "Reading a record gave no value for a field the operation writes.",
+        next "Make the binding's read-back return every field the operation writes.";
+    RUN_TIME_EXCEEDED = Busy, "run_time_exceeded",
+        meaning "The run passed the longest time its pipeline allows.",
+        next "Resume the run; what it verified stays verified.",
+        passes not_by_itself;
+    NEEDS_LOGIN = SessionExpired, "needs_login",
+        meaning "The session ended and could not be had again.",
+        next "Sign in with `anything2mcp session login`, then run the tool again or resume the run.";
+    EDGE_BLOCKED = EdgeBlocked, "edge_blocked",
+        meaning "The surface is blocked at the edge.",
+        next "Wait for the block to end; the engine does not go around it.";
+    BINDING_DRIFTED = Drift, "binding_drifted",
+        meaning "Every binding that could carry the call out has drifted.",
+        next "Repair the binding, verify it, and publish the target again.";
+    READ_BACK_DIFFERS = Mismatch, "read_back_differs",
+        meaning "The value read back differs from the value intended.",
+        next "Compare the values in the evidence, then cancel the run or settle the record by hand.";
+    CHANGED_SINCE_PREVIEW = Stale, "changed_since_preview",
+        meaning "A record no longer holds what the preview saw.",
+        next "Preview the run again and approve the new diff.";
+    CANNOT_RECONCILE = PossibleCommit, "cannot_reconcile",
+        meaning "A record in doubt cannot be read, so a person must settle it.",
+        next "Look at the system, then cancel the run or settle the record by hand.";
+    NO_CONFIRMATION = PossibleCommit, "no_confirmation",
+        meaning "A write was sent and nothing says whether it happened.",
+        next "Reconcile the record: read it back before anything is written again.";
+    NO_READ_BACK = UnknownVariant, "no_read_back",
+        meaning "A binding has no steps that read the record, so nothing it writes can be verified.",
+        next "Give the binding a read-back, or declare the operation `irreversible`, and publish the target again.";
+    OUTPUT_UNEXPECTED = UnknownVariant, "output_unexpected",
+        meaning "A step returned a value the plan gives no place to.",
+        next "Compare the operation's outputs in the target files with what the system returns.";
+    BLOCKED_BY_PARENT = Busy, "blocked_by_parent",
+        meaning "A record waits on a parent record that failed.",
+        next "Settle the earlier record, then resume the run.",
+        passes not_by_itself;
+    SANDBOX_READ_ONLY = Policy, "sandbox_read_only",
+        meaning "A write was asked for where nothing may be written.",
+        next "Declare the record under the environment's test records, or try a read.";
+    JOB_KIND_NOT_BUILT = Busy, "job_kind_not_built",
+        meaning "The job is of a kind this engine does not carry out yet.",
+        next "Do the work as jobs of a kind the engine carries out, such as one operation after the other.",
+        passes not_by_itself;
+    EVIDENCE_NOT_STORED = Busy, "evidence_not_stored",
+        meaning "Evidence could not be stored, so nothing can be marked verified.",
+        next "Free space in the evidence store, then resume the run.",
+        passes not_by_itself;
+    APPROVAL_STALE = Policy, "approval_stale",
+        meaning "The approval is expired, used, declined, revoked, or for another diff.",
+        next "Preview the run again and have a person approve the new diff.";
+    PREPARE_TIMED_OUT = Transient, "prepare_timed_out",
+        meaning "A driver was not ready within the time preparing may take.",
+        next "Call the tool again.";
+    NO_RATE_BUDGET = Busy, "no_rate_budget",
+        meaning "No rate budget was granted for a surface.",
+        next "Call the tool again later.",
+        passes by_itself;
+    NO_TOKEN = Policy, "intent_token_missing",
+        meaning "An intent was stored and no token came back for it.",
+        next "Report this as a fault in the engine; nothing was sent.";
+    COMMIT_SKIPPED = UnknownVariant, "commit_skipped",
+        meaning "A binding ended without sending its write.",
+        next "Correct the binding, or the step's condition, and publish the target again.";
+    CONTROL_UNANSWERED = Busy, "control_unanswered",
+        meaning "A call to the control plane was not answered within the time the engine waits for one.",
+        next "See `anything2mcp engine status`, then resume the run.",
+        passes by_itself;
+    DRIVER_PANICKED = UnknownVariant, "driver_panicked",
+        meaning "A provider's code panicked. The engine goes on; the step does not.",
+        next "Report this to the provider's author.";
+    CONDITION_NOT_BOOLEAN = UnknownVariant, "condition_not_boolean",
+        meaning "A condition gave a value that is neither true nor false.",
+        next "Compare the condition in the target files with what the system returns.";
+    ARGUMENT_MASKED = UnknownVariant, "argument_masked",
+        meaning "An argument of a step holds the mask of a value the redactor removed.",
+        next "Change the step so that it does not take a value the system shows as a registered secret.";
+    CAPTURE_NOT_KEPT = Busy, "capture_not_kept",
+        meaning "The control plane keeps no captures; the capture was dropped.",
+        next "Run on an engine that keeps captures if the capture is needed; the run goes on without it.",
+        passes not_by_itself;
+    ACKNOWLEDGEMENT_NOT_KEPT = Busy, "acknowledgement_not_kept",
+        meaning "The control plane cannot end a record on the system's acknowledgement alone; the record stays `acted`, in doubt.",
+        next "Look at the system and settle the record; the run stops until it is settled.",
+        passes not_by_itself;
+    BINDING_CHANGED = Stale, "binding_changed",
+        meaning "The binding a test or a trial named is no longer the one at its place: it moved, changed its mode, or changed what it does.",
+        next "Run the test or the trial again against the drafts as they are now.";
+    SHADOW_NOT_KEPT = Busy, "shadow_not_kept",
+        meaning "The control plane keeps no shadow comparisons, so no binding is run in shadow.",
+        next "Compare a binding in shadow on an engine that keeps the comparisons; the call's result is the verified binding's.",
+        passes not_by_itself;
+    SHADOW_TIME_EXCEEDED = Busy, "shadow_time_exceeded",
+        meaning "A shadow binding did not end within the time a shadow may take; it was cancelled and counted as not compared.",
+        next "Call again; the shadow binding is compared on a later call.",
+        passes by_itself;
+}
 
 pub(crate) fn fail(
     class: FailureClass,

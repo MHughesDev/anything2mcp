@@ -7,9 +7,9 @@ use a2m_core::{
     PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
-    CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, Place, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
-    TargetView,
+    BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema,
+    Level, LintRule, Located, LowerContext, Lowered, Lowering, Place, Possible, ProgramRun,
+    ResolvedBinding, ResolvedView, Sends, Stage, Statement, StepCommits, TargetView, VariableValue,
 };
 
 use crate::codes;
@@ -367,6 +367,81 @@ impl Lowering for McpLowering {
                 }
             }
         }
+    }
+
+    /// A binding on a remote server starts nothing and sends only to its
+    /// surface's address: the client follows no redirect and uses no
+    /// proxy. A binding on a local server starts the surface's program,
+    /// by its path and digest, with the variables the surface sets and
+    /// passes; where that program sends is not stated, since what a
+    /// program reaches is its own (decision 0252). A value the surface
+    /// sets is plain text in the target's file: a variable named for a
+    /// credential is refused there (`mcp.environment_refused`).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> Statement {
+        let Some(surface) = cx.target().surface(lowered.surface.as_str()) else {
+            return Statement::NotStated;
+        };
+        let Some(program) = surface.doc.get("program") else {
+            if surface.address == crate::mapping::LOCAL_ADDRESS {
+                return Statement::NotStated;
+            }
+            return Statement::Stated(BindingStatement {
+                sends: Sends::Only {
+                    surface: true,
+                    addresses: Vec::new(),
+                },
+                ..BindingStatement::default()
+            });
+        };
+        let Some(path) = program.as_text() else {
+            return Statement::NotStated;
+        };
+        let digests = surface
+            .doc
+            .text("digest")
+            .and_then(parse_digest)
+            .into_iter()
+            .collect();
+        let mut environment: Vec<EnvironmentVariable> = surface
+            .doc
+            .get("environment")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| {
+                Some(EnvironmentVariable {
+                    name: entry.key.value.clone(),
+                    value: VariableValue::Set(entry.value.as_text()?.to_owned()),
+                })
+            })
+            .collect();
+        environment.extend(
+            surface
+                .doc
+                .get("pass_environment")
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|item| {
+                    Some(EnvironmentVariable {
+                        name: item.as_text()?.to_owned(),
+                        value: VariableValue::Passed,
+                    })
+                }),
+        );
+        Statement::Stated(BindingStatement {
+            runs: vec![ProgramRun::Program {
+                path: path.to_owned(),
+                digests,
+            }],
+            environment,
+            sends: Sends::NotStated,
+        })
     }
 
     fn lower(

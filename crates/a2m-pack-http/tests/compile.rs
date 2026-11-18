@@ -35,9 +35,25 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         .iter()
         .map(|code| (code.class, code.code.as_str().to_owned()))
         .collect();
+    // The pack's own codes, which keep the class the crates below give the
+    // same code, then the session keeper's it passes on.
+    let book = a2m_core::CodeBook::new(&[
+        a2m_pack_http::codes::TABLE,
+        a2m_core::codes::TABLE,
+        a2m_provider::codes::TABLE,
+        a2m_auth::codes::TABLE,
+    ])
+    .unwrap();
+    let passed_on = a2m_pack_http::codes::PASSED_ON.iter().map(|code| {
+        let entry = book.explain(code.as_str()).unwrap();
+        assert_eq!(entry.declared_in, "a2m-auth", "{code}");
+        (entry.class, entry.code)
+    });
     let produced: Vec<(FailureClass, String)> = a2m_pack_http::codes::ALL
         .iter()
-        .map(|(class, code)| (*class, (*code).to_owned()))
+        .copied()
+        .chain(passed_on)
+        .map(|(class, code)| (class, code.to_owned()))
         .collect();
     assert_eq!(declared, produced);
     // The step kinds the lowering and the discoverers make are the mode's.
@@ -444,4 +460,40 @@ fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence()
     // A write that names a read-back keeps it.
     let kept = operation(&compile(&registry, "example").plan);
     assert_eq!(kept.bindings[0].evidence, a2m_core::WriteEvidence::ReadBack);
+}
+
+/// The review a person publishes from says that a tool of this pack starts
+/// nothing and sends only to its surface's address, which stays on this
+/// machine for the fixture (decision 0252).
+#[test]
+fn the_review_states_what_the_http_pack_runs_and_where_it_sends() {
+    let folder = Folder::new("review");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let compiled = compile(&registry, "example");
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        for binding in &item.bindings {
+            assert_eq!(
+                binding.states,
+                a2m_files::BindingStates::Stated {
+                    runs: Vec::new(),
+                    environment: Vec::new(),
+                },
+                "{}",
+                item.tool
+            );
+        }
+        assert_eq!(
+            item.reach,
+            a2m_files::Reach::Stated {
+                groups: vec![a2m_files::ReachGroup {
+                    scope: a2m_core::AddressScope::ThisMachine,
+                    addresses: vec!["http://127.0.0.1:4010".to_owned()],
+                }],
+                leaves_this_machine: false,
+            },
+            "{}",
+            item.tool
+        );
+    }
 }

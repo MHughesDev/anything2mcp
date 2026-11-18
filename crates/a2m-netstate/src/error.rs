@@ -67,14 +67,14 @@ pub enum NetError {
 
 impl NetError {
     /// `edge_blocked`: the system refused this fact to this user.
-    pub const REFUSED: FailureCode = FailureCode::fixed("net_fact_refused");
+    pub const REFUSED: FailureCode = crate::codes::NET_FACT_REFUSED;
     /// `unknown_variant`: no reader is built for this system.
-    pub const NOT_BUILT: FailureCode = FailureCode::fixed("net_reader_not_built");
+    pub const NOT_BUILT: FailureCode = crate::codes::NET_READER_NOT_BUILT;
     /// `unknown_variant`: the system's answer has a shape this reader does
     /// not know.
-    pub const UNREADABLE: FailureCode = FailureCode::fixed("net_answer_unreadable");
+    pub const UNREADABLE: FailureCode = crate::codes::NET_ANSWER_UNREADABLE;
     /// `transient`: the system's call failed.
-    pub const FAILED: FailureCode = FailureCode::fixed("net_read_failed");
+    pub const FAILED: FailureCode = crate::codes::NET_READ_FAILED;
 
     /// The fact the error is about.
     #[must_use]

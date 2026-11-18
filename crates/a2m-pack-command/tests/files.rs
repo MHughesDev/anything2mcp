@@ -461,3 +461,64 @@ fn a_program_that_starts_another_is_never_a_program_surface() {
         );
     }
 }
+
+/// The review a person publishes from names the program a tool starts, by
+/// its path and every digest its file pins, and each variable it is given,
+/// set or passed; and it does not state where the program sends, since
+/// that is the program's own (decision 0252).
+#[test]
+fn the_review_states_what_the_command_pack_runs_and_where_it_sends() {
+    let folder = Folder::new("review");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let files = changed(
+        "commands/inventory.yaml",
+        "    pass: []",
+        "    pass: [EXAMPLE_LANG]",
+    );
+    let compiled = compile(&files, registry.compiler_set()).unwrap();
+    let item = compiled
+        .review
+        .items
+        .iter()
+        .find(|item| item.tool.as_str() == "example_item_set_quantity")
+        .unwrap();
+    let digests: Vec<a2m_core::Digest> = ["1", "2", "3"]
+        .iter()
+        .map(|digit| digit.repeat(64).parse().unwrap())
+        .collect();
+    let set = |name: &str, value: &str| a2m_files::EnvironmentVariable {
+        name: name.to_owned(),
+        value: a2m_files::VariableValue::Set(value.to_owned()),
+    };
+    assert_eq!(item.bindings.len(), 1);
+    assert_eq!(
+        item.bindings[0].states,
+        a2m_files::BindingStates::Stated {
+            // The command and its read-back run the one program, named once.
+            runs: vec![a2m_files::RunReview {
+                run: a2m_files::ProgramRun::Program {
+                    path: "/opt/example/bin/example-cli".to_owned(),
+                    digests,
+                },
+                notice: None,
+            }],
+            environment: vec![
+                set("EXAMPLE_CLI_HOME", "/var/lib/example/home"),
+                set("LC_ALL", "C.UTF-8"),
+                set("TZ", "UTC"),
+                a2m_files::EnvironmentVariable {
+                    name: "EXAMPLE_LANG".to_owned(),
+                    value: a2m_files::VariableValue::Passed,
+                },
+            ],
+        }
+    );
+    assert!(
+        matches!(
+            &item.reach,
+            a2m_files::Reach::Partly { says, .. } if *says == a2m_files::REACH_NOT_STATED
+        ),
+        "{:?}",
+        item.reach
+    );
+}

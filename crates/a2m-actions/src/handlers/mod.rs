@@ -13,6 +13,7 @@ mod scout;
 mod scout_report;
 pub(crate) mod sessions;
 pub(crate) mod tools;
+pub(crate) mod watches;
 
 pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
 
@@ -94,6 +95,14 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "session.revoke" => sessions::session_revoke,
         "session.list" => sessions::session_list,
         "session.end" => sessions::session_end,
+        "watch.create" => watches::watch_create,
+        "watch.confirm" => watches::watch_confirm,
+        "watch.get" => watches::watch_get,
+        "watch.list" => watches::watch_list,
+        "watch.changes" => watches::watch_changes,
+        "watch.pause" => watches::watch_pause,
+        "watch.resume" => watches::watch_resume,
+        "watch.end" => watches::watch_end,
         _ => return None,
     })
 }

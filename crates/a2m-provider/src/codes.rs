@@ -1,100 +1,154 @@
 //! The failure codes this crate produces. Each belongs to exactly one class.
+//!
+//! Whether a `busy` code passes by itself, and why:
+//!
+//! - `provider_unavailable` does not: the provider is missing something
+//!   here, such as a program it needs, or a setting names a provider that
+//!   brings no driver, and a person changes that.
+//! - `queue_full` does: the queue drains as its work is done.
+//! - `cleanup_incomplete` does not: what an earlier stop left running is
+//!   ended by a person, as `anything2mcp doctor` shows it.
+//! - `subsystem_limit` does: a running subsystem finishes, or lets go of
+//!   the place.
+//! - `shutting_down` does not: a supervisor that is stopping never starts
+//!   again; the engine is started anew.
+//! - `start_failed` does not: the operating system refused the program, or
+//!   the engine's own state is broken.
+//! - `path_locked` does not: the holder is another program, which a person
+//!   closes.
+//! - `disk_full` does not: a person frees space.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-macro_rules! codes {
-    ($( $(#[$doc:meta])* $name:ident = $class:ident, $text:literal; )+) => {
-        $( $(#[$doc])* pub const $name: FailureCode = FailureCode::fixed($text); )+
-
-        /// Every code of this crate with its one class.
-        pub const ALL: &[(FailureClass, &str)] = &[ $( (FailureClass::$class, $text) ),+ ];
-    };
-}
-
-codes! {
-    /// A manifest does not parse, or a field of it is wrong.
-    MANIFEST_INVALID = Input, "manifest_invalid";
-    /// A manifest was written for a contract this build does not accept.
-    CONTRACT_UNSUPPORTED = Input, "contract_unsupported";
-    /// A mode or surface kind is registered twice, or with two archetypes.
-    MODE_CONFLICT = Input, "mode_conflict";
-    /// A path is outside its root, or is not a form a path may take.
-    PATH_NOT_ALLOWED = Input, "path_not_allowed";
-    /// A file under a checked path could not be read or written.
-    FILE_UNAVAILABLE = Input, "file_unavailable";
-    /// A file, or the folder that holds it, is not there.
-    PATH_MISSING = Input, "path_missing";
-    /// The engine's user may not write the file, or the file system is read
-    /// only.
-    PATH_DENIED = Input, "path_denied";
-    /// The run has no project folder, and a file of the project was asked
-    /// for.
-    PROJECT_FOLDER_MISSING = Input, "project_folder_missing";
-    /// Two ready providers drive one mode and no setting names one.
-    PROVIDER_AMBIGUOUS = Input, "provider_ambiguous";
-    /// Nobody registered the mode.
-    MODE_UNKNOWN = Input, "mode_unknown";
-    /// Nobody registered the reader, action, or discoverer asked for.
-    NOT_REGISTERED = Input, "not_registered";
-    /// A kind a provider reads has no enabled owner.
-    KIND_OWNER_MISSING = Input, "kind_owner_missing";
-    /// Two enabled providers own one kind for one surface kind.
-    KIND_OWNER_CONFLICT = Input, "kind_owner_conflict";
-    /// Two providers carry one name.
-    PROVIDER_DUPLICATE = Input, "provider_duplicate";
-    /// A pack's settings group does not fit the schema its manifest declares.
-    PACK_SETTINGS_INVALID = Input, "pack_settings_invalid";
-    /// A program to start was not found where it was declared.
-    PROGRAM_NOT_FOUND = Input, "program_not_found";
-    /// A registration, a start, or a root beyond what the manifest declares.
-    EFFECT_NOT_DECLARED = Policy, "effect_not_declared";
-    /// A plug-in's signature does not verify.
-    SIGNATURE_INVALID = Policy, "signature_invalid";
-    /// A step that commits was given no intent token, or the wrong one.
-    INTENT_MISSING = Policy, "intent_missing";
-    /// A step that commits was asked for where nothing may be written.
-    READ_ONLY_POSTURE = Policy, "read_only_posture";
-    /// A launch names a variable that belongs to the engine.
-    ENGINE_VARIABLE_REFUSED = Policy, "engine_variable_refused";
-    /// A launch names a variable that makes a program load code other than
-    /// its own.
-    VARIABLE_REFUSED = Policy, "variable_refused";
-    /// The provider is not ready here, now.
-    PROVIDER_UNAVAILABLE = Busy, "provider_unavailable";
-    /// A subsystem's queue is full.
-    QUEUE_FULL = Busy, "queue_full";
-    /// Leftovers of an earlier stop block a new start.
-    CLEANUP_INCOMPLETE = Busy, "cleanup_incomplete";
-    /// As many subsystems of this kind run as may, or the place is taken.
-    SUBSYSTEM_LIMIT = Busy, "subsystem_limit";
-    /// The supervisor is stopping and starts nothing.
-    SHUTTING_DOWN = Busy, "shutting_down";
-    /// A program could not be started by the operating system.
-    START_FAILED = Busy, "start_failed";
-    /// Another program holds the file, or a lock on it.
-    PATH_LOCKED = Busy, "path_locked";
-    /// The disk, or the user's share of it, is full.
-    DISK_FULL = Busy, "disk_full";
-    /// A subsystem failed its handshake.
-    HANDSHAKE_FAILED = UnknownVariant, "handshake_failed";
-    /// A driver returned a failure code nothing declares.
-    UNDECLARED_CODE = UnknownVariant, "undeclared_code";
-    /// A step that is no lookup reported its record absent.
-    UNEXPECTED_ABSENT = UnknownVariant, "unexpected_absent";
-    /// A step of a kind its mode did not declare.
-    STEP_KIND_UNKNOWN = UnknownVariant, "step_kind_unknown";
-    /// An offline test's fixture records no answer for a step.
-    FIXTURE_NO_ANSWER = UnknownVariant, "fixture_no_answer";
-    /// A committing step returned values for reconcile, which is too late.
-    RECONCILE_TOO_LATE = UnknownVariant, "reconcile_too_late";
-    /// A discoverer made a finding of a kind or level it did not declare.
-    FINDING_NOT_DECLARED = UnknownVariant, "finding_not_declared";
-    /// A stream to a subsystem broke.
-    CONNECTION_LOST = Transient, "connection_lost";
-    /// A deadline passed on something that commits nothing.
-    TIMEOUT = Transient, "timeout";
-    /// A write was sent and nothing says whether it happened.
-    NO_CONFIRMATION = PossibleCommit, "no_confirmation";
+a2m_core::failure_codes! {
+    MANIFEST_INVALID = Input, "manifest_invalid",
+        meaning "A manifest does not parse, or a field of it is wrong.",
+        next "Correct the field of the provider's manifest the message names, then load it again.";
+    CONTRACT_UNSUPPORTED = Input, "contract_unsupported",
+        meaning "A manifest was written for a contract this build does not accept.",
+        next "Use a version of the provider written for this contract.";
+    MODE_CONFLICT = Input, "mode_conflict",
+        meaning "A mode or surface kind is registered twice, or with two archetypes.",
+        next "State each mode and surface kind once, with its one archetype, or disable one of the two providers.";
+    PATH_NOT_ALLOWED = Input, "path_not_allowed",
+        meaning "A path or a link leaves the folder it must stay inside, or is not a form a path may take.",
+        next "Name a file inside its root by a relative path with forward slashes and no `..`, or a folder by its absolute path where a setting asks for one.";
+    FILE_UNAVAILABLE = Input, "file_unavailable",
+        meaning "A file under a checked path could not be read or written.",
+        next "Check that the file exists and that the engine may use it, then try again.";
+    PATH_MISSING = Input, "path_missing",
+        meaning "A file, or the folder that holds it, is not there.",
+        next "Make the file and its folder exist, or name one that does.";
+    PATH_DENIED = Input, "path_denied",
+        meaning "The engine's user may not write the file, or the file system is read only.",
+        next "Let the engine's user write the file and its folder, or name another file.";
+    PROJECT_FOLDER_MISSING = Input, "project_folder_missing",
+        meaning "The run has no project folder, and a file of the project was asked for.",
+        next "Call the tool from inside the project, through a door that states its folder.";
+    PROVIDER_AMBIGUOUS = Input, "provider_ambiguous",
+        meaning "Two ready providers drive one mode and no setting names one.",
+        next "Name the provider for the mode in the settings, or disable one of the two.";
+    MODE_UNKNOWN = Input, "mode_unknown",
+        meaning "Nobody registered the mode.",
+        next "Enable the provider that brings the mode; `anything2mcp provider list` shows them.";
+    NOT_REGISTERED = Input, "not_registered",
+        meaning "Nobody registered the reader, action, or discoverer asked for.",
+        next "Enable the provider that brings it.";
+    KIND_OWNER_MISSING = Input, "kind_owner_missing",
+        meaning "A kind a provider reads has no enabled owner.",
+        next "Enable the provider that owns the kind, as the message names it.";
+    KIND_OWNER_CONFLICT = Input, "kind_owner_conflict",
+        meaning "Two enabled providers own one kind for one surface kind.",
+        next "Disable one of the two providers; a kind has one owner for a surface kind.";
+    PROVIDER_DUPLICATE = Input, "provider_duplicate",
+        meaning "Two providers carry one name.",
+        next "Remove or disable one of the two.";
+    PACK_SETTINGS_INVALID = Input, "pack_settings_invalid",
+        meaning "A pack's settings group does not fit the schema its manifest declares.",
+        next "Correct the setting, or remove it to take the default.";
+    PROGRAM_NOT_FOUND = Input, "program_not_found",
+        meaning "A program to start was not found where it was declared.",
+        next "Install the program at the absolute path that is declared, or correct the declaration.";
+    EFFECT_NOT_DECLARED = Policy, "effect_not_declared",
+        meaning "A registration, a start, or a root beyond what the manifest declares.",
+        next "Declare it in the provider's manifest, where a person can review it, or keep to what the manifest declares.";
+    SIGNATURE_INVALID = Policy, "signature_invalid",
+        meaning "A plug-in's signature does not verify.",
+        next "Install the plug-in again from its author, signed by a key this engine trusts.";
+    INTENT_MISSING = Policy, "intent_missing",
+        meaning "A step that commits was given no intent token, or the wrong one.",
+        next "Store the record's intent in the ledger first, and pass the token it gives for this record.";
+    READ_ONLY_POSTURE = Policy, "read_only_posture",
+        meaning "A step that commits was asked for where nothing may be written.",
+        next "Run the operation live, or against a declared test record.";
+    ENGINE_VARIABLE_REFUSED = Policy, "engine_variable_refused",
+        meaning "A launch names a variable that belongs to the engine.",
+        next "Remove the variable from the launch; a program is given only variables of its own.";
+    VARIABLE_REFUSED = Policy, "variable_refused",
+        meaning "A launch names a variable that makes a program load code other than its own.",
+        next "Remove the variable from the target's files: a program is never told through its environment to load other code.";
+    PROVIDER_UNAVAILABLE = Busy, "provider_unavailable",
+        meaning "The provider is not ready here, now.",
+        next "Run `anything2mcp doctor` to see what the provider needs, or name another provider for the mode.",
+        passes not_by_itself;
+    QUEUE_FULL = Busy, "queue_full",
+        meaning "A queue is full.",
+        next "Call again after the wait the failure gives.",
+        passes by_itself;
+    CLEANUP_INCOMPLETE = Busy, "cleanup_incomplete",
+        meaning "Leftovers of an earlier stop block a new start.",
+        next "Run `anything2mcp doctor` to see what remains, end it, and try again.",
+        passes not_by_itself;
+    SUBSYSTEM_LIMIT = Busy, "subsystem_limit",
+        meaning "As many subsystems of this kind run as may, or the place is taken.",
+        next "Call again when one has finished, or raise the limit in the settings.",
+        passes by_itself;
+    SHUTTING_DOWN = Busy, "shutting_down",
+        meaning "The supervisor is stopping and starts nothing.",
+        next "Start the engine again.",
+        passes not_by_itself;
+    START_FAILED = Busy, "start_failed",
+        meaning "A program could not be started by the operating system.",
+        next "Check that the program can be run on this machine, then try again.",
+        passes not_by_itself;
+    PATH_LOCKED = Busy, "path_locked",
+        meaning "Another program holds the file, or a lock on it.",
+        next "Close the program that holds the file, then call again.",
+        passes not_by_itself;
+    DISK_FULL = Busy, "disk_full",
+        meaning "The disk, or the user's share of it, is full.",
+        next "Free space on the disk, then call again.",
+        passes not_by_itself;
+    HANDSHAKE_FAILED = UnknownVariant, "handshake_failed",
+        meaning "A subsystem failed its handshake.",
+        next "Check that the subsystem's version is one this engine supports, and report it to the provider's author if it is.";
+    UNDECLARED_CODE = UnknownVariant, "undeclared_code",
+        meaning "A driver returned a failure code nothing declares.",
+        next "Report this to the provider's author; every failure code is declared in the manifest.";
+    UNEXPECTED_ABSENT = UnknownVariant, "unexpected_absent",
+        meaning "A step that is no lookup reported its record absent.",
+        next "Report this to the provider's author; only a lookup may find nothing.";
+    STEP_KIND_UNKNOWN = UnknownVariant, "step_kind_unknown",
+        meaning "A step of a kind its mode did not declare.",
+        next "Compile the target again with the provider that is enabled now.";
+    FIXTURE_NO_ANSWER = UnknownVariant, "fixture_no_answer",
+        meaning "An offline test's fixture records no answer for a step.",
+        next "Record the step's answer in the test's fixture, as a file named after it.";
+    RECONCILE_TOO_LATE = UnknownVariant, "reconcile_too_late",
+        meaning "A committing step returned values for reconcile, which is too late.",
+        next "Read the record back; then report this to the provider's author.";
+    FINDING_NOT_DECLARED = UnknownVariant, "finding_not_declared",
+        meaning "A discoverer made a finding of a kind or level it did not declare.",
+        next "Report this to the provider's author; a discoverer returns only the kinds and levels it declares.";
+    CONNECTION_LOST = Transient, "connection_lost",
+        meaning "A stream to a subsystem broke.",
+        next "Try again; if the stream keeps breaking, run `anything2mcp doctor`.";
+    TIMEOUT = Transient, "timeout",
+        meaning "A deadline passed on something that commits nothing.",
+        next "Try again; if the run was to write, read the record back before anything is written again.";
+    NO_CONFIRMATION = PossibleCommit, "no_confirmation",
+        meaning "A write was sent and nothing says whether it happened.",
+        next "Reconcile the record: read it back before anything is written again.";
 }
 
 /// Codes that state the kernel's own bookkeeping about a run, a lease, or

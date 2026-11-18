@@ -50,9 +50,26 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         .iter()
         .map(|code| (code.class, code.code.as_str().to_owned()))
         .collect();
+    // The pack's own codes, which keep the class the crates below give the
+    // same code, then the browser engine's it passes on.
+    let book = a2m_core::CodeBook::new(&[
+        a2m_pack_web_ui::codes::TABLE,
+        a2m_pack_web_browser::codes::TABLE,
+        a2m_core::codes::TABLE,
+        a2m_provider::codes::TABLE,
+        a2m_auth::codes::TABLE,
+    ])
+    .unwrap();
+    let passed_on = a2m_pack_web_ui::codes::PASSED_ON.iter().map(|code| {
+        let entry = book.explain(code.as_str()).unwrap();
+        assert_eq!(entry.declared_in, "a2m-pack-web-browser", "{code}");
+        (entry.class, entry.code)
+    });
     let produced: Vec<(FailureClass, String)> = a2m_pack_web_ui::codes::ALL
         .iter()
-        .map(|(class, code)| (*class, (*code).to_owned()))
+        .copied()
+        .chain(passed_on)
+        .map(|(class, code)| (class, code.to_owned()))
         .collect();
     let sorted = |mut list: Vec<(FailureClass, String)>| {
         list.sort_by(|a, b| a.1.cmp(&b.1));
@@ -314,4 +331,32 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         |text| text.replacen("handling: absent", "handling: stop", 1),
         "web.read_back_never_absent",
     );
+}
+
+/// The review does not say a web tool sends only to its surface: the
+/// browser lets a page's other requests pass to any origin, so the pack
+/// states nothing, and the review says so in its fixed words (decisions
+/// 0252 and 0264).
+#[test]
+fn the_review_does_not_state_where_a_web_tool_sends() {
+    let stand = stand("review");
+    let compiled = compile(&stand.registry, "example");
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        for binding in &item.bindings {
+            assert_eq!(
+                binding.states,
+                a2m_files::BindingStates::NotStated {
+                    says: a2m_files::NOT_STATED
+                },
+                "{}",
+                item.tool
+            );
+        }
+        assert!(
+            matches!(item.reach, a2m_files::Reach::Partly { .. }),
+            "{}",
+            item.tool
+        );
+    }
 }

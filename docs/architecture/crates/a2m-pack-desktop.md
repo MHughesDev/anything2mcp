@@ -82,7 +82,7 @@ pub const ADDRESS_KEY: &str = "program";
 pub const SNAPSHOT_DISCOVERER: &str = "desktop_snapshot";
 pub use lower::{GOTO, WAIT, READ, SET, INVOKE, SNAPSHOT};
 pub use screens::{CONTROLS, DESKTOP_SURFACE, PACK, SCREEN_KIND};
-pub mod codes;                                           // every failure code, with `ALL`
+pub mod codes;                                           // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON
 ```
 
 Inside, one look-only back end per system, with the same methods; the driver and the discoverer reach the application only through it.

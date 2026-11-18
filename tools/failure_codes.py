@@ -46,7 +46,7 @@ CLASS_ORDER = ["policy", "input", "session_expired", "edge_blocked", "drift", "u
                "rejected", "mismatch", "possible_commit", "stale", "transient", "busy"]
 CLASSES = set(CLASS_ORDER)
 # The crates whose codes are all in a `failure_codes!` table (or, for a pack, also its manifest).
-MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry"}
+MIGRATED = {"a2m-core", "a2m-expr", "a2m-sources", "a2m-telemetry", "a2m-vault", "a2m-policy", "a2m-files", "a2m-api", "a2m-mcp", "a2m-netstate", "a2m-sched", "a2m-ledger", "a2m-auth", "a2m-provider", "a2m-engine", "a2m-actions", "a2m-local", "a2m-pack-web-probe", "a2m-pack-stream", "a2m-pack-device", "a2m-pack-data", "a2m-pack-command", "a2m-pack-http", "a2m-pack-mcp", "a2m-pack-desktop", "a2m-pack-web-browser", "a2m-pack-web-ui"}
 PASSES = {"by_itself": "yes", "not_by_itself": "no"}
 
 CODE = r"[a-z][a-z0-9_]*"
@@ -360,11 +360,37 @@ def classes_of_uses(texts, name, helper_of):
     return found
 
 
-PREFER = lambda crate: (crate.startswith("a2m-pack-"), crate)
+def layers(root):
+    """Crate -> its layer number, from the layering table of the reference."""
+    text = (root / REFERENCE).read_text(encoding="utf-8")
+    start = text.find("## Crate layering")
+    table = text[start:text.find("\n## ", start + 1)] if start >= 0 else ""
+    found = {}
+    for m in re.finditer(r"^\| (\d+)\. [^|]+\|([^|]+)\|", table, re.M):
+        for crate in re.findall(r"`([a-z0-9-]+)`", m.group(2)):
+            found[crate] = int(m.group(1))
+    return found
 
 
-def resolve(f):
+def preference(root):
+    """The order in which the crates that declare one code are shown, the first giving the row's
+    meaning: the core, then the provider contract, then the other kernel crates by layer, lowest
+    first, then the pack crates, bases and packs alike, then any crate the layering table does not
+    name; by name within each. A pack base's wording is its own kind of system's, so it is not put
+    before the packs'."""
+    layer = layers(root)
+    first = {"a2m-core": 0, "a2m-provider": 1}
+
+    def key(crate):
+        n = layer.get(crate)
+        rank = 100 if n is None else 90 if crate.startswith("a2m-pack-") else n
+        return (first.get(crate, 2), rank, crate)
+    return key
+
+
+def resolve(f, root=repo):
     """(rows, faults): rows are (class, code, crates, meaning), sorted by class then code."""
+    prefer = preference(root)
     rows, faults = [], list(f.faults)
     for code, row in sorted(f.by_code.items()):
         strong = {c for c, ss in row["classes"].items() if any(how in ("macro", "table", "manifest", "doc") for _, how in ss)}
@@ -384,14 +410,14 @@ def resolve(f):
             faults.append(f"`{code}` is given two answers to whether it passes by itself: {where}")
         meaning, nxt, passes = "", "", ""
         if row["rows"]:
-            meaning, nxt, passes, _ = row["rows"][sorted(row["rows"], key=PREFER)[0]]
+            meaning, nxt, passes, _ = row["rows"][sorted(row["rows"], key=prefer)[0]]
             passes = PASSES[passes]
         else:
-            for crate in sorted(row["meanings"], key=PREFER):
+            for crate in sorted(row["meanings"], key=prefer):
                 meaning = row["meanings"][crate]
                 break
         meaning = meaning[:1].upper() + meaning[1:]
-        rows.append((cls, code, sorted(row["crates"], key=PREFER), meaning, nxt, passes))
+        rows.append((cls, code, sorted(row["crates"], key=prefer), meaning, nxt, passes))
     rows.sort(key=lambda r: (CLASS_ORDER.index(r[0]), r[1]))
     return rows, faults
 
@@ -428,7 +454,7 @@ def current_block(text):
 def check(root):
     """Every way the reference's table differs from what the crates say, as sentences."""
     f = scan(root)
-    rows, faults = resolve(f)
+    rows, faults = resolve(f, root)
     text = (root / REFERENCE).read_text(encoding="utf-8")
     block = current_block(text)
     if block is None:

@@ -200,18 +200,22 @@ pub(crate) async fn connect(
             )));
         }
     }
-    match UnixStream::connect(&place.socket).await {
-        Ok(stream) => Ok(stream),
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
-            ) =>
-        {
-            Err(ConnectError::NotRunning)
-        }
-        Err(error) => Err(ConnectError::Io(error)),
-    }
+    reached(UnixStream::connect(&place.socket).await)
+}
+
+/// What one attempt to connect came to. Nothing listening is an engine
+/// that does not run. A connection the socket queued and that the engine
+/// then closed untaken, as one does when it stops serving, comes back
+/// reset: the kernel makes the connection at once and reports the reset
+/// when the client next looks, which `UnixStream::connect` does before it
+/// returns. That is an engine that went away with nothing sent, never a
+/// refusal of this machine.
+fn reached<T>(connected: io::Result<T>) -> Result<T, ConnectError> {
+    connected.map_err(|error| match error.kind() {
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound => ConnectError::NotRunning,
+        io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted => ConnectError::Lost,
+        _ => ConnectError::Io(error),
+    })
 }
 
 /// Who may change a file or a folder: only this user or the administrator,
@@ -278,8 +282,50 @@ mod tests {
 
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    use super::super::Place;
-    use super::{longest_socket_path, prepare_dir};
+    use super::super::{ConnectError, Place};
+    use super::{longest_socket_path, prepare_dir, reached};
+
+    /// A connection the socket queued, and that its listener then closed
+    /// untaken, is an engine that went away with nothing sent: the reset
+    /// the kernel reports for it is never told as a refusal of this
+    /// machine. Nothing listening is an engine that does not run, and any
+    /// other error is the system's.
+    #[test]
+    fn a_connection_its_listener_closed_untaken_is_lost_and_not_a_refusal() {
+        use std::io::{Error, ErrorKind};
+        let root = scratch("untaken");
+        let socket = root.join("s");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let client = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+        drop(listener);
+        // What the kernel says of the queued connection once its listener
+        // is gone. Linux reports the reset here; a system that reports it
+        // only when the client reads is held to the same reading below.
+        let said = client
+            .take_error()
+            .unwrap()
+            .unwrap_or_else(|| Error::from(ErrorKind::ConnectionReset));
+        if cfg!(target_os = "linux") {
+            assert_eq!(said.kind(), ErrorKind::ConnectionReset);
+        }
+        assert!(matches!(reached::<()>(Err(said)), Err(ConnectError::Lost)));
+        assert!(matches!(
+            reached::<()>(Err(ErrorKind::ConnectionAborted.into())),
+            Err(ConnectError::Lost)
+        ));
+        for nothing in [ErrorKind::ConnectionRefused, ErrorKind::NotFound] {
+            assert!(matches!(
+                reached::<()>(Err(nothing.into())),
+                Err(ConnectError::NotRunning)
+            ));
+        }
+        assert!(matches!(
+            reached::<()>(Err(ErrorKind::PermissionDenied.into())),
+            Err(ConnectError::Io(_))
+        ));
+        assert!(matches!(reached(Ok(())), Ok(())));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// A fresh folder of this test's own under the temporary folder.
     fn scratch(name: &str) -> PathBuf {

@@ -248,6 +248,30 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     );
     assert_eq!(never.failure().unwrap().code(), &codes::TIMEOUT);
 
+    // Asked whether a condition holds now, the page answers at once, on
+    // its own word: "no" is an answer. A page that gives none by the
+    // deadline is a timeout, never "no": here the page is kept busy for
+    // seconds by a script sent first on the one link, so it cannot answer
+    // the look sent after it within its 300 ms.
+    assert!(must(
+        tab.holds(&Primitive::Enabled(button.clone()), soon()).await
+    ));
+    assert!(!must(
+        tab.holds(&Primitive::Visible(css("#never")), soon()).await
+    ));
+    let busy =
+        "(() => { const end = Date.now() + 3000; while (Date.now() < end) {} return 'busy'; })()";
+    let nowhere = Primitive::Visible(css("#never"));
+    let (kept_busy, busied) = tokio::join!(
+        tab.page.as_the_page(busy, soon()),
+        tab.holds(&nowhere, Deadline::after(Duration::from_millis(300)))
+    );
+    assert_eq!(must(kept_busy), "busy");
+    assert!(
+        matches!(busied, Err(BrowserError::Timeout { .. })),
+        "{busied:?}"
+    );
+
     // A wait that is under way when the page moves on is re-armed in the
     // new document, by the event that replaced the old one. Again the test
     // says when: the wait is begun on the form, where the table is not,

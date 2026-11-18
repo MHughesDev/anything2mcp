@@ -317,12 +317,10 @@ fn every_code_has_one_class_and_the_conversions_use_them() {
     for (_, code) in codes::ALL {
         assert!(seen.insert(*code), "`{code}` is listed twice");
     }
-    let class_of = |code: &a2m_core::FailureCode| {
-        codes::ALL
-            .iter()
-            .find(|(_, name)| *name == code.as_str())
-            .map(|(class, _)| *class)
-    };
+    // This crate's codes, and the provider contract's it gives as they are.
+    let book = a2m_core::CodeBook::new(&[codes::TABLE, a2m_provider::codes::TABLE]).unwrap();
+    let class_of =
+        |code: &a2m_core::FailureCode| book.explain(code.as_str()).map(|entry| entry.class);
     let cases = [
         (
             BrowserError::LaunchFailed(LaunchReason::NotInstalled),

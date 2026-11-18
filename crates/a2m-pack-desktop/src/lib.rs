@@ -191,9 +191,13 @@ mod tests {
             let declared = format!("[[failure_codes]]\nclass = \"{class}\"\ncode = \"{code}\"\n");
             assert!(MANIFEST.contains(&declared), "{declared}");
         }
+        for code in codes::PASSED_ON {
+            let declared = format!("code = \"{code}\"\n");
+            assert!(MANIFEST.contains(&declared), "{declared}");
+        }
         assert_eq!(
             MANIFEST.matches("[[failure_codes]]").count(),
-            codes::ALL.len()
+            codes::ALL.len() + codes::PASSED_ON.len()
         );
         assert_eq!(version(), "0.0.1");
     }

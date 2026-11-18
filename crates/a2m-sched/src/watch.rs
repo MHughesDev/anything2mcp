@@ -37,26 +37,9 @@ use crate::types::{Admitted, BudgetKey, Priority, RateLimit, Submission};
 /// asks.
 pub const SHORTEST_INTERVAL_FLOOR: Duration = WATCH_INTERVAL_FLOOR;
 
-/// A watch's interval is below the floor. Class `input`.
-pub const WATCH_INTERVAL_TOO_SHORT: FailureCode = FailureCode::fixed("watch_interval_too_short");
-/// A watch's end is further away than the longest a watch may last. Class
-/// `input`.
-pub const WATCH_TOO_LONG: FailureCode = FailureCode::fixed("watch_too_long");
-/// The person has as many watches as they may have. Class `busy`.
-pub const WATCH_TOO_MANY: FailureCode = FailureCode::fixed("watch_too_many");
-/// The watches on one surface would take more of its budget than their
-/// share. Class `busy`.
-pub const WATCH_OVER_BUDGET_SHARE: FailureCode = FailureCode::fixed("watch_over_budget_share");
-
-/// Every failure code of a watch the scheduler produces, with its one class.
-/// The ledger's codes of a watch are in `a2m_ledger::codes::WATCH_CODES`;
-/// no code is in both.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Input, "watch_interval_too_short"),
-    (FailureClass::Input, "watch_too_long"),
-    (FailureClass::Busy, "watch_too_many"),
-    (FailureClass::Busy, "watch_over_budget_share"),
-];
+pub use crate::codes::{
+    WATCH_INTERVAL_TOO_SHORT, WATCH_OVER_BUDGET_SHARE, WATCH_TOO_LONG, WATCH_TOO_MANY,
+};
 
 const DAY_MS: u128 = 86_400_000;
 
@@ -604,7 +587,8 @@ impl Scheduler {
     /// nothing; the budgets it spends leave their reserve to others. When
     /// admission refuses (a hold, a full queue, a spent budget), nothing is
     /// kept of it, and the watch is not tried again before the moment the
-    /// answer gives.
+    /// answer gives: for a spent budget, the moment it refills; for any
+    /// other refusal, a lease's length later; never past the next due time.
     ///
     /// # Errors
     ///
@@ -636,7 +620,7 @@ impl Scheduler {
                 if row.state != WatchState::Confirmed {
                     return Err(tx
                         .watches()
-                        .begin_check(watch, due, RunId::from_bytes([0; 16]))
+                        .begin_check(watch, due, RunId::from_bytes([0; 16]), false)
                         .err()
                         .unwrap_or_else(|| failure::invalid("a watch that is not confirmed")));
                 }
@@ -653,7 +637,9 @@ impl Scheduler {
                     Admitted::New { run, job } => (run, Some(job)),
                     Admitted::Existing { run } => (run, None),
                 };
-                let check = tx.watches().begin_check(watch, due, run)?;
+                // The check opened its run exactly when admission placed a
+                // job for it; a run handed back by rule 6 is only joined.
+                let check = tx.watches().begin_check(watch, due, run, job.is_some())?;
                 Ok(CheckStarted { run, job, check })
             })
             .await;
@@ -663,8 +649,17 @@ impl Scheduler {
                 Ok(CheckAdmission::Started(started))
             }
             Err(refused) if ADMISSION_WAITS.contains(refused.code()) => {
-                // Not before a lease's length, nor past the next due time.
-                let wait = settings.lease_length.min(check.watch.interval);
+                // A spent budget says when it refills: the check waits that
+                // long, so that its due time does not pass while it waits.
+                // Any other refusal waits a lease's length. Never past the
+                // next due time.
+                let wait = match refused.retry_after_ms() {
+                    Some(ms) if refused.code() == &crate::failure::RATE_LIMITED => {
+                        Duration::from_millis(ms)
+                    }
+                    _ => settings.lease_length,
+                }
+                .min(check.watch.interval);
                 let until = tables::plus(self.now(), wait);
                 self.store()
                     .write(Durability::Relaxed, move |tx| {

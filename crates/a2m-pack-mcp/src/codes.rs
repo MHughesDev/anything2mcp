@@ -1,78 +1,80 @@
 //! The failure codes the MCP pack produces. Each belongs to exactly one
-//! class, and each is declared in the pack's manifest.
+//! class, and each is declared in the pack's manifest; a test holds the two
+//! lists together. The codes of other crates that the driver returns as
+//! they are, and the manifest declares too, are in [`PASSED_ON`].
 //!
 //! No sentence here quotes anything an upstream server said: its text is
 //! untrusted and never becomes part of a failure (spec section 502).
+//!
+//! The pack has no `busy` code.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
 
-/// A mapped tool's definition is not the one its mapping pins, or the tool
-/// is gone.
-pub const UPSTREAM_TOOL_CHANGED: FailureCode = FailureCode::fixed("upstream_tool_changed");
-/// A result does not fit the pinned output schema.
-pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
-/// The tool answered a well-formed call with its own error result.
-pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
-/// The server answered with something the protocol or the mapping did not
-/// foresee: an unforeseen protocol error, a status, a body that is not a
-/// response, a revision this build does not speak.
-pub const UNEXPECTED_STATUS: FailureCode = FailureCode::fixed("unexpected_status");
-/// A lookup found more than one record.
-pub const AMBIGUOUS_MATCH: FailureCode = FailureCode::fixed("ambiguous_match");
-/// The answer did not come in time.
-pub const TIMEOUT: FailureCode = FailureCode::fixed("timeout");
-/// The connection, or the server program, was lost.
-pub const CONNECTION_LOST: FailureCode = FailureCode::fixed("connection_lost");
-/// The server could not be reached, or said it cannot serve now.
-pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
-/// A call to a tool the mapping does not allow.
-pub const NOT_GRANTED: FailureCode = FailureCode::fixed("not_granted");
-/// A credential would cross plain `http` to an address that is not a
-/// loopback address, from a surface that does not accept it. Nothing is
-/// sent (decision 0188).
-pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
-/// The arguments of a call do not fit the tool's pinned input schema.
-pub const ARGUMENTS_INVALID: FailureCode = FailureCode::fixed("arguments_invalid");
-/// The server is reached over HTTPS, and this build cannot make HTTPS
-/// requests.
-pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
-/// A part of the pack's design that this build does not carry out.
-pub const NOT_BUILT: FailureCode = FailureCode::fixed("not_built");
-/// A session's provider placed a header whose name begins `a2m-`, one of
-/// the product's own carriers between its parts, which never goes on the
-/// wire. Nothing is sent (decision 0270).
-pub const PRODUCT_HEADER_REFUSED: FailureCode = FailureCode::fixed("product_header_refused");
-/// A local server program another user could change, or that is a shell,
-/// an interpreter, or a script, is not started (decision 0250).
-pub const PROGRAM_PATH_UNSAFE: FailureCode = FailureCode::fixed("program_path_unsafe");
+a2m_core::failure_codes! {
+    UPSTREAM_TOOL_CHANGED = Drift, "upstream_tool_changed",
+        meaning "A mapped tool's definition is not the one its mapping pins, or the tool is gone.",
+        next "Run discovery on the surface, review what changed, and pin the tool's new digest in the mapping.";
+    RESPONSE_SCHEMA_MISMATCH = Drift, "response_schema_mismatch",
+        meaning "A result does not fit the pinned output schema.",
+        next "Read the record back before anything is written again; then run discovery and compare the tool's definition with its mapping.";
+    APP_VALIDATION_ERROR = Rejected, "app_validation_error",
+        meaning "The tool answered a well-formed call with its own error result.",
+        next "Look at what the tool said, which is shown apart as untrusted text, and correct the input.";
+    UNEXPECTED_STATUS = UnknownVariant, "unexpected_status",
+        meaning "The server answered with something the protocol or the mapping did not foresee: an unforeseen protocol error, a status, a body that is not a response, a revision this build does not speak.",
+        next "Check the server and its mapping, and run discovery on the surface.";
+    AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match",
+        meaning "A lookup found more than one record.",
+        next "Look at the records in the system and decide which one the run made, before anything is written again.";
+    UPSTREAM_UNAVAILABLE = Transient, "upstream_unavailable",
+        meaning "The server could not be reached, or said it cannot serve now.",
+        next "Check that the upstream server runs and can be reached, then try again.";
+    NOT_GRANTED = Policy, "not_granted",
+        meaning "A call to a tool the mapping does not allow.",
+        next "Map the tool in the surface's mapping file, review it, and publish the target again.";
+    LINK_NOT_ENCRYPTED = Policy, "link_not_encrypted",
+        meaning "A credential would cross plain `http` to an address that is not a loopback address, from a surface that does not accept it. Nothing is sent (decision 0188).",
+        next "Reach the server over `https`. For a server on a private network that offers nothing else, the surface may declare `unencrypted_credentials: accepted` in `target.yaml`.";
+    PROGRAM_PATH_UNSAFE = Policy, "program_path_unsafe",
+        meaning "A local server program another user could change, or that is a shell, an interpreter, or a script, is not started (decision 0250).",
+        next "Name a program that is itself the server, by its absolute path on a local drive, and give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.";
+    PRODUCT_HEADER_REFUSED = Policy, "product_header_refused",
+        meaning "A session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270).",
+        next "Sign in to this surface with `upstream_mcp`, or with a provider made for an HTTP service, such as `bearer_static` or `api_key`.";
+    ARGUMENTS_INVALID = Input, "arguments_invalid",
+        meaning "The arguments of a call do not fit the tool's pinned input schema.",
+        next "Correct the binding's `args`, or the input, so that they fit the tool's input schema.";
+    TLS_NOT_ENABLED = Input, "tls_not_enabled",
+        meaning "The server is reached over HTTPS, and this build cannot make HTTPS requests.",
+        next "Reach the server over plain HTTP on a loopback address, or use a build with TLS.";
+    NOT_BUILT = Input, "not_built",
+        meaning "A part of the pack's design that this build does not carry out.",
+        next "See the build order in the design of the crate `a2m-pack-mcp` for what is built.";
+}
 
-/// Every code of this crate with its one class, as the manifest declares
-/// them. A test holds the two lists together.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Drift, "upstream_tool_changed"),
-    (FailureClass::Drift, "response_schema_mismatch"),
-    (FailureClass::Rejected, "app_validation_error"),
-    (FailureClass::UnknownVariant, "unexpected_status"),
-    (FailureClass::PossibleCommit, "ambiguous_match"),
-    (FailureClass::Transient, "timeout"),
-    (FailureClass::Transient, "connection_lost"),
-    (FailureClass::Transient, "upstream_unavailable"),
-    (FailureClass::Policy, "not_granted"),
-    (FailureClass::Policy, "link_not_encrypted"),
-    (FailureClass::Policy, "program_path_unsafe"),
-    (FailureClass::Policy, "product_header_refused"),
-    (FailureClass::Input, "arguments_invalid"),
-    (FailureClass::Input, "tls_not_enabled"),
-    (FailureClass::Input, "not_built"),
-    (FailureClass::Input, "payload_unreadable"),
-    // The TLS failures of `a2m_auth::tls`, passed on as they are.
-    (FailureClass::Input, "tls_setup_failed"),
-    (FailureClass::UnknownVariant, "certificate_untrusted"),
-    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
-    (FailureClass::UnknownVariant, "certificate_expired"),
-    (FailureClass::UnknownVariant, "certificate_not_verified"),
-    (FailureClass::UnknownVariant, "tls_handshake_failed"),
+/// From the provider contract: the answer did not come in time.
+pub const TIMEOUT: FailureCode = a2m_provider::codes::TIMEOUT;
+/// From the provider contract: the connection, or the server program, was
+/// lost.
+pub const CONNECTION_LOST: FailureCode = a2m_provider::codes::CONNECTION_LOST;
+
+/// The codes of other crates the driver returns as they are, which the
+/// manifest declares too: the provider contract's `timeout` and
+/// `connection_lost`, the core's `payload_unreadable` for a published plan
+/// that does not hold what the pack compiled into it, and the session
+/// keeper's TLS failures (decision 0157), every code of `a2m_auth::tls` but
+/// `trust_roots_unreadable`, which only the engine's start gives.
+pub const PASSED_ON: &[FailureCode] = &[
+    TIMEOUT,
+    CONNECTION_LOST,
+    FailureCode::PAYLOAD_UNREADABLE,
+    a2m_auth::tls::TLS_SETUP_FAILED,
+    a2m_auth::tls::CERTIFICATE_UNTRUSTED,
+    a2m_auth::tls::CERTIFICATE_NAME_MISMATCH,
+    a2m_auth::tls::CERTIFICATE_EXPIRED,
+    a2m_auth::tls::CERTIFICATE_NOT_VERIFIED,
+    a2m_auth::tls::TLS_HANDSHAKE_FAILED,
 ];
 
 /// A credential would cross an unencrypted link to another machine.

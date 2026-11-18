@@ -162,6 +162,67 @@ fn net_scope() -> JsonSchema {
 }
 
 /// One run of a listing: what a caller needs to decide what to do next.
+/// The words of a watch's state, as the ledger keeps them.
+const WATCH_STATES: &[&str] = &["asked", "confirmed", "running", "paused", "ended"];
+
+/// The field of a watch's identifier.
+const WATCH: &str = "The watch's identifier, as `watch.create` gave it.";
+
+/// A watch, as every `watch.*` action returns it (decision 0283). It holds
+/// no value the read returned and not its input.
+fn watch_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("watch_id", text())
+        .required("tool", text())
+        .required("target", text())
+        .required("environment", text())
+        .required("plan_hash", text())
+        .required("state", JsonSchema::words(WATCH_STATES))
+        .optional("reason", text())
+        .optional("failure", any_map())
+        .required("interval_seconds", JsonSchema::int())
+        .required("ends_at", JsonSchema::int())
+        .required("asked_at", JsonSchema::int())
+        .optional("confirmed_at", JsonSchema::int())
+        .optional("next_due_at", JsonSchema::int())
+        .required("checks", JsonSchema::int())
+        .required("surface", text())
+        .required("requests_per_check", JsonSchema::int())
+        .required("compared", JsonSchema::words(&["whole", "records"]))
+        .required("ignore", list_of(text()))
+}
+
+/// One change a watch recorded, as `watch.changes` returns it: its kind,
+/// the checks and their runs, and never a value.
+fn watch_change() -> JsonSchema {
+    JsonSchema::object()
+        .required("seq", JsonSchema::int())
+        .required(
+            "kind",
+            JsonSchema::words(&[
+                "confirmed",
+                "added",
+                "changed",
+                "removed",
+                "unseen",
+                "gap",
+                "paused",
+                "resumed",
+                "ended",
+            ]),
+        )
+        .required("at", JsonSchema::int())
+        .optional("check", JsonSchema::int())
+        .optional("run_id", text())
+        .optional("older_check", JsonSchema::int())
+        .optional("older_run_id", text())
+        .optional("record", JsonSchema::any())
+        .optional("outputs", list_of(text()))
+        .optional("reason", text())
+        .optional("failure", any_map())
+        .optional("missed", any_map())
+}
+
 fn listed_run() -> JsonSchema {
     JsonSchema::object()
         .required("run_id", text())
@@ -319,6 +380,67 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("target", text())
                 .required("environment", text())
                 .required("state", text()))
+            .done(),
+        // Watches (decisions 0234, 0262, 0283). None is listed: the `use`
+        // toolset is full (decision 0280).
+        act("watch.create", "Ask for a watch: one published read, called with one fixed input at a fixed interval until an end, that records what was added, changed, or went out of view. Nothing runs until the caller's person confirms it on the engine's page.", VIEWER, No, "5", Change)
+            .pos("tool", TEXT, "The read's full name, as tool.search gives it: an operation whose effect is read.")
+            .opt("input", MAP, "The read's own input, as its schema describes. Fixed for the life of the watch.")
+            .opt("environment", TEXT, "The environment to read in. The target's default when left out.")
+            .req("interval_seconds", FieldType::Int { min: 60, max: 86_400 }, "Seconds between checks: at least `watch.shortest_interval_seconds`, and within the share of the surface's rate that watches may take.")
+            .req("ends_at", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "When the watch ends, in whole milliseconds since 1970 in UTC: at most `watch.longest_days` from now.")
+            .opt("ignore", LIST, "Outputs left out of the comparison, such as one that moves on every read.")
+            .writes()
+            .output(watch_output()
+                .optional("act", text())
+                .optional("link", text())
+                .optional("person", text())
+                .optional("expires_at", JsonSchema::int()))
+            .example(r#"{"tool": "example_order_get", "input": {"order_id": "A-100"}, "interval_seconds": 300, "ends_at": 1800086400000}"#)
+            .done(),
+        act("watch.confirm", "Confirm a watch the caller's person was asked for, so that its checks begin. A person's act, carried out on the engine's page, never an agent's.", Who::Person, No, "5", Change)
+            .pos("watch_id", TEXT, WATCH)
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(watch_output())
+            .done(),
+        act("watch.get", "One watch of the caller's person: its read, interval, end, state, and how many checks it made. Never a value the read returned.", VIEWER, No, "5", Inspect)
+            .pos("watch_id", TEXT, WATCH)
+            .output(watch_output())
+            .done(),
+        act("watch.list", "The watches of the caller's person, oldest first.", VIEWER, No, "5", List)
+            .opt("open_only", BOOL, "Only watches that are confirmed, running, or paused.")
+            .output(JsonSchema::object()
+                .required("watches", list_of(watch_output()))
+                .required("complete", JsonSchema::bool()))
+            .example("{}")
+            .done(),
+        act("watch.changes", "The changes a watch recorded after a number: added, changed, unseen, gaps, pauses, and its end, each with the runs of its checks. Waits up to `wait_seconds` for the first. Holds no value; read a check's run with run.get for that.", VIEWER, No, "5", List)
+            .pos("watch_id", TEXT, WATCH)
+            .opt("after", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "The `seq` of the last change already seen; 0 or left out for the first.")
+            .opt("wait_seconds", FieldType::Int { min: 0, max: 60 }, "How long to wait for a change after `after` when there is none yet.")
+            .opt("limit", FieldType::Int { min: 1, max: 100 }, "The most changes to return: 100 when left out.")
+            .output(JsonSchema::object()
+                .required("watch_id", text())
+                .required("state", JsonSchema::words(WATCH_STATES))
+                .required("changes", list_of(watch_change()))
+                .required("after", JsonSchema::int())
+                .required("complete", JsonSchema::bool()))
+            .done(),
+        act("watch.pause", "Pause a confirmed watch of the caller's person: no check runs until it is resumed.", VIEWER, No, "5", Change)
+            .pos("watch_id", TEXT, WATCH)
+            .writes()
+            .output(watch_output())
+            .done(),
+        act("watch.resume", "Let a paused watch of the caller's person go on. One paused because its read changed or drifted never goes on.", VIEWER, No, "5", Change)
+            .pos("watch_id", TEXT, WATCH)
+            .writes()
+            .output(watch_output())
+            .done(),
+        act("watch.end", "End a watch, by its person or by the caller that asked for it. Its checks and changes are kept.", VIEWER, No, "5", Change)
+            .pos("watch_id", TEXT, WATCH)
+            .writes()
+            .output(watch_output())
             .done(),
         // Building a target.
         act("target.add", "Register a target in the project: makes its folder and a first target file, with one surface where an address and its kind are given.", BUILDER, No, "5", Change)

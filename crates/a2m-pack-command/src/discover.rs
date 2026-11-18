@@ -1,15 +1,22 @@
 //! Discovery: what a program says about itself, through the help and
-//! version forms its target declares and nothing else.
+//! version forms its target declares and nothing else, and through the
+//! completion file and the manual page a person hands it.
 //!
 //! The discoverer starts no command. It reads the list of commands from
 //! the program's help, and each listed command's usage line, and makes one
-//! finding for each: seen to be listed, never run.
+//! finding for each: seen to be listed, never run. A fish completion file
+//! handed under `completions` and a manual page handed under `manual` are
+//! read as text before anything starts, and never run (decision 0284):
+//! each makes a `command_file` finding that says how much of it was read,
+//! and what they say of a listed command's options is put beside its usage
+//! line in that command's finding, which is then `inferred`.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use a2m_core::{
-    Digest, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, LimitationCode, PackPayload,
-    ProducedBy, Redact, Source, Step, Subject, Value, Values,
+    Coverage, Digest, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, LimitationCode,
+    PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -20,7 +27,9 @@ use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::codes::{self, DISCOVERER, PACK, SPAWN, SURFACE_KIND, TIMEOUT};
+use crate::metadata::{COMPLETIONS, FileRead, Handed, MANUAL, OptionFound, Takes};
 use crate::model::{Probe, StepPayload};
+use crate::{fish, manual};
 
 /// How many `commands/` files of one target are asked for their forms.
 const MOST_PROGRAMS: u32 = 16;
@@ -60,6 +69,45 @@ pub struct CommandFound {
     /// The version the program reported, when its target declares how to
     /// ask.
     pub version: Option<VersionSeen>,
+    /// The options a handed completion file or manual page states of the
+    /// command, each with what every source says of it. Empty, and left
+    /// out of the text, when no file says anything of it: the finding is
+    /// then exactly what the help alone gives.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<OptionFound>,
+}
+
+/// One option of the program as a whole, as a handed file states it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramOption {
+    /// Every name the file gives it.
+    pub flags: Vec<String>,
+    /// Whether it takes a value.
+    pub takes: Takes,
+    /// The value's name, where the file gives one.
+    pub value: Option<String>,
+    /// What the file says it does, redacted.
+    pub about: Option<String>,
+}
+
+/// What a `command_file` finding holds: one file handed to the scout, and
+/// how much of it was read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandFileFound {
+    /// The name it was handed under: `completions` or `manual`.
+    pub name: String,
+    /// The form it was read in: `fish`, `man`, or `mdoc`.
+    pub form: String,
+    /// How many lines (fish) or option entries (manual page) were read.
+    pub read: u64,
+    /// How many were not, by reason. Nothing that was not read was run.
+    pub unread: BTreeMap<String, u64>,
+    /// The options it states of the program as a whole.
+    pub program_options: Vec<ProgramOption>,
+    /// The words of commands it speaks of that the help does not list.
+    pub unlisted: Vec<String>,
 }
 
 impl CommandFound {
@@ -87,6 +135,7 @@ mod written {
 
     use super::CommandFound;
     use crate::json::{self, Json};
+    use crate::metadata::{OptionFound, OptionSaid, Takes};
 
     fn text(value: &Json) -> Option<String> {
         match value {
@@ -97,6 +146,51 @@ mod written {
 
     fn field<'a>(fields: &'a [(String, Json)], name: &str) -> Option<&'a Json> {
         fields.iter().find(|(key, _)| key == name).map(|(_, v)| v)
+    }
+
+    fn texts(value: &Json) -> Option<Vec<String>> {
+        match value {
+            Json::List(items) => items.iter().map(text).collect(),
+            _ => None,
+        }
+    }
+
+    fn maybe(value: &Json) -> Option<Option<String>> {
+        match value {
+            Json::Null => Some(None),
+            other => text(other).map(Some),
+        }
+    }
+
+    fn option(value: &Json) -> Option<OptionFound> {
+        let Json::Object(fields) = value else {
+            return None;
+        };
+        let said = match field(fields, "said")? {
+            Json::List(items) => items
+                .iter()
+                .map(|item| {
+                    let Json::Object(said) = item else {
+                        return None;
+                    };
+                    Some(OptionSaid {
+                        from: text(field(said, "from")?)?,
+                        takes: Takes::from_str(&text(field(said, "takes")?)?)?,
+                        value: maybe(field(said, "value")?)?,
+                        about: maybe(field(said, "about")?)?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+            _ => return None,
+        };
+        Some(OptionFound {
+            flags: texts(field(fields, "flags")?)?,
+            said,
+            disagree: match field(fields, "disagree")? {
+                Json::Bool(disagree) => *disagree,
+                _ => return None,
+            },
+        })
     }
 
     pub(super) fn from_text(found: &str) -> Option<CommandFound> {
@@ -125,6 +219,11 @@ mod written {
             platform: text(field(&fields, "platform")?)?,
             digest: text(field(&fields, "digest")?)?,
             version,
+            options: match field(&fields, "options") {
+                None => Vec::new(),
+                Some(Json::List(items)) => items.iter().map(option).collect::<Option<Vec<_>>>()?,
+                Some(_) => return None,
+            },
         };
         // Only what this crate itself would have written is accepted.
         let again = PackPayload::encode(&read).ok()?;
@@ -240,15 +339,207 @@ fn succeeded(values: &Values) -> bool {
         && values.get("truncated").and_then(Value::as_bool) == Some(false)
 }
 
+/// The name a fish completion line gives the program with `-c`: the file
+/// name of the surface's path, without the `.exe` of a Windows program.
+fn program_name(address: &str) -> String {
+    let file = address.rsplit(['/', '\\']).next().unwrap_or(address);
+    match file.len().checked_sub(4) {
+        Some(at) if file.is_char_boundary(at) && file[at..].eq_ignore_ascii_case(".exe") => {
+            file[..at].to_owned()
+        }
+        _ => file.to_owned(),
+    }
+}
+
+fn file_unreadable(name: &str, why: &str) -> Failure {
+    codes::failure(
+        FailureClass::Input,
+        codes::COMMAND_FILE_UNREADABLE,
+        format!("The file handed to the scout as `{name}` cannot be read: {why}."),
+        "Hand the file as plain UTF-8 text, or a manual page compressed with gzip; uncompress a page compressed any other way first.",
+    )
+}
+
+fn produced_by() -> ProducedBy {
+    ProducedBy {
+        provider: PACK.to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        component: None,
+    }
+}
+
+fn finding_failed(_: a2m_core::InvalidFinding) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        a2m_core::FailureCode::FINDING_INVALID,
+        "A finding about a listed command could not be made.",
+        "Report this to the command pack's author.",
+    )
+}
+
+fn payload<T: Serialize>(found: &T) -> Result<String, Failure> {
+    PackPayload::encode(found)
+        .map(|payload| String::from_utf8_lossy(payload.as_bytes()).into_owned())
+}
+
+/// Reads each file the scout was handed under a name this discoverer
+/// declares, before any program is started: a file that cannot be read
+/// stops the discovery with nothing run. The text is redacted whole before
+/// it is read.
+fn handed(scope: &DiscoveryScope<'_>) -> Result<Vec<(Handed, Digest)>, Failure> {
+    let program = program_name(&scope.surface.surface.address);
+    let limit = usize::try_from(scope.bounds.bytes).unwrap_or(usize::MAX);
+    let mut files = Vec::new();
+    for name in [COMPLETIONS, MANUAL] {
+        let Some(path) = scope.paths.get(name) else {
+            continue;
+        };
+        let bytes = path.read(scope.bounds.bytes)?;
+        let text = if name == MANUAL {
+            manual::text_of(&bytes, limit)
+        } else {
+            String::from_utf8(bytes.clone()).map_err(|_| "it is not UTF-8 text")
+        }
+        .map_err(|why| file_unreadable(name, why))?;
+        let text = scope.redact.redact(&text);
+        let read: FileRead = if name == MANUAL {
+            manual::read(&text, &program, scope.redact).map_err(|why| file_unreadable(name, why))?
+        } else {
+            fish::read(&text, &program, scope.redact)
+        };
+        files.push((Handed { name, read }, Digest::of(&bytes)));
+    }
+    Ok(files)
+}
+
 impl HelpDiscoverer {
+    /// The finding about one handed file.
+    fn file_finding(
+        &self,
+        file: &Handed,
+        digest: Digest,
+        listed: &[String],
+    ) -> Result<Finding, Failure> {
+        let (program, unlisted) = crate::metadata::beyond_commands(&file.read, listed);
+        let unread = file.read.unread_total();
+        let found = CommandFileFound {
+            name: file.name.to_owned(),
+            form: file.read.form.to_owned(),
+            read: file.read.read,
+            unread: fish::unread_counts(&file.read),
+            program_options: program
+                .into_iter()
+                .map(|option| ProgramOption {
+                    flags: option.flags,
+                    takes: option.takes,
+                    value: option.value,
+                    about: option.about,
+                })
+                .collect(),
+            unlisted,
+        };
+        let format = if file.name == MANUAL {
+            "manual_page"
+        } else {
+            "fish_completion"
+        };
+        let mut finding = Finding::about(
+            Subject::File {
+                digest,
+                format: format.to_owned(),
+                part: None,
+            },
+            codes::file_finding_kind(),
+            payload(&found)?,
+            Source::Artifact,
+            produced_by(),
+            self.clock.now(),
+        )
+        .level(EvidenceLevel::Inferred)
+        .coverage(if unread == 0 {
+            Coverage::Complete
+        } else {
+            Coverage::Partial
+        })
+        .limitation(
+            LimitationCode::NotExercised,
+            "The file was read as text and never run. Nothing it says of the program was tried, and a line or an entry it holds in a form the reader does not know is counted as unread, not interpreted.",
+        );
+        if file.read.unread.contains_key("bound") {
+            finding = finding.limitation(
+                LimitationCode::Truncated,
+                "The file states more options than the reader takes from one file.",
+            );
+        }
+        finding.build().map_err(finding_failed)
+    }
+
+    /// The finding about one listed command. With options a handed file
+    /// states, it is `inferred` from those files; without, it is what the
+    /// help showed, at `discovered`.
+    fn command_finding(
+        &self,
+        found: &CommandFound,
+        digest: Digest,
+        files: &[(Handed, Finding)],
+    ) -> Result<Finding, Failure> {
+        let subject = Subject::File {
+            digest,
+            format: "program".to_owned(),
+            part: None,
+        };
+        if found.options.is_empty() {
+            return Finding::about(
+                subject,
+                codes::finding_kind(),
+                payload(found)?,
+                Source::LiveSystem,
+                produced_by(),
+                self.clock.now(),
+            )
+            .level(EvidenceLevel::Discovered)
+            .limitation(
+                LimitationCode::NotExercised,
+                "The program's help lists the command. It was never run, and what its arguments mean is read from its usage line.",
+            )
+            .build()
+            .map_err(finding_failed);
+        }
+        let mut finding = Finding::about(
+            subject,
+            codes::finding_kind(),
+            payload(found)?,
+            Source::Artifact,
+            produced_by(),
+            self.clock.now(),
+        )
+        .level(EvidenceLevel::Inferred)
+        .limitation(
+            LimitationCode::NotExercised,
+            "The program's help lists the command, and the files handed to the scout state options of it, each with its source. Nothing was run, and where two sources disagree neither is chosen.",
+        );
+        for (file, parent) in files {
+            let used = found
+                .options
+                .iter()
+                .any(|option| option.said.iter().any(|said| said.from == file.name));
+            if used {
+                finding = finding.derived_from(parent);
+            }
+        }
+        finding.build().map_err(finding_failed)
+    }
+
     async fn look(
         &self,
         port: &dyn SandboxPort,
         scope: &DiscoveryScope<'_>,
         out: &mut dyn FindingSink,
     ) -> Result<DiscoveryReport, Failure> {
+        let files = handed(scope)?;
         let mut report = DiscoveryReport::default();
         let mut seen = 0_usize;
+        let mut commands: Vec<(CommandFound, Digest)> = Vec::new();
         'programs: for program in 0..MOST_PROGRAMS {
             let version = run(port, scope, program, Probe::Version)
                 .await?
@@ -288,9 +579,9 @@ impl HelpDiscoverer {
             // redactor sees the whole text too, before any line of it is
             // cut out.
             let help = scope.redact.redact(text(&overview, "stdout"));
-            let (commands, dropped) = listed_commands(&help);
+            let (listed, dropped) = listed_commands(&help);
             report.dropped += dropped;
-            for (name, about) in commands {
+            for (name, about) in listed {
                 if scope.deadline.passed() {
                     report.bounds_hit.push("seconds".to_owned());
                     break 'programs;
@@ -314,47 +605,38 @@ impl HelpDiscoverer {
                         break;
                     }
                 }
-                let found = CommandFound {
-                    name: scope.redact.redact(&name),
-                    about: scope.redact.redact(&about),
-                    usage: usage.map(|usage| scope.redact.redact(&usage)),
-                    platform: current_platform(),
-                    digest: digest.to_string(),
-                    version: version.clone(),
-                };
-                let finding = Finding::about(
-                    Subject::File {
-                        digest,
-                        format: "program".to_owned(),
-                        part: None,
+                commands.push((
+                    CommandFound {
+                        name: scope.redact.redact(&name),
+                        about: scope.redact.redact(&about),
+                        usage: usage.map(|usage| scope.redact.redact(&usage)),
+                        platform: current_platform(),
+                        digest: digest.to_string(),
+                        version: version.clone(),
+                        options: Vec::new(),
                     },
-                    codes::finding_kind(),
-                    PackPayload::encode(&found)
-                        .map(|payload| String::from_utf8_lossy(payload.as_bytes()).into_owned())?,
-                    Source::LiveSystem,
-                    ProducedBy {
-                        provider: PACK.to_owned(),
-                        version: env!("CARGO_PKG_VERSION").to_owned(),
-                        component: None,
-                    },
-                    self.clock.now(),
-                )
-                .level(EvidenceLevel::Discovered)
-                .limitation(
-                    LimitationCode::NotExercised,
-                    "The program's help lists the command. It was never run, and what its arguments mean is read from its usage line.",
-                )
-                .build()
-                .map_err(|_| {
-                    Failure::new(
-                        FailureClass::Input,
-                        a2m_core::FailureCode::FINDING_INVALID,
-                        "A finding about a listed command could not be made.",
-                        "Report this to the command pack's author.",
-                    )
-                })?;
-                out.found(finding)?;
+                    digest,
+                ));
             }
+        }
+        // The files' own findings come first: a command's finding that uses
+        // what a file says is derived from that file's.
+        let listed: Vec<String> = commands
+            .iter()
+            .map(|(found, _)| found.name.clone())
+            .collect();
+        let mut parents = Vec::new();
+        for (file, digest) in files {
+            report.dropped += file.read.unread_total();
+            let finding = self.file_finding(&file, digest, &listed)?;
+            out.found(finding.clone())?;
+            parents.push((file, finding));
+        }
+        let files_read: Vec<&Handed> = parents.iter().map(|(file, _)| file).collect();
+        for (mut found, digest) in commands {
+            found.options =
+                crate::metadata::options_of(&found.name, found.usage.as_deref(), &files_read);
+            out.found(self.command_finding(&found, digest, &parents)?)?;
         }
         Ok(report)
     }
@@ -403,12 +685,54 @@ impl Describer for HelpDescriber {
             };
             untrusted.push(self.redact.redact(&line));
         }
+        // What the handed files gave: how many, how much of them was not
+        // read, and how many commands they state options of.
+        let files: Vec<&Finding> = findings
+            .iter()
+            .filter(|finding| *finding.kind() == codes::file_finding_kind())
+            .collect();
+        let unread: u64 = files
+            .iter()
+            .filter_map(|finding| match crate::json::parse(finding.found()).ok()? {
+                crate::json::Json::Object(fields) => fields
+                    .into_iter()
+                    .find(|(key, _)| key == "unread")
+                    .map(|(_, unread)| unread),
+                _ => None,
+            })
+            .map(|unread| match unread {
+                crate::json::Json::Object(counts) => counts
+                    .iter()
+                    .filter_map(|(_, count)| match count {
+                        crate::json::Json::Number(digits) => digits.parse::<u64>().ok(),
+                        _ => None,
+                    })
+                    .sum(),
+                _ => 0,
+            })
+            .sum();
+        let described = read
+            .iter()
+            .filter(|found| !found.options.is_empty())
+            .count();
+        let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        let mut text = format!(
+            "The program's help lists {} commands. None was run: whether a command reads or writes is not known until a person declares it.",
+            read.len()
+        );
+        if !files.is_empty() {
+            text.push_str(&format!(
+                " {} handed files were read as text and never run; they state options of {described} commands, and {unread} of their lines or entries were in a form the reader does not take and were not read.",
+                files.len()
+            ));
+        }
         Description {
-            text: format!(
-                "The program's help lists {} commands. None was run: whether a command reads or writes is not known until a person declares it.",
-                read.len()
-            ),
-            data: Values::new().with("commands", i64::try_from(read.len()).unwrap_or(i64::MAX)),
+            text,
+            data: Values::new()
+                .with("commands", count(read.len()))
+                .with("files", count(files.len()))
+                .with("described", count(described))
+                .with("unread", i64::try_from(unread).unwrap_or(i64::MAX)),
             untrusted,
         }
     }

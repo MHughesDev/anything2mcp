@@ -5,28 +5,11 @@
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// The key store does not answer. The kernel is degraded until it does.
-pub const KEY_STORE_UNREACHABLE: FailureCode = FailureCode::fixed("key_store_unreachable");
-/// The root that wrapped a key is no longer in the key store.
-pub const KEY_STORE_ENTRY_MISSING: FailureCode = FailureCode::fixed("key_store_entry_missing");
-/// A sealed item does not open under the context given.
-pub const SEALED_ITEM_MISMATCH: FailureCode = FailureCode::fixed("sealed_item_mismatch");
-/// A sealed item's format or cipher is one this engine does not know.
-pub const SEALED_FORMAT_UNSUPPORTED: FailureCode = FailureCode::fixed("sealed_format_unsupported");
-/// The passphrase route was asked for and is not switched on.
-pub const VAULT_PASSPHRASE_NOT_ENABLED: FailureCode =
-    FailureCode::fixed("vault_passphrase_not_enabled");
-/// The passphrase given is not the one the keys were wrapped under.
-pub const VAULT_PASSPHRASE_MISMATCH: FailureCode = FailureCode::fixed("vault_passphrase_mismatch");
-/// The passphrase given is too short to derive a root key from.
-pub const VAULT_PASSPHRASE_TOO_SHORT: FailureCode =
-    FailureCode::fixed("vault_passphrase_too_short");
-/// The passphrase route is chosen and no passphrase was given.
-pub const VAULT_PASSPHRASE_MISSING: FailureCode = FailureCode::fixed("vault_passphrase_missing");
-/// A key record already exists, or changed before it could be replaced.
-pub const KEY_RECORD_CONFLICT: FailureCode = FailureCode::fixed("key_record_conflict");
-/// The operating system gave no random bytes, so no key or nonce was made.
-pub const RANDOMNESS_UNAVAILABLE: FailureCode = FailureCode::fixed("randomness_unavailable");
+pub use crate::codes::{
+    KEY_RECORD_CONFLICT, KEY_STORE_ENTRY_MISSING, KEY_STORE_UNREACHABLE, RANDOMNESS_UNAVAILABLE,
+    SEALED_FORMAT_UNSUPPORTED, SEALED_ITEM_MISMATCH, VAULT_PASSPHRASE_MISMATCH,
+    VAULT_PASSPHRASE_MISSING, VAULT_PASSPHRASE_NOT_ENABLED, VAULT_PASSPHRASE_TOO_SHORT,
+};
 
 /// The key store did not answer. `what` is a fixed phrase, never text from
 /// the key store itself.

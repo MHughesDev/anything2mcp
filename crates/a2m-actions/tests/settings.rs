@@ -305,6 +305,84 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
     assert_eq!(problems.len(), 2);
 }
 
+/// Decision 0283: a watch acts while its person is away, so its limits are
+/// protected. A person's own file, a variable, or a flag may raise the
+/// floor and never lower it, below the default or below what an
+/// administrator's installation file set; and the schema never takes a
+/// floor below a minute.
+#[test]
+fn a_settings_file_of_the_person_cannot_lower_the_watch_floor() {
+    let raised = Settings::load(&Sources {
+        user: file("user.toml", "[watch]\nshortest_interval_seconds = 300\n"),
+        ..Sources::none()
+    })
+    .unwrap();
+    assert_eq!(raised.int("watch.shortest_interval_seconds"), Some(300));
+    // Below the floor of the type: never taken, from any layer.
+    let failure = Settings::load(&Sources {
+        user: file("user.toml", "[watch]\nshortest_interval_seconds = 30\n"),
+        ..Sources::none()
+    })
+    .unwrap_err();
+    assert_eq!(failure.class(), FailureClass::Input, "{failure}");
+    // An administrator raised it; the person's own file, a variable, and a
+    // flag cannot bring it back down.
+    for (name, sources) in [
+        (
+            "user",
+            Sources {
+                user: file("user.toml", "[watch]\nshortest_interval_seconds = 120\n"),
+                ..Sources::none()
+            },
+        ),
+        (
+            "environment",
+            Sources {
+                environment: BTreeMap::from([(
+                    "A2M_WATCH__SHORTEST_INTERVAL_SECONDS".to_owned(),
+                    "120".to_owned(),
+                )]),
+                ..Sources::none()
+            },
+        ),
+        (
+            "flag",
+            Sources::none().with_flag("watch.shortest_interval_seconds", "120"),
+        ),
+    ] {
+        let failure = Settings::load(&Sources {
+            installation: file(
+                "installation.toml",
+                "[watch]\nshortest_interval_seconds = 600\n",
+            ),
+            installation_keeper: InstallationKeeper::Administrator,
+            ..sources
+        })
+        .unwrap_err();
+        assert_eq!(failure.code().as_str(), "setting_protected", "{name}");
+        assert!(
+            failure
+                .message()
+                .contains("watch.shortest_interval_seconds"),
+            "{name}: {failure}"
+        );
+    }
+    // The other four keys, each loosened from the person's own file.
+    for loosening in [
+        "[watch]\nlongest_days = 30\n",
+        "[watch]\nmost = 50\n",
+        "[watch]\nbudget_share_percent = 20\n",
+        "[watch]\nreserve_percent = 10\n",
+    ] {
+        let failure = Settings::load(&Sources {
+            user: file("user.toml", loosening),
+            ..Sources::none()
+        })
+        .unwrap_err();
+        assert_eq!(failure.code().as_str(), "setting_protected", "{loosening}");
+    }
+}
+
 #[test]
 fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     let failure = Settings::load(&Sources {

@@ -175,6 +175,18 @@ pub(crate) const ROLES: &[(&str, &str)] = &[
 /// The roles whose value is text a read may give.
 const TEXT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox"];
 
+/// The subroles of the buttons the system draws in a window's title bar.
+/// Each is listed, and nothing under it is walked: what the system puts
+/// inside one changes between two walks of a window that did not change
+/// (a run on the hosted macOS runner found a group inside one in the first
+/// walk and not in the second), and none of it is the application's.
+pub(crate) const FRAME_BUTTONS: &[&str] = &[
+    "AXCloseButton",
+    "AXMinimizeButton",
+    "AXZoomButton",
+    "AXFullScreenButton",
+];
+
 /// Where an element stands in a walk, which refines its role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Place {
@@ -727,15 +739,20 @@ impl Ax {
         Ok(String::new())
     }
 
-    /// The items directly under an element of `role` at `place`, at most
-    /// `most`. A table's are its heading row, then its rows; its columns,
-    /// which hold the same cells again, are not walked.
+    /// The items directly under an element of `role` and `subrole` at
+    /// `place`, at most `most`. A table's are its heading row, then its
+    /// rows; its columns, which hold the same cells again, are not walked.
+    /// A title bar's button has none ([`FRAME_BUTTONS`]).
     fn children(
         element: &CFRetained<AXUIElement>,
         role: &str,
+        subrole: &str,
         place: Place,
         most: usize,
     ) -> Result<Vec<Item>, AxError> {
+        if FRAME_BUTTONS.contains(&subrole) {
+            return Ok(Vec::new());
+        }
         if place == Place::Heading {
             return Ok(elements_of(element, "AXChildren", most)?
                 .into_iter()
@@ -812,10 +829,8 @@ impl Ax {
                         };
                         self.seen.push(format!("{role}/{subrole}{titled}"));
                     }
-                    #[cfg(not(test))]
-                    let _ = subrole;
                     labelling.extend(label);
-                    let children = Self::children(&element, &role, place, limits.nodes)?;
+                    let children = Self::children(&element, &role, &subrole, place, limits.nodes)?;
                     (node, element, children)
                 }
                 Item::Headings(table, headings) => {
@@ -1679,6 +1694,22 @@ mod tests {
             "{said}"
         );
         assert_eq!(has("push_button", "Save"), 1, "{said}");
+        // The title bar's buttons are listed, and nothing under them is.
+        let frame_buttons: Vec<&Node> = tree
+            .nodes
+            .iter()
+            .zip(&seen)
+            .filter(|(_, seen)| {
+                seen.split_once('/')
+                    .is_some_and(|(_, subrole)| FRAME_BUTTONS.contains(&subrole))
+            })
+            .map(|(node, _)| node)
+            .collect();
+        assert!(!frame_buttons.is_empty(), "no title bar button:\n{said}");
+        assert!(
+            frame_buttons.iter().all(|node| node.children.is_empty()),
+            "{said}"
+        );
         assert!(
             tree.nodes
                 .iter()

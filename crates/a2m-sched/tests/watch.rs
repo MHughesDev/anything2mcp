@@ -462,6 +462,85 @@ async fn a_hold_defers_the_check_and_leaves_a_gap_when_released() {
     start(&stand, &due[0]).await;
 }
 
+/// Decision 0283 saw a check refused for its budget wait a whole interval,
+/// past its next due time, and become a gap. It waits until the share
+/// refills instead, which is well before its next due time here, though a
+/// lease is longer than the interval.
+#[tokio::test]
+async fn a_check_refused_for_its_budget_waits_until_the_share_refills_and_misses_nothing() {
+    let settings = SchedSettings {
+        lease_length: Duration::from_secs(INTERVAL * 2),
+        ..SchedSettings::default()
+    };
+    let stand = Stand::with("watch-refill", settings).await;
+    stand.hello(1).await;
+    // Ten requests every 100 seconds on the surface: the watches' tenth of
+    // it holds one request and refills one every 100 seconds.
+    let surface = BudgetKey::surface(workspace(), &target(), &environment(), "orders").unwrap();
+    stand
+        .sched
+        .set_budget(
+            surface,
+            RateLimit {
+                capacity: 10,
+                refill: 10,
+                per: Duration::from_secs(100),
+            },
+        )
+        .await
+        .unwrap();
+    let first = confirmed(&stand, 1).await;
+    // Another input, so that its check is a run of its own.
+    let asked = stand
+        .sched
+        .ask_watch(NewWatch {
+            input_hash: Digest::of(b"status=closed"),
+            ..new_watch(&stand, 1, INTERVAL)
+        })
+        .await
+        .unwrap();
+    let second = confirm(&stand, asked.id, 1).await;
+    move_to(&stand, first_due(&first).max(first_due(&second)));
+    let due = stand.sched.due_watches().await.unwrap().checks;
+    assert_eq!(due.len(), 2);
+    start(&stand, &due[0]).await;
+    let now = stand.now();
+    let CheckAdmission::Deferred { refused, until } = stand
+        .sched
+        .submit_check(&due[1], check_of(&due[1].watch))
+        .await
+        .unwrap()
+    else {
+        panic!("the share holds one request, which the first check took");
+    };
+    assert_eq!(refused.code(), &codes::RATE_LIMITED);
+    assert_eq!(refused.retry_after_ms(), Some(100_000));
+    assert_eq!(
+        until.as_unix_millis() - now.as_unix_millis(),
+        100_000,
+        "deferred until the share refills, not for a lease nor an interval"
+    );
+    let later = due[1].watch.id;
+    let next_due = due_at(
+        due[1].watch.confirmed.unwrap().1,
+        due[1].watch.phase.unwrap(),
+        due[1].watch.interval,
+        due[1].due.index + 1,
+    );
+    assert!(until < next_due, "before its next due time");
+    assert!(stand.sched.due_watches().await.unwrap().checks.is_empty());
+    assert_eq!(stand.sched.next_watch_due().await.unwrap(), Some(until));
+    // When the share has refilled, the same due time is checked: no gap.
+    move_to(&stand, until);
+    let due = stand.sched.due_watches().await.unwrap().checks;
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].watch.id, later);
+    assert_eq!(due[0].due.index, 0);
+    assert!(!due[0].due.catch_up);
+    start(&stand, &due[0]).await;
+    assert!(!kinds(&stand, later).await.contains(&ChangeKind::Gap));
+}
+
 #[tokio::test]
 async fn a_check_leaves_its_share_of_each_budget_to_the_callers_own_reads() {
     let stand = Stand::new("watch-budget").await;

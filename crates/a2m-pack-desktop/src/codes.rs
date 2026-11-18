@@ -1,97 +1,96 @@
 //! The failure codes this pack produces. Each belongs to exactly one class,
-//! and each is declared in the pack's manifest. `timeout` and
-//! `connection_lost` are the provider contract's own.
+//! and each is declared in the pack's manifest; a test holds the two lists
+//! together. `timeout`, `connection_lost`, `no_confirmation`, and
+//! `read_only_posture` are the provider contract's own, which the driver
+//! returns and the manifest does not declare; [`PASSED_ON`] names the codes
+//! of other crates the manifest declares, and there are none.
+//!
+//! Whether a `busy` code passes by itself, and why: `session_in_use` does,
+//! because the other write that holds the desktop ends by its own deadline.
+//! The others do not: a person must start the application, turn on or allow
+//! accessibility, start it without administrator rights, or run the target
+//! on a system the pack is built for.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
 
-/// `drift`: no locator of a field or a table matched.
-pub const LOCATOR_NOT_FOUND: FailureCode = FailureCode::fixed("locator_not_found");
-/// `drift`: a locator matched more than one element, or a screen's window
-/// matched more than one window. The first is never picked.
-pub const LOCATOR_AMBIGUOUS: FailureCode = FailureCode::fixed("locator_ambiguous");
-/// `drift`: a table's headings are not the ones its screen declares, or a
-/// row of it does not have one cell for each heading.
-pub const FINGERPRINT_MISMATCH: FailureCode = FailureCode::fixed("fingerprint_mismatch");
-/// `unknown_variant`: the window a screen declares did not appear, or did
-/// not become ready, by the step's deadline.
-pub const UNEXPECTED_PAGE: FailureCode = FailureCode::fixed("unexpected_page");
-/// `unknown_variant`: more than one running application is the program
-/// and the name the surface states.
-pub const APPLICATION_AMBIGUOUS: FailureCode = FailureCode::fixed("application_ambiguous");
-/// `unknown_variant`: the running application's program is not the one
-/// whose digest the surface states.
-pub const APPLICATION_NOT_PROVEN: FailureCode = FailureCode::fixed("application_not_proven");
-/// `unknown_variant`: a value is longer than the pack reads.
-pub const READ_TOO_LARGE: FailureCode = FailureCode::fixed("read_too_large");
-/// `policy`: a step would read the value of a control that holds a secret.
-pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
-/// `busy`: no running application is the program and the name the surface
-/// states. The pack starts nothing.
-pub const APPLICATION_NOT_RUNNING: FailureCode = FailureCode::fixed("application_not_running");
-/// `busy`: the session's accessibility switch is off and the application
-/// publishes no tree (Linux), or the person has not allowed this program to
-/// use the system's accessibility interface (macOS). The pack changes no
-/// setting.
-pub const ACCESSIBILITY_OFF: FailureCode = FailureCode::fixed("accessibility_off");
-/// `busy`: the application runs at a higher level than the engine, as
-/// administrator. Windows only; the pack does not reach it.
-pub const TARGET_ELEVATED: FailureCode = FailureCode::fixed("target_elevated");
-/// `policy`: the program the surface states runs as another user, or on
-/// Windows in another session. Windows and macOS; the pack reads none of
-/// it.
-pub const APPLICATION_NOT_OWNED: FailureCode = FailureCode::fixed("application_not_owned");
-/// `busy`: this pack has no back end for the operating system it runs on.
-pub const SYSTEM_NOT_BUILT: FailureCode = FailureCode::fixed("system_not_built");
-/// `input`: a step this driver cannot carry out as the plan wrote it.
-pub const STEP_NOT_USABLE: FailureCode = FailureCode::fixed("step_not_usable");
-/// `rejected`: after a committing action, the window shows a state its
-/// screen declares as the application's refusal. Nothing was stored.
-pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
-/// `unknown_variant`: a field takes no value today: it is read-only, or not
-/// editable. Nothing was set.
-pub const FIELD_READ_ONLY: FailureCode = FailureCode::fixed("field_read_only");
-/// `unknown_variant`: after a `set`, the field holds another value than
-/// the one set: the application changed it. Nothing was saved.
-pub const VALUE_NOT_HELD: FailureCode = FailureCode::fixed("value_not_held");
-/// `unknown_variant`: the element does not offer what the step needs: an
-/// editable text, or an action of the name the screen declares.
-pub const UNEXPECTED_CONTROL: FailureCode = FailureCode::fixed("unexpected_control");
-/// `policy`: a step would set a control that holds a secret. Sign-in to a
-/// desktop application is not built.
-pub const PASSWORD_SET_REFUSED: FailureCode = FailureCode::fixed("password_set_refused");
-/// `busy`: another write holds this engine's desktop past the step's
-/// deadline. Nothing was sent.
-pub const SESSION_IN_USE: FailureCode = FailureCode::fixed("session_in_use");
-/// `busy`: this pack writes only on Linux in this version. Nothing was
-/// sent.
-pub const WRITES_NOT_BUILT: FailureCode = FailureCode::fixed("writes_not_built");
+a2m_core::failure_codes! {
+    LOCATOR_NOT_FOUND = Drift, "locator_not_found",
+        meaning "No locator of a field or a table matched.",
+        next "Take a snapshot of the window and correct the screen's locators.";
+    LOCATOR_AMBIGUOUS = Drift, "locator_ambiguous",
+        meaning "A locator matched more than one element, or a screen's window matched more than one window. The first is never picked.",
+        next "Give the screen a locator the application holds once, or leave the field out.";
+    FINGERPRINT_MISMATCH = Drift, "fingerprint_mismatch",
+        meaning "A table's headings are not the ones its screen declares, or a row of it does not have one cell for each heading.",
+        next "Take a snapshot of the window and correct the screen's `header`.";
+    UNEXPECTED_PAGE = UnknownVariant, "unexpected_page",
+        meaning "The window a screen declares did not appear, or did not become ready, by the step's deadline.",
+        next "Check that the application shows the window the screen declares, then run the tool again.";
+    APPLICATION_AMBIGUOUS = UnknownVariant, "application_ambiguous",
+        meaning "More than one running application is the program and the name the surface states.",
+        next "Close the other copies of the application, then run the tool again.";
+    APPLICATION_NOT_PROVEN = UnknownVariant, "application_not_proven",
+        meaning "The running application's program is not the one whose digest the surface states.",
+        next "Review the program that is installed, then state its digest in the surface, or reinstall the reviewed one.";
+    READ_TOO_LARGE = UnknownVariant, "read_too_large",
+        meaning "A value is longer than the pack reads.",
+        next "Read a field that holds less, or a smaller window.";
+    PASSWORD_READ_REFUSED = Policy, "password_read_refused",
+        meaning "A step would read the value of a control that holds a secret.",
+        next "Read another field. A secret is never an output of a tool.";
+    APPLICATION_NOT_OWNED = Policy, "application_not_owned",
+        meaning "The program the surface states runs as another user, or on Windows in another session. Windows and macOS; the pack reads none of it.",
+        next "Start the application in your own session, as yourself, then run the tool again.";
+    APPLICATION_NOT_RUNNING = Busy, "application_not_running",
+        meaning "No running application is the program and the name the surface states. The pack starts nothing.",
+        next "Start the application as you normally do, then run the tool again.",
+        passes not_by_itself;
+    ACCESSIBILITY_OFF = Busy, "accessibility_off",
+        meaning "The session's accessibility switch is off and the application publishes no tree (Linux), or the person has not allowed this program to use the system's accessibility interface (macOS). The pack changes no setting.",
+        next "Turn on the desktop's accessibility setting, or allow the program that started the engine to use the system's accessibility interface, then run the tool again.",
+        passes not_by_itself;
+    TARGET_ELEVATED = Busy, "target_elevated",
+        meaning "The application runs at a higher level than the engine, as administrator. Windows only; the pack does not reach it.",
+        next "Start the application as yourself, without administrator rights, then run the tool again.",
+        passes not_by_itself;
+    SYSTEM_NOT_BUILT = Busy, "system_not_built",
+        meaning "This pack has no back end for the operating system it runs on.",
+        next "Run the target on Linux, Windows, or macOS.",
+        passes not_by_itself;
+    STEP_NOT_USABLE = Input, "step_not_usable",
+        meaning "A step this driver cannot carry out as the plan wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
+        next "Compile the target again with the version of the desktop pack that is enabled.";
+    APP_VALIDATION_ERROR = Rejected, "app_validation_error",
+        meaning "After a committing action, the window shows a state its screen declares as the application's refusal. Nothing was stored.",
+        next "Correct the values and run the tool again; the application refused them.";
+    FIELD_READ_ONLY = UnknownVariant, "field_read_only",
+        meaning "A field takes no value today: it is read-only, or not editable. Nothing was set.",
+        next "Look at the application; the field may be locked for this record.";
+    VALUE_NOT_HELD = UnknownVariant, "value_not_held",
+        meaning "After a `set`, the field holds another value than the one set: the application changed it. Nothing was saved.",
+        next "Give a value the field holds as it is written, such as a shorter one.";
+    UNEXPECTED_CONTROL = UnknownVariant, "unexpected_control",
+        meaning "The element does not offer what the step needs: an editable text, or an action of the name the screen declares.",
+        next "Take a snapshot of the window and correct the screen's field or the action's `perform`.";
+    PASSWORD_SET_REFUSED = Policy, "password_set_refused",
+        meaning "A step would set a control that holds a secret. Sign-in to a desktop application is not built.",
+        next "Leave the field out. Signing in to a desktop application is not built in this version.";
+    SESSION_IN_USE = Busy, "session_in_use",
+        meaning "Another write holds this engine's desktop past the step's deadline. Nothing was sent.",
+        next "Run the tool again once the other write has ended.",
+        passes by_itself;
+    WRITES_NOT_BUILT = Busy, "writes_not_built",
+        meaning "This pack writes only on Linux in this version. Nothing was sent.",
+        next "Run the write on Linux. On this system the pack reads only.",
+        passes not_by_itself;
+}
 
-/// Every code of this pack with its one class, as the manifest declares
-/// them. A test holds the two lists together.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Drift, "locator_not_found"),
-    (FailureClass::Drift, "locator_ambiguous"),
-    (FailureClass::Drift, "fingerprint_mismatch"),
-    (FailureClass::UnknownVariant, "unexpected_page"),
-    (FailureClass::UnknownVariant, "application_ambiguous"),
-    (FailureClass::UnknownVariant, "application_not_proven"),
-    (FailureClass::UnknownVariant, "read_too_large"),
-    (FailureClass::Policy, "password_read_refused"),
-    (FailureClass::Policy, "application_not_owned"),
-    (FailureClass::Busy, "application_not_running"),
-    (FailureClass::Busy, "accessibility_off"),
-    (FailureClass::Busy, "target_elevated"),
-    (FailureClass::Busy, "system_not_built"),
-    (FailureClass::Input, "step_not_usable"),
-    (FailureClass::Rejected, "app_validation_error"),
-    (FailureClass::UnknownVariant, "field_read_only"),
-    (FailureClass::UnknownVariant, "value_not_held"),
-    (FailureClass::UnknownVariant, "unexpected_control"),
-    (FailureClass::Policy, "password_set_refused"),
-    (FailureClass::Busy, "session_in_use"),
-    (FailureClass::Busy, "writes_not_built"),
-];
+/// The codes of other crates the driver returns as they are, which the
+/// manifest declares too. There are none: the provider contract's codes the
+/// driver returns are the contract's, and the manifest does not declare
+/// them.
+pub const PASSED_ON: &[FailureCode] = &[];
 
 pub(crate) fn failure(
     class: FailureClass,

@@ -831,6 +831,66 @@ pub const SCHEMA: &[SettingDef] = &[
         "Runners are in the engine's own process and hold no certificate.",
         "remote runners, with the server (milestone 9 of the roadmap)",
     ),
+    // Watches (decisions 0247, 0262, 0283). Each is protected: a watch acts
+    // while its person is away, so only a person may loosen its limits.
+    protected(
+        def(
+            "watch.shortest_interval_seconds",
+            Kind::Int {
+                min: 60,
+                max: 86_400,
+            },
+            N(60),
+            U,
+            NextStart,
+            "The shortest interval between a watch's checks, in seconds. Never below 60, whatever any layer says.",
+        ),
+        Safer::Higher,
+    ),
+    protected(
+        def(
+            "watch.longest_days",
+            Kind::Int { min: 1, max: 366 },
+            N(7),
+            U,
+            NextStart,
+            "The longest a watch lasts, in days from when it is asked for.",
+        ),
+        Safer::Lower,
+    ),
+    protected(
+        def(
+            "watch.most",
+            Kind::Int { min: 1, max: 1_000 },
+            N(20),
+            U,
+            NextStart,
+            "The most watches one person may have that have not ended.",
+        ),
+        Safer::Lower,
+    ),
+    protected(
+        def(
+            "watch.budget_share_percent",
+            Kind::Int { min: 1, max: 50 },
+            N(10),
+            U,
+            NextStart,
+            "The share of a surface's sustained rate, in percent, that all watches on it may take together.",
+        ),
+        Safer::Lower,
+    ),
+    protected(
+        def(
+            "watch.reserve_percent",
+            Kind::Int { min: 0, max: 90 },
+            N(50),
+            U,
+            NextStart,
+            "The share of each budget's capacity, in percent, that a watch's check leaves for other work.",
+        ),
+        Safer::Higher,
+    ),
     // Authoring and the scout.
     def(
         "authoring.scout.run",

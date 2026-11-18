@@ -125,7 +125,9 @@ impl Connector {
     /// `policy`/`peer_not_allowed` when what answers is not this user's;
     /// `input`/`local_api_mismatch` when the engine speaks another version
     /// of the local API; `transient`/`connection_lost` when the engine
-    /// went away, which for a hello means it stopped while starting;
+    /// went away, which for a hello means it stopped while starting, and,
+    /// on macOS and Linux, when it closed its channel with this connection
+    /// made and not yet taken, as an engine that is stopping does;
     /// `busy`/`engine_unreachable`, pointing at the engine's log, when an
     /// engine holds the channel and does not answer the hello within
     /// [`HELLO_PATIENCE`], or, on Windows, keeps every instance of the
@@ -217,25 +219,13 @@ impl Connector {
                 // the channel and does not answer, as a stalled hello.
                 #[cfg(windows)]
                 ConnectError::Busy => hello_unanswered(&self.log),
+                // The engine closed its channel with this connection made
+                // and untaken: it is stopping, and it had nothing.
+                #[cfg(unix)]
+                ConnectError::Lost => hello_lost(&self.log),
                 ConnectError::Io(error) => codes::unavailable("The local channel", &error),
             })?;
-        let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-            .await
-            .map_err(|_| codes::lost())?;
-        // The connection ends when the link is dropped, and this task with
-        // it. When the connection ends first, the link is told, so that no
-        // request waits on a connection that is gone.
-        let (ended, gone) = watch::channel(false);
-        tokio::spawn(async move {
-            let _ = connection.await;
-            ended.send_replace(true);
-        });
-        Ok(Link {
-            sender: Mutex::new(sender),
-            gone,
-            engine_version: self.version,
-            start_variables: None,
-        })
+        Link::over(stream, self.version).await
     }
 }
 
@@ -252,14 +242,98 @@ fn not_an_engine() -> Failure {
 pub struct Link {
     sender: Mutex<SendRequest<Body>>,
     /// Turns true when the connection has ended.
-    gone: watch::Receiver<bool>,
+    gone: watch::Receiver<Option<Seen>>,
     engine_version: Version,
     /// The engine's start variables, by name and digest, as its hello
     /// named them; `None` when it named none.
     start_variables: Option<BTreeMap<String, String>>,
 }
 
+/// What the client saw when a connection ended with no whole answer. The
+/// list is closed: only these words ever reach a message, never the
+/// library's own text, which could hold an address or a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Seen {
+    Reset,
+    ClosedBeforeAnswer,
+    CutShort,
+    WriteFailed,
+    NotWellFormed,
+    NoDetail,
+}
+
+impl Seen {
+    pub(crate) const fn words(self) -> &'static str {
+        match self {
+            Self::Reset => "the connection was reset",
+            Self::ClosedBeforeAnswer => "the connection closed before any answer",
+            Self::CutShort => "the answer was cut short",
+            Self::WriteFailed => "the write of the request failed",
+            Self::NotWellFormed => "the answer was not well formed",
+            Self::NoDetail => "no detail",
+        }
+    }
+
+    /// By the kind of the system's I/O error.
+    pub(crate) const fn of_io(kind: std::io::ErrorKind) -> Self {
+        use std::io::ErrorKind;
+        match kind {
+            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => Self::Reset,
+            ErrorKind::BrokenPipe => Self::WriteFailed,
+            ErrorKind::UnexpectedEof => Self::CutShort,
+            _ => Self::NoDetail,
+        }
+    }
+
+    /// By the HTTP library's error: an I/O error under it first, then its
+    /// own kinds. Its text is never read.
+    pub(crate) fn of(error: &hyper::Error) -> Self {
+        let mut source = std::error::Error::source(error);
+        while let Some(inner) = source {
+            if let Some(io) = inner.downcast_ref::<std::io::Error>() {
+                return Self::of_io(io.kind());
+            }
+            source = inner.source();
+        }
+        if error.is_parse() || error.is_parse_status() || error.is_parse_too_large() {
+            Self::NotWellFormed
+        } else if error.is_incomplete_message() || error.is_closed() || error.is_canceled() {
+            Self::ClosedBeforeAnswer
+        } else {
+            Self::NoDetail
+        }
+    }
+}
+
 impl Link {
+    /// A link over a connection that is made: the HTTP handshake, and a
+    /// task that tells the link when the connection ends and what was seen.
+    pub(crate) async fn over<T>(stream: T, engine_version: Version) -> Result<Self, Failure>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .map_err(|error| codes::lost_seeing(Seen::of(&error)))?;
+        // The connection ends when the link is dropped, and this task with
+        // it. When the connection ends first, the link is told, so that no
+        // request waits on a connection that is gone.
+        let (ended, gone) = watch::channel(None);
+        tokio::spawn(async move {
+            let seen = match connection.await {
+                Ok(()) => Seen::ClosedBeforeAnswer,
+                Err(error) => Seen::of(&error),
+            };
+            ended.send_replace(Some(seen));
+        });
+        Ok(Self {
+            sender: Mutex::new(sender),
+            gone,
+            engine_version,
+            start_variables: None,
+        })
+    }
+
     /// The version of the engine that answered the hello.
     #[must_use]
     pub const fn engine_version(&self) -> Version {
@@ -308,17 +382,23 @@ impl Link {
         let mut gone = self.gone.clone();
         let answered = async {
             // A connection that cannot take a request has been given none.
-            sender.ready().await.map_err(|_| codes::lost())?;
+            sender
+                .ready()
+                .await
+                .map_err(|error| codes::lost_seeing(Seen::of(&error)))?;
             match sender.try_send_request(request).await {
                 Ok(response) => Ok(response),
                 // The library hands the request back when it never wrote
                 // any of it; otherwise some of it may have reached the
                 // engine.
-                Err(mut error) => Err(if error.take_message().is_some() {
-                    codes::lost()
-                } else {
-                    codes::answer_lost()
-                }),
+                Err(mut error) => {
+                    let seen = Seen::of(error.error());
+                    Err(if error.take_message().is_some() {
+                        codes::lost_seeing(seen)
+                    } else {
+                        codes::answer_lost(seen)
+                    })
+                }
             }
         };
         // An answer that is there is taken first. Otherwise the end of the
@@ -327,8 +407,132 @@ impl Link {
         let response = tokio::select! {
             biased;
             answered = answered => answered?,
-            _ = gone.wait_for(|gone| *gone) => return Err(codes::answer_lost()),
+            ended = gone.wait_for(Option::is_some) => {
+                let seen = ended.ok().and_then(|seen| *seen).unwrap_or(Seen::NoDetail);
+                return Err(codes::answer_lost(seen));
+            }
         };
         Ok(response.map(Body::new))
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests; clippy.toml allows them but the attribute keeps the module self-evident"
+)]
+mod tests {
+    use std::io::ErrorKind;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+
+    #[test]
+    fn each_word_of_the_closed_list_comes_from_one_kind_of_what_the_client_saw() {
+        assert_eq!(Seen::of_io(ErrorKind::ConnectionReset), Seen::Reset);
+        assert_eq!(Seen::of_io(ErrorKind::ConnectionAborted), Seen::Reset);
+        assert_eq!(Seen::of_io(ErrorKind::BrokenPipe), Seen::WriteFailed);
+        assert_eq!(Seen::of_io(ErrorKind::UnexpectedEof), Seen::CutShort);
+        assert_eq!(Seen::of_io(ErrorKind::PermissionDenied), Seen::NoDetail);
+        let words: Vec<&str> = [
+            Seen::Reset,
+            Seen::ClosedBeforeAnswer,
+            Seen::CutShort,
+            Seen::WriteFailed,
+            Seen::NotWellFormed,
+            Seen::NoDetail,
+        ]
+        .map(Seen::words)
+        .to_vec();
+        assert_eq!(
+            words,
+            [
+                "the connection was reset",
+                "the connection closed before any answer",
+                "the answer was cut short",
+                "the write of the request failed",
+                "the answer was not well formed",
+                "no detail"
+            ]
+        );
+    }
+
+    /// A link to a peer that reads the request, then does `then` with its
+    /// end of the connection.
+    async fn link_to_peer<F>(then: F) -> Link
+    where
+        F: FnOnce(TcpStream) + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut peer, _) = listener.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0_u8; 512];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = peer.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            then(peer);
+        });
+        let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        Link::over(stream, Version::new(0, 0, 0)).await.unwrap()
+    }
+
+    fn request() -> Request<Body> {
+        Request::builder()
+            .uri("/api/v1/tools")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    fn assert_lost(failure: &Failure, words: &str) {
+        assert_eq!(failure.class(), FailureClass::PossibleCommit);
+        assert_eq!(failure.code(), &codes::ANSWER_LOST);
+        assert!(
+            failure
+                .message()
+                .ends_with(&format!("What the client saw: {words}.")),
+            "{}",
+            failure.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_closes_without_answering_is_told_as_a_connection_closed_before_any_answer()
+    {
+        let link = link_to_peer(|peer| {
+            drop(peer);
+        })
+        .await;
+        let failure = link.send(request()).await.unwrap_err();
+        assert_lost(&failure, "the connection closed before any answer");
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_resets_is_told_as_a_connection_reset() {
+        let link = link_to_peer(|peer| {
+            peer.set_zero_linger().unwrap();
+            drop(peer);
+        })
+        .await;
+        let failure = link.send(request()).await.unwrap_err();
+        assert_lost(&failure, "the connection was reset");
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_answers_what_is_not_http_is_told_as_not_well_formed() {
+        let link = link_to_peer(|mut peer| {
+            tokio::spawn(async move {
+                peer.write_all(b"not an answer\r\n\r\n").await.unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            });
+        })
+        .await;
+        let failure = link.send(request()).await.unwrap_err();
+        assert_lost(&failure, "the answer was not well formed");
     }
 }

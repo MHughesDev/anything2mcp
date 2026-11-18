@@ -19,7 +19,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, StepCommits,
+    ResolvedBinding, Stage, Statement, StepCommits,
 };
 
 use crate::codes::{self, shown};
@@ -418,6 +418,24 @@ impl<'a> Lower<'a, '_> {
 impl Lowering for UiLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
+    }
+
+    /// Not stated, on purpose (decisions 0252 and 0264). A tab's own
+    /// document goes only to the origins it was opened for, but the
+    /// browser lets the page's other requests pass to any origin: an
+    /// image, a script, or a `fetch` the page makes with `GET`, `HEAD`, or
+    /// `OPTIONS` is never refused for where it goes, and in a tab that may
+    /// act nothing is (`a2m-pack-web-browser`, `Page::judge_request`). So
+    /// the surface and the declared destinations are not all a tool of
+    /// this pack can reach, and the pack does not say they are. And what
+    /// a tab runs is the scripts the system's pages bring.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::NotStated
     }
 
     fn verbs(&self) -> &[Verb] {

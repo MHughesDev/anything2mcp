@@ -92,16 +92,16 @@ async fn confirmed(store: &Store) -> WatchId {
 async fn begin(store: &Store, watch: WatchId, index: u64, run: NewRun) -> Result<RunId, Failure> {
     store
         .write(Durability::Synced, move |tx| {
-            let id = match tx.ledger().open_run(run)? {
-                Opened::New(fence) => fence.run,
-                Opened::Existing(id) => id,
+            let (id, opened) = match tx.ledger().open_run(run)? {
+                Opened::New(fence) => (fence.run, true),
+                Opened::Existing(id) => (id, false),
             };
             let due = Due {
                 index,
                 at: Timestamp::from_unix_millis(START),
                 catch_up: false,
             };
-            tx.watches().begin_check(watch, due, id)?;
+            tx.watches().begin_check(watch, due, id, opened)?;
             Ok(id)
         })
         .await
@@ -897,9 +897,9 @@ async fn a_check_is_not_begun_at_or_after_the_end() {
         async move {
             store
                 .write(Durability::Synced, move |tx| {
-                    let id = match tx.ledger().open_run(the_read(1, b"status=open"))? {
-                        Opened::New(fence) => fence.run,
-                        Opened::Existing(id) => id,
+                    let (id, opened) = match tx.ledger().open_run(the_read(1, b"status=open"))? {
+                        Opened::New(fence) => (fence.run, true),
+                        Opened::Existing(id) => (id, false),
                     };
                     tx.watches().begin_check(
                         watch,
@@ -909,6 +909,7 @@ async fn a_check_is_not_begun_at_or_after_the_end() {
                             catch_up: false,
                         },
                         id,
+                        opened,
                     )
                 })
                 .await
@@ -1019,4 +1020,118 @@ async fn ask_refuses_an_interval_below_the_floor() {
     ] {
         raw_refused(&folder, &planted);
     }
+}
+
+#[tokio::test]
+async fn two_watches_of_one_read_share_a_run_and_only_the_opener_is_marked() {
+    let folder = Folder::new("watch-shared");
+    let store = on_disk(&folder).await;
+    let first = confirmed(&store).await;
+    let second = confirmed(&store).await;
+    // The first check opens the run; the second, due while it is
+    // unfinished, is handed the same run by rule 6 and opens none.
+    let run = begin(&store, first, 0, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    assert_eq!(
+        begin(&store, second, 0, the_read(1, b"status=open"))
+            .await
+            .unwrap(),
+        run
+    );
+    assert_eq!(runs_in(&folder), 1);
+    let (under_way, opened) = store
+        .read(move |tx| {
+            Ok((
+                tx.watches().checks_of_run(run)?,
+                tx.watches().run_opened_by_a_check(run)?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert!(opened);
+    let mut marks: Vec<(WatchId, bool)> = under_way
+        .iter()
+        .map(|check| (check.watch, check.opened_run))
+        .collect();
+    marks.sort();
+    let mut wanted = vec![(first, true), (second, false)];
+    wanted.sort();
+    assert_eq!(marks, wanted);
+    // Ending the first watch closes its check; the second's is still under
+    // way on the run, and the opener's mark stays with the run.
+    store
+        .write(Durability::Synced, move |tx| {
+            tx.watches().end(first, WatchReason::EndedByPerson)
+        })
+        .await
+        .unwrap();
+    let (under_way, opened) = store
+        .read(move |tx| {
+            Ok((
+                tx.watches().checks_of_run(run)?,
+                tx.watches().run_opened_by_a_check(run)?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert!(opened);
+    assert_eq!(under_way.len(), 1);
+    assert_eq!(under_way[0].watch, second);
+    // A run no check opened, such as the person's own call, is no check's.
+    let theirs = store
+        .write(Durability::Synced, move |tx| {
+            match tx.ledger().open_run(the_read(1, b"status=closed"))? {
+                Opened::New(fence) => Ok(fence.run),
+                Opened::Existing(id) => Ok(id),
+            }
+        })
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .read(move |tx| tx.watches().run_opened_by_a_check(theirs))
+            .await
+            .unwrap()
+    );
+    // A run a check names was opened already: no second check opens it,
+    // through the calls or the database, and the mark never changes.
+    let third = confirmed(&store).await;
+    refused(
+        store
+            .write(Durability::Synced, move |tx| {
+                let due = Due {
+                    index: 0,
+                    at: Timestamp::from_unix_millis(START),
+                    catch_up: false,
+                };
+                tx.watches().begin_check(third, due, run, true)
+            })
+            .await,
+        &FailureCode::SCHEMA_INVALID,
+    );
+    let raw = folder.raw();
+    raw.execute_batch(&format!(
+        "UPDATE watches SET state = 'running', running_check = 0 WHERE id = '{third}'"
+    ))
+    .unwrap();
+    let planted = raw
+        .execute_batch(&format!(
+            "INSERT INTO watch_checks (watch_id, seq, due_index, due_at, catch_up, run_id,
+                                       started_at, outcome, opened_run)
+             VALUES ('{third}', 0, 0, {START}, 0, '{run}', {START}, 'running', 1)"
+        ))
+        .unwrap_err();
+    assert!(
+        planted
+            .to_string()
+            .contains("opens only a run no check names yet"),
+        "{planted}"
+    );
+    let changed = raw
+        .execute_batch(&format!(
+            "UPDATE watch_checks SET opened_run = 1 WHERE watch_id = '{second}'"
+        ))
+        .unwrap_err();
+    assert!(changed.to_string().contains("never changes"), "{changed}");
 }

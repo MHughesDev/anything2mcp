@@ -26,14 +26,19 @@ archetype = "command"
 driver = ["cli"]
 discoverer = ["help"]
 
+# Runs only the help and version forms a target declares. Handed a fish
+# completion file under `completions` or a manual page under `manual`, as
+# files of the project's `sources` folder, it reads them as text and never
+# runs them (decision 0284).
 [[discoverers]]
 name = "help"
 archetype = "command"
 surface_kinds = ["program"]
-kinds = ["command"]
-sources = ["live_system"]
+kinds = ["command", "command_file"]
+sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 1048576, depth = 2 }
+files = ["completions", "manual"]
 
 [[file_kinds]]
 name = "command"
@@ -42,6 +47,10 @@ surface_kinds = ["program"]
 
 [[finding_kinds]]
 name = "command"
+surface_kinds = ["program"]
+
+[[finding_kinds]]
+name = "command_file"
 surface_kinds = ["program"]
 
 [[lint_rules]]
@@ -121,6 +130,10 @@ code = "unexpected_exit_status"
 [[failure_codes]]
 class = "unknown_variant"
 code = "unexpected_prompt"
+
+[[failure_codes]]
+class = "input"
+code = "command_file_unreadable"
 
 [[failure_codes]]
 class = "possible_commit"

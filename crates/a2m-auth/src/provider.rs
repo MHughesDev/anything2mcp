@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use a2m_core::{Failure, FailureClass, FailureCode, Secret, Timestamp};
+use a2m_core::{Failure, FailureClass, Secret, Timestamp};
 use a2m_vault::{BoxFuture, RandomSource, Vault};
 
 use crate::credentials::Credentials;
@@ -20,8 +20,7 @@ use crate::person::{AskPerson, PersonAnswer, PersonAsk};
 use crate::providers::totp;
 use crate::sink::CredentialSink;
 
-/// Two providers were given the same name.
-pub const AUTH_PROVIDER_DUPLICATE: FailureCode = FailureCode::fixed("auth_provider_duplicate");
+pub use crate::codes::AUTH_PROVIDER_DUPLICATE;
 
 /// A rung of the renewal ladder (spec section 215). The keeper climbs it in
 /// order and never repeats a rung within one renewal.

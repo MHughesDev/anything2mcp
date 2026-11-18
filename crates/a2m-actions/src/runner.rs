@@ -627,6 +627,18 @@ impl Kernel {
             self.recheck().await;
         }
         self.run_changed();
+        // A check of a watch ends with its run: the tending task ends it at
+        // once, from the run's stored result (decision 0283).
+        if let (Some(fence), Ok(store)) = (lease.fence(), self.store()) {
+            let run = fence.run;
+            let is_check = store
+                .read(move |tx| tx.watches().check_of_run(run))
+                .await
+                .is_ok_and(|check| check.is_some());
+            if is_check {
+                self.inner.wake.notify_one();
+            }
+        }
     }
 
     /// Stops a run with a failure, under the job's lease, when the job

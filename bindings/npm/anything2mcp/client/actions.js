@@ -107,6 +107,14 @@ const ACTIONS = Object.freeze([
   "version.migrate",
   "version.publish",
   "version.rollback",
+  "watch.changes",
+  "watch.confirm",
+  "watch.create",
+  "watch.end",
+  "watch.get",
+  "watch.list",
+  "watch.pause",
+  "watch.resume",
 ]);
 
 // Each method names its action and passes its input to `call`, which the client
@@ -906,6 +914,75 @@ class Actions {
    */
   versionRollback(input, options = {}) {
     return this.call("version.rollback", input, options);
+  }
+
+  /**
+   * The changes a watch recorded after a number: added, changed, unseen, gaps, pauses,
+   * and its end, each with the runs of its checks. Waits up to `wait_seconds` for the
+   * first. Holds no value; read a check's run with run.get for that. The engine action
+   * is `watch.changes`.
+   */
+  watchChanges(input, options = {}) {
+    return this.call("watch.changes", input, options);
+  }
+
+  /**
+   * Confirm a watch the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `watch.confirm`.
+   */
+  watchConfirm(input, options = {}) {
+    return this.call("watch.confirm", input, options);
+  }
+
+  /**
+   * Ask for a watch: one published read, called with one fixed input at a fixed
+   * interval until an end, that records what was added, changed, or went out of view.
+   * Nothing runs until the caller's person confirms it on the engine's page. The engine
+   * action is `watch.create`.
+   */
+  watchCreate(input, options = {}) {
+    return this.call("watch.create", input, options);
+  }
+
+  /**
+   * End a watch, by its person or by the caller that asked for it. Its checks and
+   * changes are kept. The engine action is `watch.end`.
+   */
+  watchEnd(input, options = {}) {
+    return this.call("watch.end", input, options);
+  }
+
+  /**
+   * One watch of the caller's person: its read, interval, end, state, and how many
+   * checks it made. Never a value the read returned. The engine action is `watch.get`.
+   */
+  watchGet(input, options = {}) {
+    return this.call("watch.get", input, options);
+  }
+
+  /**
+   * The watches of the caller's person, oldest first. The engine action is
+   * `watch.list`.
+   */
+  watchList(input = {}, options = {}) {
+    return this.call("watch.list", input, options);
+  }
+
+  /**
+   * Pause a confirmed watch of the caller's person: no check runs until it is resumed.
+   * The engine action is `watch.pause`.
+   */
+  watchPause(input, options = {}) {
+    return this.call("watch.pause", input, options);
+  }
+
+  /**
+   * Let a paused watch of the caller's person go on. One paused because its read
+   * changed or drifted never goes on. The engine action is `watch.resume`.
+   */
+  watchResume(input, options = {}) {
+    return this.call("watch.resume", input, options);
   }
 }
 

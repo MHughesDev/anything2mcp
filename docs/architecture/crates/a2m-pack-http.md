@@ -95,7 +95,7 @@ pub const WEB_SURFACE: SurfaceKind;                    // "web"
 pub const REQUEST: StepKind;                           // and VALIDATE, EXTRACT, PROBE
 pub const DESCRIPTION_FILE: &str;                      // the checked path a description is given under
 pub const DESCRIPTION_PATH: &str;                      // the focus entry that names where one is served
-pub mod codes;                                         // the pack's failure codes, and ALL
+pub mod codes;                                         // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON
 ```
 
 Everything else is inside the crate: the driver, the template types, the JSON reader, the shape checker, the lowering, the discoverers.
@@ -265,6 +265,8 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 13. Done: the safety audit's findings S1, S2, and M1 to M5 ([decision 0249](../../decisions/0249-the-http-pack-reads-in-bounded-work-and-sends-nothing-that-may-write-outside-a-live-run.md)): names compared without copying and bounded, every answer read on a blocking thread under the step's deadline, the XML read bounded by a count of work, JSON objects read in linear time; the driver's read-only guard and `read_asserted`, with `http.effect_method` an error; two attributes for one path, the character set agreed on, nothing outside the root element, control characters refused in values; a `bytes` body checked by the redactor. Not built: a keyed digest of a `bytes` body, which needs a purpose in `a2m-core` and a keyed digest that reaches a driver; a read binding that sends a body.
 
 14. Done: the second reading's findings C1 to C4, and the HTTP half of A1 ([decision 0270](../../decisions/0270-the-http-pack-sends-an-asserted-read-only-from-a-published-version-and-bounds-what-it-leaves-running.md)): an asserted read is sent outside a live run only from a published version's plan, told by its version, against an environment of kind `test` in it; a method override in a header or the query is judged as the method it names, at compile time and in the driver; reads left running past their deadline are counted, four for a surface and sixteen for the pack, and a read past either is `busy`; a pattern is at most 4,096 bytes and 256 KiB compiled, and is matched against at most 1,048,576 bytes; a `bytes` body is also read as UTF-16; a header whose name begins `a2m-` is refused at prepare. Not built: a mark on the prepare context that the plan is a published version's, which would replace the version as the signal; a match that can be stopped midway; a bound on the blocking pool shared with the other packs.
+
+15. Done ([decision 0264](../../decisions/0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md)): `Lowering::statement` for the review summary: a binding starts nothing, sets nothing, and sends to its surface's address and no other, since an endpoint's path is relative to the surface, the driver refuses any other address, follows no redirect, and uses no proxy. Test: `the_review_states_what_the_http_pack_runs_and_where_it_sends` (`tests/compile.rs`).
 
 ## Open points
 

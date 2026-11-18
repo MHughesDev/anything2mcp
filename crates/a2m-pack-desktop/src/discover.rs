@@ -43,7 +43,7 @@ pub(crate) struct DesktopSnapshot {
 
 fn invalid(why: &str) -> Failure {
     codes::failure(
-        FailureClass::UnknownVariant,
+        FailureClass::Input,
         codes::STEP_NOT_USABLE,
         format!("The desktop driver's snapshot is not in the form this discoverer reads: {why}."),
         "Run the discovery again with the version of the desktop pack that is enabled.",

@@ -5,12 +5,13 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
+    Digest, EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload,
+    PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
 };
 use a2m_files::{
-    Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepCommits,
+    BindingStatement, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema, Located,
+    LowerContext, Lowered, Lowering, Place, Possible, ProgramRun, ResolvedBinding, Sends, Stage,
+    Statement, StepCommits, VariableValue,
 };
 
 use crate::codes::{
@@ -337,6 +338,104 @@ impl Lowering for CliLowering {
                     .to_owned(),
             ),
         }
+    }
+
+    /// What the binding starts: for each command it runs (its own, its
+    /// read-back's, its lookup's), the program by the address of its
+    /// surface and every digest its file pins, or the fixed pair of the
+    /// interpreter and the script the target keeps; and each variable its
+    /// program is given, set or passed. A value set in a `commands/` file
+    /// is plain text the file states: a credential is refused there
+    /// (`command.secret_variable`, `command.secret_literal`), and no
+    /// credential reaches a program yet, so no variable is a secret. Where
+    /// it sends is not stated: what a program reaches is the program's
+    /// own (decision 0252).
+    fn statement(
+        &self,
+        binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> Statement {
+        let Some((_, section)) = section(cx) else {
+            return Statement::NotStated;
+        };
+        let commands: Vec<&Command> = [
+            binding.field("command"),
+            binding
+                .field("read_back")
+                .and_then(|other| other.get("command")),
+            binding
+                .field("lookup")
+                .and_then(|other| other.get("command")),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|name| section.commands.get(name.as_text()?))
+        .collect();
+        if commands.is_empty() {
+            return Statement::NotStated;
+        }
+        let mut stated = BindingStatement::default();
+        let mut programs: Vec<u32> = Vec::new();
+        for command in commands {
+            let Some(program) = usize::try_from(command.program)
+                .ok()
+                .and_then(|at| section.programs.get(at))
+            else {
+                return Statement::NotStated;
+            };
+            let Some(surface) = cx.target().surface(&program.surface) else {
+                return Statement::NotStated;
+            };
+            let digests: Vec<Digest> = program
+                .digests
+                .values()
+                .flatten()
+                .filter_map(|hex| hex.parse::<Digest>().ok())
+                .collect();
+            let run = match (&program.interpreter, &command.script) {
+                (Some(arguments), Some(script)) => {
+                    let Ok(script_digest) = script.digest.parse::<Digest>() else {
+                        return Statement::NotStated;
+                    };
+                    ProgramRun::Script {
+                        interpreter: surface.address.to_owned(),
+                        interpreter_digests: digests,
+                        arguments: arguments.clone(),
+                        script: script.path.clone(),
+                        script_digest,
+                    }
+                }
+                (None, None) => ProgramRun::Program {
+                    path: surface.address.to_owned(),
+                    digests,
+                },
+                // An interpreter with no script, or a script with no
+                // interpreter, does not compile; nothing is guessed.
+                _ => return Statement::NotStated,
+            };
+            if !stated.runs.contains(&run) {
+                stated.runs.push(run);
+            }
+            if programs.contains(&command.program) {
+                continue;
+            }
+            programs.push(command.program);
+            for (name, value) in &program.env_set {
+                stated.environment.push(EnvironmentVariable {
+                    name: name.clone(),
+                    value: VariableValue::Set(value.clone()),
+                });
+            }
+            for name in &program.env_pass {
+                stated.environment.push(EnvironmentVariable {
+                    name: name.clone(),
+                    value: VariableValue::Passed,
+                });
+            }
+        }
+        stated.sends = Sends::NotStated;
+        Statement::Stated(stated)
     }
 
     fn lower(

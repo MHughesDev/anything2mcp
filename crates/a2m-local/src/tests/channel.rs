@@ -453,6 +453,76 @@ async fn a_client_whose_connection_is_closed_is_told_so_every_time() {
     engine.stop().await;
 }
 
+/// A request the engine is answering when its channel stops is still
+/// answered, and `serve` returns only after that: the request that stopped
+/// the channel, as `engine.stop` does, answered only once the channel
+/// takes no new connection; and another request, held past that answer,
+/// as one is when a signal stops the engine. Both stops go through the one
+/// `ChannelControl::stop`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_being_answered_when_the_channel_stops_is_still_answered() {
+    let (_folder, paths) = home("inflight");
+    let channel = Channel::bind(&paths, VERSION).await.unwrap();
+    let control = channel.control();
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let held = {
+        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
+        move || async move {
+            entered.notify_one();
+            release.notified().await;
+            "held"
+        }
+    };
+    let stop = {
+        let connector = connector.clone();
+        move || async move {
+            control.stop(StopReason::Asked);
+            // The condition the answer waits on: a connection made now is
+            // refused, so the serve loop no longer takes any.
+            loop {
+                match connector.connect().await {
+                    Err(failure) => break failure.code().to_string(),
+                    Ok(_) => tokio::task::yield_now().await,
+                }
+            }
+        }
+    };
+    let service = Router::new()
+        .route("/held", get(held))
+        .route("/stop", get(stop));
+    let serving = tokio::spawn(channel.serve(service, IdlePolicy::never()));
+    let first = connect(&connector).await.unwrap();
+    let second = connect(&connector).await.unwrap();
+    let answer = |link: Link, path: &'static str| async move {
+        let response = link.send(get_request(path)).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    };
+    let held = tokio::spawn(answer(first, "/held"));
+    within("the held request's start", entered.notified()).await;
+
+    let stopped = within("the stopping request", answer(second, "/stop")).await;
+    assert!(
+        [
+            codes::ENGINE_UNREACHABLE.to_string(),
+            codes::CONNECTION_LOST.to_string()
+        ]
+        .contains(&stopped),
+        "{stopped}"
+    );
+    // The stop is answered and the other request is not: the serve loop
+    // waits for it.
+    assert!(!serving.is_finished());
+    release.notify_one();
+    assert_eq!(within("the held request", held).await.unwrap(), "held");
+    let (why, _lock) = within("the stop", serving).await.unwrap();
+    assert_eq!(why, StopReason::Asked);
+}
+
 #[test]
 fn the_engine_lock_says_whether_it_is_still_the_file_at_its_place() {
     let (_folder, paths) = home("p");

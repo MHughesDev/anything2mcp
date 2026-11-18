@@ -1,0 +1,30 @@
+.\" The manual page of one command of example-cli, the imaginary inventory
+.\" program of the command pack's test stand. Written for the tests: it
+.\" describes nothing real. One entry disagrees with the program's help, and
+.\" one is in a form the reader does not take, on purpose.
+.TH EXAMPLE-CLI-ITEM-LIST 1 2026-11-18 "example-cli 2.4.1" "example-cli manual"
+.SH NAME
+example-cli-item-list \- list the items
+.SH SYNOPSIS
+.B example-cli item list
+[\fB\-\-location\fR \fIcode\fR] [\fB\-\-ref\fR \fIreference\fR] [\fB\-\-format\fR \fIform\fR]
+.SH DESCRIPTION
+Lists the items of the inventory, one a line.
+.SH OPTIONS
+.TP
+\fB\-l\fR, \fB\-\-location\fR \fIcode\fR
+Only the items at this location, such as A01.
+.TP
+\fB\-\-ref\fR
+Only the item with this reference.
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fIform\fR
+How to print them: table, json, or jsonl.
+.TP
+\fB\-\-limit\fR \fIN\fR
+At most N items, a whole number.
+.TP
+\fB\-\-colour\fR[=\fIwhen\fR]
+Whether to colour the table.
+.SH EXIT STATUS
+0 when the items were listed.

@@ -5,33 +5,11 @@
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// A blob or a row cannot be written for lack of space. Class `busy`.
-pub const STORAGE_FULL: FailureCode = FailureCode::fixed("storage_full");
-/// The database cannot commit, or the store is not ready. Class `busy`.
-pub const STORE_UNAVAILABLE: FailureCode = FailureCode::fixed("store_unavailable");
-/// The integrity check, a stored row, a stored plan's hash, or the audit
-/// chain fails. Class `busy`.
-pub const STORE_CORRUPT: FailureCode = FailureCode::fixed("store_corrupt");
-/// The store was written by a newer engine, or a migration it applied is not
-/// the one this engine carries. Class `busy`.
-pub const STORE_VERSION_UNSUPPORTED: FailureCode = FailureCode::fixed("store_version_unsupported");
-/// Another run holds the lock on the record. Class `busy`.
-pub const RECORD_LOCKED: FailureCode = FailureCode::fixed("record_locked");
-/// A call carries a lease number other than the run's. Class
-/// `possible_commit`.
-pub const RUNNER_LOST: FailureCode = FailureCode::fixed("runner_lost");
-/// Rule 3 finds no clearance for the run. Class `policy`.
-pub const APPROVAL_MISSING: FailureCode = FailureCode::fixed("approval_missing");
-/// Rule 3 finds a clearance for another diff. Class `policy`.
-pub const APPROVAL_STALE: FailureCode = FailureCode::fixed("approval_stale");
-/// The digest read back is not the intended one. Class `mismatch`.
-pub const READ_BACK_DIFFERS: FailureCode = FailureCode::fixed("read_back_differs");
-/// A transition no rule allows. Class `unknown_variant`.
-pub const LEDGER_STATE_UNEXPECTED: FailureCode = FailureCode::fixed("ledger_state_unexpected");
-/// A statement named a table its crate does not own. Class `unknown_variant`.
-pub const TABLE_NOT_OWNED: FailureCode = FailureCode::fixed("table_not_owned");
-/// The thing asked for is not in the store. Class `input`.
-pub const NOT_FOUND: FailureCode = FailureCode::fixed("not_found");
+pub use crate::codes::{
+    APPROVAL_MISSING, APPROVAL_STALE, CHANGED_SINCE_PREVIEW, LEDGER_STATE_UNEXPECTED, NOT_FOUND,
+    READ_BACK_DIFFERS, RECONCILE_REQUIRED, RECORD_LOCKED, RUNNER_LOST, STORAGE_FULL, STORE_CORRUPT,
+    STORE_UNAVAILABLE, STORE_VERSION_UNSUPPORTED, TABLE_NOT_OWNED,
+};
 
 pub(crate) fn unavailable(what: &str) -> Failure {
     Failure::new(
@@ -152,12 +130,6 @@ pub(crate) fn invalid(what: &str) -> Failure {
         "Correct the input.",
     )
 }
-
-/// A record of the run is still in doubt from an earlier lease and has not
-/// been read back. Class `possible_commit`.
-pub const RECONCILE_REQUIRED: FailureCode = FailureCode::fixed("reconcile_required");
-/// A record no longer matches what the preview saw. Class `stale`.
-pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
 
 pub(crate) fn reconcile_required() -> Failure {
     Failure::new(

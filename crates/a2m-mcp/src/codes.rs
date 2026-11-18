@@ -1,5 +1,9 @@
 //! The failure codes this crate names, and the JSON-RPC error codes it
 //! answers with.
+//!
+//! `stdio_read_failed` is `transient` and does not pass by itself: the
+//! proxy's input is the client's end of a pipe, and once a read of it fails
+//! the same proxy cannot read it again; the client must start it anew.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
@@ -7,18 +11,21 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 /// dispatch.
 pub const SCHEMA_INVALID: FailureCode = FailureCode::SCHEMA_INVALID;
 
-/// The service was asked for a toolset or a revision it does not serve.
-pub const NOT_SERVED: FailureCode = FailureCode::fixed("mcp_not_served");
-
-/// A request came with nothing that names its caller.
-pub const CALLER_MISSING: FailureCode = FailureCode::fixed("caller_missing");
-
-/// The proxy could not read its input.
-pub const STDIO_READ_FAILED: FailureCode = FailureCode::fixed("stdio_read_failed");
-
-/// The engine may have had a tool call, and its answer was lost: the call
-/// may have started a run that writes. Class `possible_commit`.
-pub const ANSWER_LOST: FailureCode = FailureCode::fixed("answer_lost");
+a2m_core::failure_codes! {
+    NOT_SERVED = Input, "mcp_not_served",
+        meaning "The service was asked for a toolset or a revision it does not serve.",
+        next "Ask for a toolset and a revision this build serves; the message names what was asked for.";
+    CALLER_MISSING = Policy, "caller_missing",
+        meaning "A request came with nothing that names its caller.",
+        next "Call through the local channel of the engine.";
+    STDIO_READ_FAILED = Transient, "stdio_read_failed",
+        meaning "The proxy could not read its input.",
+        next "Start the client again.",
+        passes not_by_itself;
+    ANSWER_LOST = PossibleCommit, "answer_lost",
+        meaning "The engine may have had a tool call, and its answer was lost: the call may have started a run that writes.",
+        next "Do not call the tool again without its idempotency key: find the call's run with `run.list` first, and do what that run's `next` says.";
+}
 
 /// JSON-RPC: the body or line is not JSON.
 pub const PARSE_ERROR: i64 = -32700;

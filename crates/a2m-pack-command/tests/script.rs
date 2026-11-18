@@ -307,6 +307,47 @@ fn a_script_path_that_leaves_the_target_does_not_compile() {
     }
 }
 
+/// The review names a fixed pair whole: the interpreter and its digest,
+/// its fixed arguments, the script and its digest, with the fixed notice
+/// that a digest does not make a script safe (decisions 0216 and 0252).
+#[cfg(unix)]
+#[test]
+fn the_review_names_the_interpreter_and_the_script_it_runs() {
+    let pair = python_pair().unwrap_or_else(shell_pair);
+    let folder = Folder::new("script-review");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let script_digest = Digest::of(pair.text.as_bytes());
+    let out = folder.path().join("received.bin");
+    let path = format!("scripts/{}", pair.name);
+    let compiled = common::compile(
+        &files(&pair, &path, &script_digest, &out),
+        registry.compiler_set(),
+    )
+    .unwrap();
+    let binding = &compiled.review.items[0].bindings[0];
+    assert_eq!(
+        binding.states,
+        a2m_files::BindingStates::Stated {
+            runs: vec![a2m_files::RunReview {
+                run: a2m_files::ProgramRun::Script {
+                    interpreter: pair.interpreter.display().to_string(),
+                    interpreter_digests: vec![Digest::of(
+                        &std::fs::read(&pair.interpreter).unwrap()
+                    )],
+                    arguments: pair.fixed.iter().map(|arg| (*arg).to_owned()).collect(),
+                    script: path,
+                    script_digest,
+                },
+                notice: Some(a2m_files::SCRIPT_NOTICE),
+            }],
+            environment: vec![a2m_files::EnvironmentVariable {
+                name: "EXAMPLE_OUT".to_owned(),
+                value: a2m_files::VariableValue::Set(out.display().to_string()),
+            }],
+        }
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn an_interpreter_another_user_can_replace_is_refused() {

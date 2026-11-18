@@ -24721,6 +24721,3148 @@
     "x-action": "version.rollback"
    }
   },
+  "/api/v1/actions/watch.changes": {
+   "post": {
+    "operationId": "watch_changes",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "after": {
+          "maximum": 99999999999999,
+          "minimum": 0,
+          "type": "integer"
+         },
+         "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+         },
+         "wait_seconds": {
+          "maximum": 60,
+          "minimum": 0,
+          "type": "integer"
+         },
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "integer"
+            },
+            "changes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "at": {
+                "type": "integer"
+               },
+               "check": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "kind": {
+                "enum": [
+                 "confirmed",
+                 "added",
+                 "changed",
+                 "removed",
+                 "unseen",
+                 "gap",
+                 "paused",
+                 "resumed",
+                 "ended"
+                ]
+               },
+               "missed": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "older_check": {
+                "type": "integer"
+               },
+               "older_run_id": {
+                "type": "string"
+               },
+               "outputs": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "record": {},
+               "run_id": {
+                "type": "string"
+               },
+               "seq": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "seq",
+               "kind",
+               "at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "state",
+            "changes",
+            "after",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "integer"
+            },
+            "changes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "at": {
+                "type": "integer"
+               },
+               "check": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "kind": {
+                "enum": [
+                 "confirmed",
+                 "added",
+                 "changed",
+                 "removed",
+                 "unseen",
+                 "gap",
+                 "paused",
+                 "resumed",
+                 "ended"
+                ]
+               },
+               "missed": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "older_check": {
+                "type": "integer"
+               },
+               "older_run_id": {
+                "type": "string"
+               },
+               "outputs": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "record": {},
+               "run_id": {
+                "type": "string"
+               },
+               "seq": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "seq",
+               "kind",
+               "at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "state",
+            "changes",
+            "after",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The changes a watch recorded after a number: added, changed, unseen, gaps, pauses, and its end, each with the runs of its checks. Waits up to `wait_seconds` for the first. Holds no value; read a check's run with run.get for that.",
+    "x-action": "watch.changes"
+   }
+  },
+  "/api/v1/actions/watch.confirm": {
+   "post": {
+    "operationId": "watch_confirm",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "asked_at": {
+               "type": "integer"
+              },
+              "checks": {
+               "type": "integer"
+              },
+              "compared": {
+               "enum": [
+                "whole",
+                "records"
+               ]
+              },
+              "confirmed_at": {
+               "type": "integer"
+              },
+              "ends_at": {
+               "type": "integer"
+              },
+              "environment": {
+               "type": "string"
+              },
+              "failure": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "ignore": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "interval_seconds": {
+               "type": "integer"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "next_due_at": {
+               "type": "integer"
+              },
+              "plan_hash": {
+               "type": "string"
+              },
+              "reason": {
+               "type": "string"
+              },
+              "requests_per_check": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "asked",
+                "confirmed",
+                "running",
+                "paused",
+                "ended"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "watch_id": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "watch_id",
+              "tool",
+              "target",
+              "environment",
+              "plan_hash",
+              "state",
+              "interval_seconds",
+              "ends_at",
+              "asked_at",
+              "checks",
+              "surface",
+              "requests_per_check",
+              "compared",
+              "ignore"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "asked_at": {
+               "type": "integer"
+              },
+              "checks": {
+               "type": "integer"
+              },
+              "compared": {
+               "enum": [
+                "whole",
+                "records"
+               ]
+              },
+              "confirmed_at": {
+               "type": "integer"
+              },
+              "ends_at": {
+               "type": "integer"
+              },
+              "environment": {
+               "type": "string"
+              },
+              "failure": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "ignore": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "interval_seconds": {
+               "type": "integer"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "next_due_at": {
+               "type": "integer"
+              },
+              "plan_hash": {
+               "type": "string"
+              },
+              "reason": {
+               "type": "string"
+              },
+              "requests_per_check": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "asked",
+                "confirmed",
+                "running",
+                "paused",
+                "ended"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "watch_id": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "watch_id",
+              "tool",
+              "target",
+              "environment",
+              "plan_hash",
+              "state",
+              "interval_seconds",
+              "ends_at",
+              "asked_at",
+              "checks",
+              "surface",
+              "requests_per_check",
+              "compared",
+              "ignore"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Confirm a watch the caller's person was asked for, so that its checks begin. A person's act, carried out on the engine's page, never an agent's.",
+    "x-action": "watch.confirm"
+   }
+  },
+  "/api/v1/actions/watch.create": {
+   "post": {
+    "operationId": "watch_create",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "ends_at": {
+          "maximum": 99999999999999,
+          "minimum": 0,
+          "type": "integer"
+         },
+         "environment": {
+          "type": "string"
+         },
+         "ignore": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "input": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
+         "interval_seconds": {
+          "maximum": 86400,
+          "minimum": 60,
+          "type": "integer"
+         },
+         "tool": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tool",
+         "interval_seconds",
+         "ends_at"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "person": {
+             "type": "string"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "person": {
+             "type": "string"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Ask for a watch: one published read, called with one fixed input at a fixed interval until an end, that records what was added, changed, or went out of view. Nothing runs until the caller's person confirms it on the engine's page.",
+    "x-action": "watch.create"
+   }
+  },
+  "/api/v1/actions/watch.end": {
+   "post": {
+    "operationId": "watch_end",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "End a watch, by its person or by the caller that asked for it. Its checks and changes are kept.",
+    "x-action": "watch.end"
+   }
+  },
+  "/api/v1/actions/watch.get": {
+   "post": {
+    "operationId": "watch_get",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "One watch of the caller's person: its read, interval, end, state, and how many checks it made. Never a value the read returned.",
+    "x-action": "watch.get"
+   }
+  },
+  "/api/v1/actions/watch.list": {
+   "post": {
+    "operationId": "watch_list",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "open_only": {
+          "type": "boolean"
+         }
+        },
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "watches": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "asked_at": {
+                "type": "integer"
+               },
+               "checks": {
+                "type": "integer"
+               },
+               "compared": {
+                "enum": [
+                 "whole",
+                 "records"
+                ]
+               },
+               "confirmed_at": {
+                "type": "integer"
+               },
+               "ends_at": {
+                "type": "integer"
+               },
+               "environment": {
+                "type": "string"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "ignore": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "interval_seconds": {
+                "type": "integer"
+               },
+               "next_due_at": {
+                "type": "integer"
+               },
+               "plan_hash": {
+                "type": "string"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "requests_per_check": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "asked",
+                 "confirmed",
+                 "running",
+                 "paused",
+                 "ended"
+                ]
+               },
+               "surface": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "watch_id": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "watch_id",
+               "tool",
+               "target",
+               "environment",
+               "plan_hash",
+               "state",
+               "interval_seconds",
+               "ends_at",
+               "asked_at",
+               "checks",
+               "surface",
+               "requests_per_check",
+               "compared",
+               "ignore"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "watches",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "watches": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "asked_at": {
+                "type": "integer"
+               },
+               "checks": {
+                "type": "integer"
+               },
+               "compared": {
+                "enum": [
+                 "whole",
+                 "records"
+                ]
+               },
+               "confirmed_at": {
+                "type": "integer"
+               },
+               "ends_at": {
+                "type": "integer"
+               },
+               "environment": {
+                "type": "string"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "ignore": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "interval_seconds": {
+                "type": "integer"
+               },
+               "next_due_at": {
+                "type": "integer"
+               },
+               "plan_hash": {
+                "type": "string"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "requests_per_check": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "asked",
+                 "confirmed",
+                 "running",
+                 "paused",
+                 "ended"
+                ]
+               },
+               "surface": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "watch_id": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "watch_id",
+               "tool",
+               "target",
+               "environment",
+               "plan_hash",
+               "state",
+               "interval_seconds",
+               "ends_at",
+               "asked_at",
+               "checks",
+               "surface",
+               "requests_per_check",
+               "compared",
+               "ignore"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "watches",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The watches of the caller's person, oldest first.",
+    "x-action": "watch.list"
+   }
+  },
+  "/api/v1/actions/watch.pause": {
+   "post": {
+    "operationId": "watch_pause",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Pause a confirmed watch of the caller's person: no check runs until it is resumed.",
+    "x-action": "watch.pause"
+   }
+  },
+  "/api/v1/actions/watch.resume": {
+   "post": {
+    "operationId": "watch_resume",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "watch_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "watch_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compared": {
+             "enum": [
+              "whole",
+              "records"
+             ]
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ignore": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "plan_hash": {
+             "type": "string"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "tool",
+            "target",
+            "environment",
+            "plan_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "surface",
+            "requests_per_check",
+            "compared",
+            "ignore"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Let a paused watch of the caller's person go on. One paused because its read changed or drifted never goes on.",
+    "x-action": "watch.resume"
+   }
+  },
   "/api/v1/openapi.json": {
    "get": {
     "operationId": "openapi_document",

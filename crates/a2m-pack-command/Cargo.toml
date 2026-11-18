@@ -13,6 +13,9 @@ a2m-core = { path = "../a2m-core" }
 a2m-files = { path = "../a2m-files" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
+# Inflates a manual page handed compressed with gzip; already in the tree
+# for a2m-sources.
+miniz_oxide.workspace = true
 regex.workspace = true
 serde.workspace = true
 sha2.workspace = true

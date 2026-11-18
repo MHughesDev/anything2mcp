@@ -28,36 +28,11 @@ use crate::watch_compare::{
     Baseline, CheckDigests, CheckFault, Comparison, Held, RecordDigests, WatchKey, compare,
 };
 
-/// A watch was asked for an operation that is not a read. Class `policy`.
-pub const WATCH_NOT_A_READ: FailureCode = FailureCode::fixed("watch_not_a_read");
-/// A check was asked of a watch its person has not confirmed. Class
-/// `policy`.
-pub const WATCH_NOT_CONFIRMED: FailureCode = FailureCode::fixed("watch_not_confirmed");
-/// Someone other than the person a watch acts for tried to confirm it.
-/// Class `policy`.
-pub const WATCH_NOT_YOURS: FailureCode = FailureCode::fixed("watch_not_yours");
-/// A check of the watch is under way already. Class `busy`.
-pub const WATCH_CHECK_RUNNING: FailureCode = FailureCode::fixed("watch_check_running");
-/// The watch is paused. Class `busy`.
-pub const WATCH_PAUSED: FailureCode = FailureCode::fixed("watch_paused");
-/// The watch has ended. Class `policy`.
-pub const WATCH_ENDED: FailureCode = FailureCode::fixed("watch_ended");
-/// A run that is not the watch's own read was offered as its check. Class
-/// `policy`.
-pub const WATCH_RUN_NOT_ITS_OWN: FailureCode = FailureCode::fixed("watch_run_not_its_own");
-/// A paused watch cannot go on without a person confirming a new one: its
-/// version changed or its read drifted. Class `policy`.
-pub const WATCH_NEEDS_CONFIRMATION: FailureCode = FailureCode::fixed("watch_needs_confirmation");
-/// A check's run has not reached an end the watch can take. Class `busy`.
-pub const WATCH_CHECK_UNFINISHED: FailureCode = FailureCode::fixed("watch_check_unfinished");
-/// Due times passed with no check: the engine was not running, the watch
-/// was paused or held, or a check could not be admitted in time. A `gap`
-/// carries it. Class `busy`.
-pub const WATCH_DUE_MISSED: FailureCode = FailureCode::fixed("watch_due_missed");
-
-/// A check's run ended without completing and gave no failure: it was
-/// cancelled, or it expired. Class `busy`.
-pub const WATCH_CHECK_NOT_COMPLETED: FailureCode = FailureCode::fixed("watch_check_not_completed");
+pub use crate::codes::{
+    WATCH_CHECK_NOT_COMPLETED, WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_DUE_MISSED,
+    WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ, WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS,
+    WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
+};
 
 /// The shortest interval the ledger takes for a watch, whatever asks: the
 /// floor no setting lowers. The scheduler's setting may only raise it.
@@ -70,24 +45,6 @@ pub const WATCH_LONGEST: Duration = Duration::from_secs(366 * 86_400);
 /// not yet: until it does, no check is complete, and no removal is ever
 /// reported, only `unseen` (decision 0262).
 const COMPLETENESS_RECORDED: bool = false;
-
-/// Every failure code of a watch the ledger produces, with its one class.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Policy, "watch_not_a_read"),
-    (FailureClass::Policy, "watch_not_confirmed"),
-    (FailureClass::Policy, "watch_not_yours"),
-    (FailureClass::Busy, "watch_check_running"),
-    (FailureClass::Busy, "watch_paused"),
-    (FailureClass::Policy, "watch_ended"),
-    (FailureClass::Policy, "watch_run_not_its_own"),
-    (FailureClass::Policy, "watch_needs_confirmation"),
-    (FailureClass::Busy, "watch_check_unfinished"),
-    (FailureClass::Busy, "watch_due_missed"),
-    (FailureClass::Busy, "watch_check_not_completed"),
-    (FailureClass::UnknownVariant, "watch_key_repeated"),
-    (FailureClass::UnknownVariant, "watch_shapes_mixed"),
-    (FailureClass::UnknownVariant, "watch_result_not_its_shape"),
-];
 
 words! {
     /// Why a watch paused or ended: a state of the watch, not a failure.
@@ -497,6 +454,11 @@ pub struct CheckRow {
     pub due: Due,
     /// The run of the read.
     pub run: RunId,
+    /// Whether this check's admission opened the run. `false` for a check
+    /// handed a run that already existed for the same read, input, and
+    /// person (ledger rule 6): another watch's check, or the person's own
+    /// call (decision 0285).
+    pub opened_run: bool,
     /// When it began.
     pub started_at: Timestamp,
     /// How it ended.
@@ -766,7 +728,7 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
 macro_rules! check_columns {
     () => {
         "watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome, ended_at,
-         why_class, why_code, records_seen, added, changed, removed, unseen, unchanged"
+         why_class, why_code, records_seen, added, changed, removed, unseen, unchanged, opened_run"
     };
 }
 
@@ -797,6 +759,7 @@ fn check_row(row: &Row) -> Result<CheckRow, Failure> {
             catch_up: row.int(4)? != 0,
         },
         run: parse(row.text(5)?)?,
+        opened_run: row.int(17)? != 0,
         started_at: moment(row.int(6)?),
         outcome: parse(row.text(7)?)?,
         ended_at: row.opt_int(8)?.map(moment),
@@ -1109,14 +1072,24 @@ impl Watches<'_, '_> {
     /// Begins a check for `due`, on `run`, which the scheduler admitted in
     /// the same transaction. The run must be the watch's own read: its
     /// operation, version, and input, for the person it acts for.
+    /// `opened` says whether that admission opened the run, or handed back
+    /// one that already existed (ledger rule 6); only the check that opened
+    /// a run may end up cancelling it (decisions 0285 and 0287).
     ///
     /// # Errors
     ///
     /// The refusal of the watch's state unless it is `confirmed`;
     /// `policy`/`watch_ended` at or after its end, or for a due time at or
     /// after it; `policy`/`watch_run_not_its_own`; `input`/`schema_invalid`
-    /// for a due time handled already.
-    pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId) -> Result<CheckRow, Failure> {
+    /// for a due time handled already, or for a run said to be opened that
+    /// a check names already.
+    pub fn begin_check(
+        &mut self,
+        id: WatchId,
+        due: Due,
+        run: RunId,
+        opened: bool,
+    ) -> Result<CheckRow, Failure> {
         let watch = self.load(id)?;
         if watch.state != WatchState::Confirmed {
             return Err(state_refusal(watch.state));
@@ -1144,6 +1117,11 @@ impl Watches<'_, '_> {
                 "Nothing to do; a watch runs nothing else.",
             ));
         }
+        if opened && self.named_by_a_check(run)? {
+            return Err(failure::invalid(
+                "a run said to be opened by a check that another check names already",
+            ));
+        }
         let seq = watch.checks;
         let next = due
             .index
@@ -1164,8 +1142,9 @@ impl Watches<'_, '_> {
         )?;
         self.tx.exec(
             "INSERT INTO watch_checks
-                (watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running')",
+                (watch_id, seq, due_index, due_at, catch_up, run_id, started_at, outcome,
+                 opened_run)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
             &[
                 id.to_string().into(),
                 stored(seq)?.into(),
@@ -1174,6 +1153,7 @@ impl Watches<'_, '_> {
                 due.catch_up.into(),
                 run.to_string().into(),
                 now.into(),
+                opened.into(),
             ],
         )?;
         self.check(id, seq)
@@ -1922,7 +1902,10 @@ impl Watches<'_, '_> {
         check_row(&row)
     }
 
-    /// The check a run is, when it is one under way.
+    /// The check a run is, when it is one under way. A run two watches
+    /// share names two checks, and this gives one of them: enough to tell
+    /// that a run is a check's and which surface it reads, which both share.
+    /// [`Watches::checks_of_run`] gives every one.
     ///
     /// # Errors
     ///
@@ -1935,6 +1918,53 @@ impl Watches<'_, '_> {
             )?
             .map(|row| Ok((parse(row.text(0)?)?, count(row.int(1)?)?)))
             .transpose()
+    }
+
+    /// Every check under way that names `run`, by watch and number. Two
+    /// watches of one read and input for one person share a run (decision
+    /// 0285), so a run can rest under more than one check.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn checks_of_run(&mut self, run: RunId) -> Result<Vec<CheckRow>, Failure> {
+        let rows = self.tx.rows(
+            concat!(
+                "SELECT ",
+                check_columns!(),
+                " FROM watch_checks WHERE run_id = ?1 AND outcome = 'running'
+                  ORDER BY watch_id, seq"
+            ),
+            &[run.to_string().into()],
+        )?;
+        rows.iter().map(check_row).collect()
+    }
+
+    /// Whether a check of any watch opened `run`, whether or not that check
+    /// has ended since. A run no check opened is someone else's: the
+    /// person's own call, which a check only joined (decision 0287).
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn run_opened_by_a_check(&mut self, run: RunId) -> Result<bool, Failure> {
+        Ok(self
+            .tx
+            .row(
+                "SELECT 1 FROM watch_checks WHERE run_id = ?1 AND opened_run = 1 LIMIT 1",
+                &[run.to_string().into()],
+            )?
+            .is_some())
+    }
+
+    fn named_by_a_check(&mut self, run: RunId) -> Result<bool, Failure> {
+        Ok(self
+            .tx
+            .row(
+                "SELECT 1 FROM watch_checks WHERE run_id = ?1 LIMIT 1",
+                &[run.to_string().into()],
+            )?
+            .is_some())
     }
 
     /// The watch's checks after `after`, oldest first, at most `limit`.
@@ -2121,9 +2151,10 @@ mod tests {
                 FailureClass::UnknownVariant,
             ),
         ];
-        assert_eq!(constants.len(), ALL.len());
+        let all = crate::codes::WATCH_CODES;
+        assert_eq!(constants.len(), all.len());
         for (code, class) in constants {
-            assert!(ALL.contains(&(class, code.as_str())), "{code:?}");
+            assert!(all.contains(&(class, code.as_str())), "{code:?}");
         }
         for (class, code) in [
             state_refusal(WatchState::Asked),
@@ -2134,7 +2165,7 @@ mod tests {
         .iter()
         .map(|failure| (failure.class(), failure.code().as_str()))
         {
-            assert!(ALL.contains(&(class, code)));
+            assert!(all.contains(&(class, code)));
         }
     }
 }

@@ -83,10 +83,29 @@ fn every_failure_code_of_the_pack_is_declared_in_its_manifest_with_its_one_class
         .iter()
         .map(|declared| (declared.class, declared.code.as_str().to_owned()))
         .collect();
-    let own: Vec<(FailureClass, String)> = a2m_pack_mcp::codes::ALL
+    // The pack's own codes, which keep the class the crates below give the
+    // same code, then those of other crates it returns as they are.
+    let book = a2m_core::CodeBook::new(&[
+        a2m_pack_mcp::codes::TABLE,
+        a2m_core::codes::TABLE,
+        a2m_provider::codes::TABLE,
+        a2m_auth::codes::TABLE,
+    ])
+    .unwrap();
+    let passed_on = a2m_pack_mcp::codes::PASSED_ON.iter().map(|code| {
+        let entry = book.explain(code.as_str()).unwrap();
+        assert_ne!(entry.declared_in, "a2m-pack-mcp", "{code}");
+        (entry.class, entry.code)
+    });
+    let mut own: Vec<(FailureClass, String)> = a2m_pack_mcp::codes::ALL
         .iter()
-        .map(|(class, code)| (*class, (*code).to_owned()))
+        .copied()
+        .chain(passed_on)
+        .map(|(class, code)| (class, code.to_owned()))
         .collect();
+    let mut declared = declared;
+    own.sort_by(|a, b| a.1.cmp(&b.1));
+    declared.sort_by(|a, b| a.1.cmp(&b.1));
     assert_eq!(declared, own);
 }
 
@@ -395,5 +414,86 @@ fn a_call_to_an_irreversible_tool_with_no_read_back_states_the_acknowledgement()
     assert_eq!(
         evidence(&compiled_fixture(&registry), "example_order_note_update"),
         a2m_core::WriteEvidence::ReadBack
+    );
+}
+
+/// The review a person publishes from says that a tool on a remote server
+/// starts nothing and sends only to the server's address; that a tool on a
+/// local server starts its program, by path and digest, with the
+/// variables the surface sets and passes; and that where that program
+/// sends is not stated (decision 0252).
+#[test]
+fn the_review_states_what_the_mcp_pack_runs_and_where_it_sends() {
+    let folder = Folder::new("review");
+    let registry = registry(&folder);
+    let root = folder.path().join("target");
+    write_target(&root, &|path, text| {
+        match path {
+        "operations/order_get.yaml" => text.replace(
+            "    tool: orders_get\n",
+            "    tool: orders_get\n    surface: orders_local\n",
+        ),
+        "target.yaml" => text.replace(
+            "    environment: {EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}\n",
+            "    environment: {EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}\n    pass_environment: [EXAMPLE_LANG]\n",
+        ),
+        _ => text,
+    }
+    });
+    let compiled = compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)));
+    let item = |tool: &str| {
+        compiled
+            .review
+            .items
+            .iter()
+            .find(|item| item.tool.as_str() == tool)
+            .unwrap()
+    };
+    let remote = item("example_order_note_update");
+    assert_eq!(
+        remote.bindings[0].states,
+        a2m_files::BindingStates::Stated {
+            runs: Vec::new(),
+            environment: Vec::new(),
+        }
+    );
+    assert_eq!(
+        remote.reach,
+        a2m_files::Reach::Stated {
+            groups: vec![a2m_files::ReachGroup {
+                scope: a2m_core::AddressScope::ThisMachine,
+                addresses: vec!["http://127.0.0.1:9/mcp".to_owned()],
+            }],
+            leaves_this_machine: false,
+        }
+    );
+    let local = item("example_order_get");
+    assert_eq!(
+        local.bindings[0].states,
+        a2m_files::BindingStates::Stated {
+            runs: vec![a2m_files::RunReview {
+                run: a2m_files::ProgramRun::Program {
+                    path: "/opt/example/bin/example-mcp".to_owned(),
+                    digests: vec!["0".repeat(64).parse().unwrap()],
+                },
+                notice: None,
+            }],
+            environment: vec![
+                a2m_files::EnvironmentVariable {
+                    name: "EXAMPLE_MCP_STATE".to_owned(),
+                    value: a2m_files::VariableValue::Set("/var/lib/example-mcp".to_owned()),
+                },
+                a2m_files::EnvironmentVariable {
+                    name: "EXAMPLE_LANG".to_owned(),
+                    value: a2m_files::VariableValue::Passed,
+                },
+            ],
+        }
+    );
+    assert!(
+        matches!(local.reach, a2m_files::Reach::Partly { .. }),
+        "{:?}",
+        local.reach
     );
 }

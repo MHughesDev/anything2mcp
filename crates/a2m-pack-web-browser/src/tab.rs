@@ -1428,6 +1428,33 @@ impl Page {
     }
 
     async fn wait(&self, until: &Primitive, deadline: Deadline) -> Result<(), BrowserError> {
+        if self.until(until, true, deadline).await? {
+            Ok(())
+        } else {
+            Err(BrowserError::Timeout {
+                dispatch: Dispatch::NotSent,
+            })
+        }
+    }
+
+    /// Whether the condition holds now, on the page's own word: the page
+    /// looks once and answers at once. The deadline bounds only the
+    /// browser's answer, so a slow machine is never read as "does not
+    /// hold".
+    async fn holds(&self, condition: &Primitive, deadline: Deadline) -> Result<bool, BrowserError> {
+        self.until(condition, false, deadline).await
+    }
+
+    /// The page's answer to a condition: `true` once it holds. When
+    /// `page_waits`, the page waits for it until the deadline; otherwise
+    /// it looks once, and `false` is its word that the condition does not
+    /// hold now.
+    async fn until(
+        &self,
+        until: &Primitive,
+        page_waits: bool,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
         #[derive(Deserialize, Default)]
         #[serde(default)]
         struct Waited {
@@ -1441,7 +1468,11 @@ impl Page {
             .in_world(
                 "function (condition, timeout) { return __a2m.until(condition, timeout); }",
                 || {
-                    let left = u64::try_from(deadline.remaining().as_millis()).unwrap_or(u64::MAX);
+                    let left = if page_waits {
+                        u64::try_from(deadline.remaining().as_millis()).unwrap_or(u64::MAX)
+                    } else {
+                        0
+                    };
                     Some(vec![
                         CallArgument::of(&condition)?,
                         CallArgument::number(usize::try_from(left).unwrap_or(usize::MAX)),
@@ -1454,16 +1485,14 @@ impl Page {
             .await?;
         let waited: Waited = Self::answer(evaluated)?;
         match waited {
-            Waited { ok: true, .. } => Ok(()),
+            Waited { ok: true, .. } => Ok(true),
             Waited {
                 error: Some(error), ..
             } if error.contains(PASSWORD_REFUSED) => Err(BrowserError::PasswordField),
             Waited {
                 error: Some(error), ..
             } => Err(BrowserError::Unexpected(self.shown(&error))),
-            Waited { .. } => Err(BrowserError::Timeout {
-                dispatch: Dispatch::NotSent,
-            }),
+            Waited { .. } => Ok(false),
         }
     }
 
@@ -2821,7 +2850,10 @@ fn fetch_documents() -> FetchEnable<'static> {
 ///   with that lock on, until the tab that opened it goes.
 ///
 /// Only the browser's own side can be set on a window that is held: its
-/// scripts answer nothing until it runs.
+/// scripts answer nothing until it runs. The browser answers the call that
+/// lets a window run only once the window's first request has been decided,
+/// so that answer is never awaited on the one stream of events that decides
+/// it.
 pub(crate) async fn watch_windows(
     browser: Weak<BrowserInner>,
     mut events: mpsc::UnboundedReceiver<Event>,
@@ -2876,7 +2908,17 @@ pub(crate) async fn watch_windows(
                         asked: false,
                     },
                 );
-                let _ = client.call(session, &RunIfWaiting {}, deadline).await;
+                // The browser answers this only once the window's first
+                // request has been decided, and deciding it is this loop's
+                // next event: awaited here, the two waited on each other
+                // until the deadline. So the answer is awaited apart, and
+                // the loop goes on to the window's first request.
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let _ = client
+                        .call(Some(&session_id), &RunIfWaiting {}, deadline)
+                        .await;
+                });
             }
             EventKind::RequestPaused(paused) => {
                 let session = event.session.as_deref();
@@ -3247,6 +3289,16 @@ pub trait Look {
         deadline: Deadline,
     ) -> impl Future<Output = Result<(), BrowserError>> + Send;
 
+    /// Whether the condition holds now: the page looks once and answers
+    /// at once, and `false` is only its own word that the condition does
+    /// not hold. The deadline bounds the browser's answer alone; a page
+    /// that gives none by then is [`BrowserError::Timeout`], never `false`.
+    fn holds(
+        &self,
+        condition: &Primitive,
+        deadline: Deadline,
+    ) -> impl Future<Output = Result<bool, BrowserError>> + Send;
+
     /// The snapshot of the page, from the accessibility tree, without
     /// screen matches.
     fn snapshot(
@@ -3293,6 +3345,14 @@ macro_rules! looks {
                 deadline: Deadline,
             ) -> Result<(), BrowserError> {
                 self.page.wait(until, deadline).await.map_err(looked)
+            }
+
+            async fn holds(
+                &self,
+                condition: &Primitive,
+                deadline: Deadline,
+            ) -> Result<bool, BrowserError> {
+                self.page.holds(condition, deadline).await.map_err(looked)
             }
 
             async fn snapshot(

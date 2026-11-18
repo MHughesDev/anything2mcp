@@ -63,6 +63,7 @@ An agent starts each session knowing nothing of the last one. The repository is 
 - Two agents do not change the same crate at the same time. Documents that many packages touch, such as the indexes, are changed last and in small edits.
 - An agent that leads others gives each a package with a stated proof, checks the proof, and merges what passes. It does not hand over its conclusion and ask for it to be confirmed.
 - Whoever merges second brings their branch up to date first. Nobody rewrites another agent's history.
+- On a machine that many agents share, no agent stops a process by its name (`pkill`, `killall`, `taskkill /IM`, or the like). Another agent's engine or test stand runs under the same name, so a stop by name ends that agent's work too. An agent stops only a process it started, by the identifier the system gave it. On 2026-11-18 an engine was asked to stop from outside in the middle of another agent's test, and a stop by name was the likely cause.
 
 ## When to stop and change course
 

@@ -59,9 +59,9 @@ pub(crate) fn program_version() -> Result<Version, Failure> {
 }
 
 /// What keeps an engine with no connection from stopping: a page that
-/// waits for a person, and a run in hand, whether a runner works on it or
-/// it rests for a person. A run whose caller has gone is thus not lost
-/// with an idle engine.
+/// waits for a person, a watch that is confirmed or running, and a run in
+/// hand, whether a runner works on it or it rests for a person. A run whose
+/// caller has gone is thus not lost with an idle engine.
 struct Holds {
     surface: LocalSurface,
     kernel: Kernel,
@@ -90,6 +90,12 @@ impl IdleHolds for Holds {
                 return false;
             }
             if self.surface.waiting() > 0 {
+                return true;
+            }
+            // A watch that is confirmed or running has checks to make, so
+            // the engine stays until its end (decision 0283). A paused one
+            // does not hold it; a store that cannot say holds it.
+            if self.kernel.watches_hold_the_engine().await.unwrap_or(true) {
                 return true;
             }
             // A store that cannot say what is in hand is no reason to

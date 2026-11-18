@@ -16,8 +16,8 @@ use a2m_core::{
     WriteEvidence,
 };
 use a2m_files::{
-    Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, StepCommits,
+    BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
+    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepCommits,
 };
 
 use crate::codes;
@@ -677,6 +677,26 @@ impl Lowering for HttpLowering {
                     .to_owned(),
             ),
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable. It
+    /// sends requests to its surface's address and to no other: an
+    /// endpoint's path is relative to the surface, the driver refuses a
+    /// request outside it (`surface_not_declared`), follows no redirect,
+    /// and uses no proxy (decision 0252).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: true,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     fn lower(

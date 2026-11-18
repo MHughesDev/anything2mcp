@@ -228,6 +228,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-cli",
+ "miniz_oxide",
  "regex",
  "rustix",
  "serde",
