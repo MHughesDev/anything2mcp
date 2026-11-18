@@ -81,6 +81,7 @@ The full catalog, kind by kind, is the [coverage map](docs/reviews/coverage-map.
 | | Use an SSH or signing agent | Owner decision [decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md): not in the first release |
 | | Use another program's stored credentials: a cloud tool's credential file, a credential helper, a password manager | Rule 5 |
 | | Sign each request as cloud providers ask | Not yet |
+| Stores a secret for a person under a name, sealed, and lets a person list their sessions and end one | List the names of the secrets it holds for a person, remove one, or show on one screen everything it keeps for them: the store can put a credential and use it, and cannot name or remove one | Not yet |
 
 ## The machine and the network
 

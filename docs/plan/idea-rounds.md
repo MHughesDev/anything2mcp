@@ -167,3 +167,15 @@ A designer who read the code for the command-line package found two statements i
 
 - **Round 19** said the registry already marks which actions need no health at all, and that a command for one of those can be answered from the program itself. The mark it meant covers eleven actions, and most of them need the kernel, the settings, or the provider registry. Only three read nothing but the registry: `docs.get`, `action.search`, and `action.describe`. So the fix needs a mark of its own for an action the program can answer alone.
 - **Round 21** said the top-level help marks the actions that are not built. It does not: it marks one process command and the steps of shortcuts, which is what the word search matched. No help, at any level, says that an action is not built.
+
+## Round 23 (2026-11-18, 04:57 UTC)
+
+**Idea.** A person can ask the product what it holds for them on this machine, and can take any of it back.
+
+**Test.** Looked at a scratch engine's home after an afternoon of use, asked the built program the same question through its own commands (`secret`, `session`, `run`, `trace`, `audit`, `doctor`), and read the credential store's interface and the action catalog for anything that lists or removes. One debug build; the scratch home had no passphrase set, so the session commands answered with that refusal and their content was read from the source instead.
+
+**Result.** For sessions the answer is yes: they can be listed, and one can be ended. For runs and traces a person can list and read, and nothing deletes them, which the scope page already says. For secrets the answer is no on both counts. The command has one verb, `set`. The store beneath it can put a credential, say whether one is held, and open one for a sign-in; it cannot name what it holds, and it cannot remove anything. So a person who stored a password for a target last month cannot see that the product still has it, and cannot make the product forget it short of storing another value over it or deleting the whole home. No command gives the whole picture either: what is kept, by kind, where, and how much.
+
+**Verdict: taken up.** Three additions. The credential store names what it holds for a person (the reference, the target it belongs to, when it was stored, never a value) and removes one. Two actions serve that: a list any caller acting for the person may read, and a removal that is the person's own act and is written to the audit log. And one read answers "what do you hold for me" on one screen: secrets by name, sessions, runs, traces, captures, and findings by count and size, and the home's place on disk.
+
+**Next.** A package in the session keeper's store and the action registry, placed in the registry lane after the wiring that is already planned. The scope page says so until it is built.
