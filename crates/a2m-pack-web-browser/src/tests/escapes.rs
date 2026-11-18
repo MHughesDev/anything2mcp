@@ -10,6 +10,8 @@ use crate::{
     TextMatch,
 };
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 /// Where every attempt of an escaping page lands, and is counted.
@@ -96,6 +98,10 @@ async fn refused_at(
 }
 
 async fn observing(stand: &Stand, app: &TestApp, identity: &str) -> ObserveTab {
+    observing_with(stand, identity, &only(app)).await
+}
+
+async fn observing_with(stand: &Stand, identity: &str, origins: &Origins) -> ObserveTab {
     must(
         stand
             .browsers
@@ -104,10 +110,16 @@ async fn observing(stand: &Stand, app: &TestApp, identity: &str) -> ObserveTab {
                 &profile(identity),
                 &environment(),
                 &SafeRequests::default(),
-                &only(app),
+                origins,
             )
             .await,
     )
+}
+
+/// The application's own origin, and its other name as a place the tab's
+/// page may send requests to.
+fn reaching_the_other_name(app: &TestApp) -> Origins {
+    only(app).and_requests_to([&at(&other(app, "/"))])
 }
 
 fn outside(error: &BrowserError, origin: &str) {
@@ -355,7 +367,9 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
 async fn a_frame_from_another_site_runs_locked_in_every_document_it_loads() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("frames");
-    let tab = observing(&stand, &app, "scout").await;
+    // The frame's origin is one the page may load from; the tab is never
+    // on it (decision 0292).
+    let tab = observing_with(&stand, "scout", &reaching_the_other_name(&app)).await;
     // The page embeds a frame from another site, which the browser runs in
     // a process of its own. The frame opens a socket and sends a POST, in
     // its first document and in a second one it moves itself to, and the
@@ -393,17 +407,32 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
         new Promise((resolve) => { navigator.serviceWorker.onmessage = (event) => resolve(event.data); \
         found.active.postMessage('go'); }))";
 
-    // First, that the test means something: a page of a tab that may act
-    // installs the worker, and the worker writes when it is told to.
+    // First, that the test means something. A page of a tab that may act
+    // cannot register a worker (decision 0292); the one tab whose page
+    // still can is a sign-in tab, which installs it here. Then a page of a
+    // tab that may act wakes it, and the worker writes to its own origin,
+    // which the tab may reach.
     let browser = stand.open(&clerk).await;
+    let register = "navigator.serviceWorker.register('/escapes/service-worker.js', {scope: '/escapes/'})\
+        .then(() => navigator.serviceWorker.ready).then(() => 'ready', () => 'refused')";
     let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
     must(acting.goto(&quiet, soon()).await);
-    let register = "navigator.serviceWorker.register('/escapes/service-worker.js', {scope: '/escapes/'})\
-        .then(() => navigator.serviceWorker.ready).then(() => 'ready')";
     assert_eq!(
         must(acting.page.as_the_page(register, soon()).await),
+        "refused"
+    );
+    refused(|| acting.blocked(), "SERVICEWORKER").await;
+    let installing = must(
+        browser
+            .sign_in_tab(&environment(), &only(&app), &Origins::default())
+            .await,
+    );
+    must(installing.goto(&quiet, soon()).await);
+    assert_eq!(
+        must(installing.page.as_the_page(register, soon()).await),
         "ready"
     );
+    drop(installing);
     assert_eq!(
         must(acting.page.as_the_page(poke, soon()).await),
         "post sent, socket made"
@@ -453,7 +482,7 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_shared_worker_an_acting_tab_keeps_running_is_out_of_reach_of_an_observed_page() {
+async fn a_shared_worker_is_refused_to_a_page_of_either_kind_of_tab() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("shared");
     let quiet = at(&app.url("/escapes/quiet"));
@@ -475,22 +504,21 @@ async fn a_shared_worker_an_acting_tab_keeps_running_is_out_of_reach_of_an_obser
         )
     };
 
-    // First, that the test means something: a page of a tab that may act
-    // starts the worker, and the worker writes. The tab stays open, so the
-    // worker keeps running.
+    // A page of a tab that may act cannot start one: its requests would be
+    // the worker's own, which the tab's interception does not hold
+    // (decision 0292). So no shared worker runs that a page of the same
+    // origin could reach.
     let browser = stand.open(&profile("clerk")).await;
     let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
     must(acting.goto(&quiet, soon()).await);
     assert_eq!(
         must(acting.page.as_the_page(&connect(false), soon()).await),
-        "post sent, socket made"
+        "refused"
     );
-    let both = ["escapes/shared-post", "escapes/shared-socket"];
-    assert_eq!(arrived_all(&app, &both).await, both);
-    app.reset().await.unwrap();
+    refused(|| acting.blocked(), "SHAREDWORKER").await;
 
-    // A page that is only observed, of the same origin and in the same
-    // browser, cannot reach it: not directly, and not through a frame.
+    // A page that is only observed cannot start one either: not directly,
+    // and not through a frame.
     let tab = observing(&stand, &app, "clerk").await;
     must(tab.goto(&quiet, soon()).await);
     for through_a_frame in [false, true] {
@@ -810,4 +838,194 @@ fn the_browser_s_reviewed_digests_are_read_from_a_pack_s_settings_or_refused() {
         let failure = read(&Values::default().with(crate::DIGESTS_SETTING, wrong)).unwrap_err();
         assert_eq!(failure.class(), FailureClass::Input);
     }
+}
+
+/// What arrived at `app` from `/escapes/loads`, by name and count.
+async fn loads_arrived(app: &TestApp) -> BTreeMap<String, u64> {
+    app.trap_writes()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("escapes/loads-"))
+        .collect()
+}
+
+/// The names of `/escapes/loads`' attempts, as the application counts them.
+fn loads(names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| format!("escapes/loads-{name}"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tab_sends_nothing_to_an_origin_outside_its_reach_and_what_it_may_reach_arrives() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("reach");
+    let browser = stand.open(&profile("clerk")).await;
+    let page = at(&app.url("/escapes/loads"));
+    let elsewhere = |name: &str| other(&app, &format!("{WRITE}/loads-{name}"));
+    let shapes = |seen: Vec<RequestShape>, word: &str| -> Vec<String> {
+        let mut found: Vec<String> = seen
+            .into_iter()
+            .filter(|one| one.method == word)
+            .map(|one| one.address)
+            .collect();
+        found.sort();
+        found
+    };
+
+    // The page loads an image, a script, and a style, sends a `fetch` with
+    // GET and one with POST, and opens a socket, all at the application's
+    // other name. A tab opened for the application alone, in either
+    // posture, sends none of them: each is refused in the browser, and
+    // reported with its address.
+    let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
+    must(acting.goto(&page, soon()).await);
+    must(
+        acting
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let from_acting = refused(|| acting.blocked(), "WEBSOCKET").await;
+    let observing = observing(&stand, &app, "scout").await;
+    must(observing.goto(&page, soon()).await);
+    must(
+        observing
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let from_observing = refused(|| observing.blocked(), "WEBSOCKET").await;
+    let mut outside: Vec<String> = ["fetch", "image", "post", "script", "style"]
+        .iter()
+        .map(|name| elsewhere(name))
+        .collect();
+    outside.sort();
+    for seen in [from_acting, from_observing] {
+        assert_eq!(shapes(seen.clone(), crate::OUTSIDE), outside);
+        assert_eq!(
+            shapes(seen, "WEBSOCKET"),
+            [elsewhere("socket").replacen("http", "ws", 1)]
+        );
+    }
+    drop(acting);
+    drop(observing);
+    assert_eq!(loads_arrived(&app).await, BTreeMap::new());
+
+    // Declared as a place the page may send requests to, the other name
+    // receives what each posture lets through: every attempt from a tab
+    // that may act; the reads alone from one that observes, which still
+    // refuses the POST and the socket as it always has.
+    let acting = must(
+        browser
+            .acting_tab(&environment(), &reaching_the_other_name(&app))
+            .await,
+    );
+    must(acting.goto(&page, soon()).await);
+    must(
+        acting
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let all = loads(&["fetch", "image", "post", "script", "socket", "style"]);
+    let names: Vec<&str> = all.iter().map(String::as_str).collect();
+    let started = std::time::Instant::now();
+    while loads_arrived(&app).await.len() < all.len() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            loads_arrived(&app).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        names
+    );
+    assert_eq!(acting.blocked(), []);
+    drop(acting);
+
+    app.reset().await.unwrap();
+    let observing = observing_with(&stand, "scout_2", &reaching_the_other_name(&app)).await;
+    must(observing.goto(&page, soon()).await);
+    must(
+        observing
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let seen = refused(|| observing.blocked(), "WEBSOCKET").await;
+    assert_eq!(shapes(seen.clone(), crate::OUTSIDE), Vec::<String>::new());
+    assert_eq!(shapes(seen, "POST"), [elsewhere("post")]);
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        loads(&["fetch", "image", "script", "style"])
+    );
+    drop(observing);
+    drop(browser);
+    stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_frame_in_another_process_of_an_acting_tab_sends_nothing_outside_the_tab_s_reach() {
+    // A third origin: a second application, on a port of its own.
+    let app = TestApp::start().await.unwrap();
+    let third = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("reach-frame");
+    let browser = stand.open(&profile("clerk")).await;
+    let tab = must(
+        browser
+            .acting_tab(&environment(), &reaching_the_other_name(&app))
+            .await,
+    );
+    // The page, and a frame of the application's other name, which the
+    // browser runs in a process of its own, each try to load from the
+    // third origin.
+    let frame = other(&app, "/");
+    let from = third.url("/");
+    let page = format!(
+        "/escapes/loads?frame={}&from={}",
+        frame
+            .trim_end_matches('/')
+            .replace(':', "%3A")
+            .replace('/', "%2F"),
+        from.trim_end_matches('/')
+            .replace(':', "%3A")
+            .replace('/', "%2F"),
+    );
+    must(tab.goto(&at(&app.url(&page)), soon()).await);
+    must(tab.wait(&Primitive::Visible(css("#tried")), soon()).await);
+    must(
+        tab.wait(&Primitive::Visible(css("#frame-tried")), soon())
+            .await,
+    );
+    let seen = tab.blocked();
+    // Five refusals by the browser, and a socket by the page, for each of
+    // the two documents.
+    let third_origin = from.trim_end_matches('/');
+    let outside: Vec<&RequestShape> = seen
+        .iter()
+        .filter(|one| one.method == crate::OUTSIDE)
+        .collect();
+    assert_eq!(outside.len(), 10, "{seen:?}");
+    assert!(
+        outside
+            .iter()
+            .all(|one| one.address.starts_with(third_origin)),
+        "{seen:?}"
+    );
+    // The frame did load, from the other name: the application served the
+    // page twice, and the third heard nothing at all.
+    let served = app
+        .seen()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|line| line == "GET /escapes/loads")
+        .count();
+    assert_eq!(served, 2);
+    assert_eq!(third.seen_all().await.unwrap(), Vec::<String>::new());
+    assert_eq!(loads_arrived(&third).await, BTreeMap::new());
+    drop(tab);
+    drop(browser);
+    stand.end().await;
 }

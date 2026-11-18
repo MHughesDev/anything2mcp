@@ -11,6 +11,9 @@ publish.workspace = true
 a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
 a2m-engine = { path = "../a2m-engine" }
+# A watch's condition is checked and compiled against the read's outputs
+# when it is asked (decision 0291).
+a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files" }
 a2m-ledger = { path = "../a2m-ledger" }
 # The machine's own network facts, served by the `net.*` actions (decision
@@ -40,7 +43,6 @@ rustix = { workspace = true, features = ["fs"] }
 testing = []
 
 [dev-dependencies]
-a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
 a2m-sources = { path = "../a2m-sources" }
 example-app = { path = "../../targets/example-app" }

@@ -508,3 +508,69 @@ async fn a_check_that_joined_a_run_it_did_not_open_never_cancels_it() {
     assert_eq!(world.run_state(theirs).await, RunState::Queued);
     world.kernel.close(CloseReason::Asked).await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_condition_is_checked_against_the_reads_outputs_and_ends_the_watch_when_it_holds() {
+    let world = World::ready().await;
+    *world.surface.pages.lock().unwrap() = true;
+    // A condition is an expression over the read's outputs that gives true
+    // or false; anything else is refused at the ask, and no watch is kept.
+    for (condition, code) in [
+        ("result.no_such_output == 1", "expression_invalid"),
+        ("result.status", "expression_type_error"),
+        ("input.order_id == 'A-100'", "expression_invalid"),
+    ] {
+        let mut input = world.watch_input();
+        input["condition"] = json!(condition);
+        let refused = world.call("watch.create", input).await;
+        assert_eq!(code_of(&refused), code, "{condition}: {refused:?}");
+    }
+    let listed = world.ok("watch.list", json!({})).await;
+    assert_eq!(listed["watches"], json!([]), "{listed}");
+
+    // One that always holds of what the read returns: the watch ends at its
+    // first check, which made the baseline and compared nothing.
+    let mut input = world.watch_input();
+    input["condition"] = json!("result.lines >= 0");
+    let asked = world.call("watch.create", input).await;
+    let watch = asked.result.clone().unwrap();
+    assert_eq!(watch["condition"], "result.lines >= 0", "{watch}");
+    let id: WatchId = watch["watch_id"].as_str().unwrap().parse().unwrap();
+    // The person is shown the condition before confirming.
+    let ask = world.confirmation();
+    let read = ask.details.join("\n");
+    assert!(read.contains("result.lines >= 0"), "{read}");
+    assert!(world.confirmed_on_the_page(&ask).await.ok);
+
+    world.clock.advance(Duration::from_secs(10));
+    let ended = world
+        .tended_until(&id.to_string(), |watch| watch["state"] == "ended")
+        .await;
+    assert_eq!(ended["reason"], "condition_met", "{ended}");
+    // The ledger holds one check, completed, and the condition's change
+    // between the confirmation and the end.
+    let stored = world.stored_watch(id).await;
+    assert_eq!(stored.reason, Some(WatchReason::ConditionMet));
+    let checks = world.stored_checks(id).await;
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_ne!(checks[0].outcome, CheckOutcome::Failed, "{checks:?}");
+    assert_eq!(
+        world.stored_kinds(id).await,
+        [
+            ChangeKind::Confirmed,
+            ChangeKind::ConditionMet,
+            ChangeKind::Ended
+        ]
+    );
+    let told = world
+        .ok("watch.changes", json!({"watch_id": id.to_string()}))
+        .await;
+    let met = &told["changes"][1];
+    assert_eq!(met["kind"], "condition_met", "{told}");
+    assert_eq!(met["run_id"], checks[0].run.to_string(), "{told}");
+    // Nothing more is read: the order was read once.
+    world.clock.advance(Duration::from_secs(600));
+    world.kernel.tend().await;
+    assert_eq!(world.order_reads().await, 1);
+    world.kernel.close(CloseReason::Asked).await;
+}

@@ -51,6 +51,11 @@ const NAVIGATION: &str = "NAVIGATION";
 const POPUP: &str = "POPUP";
 const DOWNLOAD: &str = "DOWNLOAD";
 
+/// What a tab reports for a request of its page, a frame, or a worker that
+/// was refused because its address is on none of the origins the tab may
+/// reach (decision 0292).
+pub const OUTSIDE: &str = "OUTSIDE";
+
 /// How the browser is told to end a request. A document that is ended as
 /// aborted leaves the page that asked for it in place; one that is ended
 /// as blocked is replaced by the browser's own error page (measured,
@@ -104,6 +109,73 @@ const REFUSE_SOCKETS: &str = r#"(() => {
     });
   }
 })()"#;
+
+/// Where the socket script of an acting tab holds the origins it may reach.
+const SOCKET_REACH: &str = "/*a2m:reach*/[]";
+
+/// Run in the page's own world, and in every worker, of an acting tab
+/// (decision 0292). What request interception cannot see is held to the
+/// tab's reach when it is made: a WebSocket or a WebTransport to an origin
+/// outside it is refused, and so is every peer connection, shared worker,
+/// and service worker, whose requests could go anywhere. Like the
+/// observing tab's, this lock is a script in the page.
+const HOLD_SOCKETS: &str = r#"(() => {
+  const reach = /*a2m:reach*/[];
+  const report = (what, address) => {
+    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+  };
+  const refusal = () => new DOMException("Refused: outside what this tab may reach.", "SecurityError");
+  const inside = (address) => {
+    try {
+      const url = new URL(String(address), globalThis.location ? globalThis.location.href : undefined);
+      const scheme = url.protocol === "ws:" ? "http:" : url.protocol === "wss:" ? "https:" : url.protocol;
+      return reach.includes(scheme + "//" + url.host);
+    } catch (_) {
+      return false;
+    }
+  };
+  for (const name of ["WebSocket", "WebTransport"]) {
+    const real = globalThis[name];
+    if (typeof real !== "function") continue;
+    const held = new Proxy(real, {
+      apply() { throw new TypeError(name + " must be called with new."); },
+      construct(target, args, made) {
+        if (!inside(args[0])) {
+          report(name, args[0]);
+          throw refusal();
+        }
+        return Reflect.construct(target, args, made);
+      },
+    });
+    Object.defineProperty(globalThis, name, { value: held, writable: false, configurable: false });
+  }
+  for (const name of ["SharedWorker", "RTCPeerConnection", "webkitRTCPeerConnection"]) {
+    if (!(name in globalThis)) continue;
+    const refused = function (address) {
+      report(name === "webkitRTCPeerConnection" ? "RTCPeerConnection" : name, address);
+      throw refusal();
+    };
+    Object.defineProperty(globalThis, name, { value: refused, writable: false, configurable: false });
+  }
+  if (globalThis.ServiceWorkerContainer) {
+    Object.defineProperty(ServiceWorkerContainer.prototype, "register", {
+      value: function (address) {
+        report("ServiceWorker", address);
+        return Promise.reject(refusal());
+      },
+      writable: false,
+      configurable: false,
+    });
+  }
+})()"#;
+
+/// The socket script of an acting tab that may reach these origins.
+fn sockets_held_to(origins: &Origins) -> String {
+    let list = origins.reach();
+    // A list of plain texts is always written; an empty one refuses all.
+    let list = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_owned());
+    HOLD_SOCKETS.replacen(SOCKET_REACH, &list, 1)
+}
 
 /// The fixed environment of a tab. Set per target and never varied.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -873,6 +945,10 @@ pub(crate) struct Page {
     origins: Origins,
     /// The helper's source, with those origins written in.
     helper: String,
+    /// The script that holds what interception cannot see: every socket
+    /// refused in an observing tab, and in an acting tab every socket
+    /// outside the tab's reach.
+    sockets: String,
     moves: Mutex<Moves>,
     /// Whether the tab has been released. Kept apart from its status,
     /// which the tab's events also end: the release is done once, whatever
@@ -2213,7 +2289,7 @@ impl Page {
             )
             .await;
         let now = Evaluate {
-            expression: REFUSE_SOCKETS,
+            expression: &self.sockets,
             context_id: None,
             return_by_value: true,
             await_promise: false,
@@ -2224,7 +2300,7 @@ impl Page {
                     .call(
                         Some(session),
                         &AddScriptOnNewDocument {
-                            source: REFUSE_SOCKETS,
+                            source: &self.sockets,
                             world_name: None,
                         },
                         deadline,
@@ -2254,8 +2330,15 @@ impl Page {
     }
 
     /// What becomes of a request that is not a move of the tab itself.
+    ///
+    /// A request whose address is on none of the origins the tab may reach
+    /// is refused first, whatever its method and whichever tab it is in
+    /// (decision 0292). Then an observing tab refuses what could write.
     fn judge_request(&self, paused: &RequestPaused) -> Verdict {
         let request = &paused.request;
+        if !self.origins.reaches_reported(&request.url) {
+            return Verdict::Refuse(Some(OUTSIDE.to_owned()));
+        }
         match &self.safe {
             Some(safe) if !safe.allows(&request.method, &request.url) => {
                 Verdict::Refuse(Some(request.method.clone()))
@@ -2367,7 +2450,10 @@ impl Page {
             // when the browser starts. This is the report.
             EventKind::DownloadBegins(download) => self.block(DOWNLOAD, &download.url),
             EventKind::Attached(attached) => {
-                if self.safe.is_some() {
+                // Every child of a tab a tool runs in is locked before it
+                // runs, in both postures (decision 0292); a sign-in tab
+                // attaches none.
+                if !self.quiet {
                     self.guard_child(
                         &attached.session_id,
                         &attached.target_info.kind,
@@ -3033,6 +3119,10 @@ pub(crate) async fn open_page(
         )
         .await
         .map_err(lost)?;
+    let sockets = match &posture {
+        Posture::Observe(_) => REFUSE_SOCKETS.to_owned(),
+        Posture::Act | Posture::SignIn => sockets_held_to(origins),
+    };
     let page = Arc::new(Page {
         client: client.clone(),
         session: attached.session_id,
@@ -3060,6 +3150,7 @@ pub(crate) async fn open_page(
         },
         origins: origins.clone(),
         helper: helper_for(look_on.unwrap_or(origins)),
+        sockets,
         moves: Mutex::new(Moves::default()),
         released: AtomicBool::new(false),
         browser: Arc::clone(browser),
@@ -3116,7 +3207,7 @@ async fn prepare(
         .await?;
         page.call(
             &AddScriptOnNewDocument {
-                source: REFUSE_SOCKETS,
+                source: &page.sockets,
                 world_name: None,
             },
             deadline,
@@ -3128,11 +3219,14 @@ async fn prepare(
         page.call(&fetch_documents(), deadline).await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     } else {
-        // A tab that may act holds only the requests of documents: that is
-        // where it is kept on the origins it was opened for. The page's
-        // service worker is passed by here too, so that a write from inside
-        // the page reaches the application as sent, once, and no worker
-        // answers or changes it (decision 0245, audit finding M6).
+        // A tab that may act holds every request, as an observing tab does,
+        // so that none leaves for an origin outside its reach (decision
+        // 0292), and locks each worker and frame in another process the
+        // same way before it runs; what interception cannot see is held by
+        // the socket script. The page's service worker is passed by here
+        // too, so that a write from inside the page reaches the application
+        // as sent, once, and no worker answers or changes it (decision
+        // 0245, audit finding M6).
         //
         // Its network events stay on: the browser passes the service
         // worker by only while they are, and switching them off undoes it
@@ -3141,8 +3235,20 @@ async fn prepare(
         // form posts and a token sent in a write's body never cross into
         // the engine's process by them (audit finding M7). A write's "sent"
         // and "answered" rest on none of them: they are the page's own
-        // request and its answer, through the helper.
-        page.call(&fetch_documents(), deadline).await?;
+        // request and its answer, through the helper. The interception's
+        // own event carries a held request's body as the browser holds it;
+        // none of it is read into a field (decision 0292).
+        page.call(&fetch_everything(), deadline).await?;
+        page.call(
+            &SetAutoAttach {
+                auto_attach: true,
+                wait_for_debugger_on_start: true,
+                flatten: true,
+                filter: None,
+            },
+            deadline,
+        )
+        .await?;
         page.call(
             &NetworkEnable::keeping(page.max_read).without_bodies(),
             deadline,
@@ -3151,6 +3257,21 @@ async fn prepare(
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
+        page.call(
+            &AddBinding {
+                name: REFUSED_BINDING,
+            },
+            deadline,
+        )
+        .await?;
+        page.call(
+            &AddScriptOnNewDocument {
+                source: &page.sockets,
+                world_name: None,
+            },
+            deadline,
+        )
+        .await?;
     }
     page.call(&PageEnable {}, deadline).await?;
     page.call(&SetLifecycleEvents { enabled: true }, deadline)

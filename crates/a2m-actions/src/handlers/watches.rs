@@ -16,9 +16,9 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingStatus, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, Identity,
-    OperationName, OperationPlan, Plan, PrincipalId, RecordKey, RunId, RunState, SessionState,
-    Timestamp, ToolRuns, Value, Values,
+    BindingStatus, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, FieldOf,
+    Identity, OperationName, OperationPlan, Plan, PlanExpr, PrincipalId, RecordKey, RunId,
+    RunState, SessionState, Timestamp, ToolRuns, Value, ValueType, Values,
 };
 use a2m_engine::{decode_values, encode_values};
 use a2m_ledger::{
@@ -82,19 +82,14 @@ fn person_of(caller: &Caller) -> Result<PrincipalId, Failure> {
 /// check opened, such as the person's own call that a check joined, is never
 /// cancelled for a watch; a run another watch's check still rests on is left
 /// for that check, and the last check on it to stop cancels it.
+/// The ledger answers the rule in one place, for this module and for the
+/// scheduler's end of watches past their end.
 fn run_left_to_cancel(
     tx: &mut Tx<'_>,
     run: RunId,
     stopping: &BTreeSet<(WatchId, u64)>,
 ) -> Result<bool, Failure> {
-    if !tx.watches().run_opened_by_a_check(run)? {
-        return Ok(false);
-    }
-    Ok(tx
-        .watches()
-        .checks_of_run(run)?
-        .iter()
-        .all(|check| stopping.contains(&(check.watch, check.seq))))
+    tx.watches().run_left_to_cancel(run, stopping)
 }
 
 fn failure_json((class, code): &(FailureClass, FailureCode)) -> Json {
@@ -156,6 +151,9 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
         "ignore".to_owned(),
         json!(row.ignore.iter().collect::<Vec<_>>()),
     );
+    if let Some(condition) = &row.condition {
+        map.insert("condition".to_owned(), json!(condition.source));
+    }
     Json::Object(map)
 }
 
@@ -287,6 +285,32 @@ fn checked_ignore(
     Ok(ignore.iter().cloned().collect())
 }
 
+/// Checks and compiles a watch's condition: an expression over the read's
+/// result, `result`, a record of the read's outputs with the types the plan
+/// gives them, that gives true or false (decisions 0234 and 0291). It reads
+/// no input, no environment, and nothing but the one result, so the same
+/// result always gives the same answer. Kept in the plan's form, which the
+/// ledger loads again and evaluates on each check's own result.
+fn checked_condition(
+    operation: &OperationPlan,
+    given: Option<&str>,
+) -> Result<Option<PlanExpr>, Failure> {
+    let Some(source) = given.filter(|source| !source.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let mut env = a2m_expr::TypeEnv::new(a2m_expr::LibraryVersion::CURRENT);
+    let result = ValueType::Record(
+        operation
+            .outputs
+            .iter()
+            .map(|output| FieldOf::required(output.name.clone(), output.ty.clone()))
+            .collect(),
+    );
+    env.declare(a2m_expr::names::RESULT, result)?;
+    let compiled = a2m_expr::compile(source, &env, Some(&ValueType::Bool))?;
+    Ok(Some(compiled.to_plan_expr()?))
+}
+
 impl Kernel {
     /// The watch, when it acts for the caller's person. Any other watch is
     /// answered as no watch at all, whatever role the caller holds: a watch
@@ -357,25 +381,11 @@ impl Kernel {
             return;
         };
         let mut changed = false;
-        // 1. What is due, and what a watch's end closed.
+        // 1. What is due, and what a watch's end closed. The scheduler
+        // ends each watch past its end and cancels its check's run in one
+        // transaction, so a pass that fails leaves both to the next.
         if let Ok(due) = sched.due_watches().await {
-            // The checks a watch's end closed are closed already: a run is
-            // cancelled only when no other check rests on it.
-            let closed = due.cancel;
-            let cancel = store
-                .read(move |tx| {
-                    let mut cancel = BTreeSet::new();
-                    for run in closed {
-                        if run_left_to_cancel(tx, run, &BTreeSet::new())? {
-                            cancel.insert(run);
-                        }
-                    }
-                    Ok(cancel)
-                })
-                .await
-                .unwrap_or_default();
-            for run in cancel {
-                let _ = sched.cancel(run).await;
+            if !due.cancelled.is_empty() {
                 changed = true;
             }
             for check in due.checks {
@@ -724,6 +734,13 @@ impl Kernel {
                 "Each check sends up to {} requests to the surface `{}`: about {per_day} a day of the {allowed} it allows. All watches on the surface together may take at most {share} in every hundred.",
                 row.requests_per_check, row.surface
             ),
+            match &row.condition {
+                Some(condition) => format!(
+                    "It also ends at the first check on which this holds of what the read returned: {}. A check on which it cannot be answered is recorded as a gap.",
+                    condition.source
+                ),
+                None => "It has no condition: it ends at its end, or when you or the agent end it.".to_owned(),
+            },
             "While it runs, each check uses your session for the target, and the session is kept signed in while you are away. A check that needs you to sign in pauses the watch; it never asks you itself.".to_owned(),
             "What is kept: for each check, keyed digests of what the read returned, never a value; the values stay in each check's run, as for any read you call.".to_owned(),
         ])
@@ -834,6 +851,7 @@ handler!(
             })
             .unwrap_or_default();
         let ignore = checked_ignore(operation, &ignore)?;
+        let condition = checked_condition(operation, call.text("condition"))?;
         let environment = match call.text("environment") {
             Some(given) => Environment::new(given)?,
             None => found
@@ -922,6 +940,7 @@ handler!(
                 acts_for: person,
                 client_label: codes::shown(&call.caller.client),
                 retention: RetentionClass::Long,
+                condition,
             })
             .await?;
         // The confirmation is the person's, on the engine's page, exactly

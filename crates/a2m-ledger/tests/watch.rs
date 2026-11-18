@@ -51,6 +51,7 @@ fn new_watch(effect: EffectClass) -> NewWatch {
         acts_for: principal(1),
         client_label: "example-agent".to_owned(),
         retention: RetentionClass::Long,
+        condition: None,
     }
 }
 

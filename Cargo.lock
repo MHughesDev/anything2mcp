@@ -138,6 +138,7 @@ name = "a2m-ledger"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-expr",
  "a2m-telemetry",
  "a2m-vault",
  "rusqlite",

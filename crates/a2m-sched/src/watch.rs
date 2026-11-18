@@ -17,6 +17,7 @@
 //! than the watches on it were confirmed for, however many pages it reads.
 //! A watch past its end is ended, whatever its state.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use a2m_core::{Digest, Failure, FailureClass, FailureCode, JobId, PrincipalId, RunId, Timestamp};
@@ -29,7 +30,7 @@ use crate::budget;
 use crate::failure;
 use crate::scheduler::Scheduler;
 use crate::tables;
-use crate::types::{Admitted, BudgetKey, Priority, RateLimit, Submission};
+use crate::types::{Admitted, BudgetKey, CancelOutcome, Priority, RateLimit, Submission};
 
 /// The shortest interval any installation may give a watch. A setting may
 /// raise the floor above it and never lower it below it, so that a watch is
@@ -340,14 +341,19 @@ pub struct DueCheck {
 }
 
 /// What [`Scheduler::due_watches`] gives: the checks due now, and the runs of
-/// checks that a watch's end closed, which the caller cancels.
+/// checks that a watch's end closed, which it cancelled.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DueWatches {
     /// The checks due now.
     pub checks: Vec<DueCheck>,
-    /// The runs of checks under way when their watch's end came. The watch
-    /// has ended; its run is the caller's to cancel.
-    pub cancel: Vec<RunId>,
+    /// The runs of checks under way when their watch's end came that were
+    /// cancelled, or whose runner was told to cancel them, in the
+    /// transaction that ended the watch: each one a check of a watch opened
+    /// and no check under way still rests on (decision 0287). Nothing is
+    /// left for the caller to cancel, so a pass that fails loses nothing:
+    /// the watch's end and its run's cancel commit together, or neither
+    /// does and the next pass does both.
+    pub cancelled: Vec<RunId>,
 }
 
 /// The budget all watches on the watch's surface share, with its limit
@@ -370,25 +376,50 @@ pub(crate) fn share_key(
     Ok(share)
 }
 
+/// The runs [`end_past_their_end`] cancelled, and what their cancels let go.
+#[derive(Debug, Default)]
+struct Cancels {
+    runs: Vec<RunId>,
+    /// A run was cancelled at once, and the ledger sorted its locks.
+    at_once: bool,
+    /// A job let resources go.
+    freed: bool,
+}
+
 /// Ends every watch past its end that a plan does not end: one asked, paused,
 /// or running. A confirmed watch is left to [`plan`], which records the due
-/// times that passed before its end as a gap. Gives the runs of the checks
-/// it closed.
-fn end_past_their_end(tx: &mut Tx<'_>, now: Timestamp) -> Result<Vec<RunId>, Failure> {
-    let mut cancel = Vec::new();
+/// times that passed before its end as a gap. Then, in the same
+/// transaction, cancels each run of a check it closed that a check opened
+/// and no check under way rests on any more (`Watches::run_left_to_cancel`,
+/// asked once every watch of the pass has ended, so that two watches ending
+/// together on one run cancel it).
+fn end_past_their_end(tx: &mut Tx<'_>, now: Timestamp) -> Result<Cancels, Failure> {
+    let mut closed = BTreeSet::new();
     for watch in tx.watches().past_end(now)? {
         match watch.state {
             WatchState::Confirmed | WatchState::Ended => continue,
             WatchState::Running => {
                 if let Some(seq) = watch.running_check {
-                    cancel.push(tx.watches().check(watch.id, seq)?.run);
+                    closed.insert(tx.watches().check(watch.id, seq)?.run);
                 }
             }
             WatchState::Asked | WatchState::Paused => {}
         }
         tx.watches().end(watch.id, WatchReason::EndReached)?;
     }
-    Ok(cancel)
+    let mut cancels = Cancels::default();
+    for run in closed {
+        if !tx.watches().run_left_to_cancel(run, &BTreeSet::new())? {
+            continue;
+        }
+        let (outcome, freed) = tables::cancel(tx, run)?;
+        cancels.at_once |= outcome == CancelOutcome::Cancelled;
+        cancels.freed |= freed;
+        if !matches!(outcome, CancelOutcome::AlreadyFinal(_)) {
+            cancels.runs.push(run);
+        }
+    }
+    Ok(cancels)
 }
 
 /// A check that was admitted and begun.
@@ -499,8 +530,8 @@ impl Scheduler {
     }
 
     /// Looks over every watch, in one transaction: ends every watch whose
-    /// end has come, whatever its state, giving the run of a check it closed
-    /// to be cancelled; records a gap for due times of a confirmed watch that
+    /// end has come, whatever its state, and cancels the run of a check it
+    /// closed when no other check rests on it; records a gap for due times of a confirmed watch that
     /// passed with no check; and answers the checks due now. Running and
     /// paused watches have no check due: a watch never runs two at once.
     ///
@@ -508,10 +539,11 @@ impl Scheduler {
     ///
     /// `busy` failures of the store.
     pub async fn due_watches(&self) -> Result<DueWatches, Failure> {
-        self.store()
+        let (due, cancels) = self
+            .store()
             .write(Durability::Synced, move |tx| {
                 let now = tx.now();
-                let cancel = end_past_their_end(tx, now)?;
+                let cancels = end_past_their_end(tx, now)?;
                 let mut due = Vec::new();
                 for watch in tx.watches().open()? {
                     match plan(&watch, now) {
@@ -535,12 +567,16 @@ impl Scheduler {
                         }
                     }
                 }
-                Ok(DueWatches {
-                    checks: due,
-                    cancel,
-                })
+                Ok((due, cancels))
             })
-            .await
+            .await?;
+        if !cancels.runs.is_empty() {
+            self.after_cancels(cancels.at_once, cancels.freed).await;
+        }
+        Ok(DueWatches {
+            checks: due,
+            cancelled: cancels.runs,
+        })
     }
 
     /// The earliest moment at which [`Scheduler::due_watches`] has something

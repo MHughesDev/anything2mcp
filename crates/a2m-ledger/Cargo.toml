@@ -10,6 +10,9 @@ build = "build.rs"
 
 [dependencies]
 a2m-core = { path = "../a2m-core" }
+# A watch's condition is evaluated on its check's own result, in the
+# transaction that ends the check (decision 0291).
+a2m-expr = { path = "../a2m-expr" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 a2m-vault = { path = "../a2m-vault" }
 # `hooks` gives the authorizer, which holds each crate to its own tables, and
