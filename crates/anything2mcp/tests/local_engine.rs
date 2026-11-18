@@ -16,11 +16,8 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
@@ -28,8 +25,9 @@ use a2m_local::{
     Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptName, PromptText,
     StopReason,
 };
-use anything2mcp::cli::{Finished, Host, READY_LINE, run_with};
+use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
+use common::served::{Bridge, PATIENCE, Served, object, output, request, stateless};
 use common::{Machine, Surface};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
@@ -41,10 +39,6 @@ const READ_INPUT: &str = r#"{"order_id": "A-100"}"#;
 const OTHER_INPUT: &str = r#"{"order_id": "A-101"}"#;
 /// The length is written as a person writes it, in feet and inches.
 const WRITE_INPUT: &str = r#"{"order_id": "A-102", "item_code": "L-300", "description": "New rail", "quantity": 3, "length_in": "12' 6 1/2\""}"#;
-
-/// How long a test waits for a child process to say or do what it should
-/// do at once. Only a failure waits this long.
-const PATIENCE: Duration = Duration::from_secs(180);
 
 /// A machine whose store is on disk and holds the published `example`
 /// target. A person publishes on an engine in this process, which then
@@ -62,109 +56,6 @@ async fn published(app: &TestApp) -> Machine {
     // waiting, so the test waits until no copy is left.
     lock_comes_free(&machine).await;
     machine
-}
-
-/// What a child wrote on one of its streams, line by line, as it comes.
-fn lines_of(stream: impl std::io::Read + Send + 'static) -> Receiver<String> {
-    let (send, lines) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stream).lines() {
-            let Ok(line) = line else { break };
-            if send.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    lines
-}
-
-/// Waits for a child to end, and gives its exit code and what was left on
-/// its standard output.
-fn ended(mut child: Child) -> (Option<i32>, String) {
-    let stdout = child.stdout.take();
-    let (send, done) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(mut stdout) = stdout {
-            let _ = std::io::Read::read_to_string(&mut stdout, &mut text);
-        }
-        let _ = send.send((child.wait().unwrap().code(), text));
-    });
-    done.recv_timeout(PATIENCE).expect("the process ended")
-}
-
-/// The local engine as a child process: the real program's `serve`.
-struct Served {
-    child: Option<Child>,
-    /// Kept so that what the engine says goes on being read.
-    _said: Receiver<String>,
-}
-
-impl Served {
-    /// Starts `serve` and waits for the line it writes when it answers on
-    /// the local channel.
-    fn start(machine: &Machine) -> Self {
-        let mut child = machine.program(&["serve"]).spawn().unwrap();
-        let said = lines_of(child.stderr.take().unwrap());
-        let mut heard = Vec::new();
-        loop {
-            match said.recv_timeout(PATIENCE) {
-                Ok(line) if line == READY_LINE => break,
-                Ok(line) => heard.push(line),
-                Err(_) => {
-                    let _ = child.kill();
-                    panic!("`serve` did not become ready; it said {heard:?}");
-                }
-            }
-        }
-        // Before it is ready, `serve` says what approvals on this machine
-        // need: the kind of presence check, and the reason.
-        let presence = heard
-            .iter()
-            .find(|line| line.starts_with(anything2mcp::PRESENCE_LINE))
-            .unwrap_or_else(|| panic!("`serve` did not say what approvals need: {heard:?}"));
-        assert!(
-            presence.contains(" os_prompt, ready") || presence.contains(" not_available, "),
-            "{presence}"
-        );
-        Self {
-            child: Some(child),
-            _said: said,
-        }
-    }
-
-    /// Waits for the engine's process to end by itself.
-    fn ended(mut self) -> (Option<i32>, String) {
-        ended(self.child.take().unwrap())
-    }
-}
-
-impl Drop for Served {
-    fn drop(&mut self) {
-        // Only a test that failed leaves the process running.
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// Runs a command of the real program to its end, off the test's own
-/// threads, which the test application needs.
-async fn output(mut command: Command) -> Output {
-    tokio::task::spawn_blocking(move || command.output().unwrap())
-        .await
-        .unwrap()
-}
-
-fn object(output: &Output) -> Json {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
-        panic!(
-            "not one JSON object: {} / {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
 }
 
 /// A response without what differs from call to call: the identifier of
@@ -335,102 +226,6 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     }
     let inside = output(machine.program(&["--in-process", "engine", "status"])).await;
     assert_eq!(inside.status.code(), Some(0), "{inside:?}");
-}
-
-/// The real program's `bridge`, driven by raw protocol messages over its
-/// standard streams.
-struct Bridge {
-    child: Option<Child>,
-    stdin: Option<ChildStdin>,
-    answers: Receiver<String>,
-}
-
-impl Bridge {
-    fn start(machine: &Machine, args: &[&str]) -> Self {
-        let mut command = machine.program(args);
-        // The bridge holds no key and opens no store: it only copies.
-        command
-            .env_remove(PASSPHRASE_VARIABLE)
-            .stdin(Stdio::piped());
-        let mut child = command.spawn().unwrap();
-        Self {
-            stdin: child.stdin.take(),
-            answers: lines_of(child.stdout.take().unwrap()),
-            child: Some(child),
-        }
-    }
-
-    fn send(&mut self, message: &Json) {
-        let stdin = self.stdin.as_mut().unwrap();
-        writeln!(stdin, "{message}").unwrap();
-        stdin.flush().unwrap();
-    }
-
-    /// The next line of standard output, which must be one protocol
-    /// message.
-    fn next(&mut self) -> Json {
-        let line = self
-            .answers
-            .recv_timeout(PATIENCE)
-            .expect("the bridge answered");
-        let message: Json = serde_json::from_str(&line)
-            .unwrap_or_else(|_| panic!("standard output held something else: {line}"));
-        assert_eq!(message["jsonrpc"], "2.0", "{line}");
-        message
-    }
-
-    /// The response to request `id`; what comes before it is progress.
-    fn answer(&mut self, id: u64) -> Json {
-        loop {
-            let message = self.next();
-            if message["id"] == json!(id) {
-                return message;
-            }
-            assert!(message.get("id").is_none(), "{message}");
-        }
-    }
-
-    fn ask(&mut self, message: &Json) -> Json {
-        self.send(message);
-        self.answer(message["id"].as_u64().unwrap())
-    }
-
-    /// Ends the input, and gives the exit code, what was left on standard
-    /// output, and standard error.
-    fn close(mut self) -> (Option<i32>, Vec<String>, String) {
-        drop(self.stdin.take());
-        let mut child = self.child.take().unwrap();
-        let stderr = lines_of(child.stderr.take().unwrap());
-        let (code, _) = ended(child);
-        let left: Vec<String> = self.answers.iter().collect();
-        (code, left, stderr.iter().collect::<Vec<_>>().join("\n"))
-    }
-}
-
-impl Drop for Bridge {
-    fn drop(&mut self) {
-        drop(self.stdin.take());
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// A request of the handshake revision.
-fn request(id: u64, method: &str, params: Json) -> Json {
-    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-}
-
-/// A request of the stateless revision: its `_meta` names the revision,
-/// the client, and the client's capabilities.
-fn stateless(id: u64, method: &str, mut params: Json) -> Json {
-    params["_meta"] = json!({
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
-        "io.modelcontextprotocol/clientInfo": {"name": "raw", "version": "0"},
-    });
-    request(id, method, params)
 }
 
 fn assert_read(answer: &Json) {

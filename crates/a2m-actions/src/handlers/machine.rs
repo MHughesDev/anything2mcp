@@ -423,10 +423,12 @@ handler!(
     /// agent sees listed; it names the fuller reading of the interfaces.
     net_standing,
     |_kernel, _call| {
-        Ok(Output::ok(net_read(a2m_netstate::standing).await?).then(Next::new(
-            "action.run",
-            json!({"action": "net.interfaces"}),
-            "for every interface in full",
-        )))
+        Ok(
+            Output::ok(net_read(a2m_netstate::standing).await?).then(Next::new(
+                "action.run",
+                json!({"action": "net.interfaces"}),
+                "for every interface in full",
+            )),
+        )
     }
 );

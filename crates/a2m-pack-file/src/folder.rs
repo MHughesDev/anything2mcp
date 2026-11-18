@@ -1080,6 +1080,33 @@ mod tests {
         assert_eq!(fs::read_dir(&inbox).unwrap().count(), 1);
     }
 
+    /// The same file, written again in place after the look, keeps its
+    /// identity and not its bytes: the delete is held to the bytes that
+    /// were read too, so it is stale and the file stays.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_written_in_place_after_the_look_is_not_deleted() {
+        let swap = Swap::new("rewritten");
+        let inbox = swap.root.join("inbox");
+        fs::write(inbox.join("a.txt"), b"read\n").unwrap();
+        let folder = swap.folder();
+        let read = WasRead {
+            identity: identity(&folder, "a.txt", 0).unwrap(),
+            digest: Some(Digest::of(b"read\n")),
+            max_bytes: 100,
+        };
+        let done = delete_with(&folder, "a.txt", Kind::File, read, || {
+            fs::write(inbox.join("a.txt"), b"rewritten\n").unwrap();
+        });
+        assert_eq!(identity(&folder, "a.txt", 0).unwrap(), read.identity);
+        assert_eq!(
+            done.unwrap_err().failure.code(),
+            &codes::CHANGED_SINCE_PREVIEW
+        );
+        assert_eq!(fs::read(inbox.join("a.txt")).unwrap(), b"rewritten\n");
+        assert_eq!(fs::read_dir(&inbox).unwrap().count(), 1);
+    }
+
     /// A name the file system takes for an entry it lists under another
     /// form of the same letters is a named stop, for a read and for a
     /// write, and not "missing" or "changed". Only macOS folds the two

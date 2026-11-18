@@ -385,7 +385,7 @@ impl DraftingRule for LogReads {
                 (
                     "description",
                     DraftValue::text(&format!(
-                        "Reads the complete lines added to the growing file `{name}` since the position given, within the bounds its file declares, each as text marked untrusted, and the position to hand to the next read. A file replaced or cut short is told by its outcome, and nothing is read from it.{form} Drafted by rule from the file's name and its first lines; its name is provisional."
+                        "Reads the complete lines added to the growing file `{name}` since the position given, within the bounds its file declares, each as text marked untrusted, and the position to hand to the next read. A file replaced or cut short is told by its outcome, and nothing is read from it; so is a line that is not text, which the next read goes past.{form} Drafted by rule from the file's name and its first lines; its name is provisional."
                     )),
                 ),
             ]),

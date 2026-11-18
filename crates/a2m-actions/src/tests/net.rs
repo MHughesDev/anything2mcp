@@ -8,9 +8,9 @@ use a2m_actions::{BuiltInToolset, HealthState};
 use a2m_core::{AddressScope, FailureClass};
 use a2m_netstate::{
     Absent, AbsentReason, AddressStanding, Cut, Family, HardwareAddress, Interface,
-    InterfaceAddress, InterfaceKind, InterfaceStanding, Interfaces, LinkState, Listener,
-    Listeners, Neighbour, NeighbourState, Neighbours, Owner, Proxy, ProxySetting,
-    ResolverSetting, Resolvers, Route, Routes, Standing, Transport,
+    InterfaceAddress, InterfaceKind, InterfaceStanding, Interfaces, LinkState, Listener, Listeners,
+    Neighbour, NeighbourState, Neighbours, Owner, Proxy, ProxySetting, ResolverSetting, Resolvers,
+    Route, Routes, Standing, Transport,
 };
 use serde_json::{Value as Json, json};
 
@@ -35,8 +35,8 @@ async fn each_network_action_answers_an_agent_with_a_decision_and_fits_its_schem
     for action in NET {
         let response = world.call(action, json!({})).await;
         assert!(response.decision.is_some(), "{action}: no decision");
-        let not_built_here = cfg!(target_os = "macos")
-            && matches!(action, "net.listeners" | "net.proxy");
+        let not_built_here =
+            cfg!(target_os = "macos") && matches!(action, "net.listeners" | "net.proxy");
         if not_built_here {
             let error = response.error.expect("an error");
             assert_eq!(error.class, FailureClass::UnknownVariant, "{action}");
@@ -84,7 +84,11 @@ fn only_net_standing_is_listed_and_every_one_is_for_the_local_user() {
             "{action}"
         );
         assert!(def.input.fields.is_empty(), "{action}");
-        assert_eq!(listed.contains(&action), action == "net.standing", "{action}");
+        assert_eq!(
+            listed.contains(&action),
+            action == "net.standing",
+            "{action}"
+        );
     }
     assert!(registry.past_cap(BuiltInToolset::Use).is_empty());
 }
@@ -139,7 +143,10 @@ fn reasons() -> Vec<AbsentReason> {
     ];
     for reason in &all {
         match reason {
-            NotStated | NeedsLocationPermission | NotVisibleToThisUser | NotRead
+            NotStated
+            | NeedsLocationPermission
+            | NotVisibleToThisUser
+            | NotRead
             | MayHoldCredentials => {}
         }
     }
