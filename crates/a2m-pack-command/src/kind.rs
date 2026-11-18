@@ -19,99 +19,6 @@ use crate::model::{
 };
 use crate::pattern;
 
-/// The file names a program surface may not have: shells, interpreters
-/// that take code as an argument, and programs whose work is to start the
-/// program their arguments name. Compared without a `.exe` suffix and
-/// without regard to case.
-///
-/// The list is a net for a mistake, and it is not complete: many programs
-/// can be told to run another through some option of their own. What
-/// holds for those is the review of the target's files, where a command's
-/// arguments are shown.
-pub(crate) const SHELLS_AND_INTERPRETERS: &[&str] = &[
-    "sh",
-    "bash",
-    "dash",
-    "zsh",
-    "ksh",
-    "csh",
-    "tcsh",
-    "fish",
-    "ash",
-    "busybox",
-    "cmd",
-    "command",
-    "powershell",
-    "pwsh",
-    "wscript",
-    "cscript",
-    "python",
-    "python2",
-    "python3",
-    "perl",
-    "ruby",
-    "node",
-    "nodejs",
-    "deno",
-    "bun",
-    "php",
-    "lua",
-    "tclsh",
-    "osascript",
-    "awk",
-    "gawk",
-    "sed",
-    "env",
-    "xargs",
-    "nohup",
-    "sudo",
-    "su",
-    "ssh",
-    "eval",
-    "exec",
-    // More interpreters.
-    "pythonw",
-    "ipython",
-    "rscript",
-    "r",
-    "java",
-    "javaw",
-    "jshell",
-    "jrunscript",
-    "irb",
-    "wish",
-    "expect",
-    "mshta",
-    // Programs that start the program their arguments name.
-    "nice",
-    "ionice",
-    "timeout",
-    "stdbuf",
-    "chroot",
-    "doas",
-    "pkexec",
-    "runuser",
-    "setsid",
-    "setpriv",
-    "unshare",
-    "nsenter",
-    "taskset",
-    "chrt",
-    "flock",
-    "time",
-    "watch",
-    "script",
-    "strace",
-    "ltrace",
-    "find",
-    "parallel",
-    "systemd-run",
-    "start-stop-daemon",
-    "wsl",
-    "rundll32",
-    "forfiles",
-];
-
 /// One-letter flags that hand their value to something that runs it,
 /// matched as written: `-C` is a folder to many programs.
 const CODE_FLAG_LETTERS: &[&str] = &["c", "e"];
@@ -144,13 +51,23 @@ const CODE_FLAG_WORDS: &[&str] = &[
 /// A cluster of one-letter flags, such as `-xc`, is not recognised: what a
 /// cluster means is the program's own.
 pub(crate) fn runs_its_value(flag: &str) -> bool {
+    let slashed = flag.starts_with('/');
     let name = flag
         .strip_prefix('/')
         .unwrap_or_else(|| flag.trim_start_matches('-'));
     let name = name.split(['=', ':']).next().unwrap_or(name);
-    CODE_FLAG_LETTERS.contains(&name)
+    // An option written with `/` is read without regard to case by the
+    // programs that take one; the Windows command interpreter's `/c`, `/k`,
+    // and `/r` each run what follows them.
+    let slash_letter = slashed && SLASH_CODE_LETTERS.contains(&name.to_ascii_lowercase().as_str());
+    slash_letter
+        || CODE_FLAG_LETTERS.contains(&name)
         || CODE_FLAG_WORDS.contains(&name.to_ascii_lowercase().as_str())
 }
+
+/// One-letter options written with `/` that hand what follows to something
+/// that runs it, compared without regard to case.
+const SLASH_CODE_LETTERS: &[&str] = &["c", "k", "r"];
 
 /// Words that name a credential when they end a variable's or a flag's
 /// name, as in `EXAMPLE_TOOL_TOKEN` and `--password`.
@@ -219,22 +136,11 @@ fn joined_value(element: &str) -> Option<(&str, &str)> {
         .flatten()
 }
 
-/// Whether a program's path names a shell or an interpreter.
+/// Whether a program's path names a shell or an interpreter, a program that
+/// starts another, or a script by its suffix. The list is the provider
+/// contract's, shared with every pack that starts a program (decision 0250).
 pub(crate) fn is_shell_or_interpreter(path: &str) -> bool {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let lower = name.to_ascii_lowercase();
-    let stem = lower
-        .strip_suffix(".exe")
-        .or_else(|| lower.strip_suffix(".com"))
-        .unwrap_or(&lower);
-    // A versioned name, such as `python3.12`, is the same program.
-    let base = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-    SHELLS_AND_INTERPRETERS.contains(&stem)
-        || SHELLS_AND_INTERPRETERS.contains(&base)
-        || lower.ends_with(".bat")
-        || lower.ends_with(".cmd")
-        || lower.ends_with(".ps1")
-        || lower.ends_with(".sh")
+    a2m_provider::is_shell_or_interpreter(path)
 }
 
 fn limits_schema() -> JsonSchema {
@@ -768,6 +674,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
             );
             continue;
         }
+        if a2m_provider::redirects_loading(name) {
+            found.bad(
+                "loader_variable",
+                &entry.key.at,
+                format!(
+                    "The variable `{}` makes a program load code other than its own, or run code at its start.",
+                    codes::shown(name)
+                ),
+                "Remove it. A program runs its own code; what it loads is never chosen through its environment.",
+            );
+            continue;
+        }
         if names_a_credential(name) {
             found.bad(
                 "secret_variable",
@@ -819,6 +737,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
                     codes::shown(&scalar(name))
                 ),
                 "Remove it. A program is given only variables of its own.",
+            );
+            continue;
+        }
+        if a2m_provider::redirects_loading(&scalar(name)) {
+            found.bad(
+                "loader_variable",
+                &name.at,
+                format!(
+                    "The variable `{}` makes a program load code other than its own, or run code at its start, and copying it from the engine's own environment would hand the program whatever that environment holds.",
+                    codes::shown(&scalar(name))
+                ),
+                "Remove it. A program runs its own code; what it loads is never chosen through its environment.",
             );
             continue;
         }
@@ -882,7 +812,7 @@ fn interpreter(doc: &Located<Doc>, found: &mut Found) -> Option<Vec<String>> {
                 "The interpreter is given `{}`, which hands what follows it to something that runs it.",
                 codes::shown(flag)
             ),
-            "Give the interpreter the arguments that make it read a script file, such as `-File` or none at all.",
+            "Give the interpreter the fixed arguments of its one form, in which it reads a script file and takes what follows as data: for Python `-I`, for Windows PowerShell `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`.",
         );
     }
     if !doc

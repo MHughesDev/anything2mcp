@@ -615,11 +615,8 @@ fn readers(key: &str, sources: &[(PathBuf, String)]) -> Vec<String> {
             continue;
         }
         let as_argument = |needle: &str| {
-            text.match_indices(needle).any(|(at, _)| {
-                text[..at]
-                    .trim_end()
-                    .ends_with(['(', ','])
-            })
+            text.match_indices(needle)
+                .any(|(at, _)| text[..at].trim_end().ends_with(['(', ',']))
         };
         let reads = if let Some((prefix, last)) = key.split_once('*') {
             text.contains(&format!("strip_prefix(\"{prefix}\")"))
