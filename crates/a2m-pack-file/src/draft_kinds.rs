@@ -198,7 +198,10 @@ impl DraftingRule for FolderReads {
                     ("effect", DraftValue::text("read")),
                     ("inputs", DraftValue::Map(Vec::new())),
                     ("outputs", DraftValue::Map(list_outputs)),
-                    ("bindings", DraftValue::List(vec![DraftValue::map(binding("list"))])),
+                    (
+                        "bindings",
+                        DraftValue::List(vec![DraftValue::map(binding("list"))]),
+                    ),
                     (
                         "description",
                         DraftValue::text(&format!(
@@ -228,7 +231,10 @@ impl DraftingRule for FolderReads {
                         )]),
                     ),
                     ("outputs", DraftValue::Map(fields(false))),
-                    ("bindings", DraftValue::List(vec![DraftValue::map(read_binding)])),
+                    (
+                        "bindings",
+                        DraftValue::List(vec![DraftValue::map(read_binding)]),
+                    ),
                     (
                         "description",
                         DraftValue::text(&format!(

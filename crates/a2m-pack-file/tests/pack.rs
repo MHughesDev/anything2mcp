@@ -393,12 +393,12 @@ impl a2m_files::DraftingRule for DraftsAFolderThatWrites {
         Ok(vec![
             folder(
                 "names_writes",
-                Some((
-                    "writes",
-                    DraftValue::List(vec![DraftValue::text("create")]),
-                )),
+                Some(("writes", DraftValue::List(vec![DraftValue::text("create")]))),
             ),
-            folder("says_it_may_be_open", Some(("may_be_open", DraftValue::Bool(false)))),
+            folder(
+                "says_it_may_be_open",
+                Some(("may_be_open", DraftValue::Bool(false))),
+            ),
             folder("only_lists", None),
         ])
     }
@@ -500,10 +500,8 @@ fn a_drafting_rule_that_drafts_a_folder_or_an_operation_that_writes_is_refused()
     .coverage(Coverage::Complete)
     .build()
     .unwrap();
-    let root = std::env::temp_dir().join(format!(
-        "a2m-pack-file-draft-folder-{}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("a2m-pack-file-draft-folder-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(

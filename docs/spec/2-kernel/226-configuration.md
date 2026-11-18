@@ -102,6 +102,7 @@ A protected setting is never reported as in force when it is not. A policy setti
 | `plugins.allow_unsigned` | Allowing an unsigned plug-in, by digest | [Section 202](202-kernel-and-packs.md) |
 | `providers.attach` | Attaching to a process the runtime did not start | Section 213 |
 | `engine.shadow.matches_to_promote` | Lowering the matches a binding needs | [Section 206](206-the-compiler-and-the-plan.md) |
+| `engine.shadow.time_limit_ms` | Raising it | [Section 206](206-the-compiler-and-the-plan.md) |
 | `network.allowed_hosts`, `network.trust_roots`, `network.proxy` | Adding a destination, a certificate authority, or a proxy | [Section 603](../6-running-it/603-networking.md) |
 | `server.local_http` | Opening a local port on a workstation | [Section 222](222-front-doors-and-the-local-engine.md) |
 | `telemetry.export`, `telemetry.crash_reports`, `updates.check`, `server.webhooks`, `alerts.destinations` | Sending anything off the machine | [Section 605](../6-running-it/605-packaging-and-release.md) |
@@ -183,8 +184,8 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `engine.person` | `present`: work that needs a person waits; `absent`: it stops at once with its named state. Only the wait for a sign-in honours `absent` yet | `present` | U | no |
 | `engine.retries.transient` | 0 to 5 | 2 | U | no |
 | `engine.time_limit_ceiling_seconds` (not built) | Seconds; the longest step time limit a target may declare here | A draft: 600 | I | no |
-| `engine.shadow.matches_to_promote.read`, `engine.shadow.matches_to_promote.write` | Counts | 5, 20 | I | yes |
-| `engine.shadow.time_limit_ms` | Milliseconds, 100 to 60000; how long a binding in shadow may read beside a live read before it is left uncompared | 2000 | U | no |
+| `engine.shadow.matches_to_promote.read`, `engine.shadow.matches_to_promote.write` | 1 to 100000; the distinct inputs that matched, in each environment the evidence must come from, since the last mismatch ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)); higher is safer | 5, 20 | I | yes |
+| `engine.shadow.time_limit_ms` | Milliseconds, 100 to 60000; one budget of time, shared by all of a call's bindings in shadow, for their reads and for the keeping of their comparisons; lower is safer ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)) | 2000 | U | yes |
 | `engine.promoted_writes` (not built) | `after_promotion`, `never`: whether writes may use a binding promoted from shadow | `after_promotion` | U | no |
 | `ledger.intent_window.<mode>` (not built) | 1 up to the manifest's value | The mode's `intent_window` in its manifest | U | no |
 | `modes.disabled` (not built) | Modes that may not be used here | None | U | no |

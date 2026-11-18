@@ -347,7 +347,10 @@ pub(crate) fn settings_found(file: &Settings, bytes: &[u8]) -> Vec<SettingFound>
                 Kind::Data => ValueShape::Data,
                 Kind::Nested => {
                     let at = usize::try_from(setting.span.start).unwrap_or(usize::MAX);
-                    if bytes.get(at..).is_some_and(|rest| rest.starts_with(b"<array")) {
+                    if bytes
+                        .get(at..)
+                        .is_some_and(|rest| rest.starts_with(b"<array"))
+                    {
                         ValueShape::List
                     } else {
                         ValueShape::Record
@@ -492,7 +495,10 @@ mod tests {
         );
         // Plain text, two delimiters that both fit, a key=value word that
         // also holds a delimiter, and bytes that are not text: no form.
-        assert_eq!(form("order A-100 drafted\norder A-100 sent\n"), (None, None));
+        assert_eq!(
+            form("order A-100 drafted\norder A-100 sent\n"),
+            (None, None)
+        );
         assert_eq!(form("a,b;c\nd,e;f\n"), (None, None));
         assert_eq!(form("a=1,b=2\nc=3,d=4\n"), (None, None));
         assert_eq!(line_form(b"a=1\n\xff\n", &limits()), (2, None, None));
@@ -502,7 +508,13 @@ mod tests {
 
     #[test]
     fn a_key_naming_a_secret_and_a_value_shaped_as_one_are_told() {
-        for key in ["password", "db_password", "API-KEY", "auth.token", "Credentials"] {
+        for key in [
+            "password",
+            "db_password",
+            "API-KEY",
+            "auth.token",
+            "Credentials",
+        ] {
             assert!(names_a_secret(key), "{key}");
         }
         for key in ["prefix", "next_number", "open", "tokenizer", "spin"] {

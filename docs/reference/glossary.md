@@ -29,6 +29,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Decision point | A question a person may have to answer during a run, declared by the operation with a name and its wording. A run asks only what its operation declares, and waits at `needs_input` |
 | Diff | Current values against proposed values, record by record, shown before a write |
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |
+| Distinct input (of a shadow binding) | One input of a call, told apart from another by the workspace's keyed digest of the call's inputs. Two calls with equal inputs are one distinct input. A shadow binding is promotable when, in every environment its evidence must come from, the distinct inputs that matched the verified binding since the last mismatch number at least the threshold ([decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)) |
 | Diff hash | A hash of a diff in canonical form; what an approval is bound to |
 | Digest key | An installation's key for keyed digests. The vault makes it at first use and keeps it wrapped by the root key; each workspace's key for digests is derived from it and never stored |
 | Draft | Target files not yet published; runnable only in the sandbox |

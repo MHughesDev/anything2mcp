@@ -906,9 +906,11 @@ impl NetworkEnable {
         }
     }
 
-    /// The same, and no request's body in any event: the browser leaves
-    /// out every body longer than the bound, and reads 0 as no bound, so
-    /// the bound is one byte (measured, decision 0254).
+    /// The same, and no body of a request the page's script makes in any
+    /// event: the browser leaves out every body longer than the bound, and
+    /// reads 0 as no bound, so the bound is one byte. The body of a form a
+    /// document posts is put in the event whatever the bound (both
+    /// measured, decision 0254).
     pub(crate) fn without_bodies(self) -> Self {
         Self {
             max_post_data_size: Some(1),

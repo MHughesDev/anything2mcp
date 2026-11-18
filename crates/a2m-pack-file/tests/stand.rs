@@ -2064,9 +2064,12 @@ async fn a_folder_is_discovered_to_its_depth_and_its_drafted_reads_list_what_the
         ]
     );
     assert!(drafted.refused.is_empty() && drafted.open_questions.is_empty());
-    assert!(drafted.kept_failing.is_empty(), "{:?}", drafted.kept_failing);
-    let declared =
-        std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
+    assert!(
+        drafted.kept_failing.is_empty(),
+        "{:?}",
+        drafted.kept_failing
+    );
+    let declared = std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
     assert!(declared.contains("depth: 1"), "{declared}");
     // Nothing is drafted for a write.
     assert!(
@@ -2095,8 +2098,9 @@ async fn a_folder_is_discovered_to_its_depth_and_its_drafted_reads_list_what_the
     assert_eq!(column("kind")[0], text("folder"));
     for (name, size) in names.iter().zip(column("size")) {
         let stored = scene.stand.bytes(&format!("inbox/{name}")).unwrap();
-        let expected =
-            stored.map_or(Value::Null, |bytes| Value::Int(i64::try_from(bytes.len()).unwrap()));
+        let expected = stored.map_or(Value::Null, |bytes| {
+            Value::Int(i64::try_from(bytes.len()).unwrap())
+        });
         assert_eq!(size, expected, "{name}");
     }
     assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
@@ -2176,8 +2180,7 @@ async fn a_folder_deeper_than_the_bound_is_cut_and_a_link_out_of_the_root_is_nev
             .any(|limitation| limitation.code == LimitationCode::Truncated)
     );
     let (dir, drafted) = drafted_into(&scene, "cut", &findings);
-    let declared =
-        std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
+    let declared = std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
     assert!(!declared.contains("depth"), "{declared}");
     let list =
         std::fs::read_to_string(dir.join("operations").join("inbox_files_list.yaml")).unwrap();
@@ -2201,7 +2204,11 @@ async fn a_folder_deeper_than_the_bound_is_cut_and_a_link_out_of_the_root_is_nev
     let [folder]: [FolderFound; 1] = found_of(&findings, FILE_FOLDER).try_into().unwrap();
     for name in ["out.csv", "away"] {
         let entry = folder.entries.iter().find(|e| e.name == name).unwrap();
-        assert_eq!((entry.kind, entry.size), (EntryKindFound::Link, None), "{name}");
+        assert_eq!(
+            (entry.kind, entry.size),
+            (EntryKindFound::Link, None),
+            "{name}"
+        );
     }
     assert!(
         !folder
@@ -2233,8 +2240,10 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
         .set_fault(Fault::changed(
             seed::SETTINGS_INI,
             Change::Appended(
-                format!("\r\n[service]\r\npassword = {PASSWORD}\r\nheader = {HEADER}\r\nretries = 3")
-                    .into_bytes(),
+                format!(
+                    "\r\n[service]\r\npassword = {PASSWORD}\r\nheader = {HEADER}\r\nretries = 3"
+                )
+                .into_bytes(),
             ),
         ))
         .unwrap();
@@ -2299,7 +2308,9 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
     // The INI file's finding says it withheld what it withheld.
     let ini_finding = findings
         .iter()
-        .find(|finding| finding.found().contains("\"example.ini\""))
+        .find(|finding| {
+            finding.kind().as_str() == FILE_LAYOUT && finding.found().contains("\"example.ini\"")
+        })
         .unwrap();
     assert!(
         ini_finding
@@ -2343,7 +2354,11 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
         })
         .remove(0);
     let described = discoverer.describe(&findings, a2m_provider::DescribeForm::Full);
-    assert!(described.text.contains("2 settings value(s) withheld"), "{}", described.text);
+    assert!(
+        described.text.contains("2 settings value(s) withheld"),
+        "{}",
+        described.text
+    );
     let evidence = findings
         .iter()
         .map(|finding| finding.found().to_owned())
@@ -2380,7 +2395,8 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
             common::outputs_of(&scene.plan, operation, last_values(&observed))
         }
     };
-    let stored = String::from_utf8(scene.stand.bytes(seed::SETTINGS_INI).unwrap().unwrap()).unwrap();
+    let stored =
+        String::from_utf8(scene.stand.bytes(seed::SETTINGS_INI).unwrap().unwrap()).unwrap();
     assert!(stored.contains("prefix = A-") && stored.contains("next_number=103"));
     let orders = read("example_example_ini_orders_get").await;
     assert_eq!(orders.get("prefix"), Some(&text("A-")));
@@ -2418,8 +2434,19 @@ async fn a_growing_file_is_discovered_drafted_and_read_from_the_start_through_th
         .find(|finding| finding.kind().as_str() == FILE_LOG)
         .unwrap();
     assert_eq!(finding.level(), EvidenceLevel::Inferred);
-    let codes: Vec<LimitationCode> = finding.limitations().iter().map(|l| l.code).collect();
-    assert_eq!(codes, [LimitationCode::NotExercised, LimitationCode::Sampled]);
+    let mut codes: Vec<&str> = finding
+        .limitations()
+        .iter()
+        .map(|limitation| limitation.code.as_str())
+        .collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        [
+            LimitationCode::NotExercised.as_str(),
+            LimitationCode::Sampled.as_str()
+        ]
+    );
     for finding in &findings {
         assert!(!finding.found().contains("A-100"), "{}", finding.found());
     }
@@ -2461,7 +2488,9 @@ async fn a_growing_file_is_discovered_drafted_and_read_from_the_start_through_th
         .unwrap();
     let next = common::outputs_of(&scene.plan, "example_orders_read", last_values(&observed));
     assert_eq!(
-        next.get("lines").and_then(Value::as_list).map(<[Value]>::len),
+        next.get("lines")
+            .and_then(Value::as_list)
+            .map(<[Value]>::len),
         Some(0)
     );
     assert!(scene.stand.observe().unwrap().is_empty());

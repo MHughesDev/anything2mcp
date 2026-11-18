@@ -53,11 +53,11 @@ pub use discover::{
     TableFound,
 };
 pub use drive_folder::SKIPPED;
+pub use driver::{FileDriver, FileLimits};
 pub use evidence::{
     EntryFound, EntryKindFound, FILE_FOLDER, FILE_LOG, FolderFound, LineForm, LogFound,
     SettingFound, ValueShape, Withheld,
 };
-pub use driver::{FileDriver, FileLimits};
 pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
     BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_UNDECLARED, OPEN_WITHOUT_SIGNAL,

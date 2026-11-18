@@ -26,7 +26,7 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | HTTP over a local socket or named pipe | As HTTP | Sometimes (container engines publish OpenAPI) | WML | N | No surface address for a socket or pipe | Surface field in the HTTP pack, S to M | 2 (a container engine's socket gives administrator rights: a hazard) |
 | GraphQL | Query · mutation | Introspection; **reads stated** | WML | D: HTTP pack import | Not built | Discoverer and rule over `api`, S to M | 7 |
 | gRPC | Unary call · call | Reflection, proto files; reads stated only where `idempotency_level` says so | WML | D, after the first release ([section 303](../spec/3-packs/303-the-http-pack.md)) | HTTP/2, protobuf, a stand | New request mode in the HTTP pack, M to L | 7 |
-| SOAP | Operation · operation | WSDL; reads rarely stated | WML | N | XML answers; the envelope | After XML answers, an import, M | 7 |
+| SOAP | Operation · operation | WSDL; reads rarely stated | WML | N: an answer in XML is read since [decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md); a request cannot be sent | A request body that is neither JSON nor a form, which the envelope needs, is not built; no importer reads a WSDL | A request body in XML, S; then an import, M | 7 |
 | JSON-RPC | Call · call | Only with OpenRPC (`rpc.discover`) | WML | T over HTTP, as a declared POST whose effect the developer states; N over standard streams or a socket | No transport but HTTP | A request mode on the MCP pack's transports, M | 7 |
 | WebSocket | Message · message | Rarely (AsyncAPI) | WML | N: observed only for confirmation in the web pack, refused in discovery | No surface kind | A request mode with a stream side, M | 3, 7 |
 | Server-sent events | Wait for an event · — | Rarely | WML | N | No surface kind | A stream mode, S to M | 3 |
@@ -121,7 +121,7 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | A universal bridge (ODBC) | — | Through the driver | W mostly | N by design: one client per protocol ([section 307](../spec/3-packs/307-the-data-pack.md)) | — | Leave out | 7 |
 | Key-value and document stores | Read by key · keyed write | Sampled shapes, `inferred` | WML | C: a later mode of the data pack | — | M | 3 |
 | Search indexes | Query · — | Mappings | WML | T: HTTP pack | — | None | — |
-| Object stores | Object · put | Listings | WML | T in section 106, but not reachable: XML answers and signed requests are not designed | Both | Answer formats (above), and an auth provider that signs each request, M | 4 |
+| Object stores | Object · put | Listings | WML | T in section 106, but not reachable: a listing in XML is read since [decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md), and the request signed for each call is not designed | An auth provider that signs each request; a body that is neither JSON nor a form, and the HTTP pack's `upload`, which it does not register yet | An auth provider that signs each request, M; request bodies and `upload`, M | 4 |
 | Another program's private store | — | — | WML | R | — | None | 4, 5 |
 
 ## Streams and messages
@@ -132,8 +132,8 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | Brokers of other protocols (MQTT, AMQP, Kafka) | As above | Schema registries | WML | D: one protocol interface in the stream pack; MQTT second ([note 22](../research/22-stream-wire-protocol.md)) | Not built | M each | 3 |
 | Mail, reading | Message, folder · flag, move | Folder lists | WML | C | — | Request mode, M | 4 |
 | Mail, sending | — · submit | — | WML | C, `irreversible` | — | S after reading | 3 |
-| Calendars and contacts | Entry · entry | DAV properties | WML | N: XML answers and DAV methods; the systems' own stores are protected | — | After answer formats, M | 4, 5 |
-| Feeds | Entry · — | Structure | WML | N: XML | — | After answer formats, S | — |
+| Calendars and contacts | Entry · entry | DAV properties | WML | N: an answer in XML is read since [decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md); the systems' own stores are protected | The DAV methods (the pack's methods are `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, and `DELETE`) and a request body in XML are not built | DAV methods and a request body in XML, M | 4, 5 |
+| Feeds | Entry · — | Structure | WML | T: HTTP pack, `http`, an endpoint's `answer` form `xml`, since [decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md); no feed has been declared or tried | Nothing drafts the paths of a feed; no feed route is in the test application | A feed route in the test application and a test over it, S | — |
 | Logs and files that grow | Lines after a recorded place · — | No | WML | B: file pack, `file`, artifact, `logs/`; the complete lines after a recorded position, read only, on Linux ([decision 0246](../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)) | The caller hands the position back; the engine keeps none between runs | A cursor a read returns and a later run is handed, a kernel change | 3, 4 |
 | Change notifications of the file system | Wait for a change · — | — | WML | N; runs started by an event are not designed | — | After triggers | — |
 | A watch: any read, repeated on a schedule | A read, each time compared with the last · — | — | WML | B in part: the ledger's and the scheduler's halves ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)); an agent cannot reach it yet | The actions, the engine's check job, the settings, and the MCP resource | Roadmap W2 | 3 |
@@ -149,7 +149,7 @@ It is a map, not a design. A row says where a mechanism would go and what closin
 | USB devices | — | Descriptors only | WML | N | — | Leave out | 5, 10 |
 | Bluetooth devices | Characteristic · characteristic | GATT services; **reads stated** (properties) | WML | N | — | New mode, L; leave out | 10 |
 | Home-automation hubs | State · service call | Often | WML | T for a JSON HTTP interface; N for their WebSocket and MQTT faces | — | WebSocket mode; MQTT | 10 |
-| Printers and scanners | Attributes · job | IPP attributes, scanner capabilities | WML | N: binary and XML answers | — | After answer formats, M | 3 |
+| Printers and scanners | Attributes · job | IPP attributes, scanner capabilities | WML | N: an answer in XML is read since [decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md); a binary answer gives its length and digest only | The request and the answer of IPP are binary: a request body that is neither JSON nor a form, and a reader of a binary answer, are not built | A binary request and answer in the HTTP pack, M | 3 |
 | Cameras | — | A SOAP description | WML | N | — | Leave out | 4 |
 | Network equipment | Object · object | MIBs (`MAX-ACCESS`), YANG (`config false`); **reads stated** | WML | T for a JSON HTTP interface; N for SNMP and NETCONF | — | Request modes, M to L | 10 |
 | Audio and control surfaces | — | No | WML | N | — | Leave out | 10 |

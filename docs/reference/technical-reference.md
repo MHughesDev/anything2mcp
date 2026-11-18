@@ -147,6 +147,14 @@ Rules for every driver:
 - `CheckedPath` writes under a random name, only where nothing stands, and never through a link; the new methods are `entry_kind` (what stands at the final name, a link reported and not followed) and `create_dir` (one folder, new; it fails when anything is at the name). A link at the final name is refused for `write` and `remove_file`. A pack's manifest may not name a program by a relative path.
 - The supervisor digests the program it opens at every start and refuses a digest that is none of the declared ones; on Linux it starts the file it digested.
 
+The check of who may change a program, and what it gives the supervisor, are in the contract ([decision 0250](../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)):
+
+- **`check_program(path, &ProgramTrust, ProgramRole)`** walks the program's path and refuses it as a **`ProgramRefused`** when another user could change it or a folder on the way to it. **`ProgramTrust::with_groups`** names the groups whose write counts as the administrator's. **`ProgramRole`** is `Program` (a program that takes its arguments as data), `Interpreter` (the interpreter of a fixed pair), `Script` (a file the engine wrote), or `Folder` (a folder it made); the last two are walked like a program's path without its name and first-bytes checks.
+- **`is_shell_or_interpreter`** keeps the list of shells and interpreters once. **`reads_its_line_as_code`** names the interpreters that read their whole command line as code. **`interpreter_form`** holds an interpreter and its fixed arguments to the closed table of forms, and refuses the rest as an **`InterpreterRefused`**.
+- **`redirects_loading`** names the variables that make a program load other code. The supervisor refuses a launch that names one, `policy`, `variable_refused`, for every pack.
+- **`LinkKind::Standard`** is a link over the child's standard input and output, started by **`Supervisor::start_on_standard_streams`** or **`ScopedSupervisor::start_on_standard_streams`**, on every system; its standard error goes to the null device.
+- **`CheckedPath::create_private_dir`** and **`create_private_dir_all`** make a folder its user's alone from the moment it exists: mode `0700` on Linux and macOS, and on Windows a protected access list for the folder's owner, the local system account, and the Administrators group.
+
 ## Verbs by mode
 
 | Verb | `ui` | `page_http` | `http` | `api` | `site_tools` | `mcp` | `desktop` |
@@ -203,6 +211,13 @@ Every outbound HTTP client of the product is made by the module `tls` of `a2m-au
 
 Further packs bring their own where a credential is bound to their kind of connection: the data pack brings a database password provider.
 
+The web pack's sign-in through an application's own pages is built in `a2m-pack-web-browser`, `a2m-pack-web-ui`, and `a2m-auth` ([decision 0245](../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)):
+
+- **`form_login`** fills the application's sign-in page in the engine's own browser with a stored credential, tried once. Its `auth.yaml` settings name parts of `screens/` and no locator: `screen`, `user_field`, `pass_field`, `submit`, `refused`, and optionally `blocked`, `code_screen`, `code_field`, `code_submit`, `code_refused`, and `wait_ms`. Its credential roles are `user` and `password`, vault references under `vault://<target>/`; `attempt_limit` must be 1.
+- **`Browser::export_state`** reads the cookies the browser holds for given origins as a **`BrowserState`** of **`StateCookie`**s, each value a secret; **`Browser::import_state`** places a state into the browser's context once for each mark. A state cannot be printed with its values and is not serializable.
+- **`PageAnswer::withheld`** says that the answer of a write from inside a page held the page's anti-forgery token in some spelling and was withheld whole; the write is then in doubt.
+- **`AuthEntry::surfaces`** is an **`EntrySurfaces`**: the surfaces the entry covers, the plan's pack sections for their kinds, the addresses the target declares, and whether the plan is a published version's. **`EntrySurfaces::of`** reads it from a plan, and **`EntrySurfaces::published`** marks it as taken from a published version's plan, which only the caller that loaded that plan says ([decision 0248](../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)). `form_login` refuses an entry that is not marked.
+
 ## Vault interface
 
 The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the interface in full. The main types:
@@ -237,6 +252,12 @@ The design of [`a2m-ledger`](../architecture/crates/a2m-ledger.md) gives the int
 - **`Ledger`**, **`Findings`**, **`Versions`**, and **`Audit`** are the ledger's own tables inside a transaction. **`Blobs`** keeps evidence, sealed.
 - **`Tables`**, from `tx.tables` with an **`Owner`**, is how a crate above reaches its own tables and no others.
 - **`Fence`** names a run and its lease number. **`IntentToken`** is what the store gives for a stored intent, and what a step that commits must carry.
+
+The ledger's shadow evidence says what it covers ([decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)):
+
+- **`ShadowComparison`** carries `input`, the call's inputs, of which the ledger keeps only the workspace's keyed digest, and `requests`, what the shadow read cost in the rate budget's units.
+- **`ShadowSubject`** carries `against`, the digest of the verified binding that acts beside the one in shadow, and `environments`, those the evidence must come from.
+- **`EnvironmentEvidence`** is what one such environment holds toward a promotion: its distinct inputs and matches since the last mismatch. **`EnvironmentStanding`** is what `shadow.report` shows for a binding in one environment: reads, requests, matches, and distinct inputs.
 
 ## Policy interface
 
@@ -280,6 +301,12 @@ The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the int
 - **`JobSpec`** names the plan, the tool, the input, and the job's **`JobKind`**: a preview, an execute, a try, a reconcile, a check after a loss, a canary, or a discovery. The job ends as a **`JobOutcome`**.
 - **`Control`** is everything the engine asks of the kernel around it: the plan, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 
+What [decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md) added to the engine:
+
+- **`Control::shadow_rate`** asks the control plane for a rate budget for a binding in shadow, all at once or nothing, without waiting, and leaving the share a caller's reads need; by default it grants nothing.
+- **`shadow_evidence_environments`** gives the environments a plan's shadow evidence must come from, and **`verified_binding`** the verified binding of an operation that acts beside one in shadow.
+- **`Engine::shadow_comparisons_lost`** counts the comparisons that were not kept within the shadow budget.
+
 ## Action registry interface
 
 The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the interface in full ([decision 0094](../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md)). The main types:
@@ -289,6 +316,13 @@ The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the i
 - **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves or declines a diff, and where an approval page reads what the diff would change (**`ApprovalPreview`**); no action reaches it. A decline ends the run as `expired`.
 - **`Kernel::events`** and **`Kernel::next_events`** give a page of **`RunEvents`** after a sequence number, the second after waiting for one, to the caller that started the run ([decision 0132](../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md)). **`Kernel::next_events_from`** waits from a **`Followed`**, what the follower last saw, and answers at once when the run came to rest or began again since ([decision 0159](../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
 - The faces are data generated from the registry: `command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, and **`McpResultFace`**.
+
+The settings schema and loader of `a2m-actions` carry what [decision 0241](../decisions/0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) added:
+
+- **`settings::Built`** says for each key whether code reads it (`Yes`), or it is not built (`No`, with what happens `instead` and what it `arrives_with`); a value for a key that is not built is refused by name. **`Entry::built`** carries it into `config.show`, and the setting's `effective` is only `NextStart`: `Effective::AtOnce` no longer exists.
+- **`settings::InstallationKeeper`** says who may change the installation's settings file: `Administrator`, `Open` (with the path and why), or `NotChecked`. **`Sources::installation_keeper`** carries it into the loader; only a file kept by an administrator may loosen a protected setting.
+- **`Settings::project_file`** gives the project file whose values are layer 6, and **`Settings::project_values`** what it wrote. The warning `project_settings_differ` names the keys where a request's project folder holds a project file that differs from the one the engine applies.
+- **`keep_folder_private`**, in `a2m-local`, makes a folder its user's alone; the engine applies it to its data, configuration, and cache folders when it opens.
 
 ## REST router
 

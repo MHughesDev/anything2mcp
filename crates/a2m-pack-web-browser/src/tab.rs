@@ -3063,8 +3063,11 @@ async fn prepare(
         // and "answered" rest on none of them: they are the page's own
         // request and its answer, through the helper.
         page.call(&fetch_documents(), deadline).await?;
-        page.call(&NetworkEnable::keeping(page.max_read).without_bodies(), deadline)
-            .await?;
+        page.call(
+            &NetworkEnable::keeping(page.max_read).without_bodies(),
+            deadline,
+        )
+        .await?;
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;

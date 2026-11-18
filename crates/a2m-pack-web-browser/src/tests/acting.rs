@@ -335,7 +335,11 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
 
 /// A write of an order's note from inside the page of that note, with the
 /// page's own anti-forgery token read from `from` and sent to `to`.
-pub(super) fn note_write(note: &str, from: crate::TokenFrom, to: crate::TokenTo) -> crate::PageWrite {
+pub(super) fn note_write(
+    note: &str,
+    from: crate::TokenFrom,
+    to: crate::TokenTo,
+) -> crate::PageWrite {
     note_write_as(
         crate::BodyEncoding::Json,
         note,

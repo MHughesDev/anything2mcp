@@ -57,7 +57,7 @@ Each dimension names a proof that can fail. A proof is a test in the suite, a be
 ### Configurability
 
 **The best:** every behavior that may differ between installations can be set at the right scope, the defaults are safe without any file, and no setting can reach safety ([section 226](../2-kernel/226-configuration.md)).
-**The test:** an empty file is a complete configuration; an unknown key fails the load; every key read in code is declared in the one schema, and `config.show` names where every value came from; every guardrail has a test that a file, a variable, a flag, and a preset each fail to loosen it.
+**The test:** an empty file is a complete configuration; an unknown key fails the load; every key read in code is declared in the one schema; every declared key is read by code, or is marked not built and refused by name ([decision 0241](../../decisions/0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md)); and `config.show` names where every value came from; every guardrail has a test that a file, a variable, a flag, and a preset each fail to loosen it.
 **Measured in:** the settings loader in `a2m-actions`, with `config.show` in Phase 1 and `config.set` in Phase 3.
 
 ### How it fails
