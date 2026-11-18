@@ -1518,10 +1518,14 @@ handler!(
         // reconcile settles what was in doubt and leaves the run stopped;
         // going on from there is this call's own job, queued once the
         // other has ended.
+        // The scheduler's `resume` says which: this call's own job queued,
+        // or the run's reconcile found, which it hands out now, or at the
+        // end of a quarantine, and never loses (decision 0201).
+        let mut reconciling: Option<a2m_sched::Reconciling> = None;
         for last in [false, true] {
             let queued = kernel
                 .sched()?
-                .enqueue(Enqueue {
+                .resume(Enqueue {
                     run,
                     job: requirements(&row, JobKind::Execute, exclusive.clone()),
                     priority: Priority::Interactive,
@@ -1530,7 +1534,14 @@ handler!(
                 })
                 .await;
             let own = match queued {
-                Ok(_) => true,
+                Ok(a2m_sched::Resumed::Queued(_)) => {
+                    reconciling = None;
+                    true
+                }
+                Ok(a2m_sched::Resumed::Reconciling(found)) => {
+                    reconciling = Some(found);
+                    false
+                }
                 Err(failure) if failure.code() == &codes::SCHEMA_INVALID => false,
                 Err(failure) => {
                     let module = kernel
@@ -1560,7 +1571,14 @@ handler!(
                 break;
             }
         }
-        run_output(kernel, &call, row, Tell::Person).await
+        let still = row.state == RunState::Stopped;
+        let output = run_output(kernel, &call, row, Tell::Person).await?;
+        // The run's reconcile still holds it: the person is told what the
+        // scheduler said, a quarantine's time left among it.
+        Ok(match reconciling.filter(|_| still) {
+            Some(found) => output.warn(found.failure().message()),
+            None => output,
+        })
     }
 );
 
@@ -1751,7 +1769,16 @@ pub(crate) async fn submit_trial(
     if let Some(binding) = &binding {
         hasher.field("binding", binding.to_json().to_string().as_bytes());
     }
-    submit_trial_as(kernel, call, found, input, environment, hasher.finish(), binding).await
+    submit_trial_as(
+        kernel,
+        call,
+        found,
+        input,
+        environment,
+        hasher.finish(),
+        binding,
+    )
+    .await
 }
 
 /// The binding of an operation a trial or a recording runs (audit finding

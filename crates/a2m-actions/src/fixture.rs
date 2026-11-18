@@ -204,8 +204,10 @@ const KEY_LENGTH: usize = 6;
 ///   every other name is data and is put in place of by a made-up key, the
 ///   same original key by the same made-up key throughout the fixture.
 ///
-/// Text of a field type built on a number, a date, or a time has no rule,
-/// and stops the action.
+/// Text of a field type built on a number is a number the system shows as
+/// text, and is put in place of by the same fixed number; text of a field
+/// type built on a date or a time has no rule, since its format is the
+/// system's, and stops the action.
 pub(crate) struct Scrubber<'r> {
     redact: &'r dyn Redact,
     /// The made-up text of each original text of a key field.
@@ -226,6 +228,12 @@ pub(crate) struct Scrubber<'r> {
     pub(crate) originals: BTreeSet<String>,
     /// Every made-up text and key written.
     pub(crate) synthetics: BTreeSet<String>,
+    /// Every fixed value written for a number, which says nothing of the
+    /// original: an original equal to one is not taken for a leak.
+    fixed: BTreeSet<String>,
+    /// The names the target's own files state for the entries the read's
+    /// steps refer to ([`declared_names`]): structure, kept as they are.
+    structure: BTreeSet<String>,
 }
 
 impl<'r> Scrubber<'r> {
@@ -240,7 +248,16 @@ impl<'r> Scrubber<'r> {
             counts: BTreeMap::new(),
             originals: BTreeSet::new(),
             synthetics: BTreeSet::new(),
+            fixed: BTreeSet::new(),
+            structure: BTreeSet::new(),
         }
+    }
+
+    /// The same scrubber, taking `names` for structure: names the target's
+    /// own files state, which are in the repository already.
+    pub(crate) fn with_structure(mut self, names: BTreeSet<String>) -> Self {
+        self.structure = names;
+        self
     }
 
     fn count(&mut self, rule: &'static str) {
@@ -284,6 +301,7 @@ impl<'r> Scrubber<'r> {
         for (name, value) in values.iter() {
             let (kept, slot) = match slot(name) {
                 Some(slot) => (name.to_owned(), slot),
+                None if self.structure.contains(name) => (name.to_owned(), Slot::default()),
                 None => (self.data_key(name), Slot::default()),
             };
             let here = format!("{at}/{kept}");
@@ -350,10 +368,29 @@ impl<'r> Scrubber<'r> {
                         // Places are counted apart from keys: a made-up key
                         // text is never another place's text.
                         let index = self.place(at);
-                        format!("{}{}", ALPHABET[ALPHABET.len() - 1], encode(index, length - 1))
+                        format!(
+                            "{}{}",
+                            ALPHABET[ALPHABET.len() - 1],
+                            encode(index, length - 1)
+                        )
                     };
                     self.count("text by made-up text of its type's length");
                     self.synthetics.insert(made.clone());
+                    Value::Text(made)
+                }
+                Some(
+                    FieldBase::Integer
+                    | FieldBase::Decimal
+                    | FieldBase::Money
+                    | FieldBase::Measurement,
+                ) => {
+                    // A number the system shows as text: the same fixed
+                    // number as an exact one, `1` with its type's places.
+                    self.original(text);
+                    let places = slot.rule.as_ref().and_then(|rule| rule.places).unwrap_or(0);
+                    let made = fixed_number_text(places);
+                    self.fixed.insert(made.clone());
+                    self.count("number shown as text by a fixed number of its type's places");
                     Value::Text(made)
                 }
                 Some(base) => {
@@ -368,6 +405,7 @@ impl<'r> Scrubber<'r> {
                 } else {
                     1
                 };
+                self.fixed.insert(made.to_string());
                 self.count("whole number by a fixed number");
                 Value::Int(made)
             }
@@ -375,7 +413,9 @@ impl<'r> Scrubber<'r> {
                 self.original(&number.to_string());
                 let places = slot.rule.as_ref().and_then(|rule| rule.places).unwrap_or(0);
                 self.count("exact number by a fixed number of its type's places");
-                Value::Decimal(fixed_decimal(places)?)
+                let made = fixed_decimal(places)?;
+                self.fixed.insert(made.to_string());
+                Value::Decimal(made)
             }
             Value::Date(_) => {
                 self.original_as_written(value);
@@ -420,11 +460,14 @@ impl<'r> Scrubber<'r> {
                     _ => Vec::new(),
                 };
                 let named = move |name: &str| {
-                    fields.iter().find(|field| field.name == name).map(|field| Slot {
-                        rule: None,
-                        declared: Some(field.ty.clone()),
-                        key: false,
-                    })
+                    fields
+                        .iter()
+                        .find(|field| field.name == name)
+                        .map(|field| Slot {
+                            rule: None,
+                            declared: Some(field.ty.clone()),
+                            key: false,
+                        })
                 };
                 Value::Record(self.values(values, at, &named)?)
             }
@@ -445,16 +488,72 @@ fn encode(mut index: usize, length: usize) -> String {
     out.into_iter().collect()
 }
 
-/// The fixed exact number of `places` decimal places: `1`, or `1.0…0`.
-fn fixed_decimal(places: u32) -> Result<Decimal, a2m_core::Failure> {
+/// The fixed exact number of `places` decimal places, as text: `1`, or
+/// `1.0…0`.
+fn fixed_number_text(places: u32) -> String {
     let places = usize::try_from(places.min(18)).unwrap_or(0);
-    let text = if places == 0 {
+    if places == 0 {
         "1".to_owned()
     } else {
         format!("1.{}", "0".repeat(places))
-    };
-    text.parse::<Decimal>()
+    }
+}
+
+/// The fixed exact number of `places` decimal places.
+fn fixed_decimal(places: u32) -> Result<Decimal, a2m_core::Failure> {
+    fixed_number_text(places)
+        .parse::<Decimal>()
         .map_err(|_| no_rule("an exact number"))
+}
+
+/// The names the target's own files state for what the operation's steps
+/// refer to: the entries its bindings' steps name, and every key and every
+/// text of the pack sections those entries are in, such as a statement's
+/// record and its fields, or an endpoint's schema. They are the target's, already in the repository, and
+/// a name of them in an answer is structure, not the system's data (audit
+/// finding FX-1). A name only the system gave is data.
+fn declared_names(plan: &Plan, operation: &OperationPlan) -> BTreeSet<String> {
+    fn gather(json: &Json, into: &mut BTreeSet<String>) {
+        match json {
+            Json::Object(map) => {
+                for (key, value) in map {
+                    into.insert(key.clone());
+                    gather(value, into);
+                }
+            }
+            Json::Array(items) => items.iter().for_each(|item| gather(item, into)),
+            Json::String(text) => {
+                into.insert(text.clone());
+            }
+            _ => {}
+        }
+    }
+    let mut names = BTreeSet::new();
+    for binding in &operation.bindings {
+        for step in binding
+            .act
+            .iter()
+            .chain(&binding.confirm)
+            .chain(&binding.read_back)
+            .chain(&binding.lookup)
+        {
+            let Some(reference) = &step.refers_to else {
+                continue;
+            };
+            names.insert(reference.entry.clone());
+            let Some(section) = plan.packs.get(reference.section.get()) else {
+                continue;
+            };
+            let Ok(payload) = section.payload.decode::<Json>() else {
+                continue;
+            };
+            // The whole section: an entry may name another of it, as a
+            // statement names its record, and every name of it is the
+            // target's own.
+            gather(&payload, &mut names);
+        }
+    }
+    names
 }
 
 /// The slot of each output of the operation, by name: an answer's names
@@ -545,9 +644,8 @@ pub(crate) fn scrubbed_answers(
         let repeats = scrubbed.windows(2).all(|pair| pair[0] == pair[1]);
         let json_of = |answer: &Recorded| -> Result<Json, a2m_core::Failure> {
             match answer {
-                Recorded::Done(values) => serde_json::to_value(values).map_err(|_| {
-                    no_rule("an answer that cannot be written as JSON")
-                }),
+                Recorded::Done(values) => serde_json::to_value(values)
+                    .map_err(|_| no_rule("an answer that cannot be written as JSON")),
                 Recorded::Absent => Ok(Json::Null),
             }
         };
@@ -606,7 +704,7 @@ pub(crate) fn leak_check(scrubber: &Scrubber<'_>, files: &[(String, Vec<u8>)]) -
             short += 1;
             continue;
         }
-        if scrubber.synthetics.contains(original) {
+        if scrubber.synthetics.contains(original) || scrubber.fixed.contains(original) {
             continue;
         }
         leaked |= texts.iter().any(|text| text.contains(original.as_str()));
@@ -698,7 +796,10 @@ fn create_new(
     let there = || {
         codes::input(
             codes::SCHEMA_INVALID,
-            format!("`{}` appeared while the read was recorded, and a recorded fixture is never written over anything.", path.relative()),
+            format!(
+                "`{}` appeared while the read was recorded, and a recorded fixture is never written over anything.",
+                path.relative()
+            ),
             "Give `name` another name, or remove the old files with `draft.delete`.",
         )
     };
@@ -735,7 +836,10 @@ fn create_new(
     if path.identity()? != identity {
         return Err(codes::input(
             codes::SCHEMA_INVALID,
-            format!("`{}` is not the file this call made: the folder changed while it was written.", path.relative()),
+            format!(
+                "`{}` is not the file this call made: the folder changed while it was written.",
+                path.relative()
+            ),
             "Make no change to the target's folders while a fixture is recorded, and record again.",
         ));
     }
@@ -972,7 +1076,11 @@ handler!(
                         .as_ref()
                         .map(|(class, code)| format!(", {class}/{code}"))
                         .unwrap_or_default(),
-                    if active { " within the wait, and was cancelled" } else { "" }
+                    if active {
+                        " within the wait, and was cancelled"
+                    } else {
+                        ""
+                    }
                 ),
                 format!(
                     "Call `run.get` with `{run}` to see why; correct the draft or the input, and record again."
@@ -990,7 +1098,8 @@ handler!(
         // Scrub: the input first, so that a key keeps one synthetic value
         // in the input and in every answer of a key field.
         let redact = kernel.redact();
-        let mut scrubber = Scrubber::new(redact.as_ref());
+        let mut scrubber =
+            Scrubber::new(redact.as_ref()).with_structure(declared_names(&plan, &operation));
         let input_slots = input_slots(&plan, &operation);
         let inputs = scrubber.values(&input, "input", &|name| {
             Some(input_slots.get(name).cloned().unwrap_or_default())
@@ -1274,17 +1383,26 @@ mod tests {
             .with("balance", Value::Decimal("-1830.25".parse().unwrap()))
             .with("open", Value::Bool(true))
             .with("shut", Value::Bool(true))
-            .with("items", Value::List(vec![Value::Text("A-100".to_owned()); 5]));
+            .with(
+                "items",
+                Value::List(vec![Value::Text("A-100".to_owned()); 5]),
+            );
         let scrubbed = scrubber.values(&observed, "answer", &typed).unwrap();
         let input = scrubber
             .values(&Values::new().with("order_id", "A-100"), "input", &typed)
             .unwrap();
         for (name, text) in texts(&scrubbed) {
-            assert!(text.chars().all(|c| ALPHABET.contains(&c)), "{name}: {text}");
+            assert!(
+                text.chars().all(|c| ALPHABET.contains(&c)),
+                "{name}: {text}"
+            );
         }
         let get = |name: &str| scrubbed.get(name).cloned().unwrap();
         assert_eq!(get("order_id"), input.get("order_id").cloned().unwrap());
-        assert_eq!(texts(&Values::new().with("x", get("first")))[0].1.len(), TEXT_LENGTH);
+        assert_eq!(
+            texts(&Values::new().with("x", get("first")))[0].1.len(),
+            TEXT_LENGTH
+        );
         assert_ne!(get("first"), get("second"));
         match get("note") {
             Value::Text(text) => assert_eq!(text.chars().count(), FREE_TEXT_LENGTH),
@@ -1301,7 +1419,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        // Text of a field type built on a number has no rule.
+        // Text of a field type built on a number is a fixed number.
         let money = Slot {
             rule: Some(TypeRule {
                 base: FieldBase::Money,
@@ -1312,9 +1430,26 @@ mod tests {
             declared: Some(ValueType::Text),
             key: false,
         };
-        let refused = scrubber
+        let total = scrubber
             .values(&Values::new().with("total", "12.50"), "answer", &|_| {
                 Some(money.clone())
+            })
+            .unwrap();
+        assert_eq!(total.get("total"), Some(&Value::Text("1.00".to_owned())));
+        // Text of a field type built on a date has no rule.
+        let day = Slot {
+            rule: Some(TypeRule {
+                base: FieldBase::Date,
+                codes: Vec::new(),
+                places: None,
+                untrusted: false,
+            }),
+            declared: Some(ValueType::Text),
+            key: false,
+        };
+        let refused = scrubber
+            .values(&Values::new().with("on", "2026-03-02"), "answer", &|_| {
+                Some(day.clone())
             })
             .unwrap_err();
         assert_eq!(refused.code(), &codes::FIXTURE_NO_SCRUB_RULE);
@@ -1342,7 +1477,10 @@ mod tests {
                     Some(choice.clone())
                 })
                 .unwrap();
-            assert_eq!(chosen.get("status"), Some(&Value::Text("active".to_owned())));
+            assert_eq!(
+                chosen.get("status"),
+                Some(&Value::Text("active".to_owned()))
+            );
         }
     }
 
@@ -1357,11 +1495,14 @@ mod tests {
             Value::Record(
                 Values::new()
                     .with(first, Value::Decimal("1830.20".parse().unwrap()))
-                    .with("cust-5120@example.com", Value::Decimal("12.00".parse().unwrap())),
+                    .with(
+                        "cust-5120@example.com",
+                        Value::Decimal("12.00".parse().unwrap()),
+                    ),
             )
         };
         let declared = |name: &str| {
-            (name == "balances").then(|| Slot {
+            (name == "balances").then_some(Slot {
                 rule: None,
                 declared: Some(ValueType::Text),
                 key: false,
@@ -1394,7 +1535,10 @@ mod tests {
         // A key left as it was is found by the check.
         let (leaked, _) = leak_check(
             &scrubber,
-            &[("a.json".to_owned(), b"{\"cust-4711@example.com\": 1}".to_vec())],
+            &[(
+                "a.json".to_owned(),
+                b"{\"cust-4711@example.com\": 1}".to_vec(),
+            )],
         );
         assert!(leaked);
     }
@@ -1407,9 +1551,11 @@ mod tests {
         let redact = a2m_core::NoSecrets;
         let mut scrubber = Scrubber::new(&redact);
         scrubber
-            .values(&Values::new().with("a", "ab").with("b", "zjj"), "answer", &|_| {
-                Some(Slot::default())
-            })
+            .values(
+                &Values::new().with("a", "ab").with("b", "zjj"),
+                "answer",
+                &|_| Some(Slot::default()),
+            )
             .unwrap();
         let made: Vec<String> = scrubber.synthetics.iter().cloned().collect();
         let bytes = made.join(" ").into_bytes();
@@ -1435,13 +1581,20 @@ mod tests {
             .unwrap();
         let at = roots.folder(&name, a2m_provider::Access::Write).unwrap();
         let files = vec![
-            ("fixtures/one/fixture.yaml".to_owned(), MARKER.as_bytes().to_vec()),
+            (
+                "fixtures/one/fixture.yaml".to_owned(),
+                MARKER.as_bytes().to_vec(),
+            ),
             ("fixtures/one/order_get.json".to_owned(), b"{}\n".to_vec()),
             ("tests/one.yaml".to_owned(), b"test: made\n".to_vec()),
         ];
         let mut made = Vec::new();
         let refused = write_all_or_none(&at, "fixtures/one", &files, &mut made).unwrap_err();
-        assert!(refused.message().contains("appeared"), "{}", refused.message());
+        assert!(
+            refused.message().contains("appeared"),
+            "{}",
+            refused.message()
+        );
         assert!(remove_made(&made).is_empty());
         assert!(!folder.join("fixtures").exists());
         assert_eq!(

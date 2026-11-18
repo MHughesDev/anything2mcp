@@ -1201,6 +1201,11 @@
          "mode": {
           "type": "string"
          },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+         },
          "run_id": {
           "type": "string"
          },
@@ -1286,6 +1291,9 @@
                 "when"
                ],
                "type": "object"
+              },
+              "position": {
+               "type": "integer"
               },
               "promoted": {
                "type": "boolean"
@@ -1454,6 +1462,9 @@
                 "when"
                ],
                "type": "object"
+              },
+              "position": {
+               "type": "integer"
               },
               "promoted": {
                "type": "boolean"
@@ -5310,6 +5321,14 @@
           "required": [],
           "type": "object"
          },
+         "mode": {
+          "type": "string"
+         },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+         },
          "target": {
           "type": "string"
          },
@@ -7126,8 +7145,16 @@
           "required": [],
           "type": "object"
          },
+         "mode": {
+          "type": "string"
+         },
          "name": {
           "type": "string"
+         },
+         "position": {
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
          },
          "target": {
           "type": "string"
@@ -7170,6 +7197,12 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "binding": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "files": {
              "items": {
               "type": "string"
@@ -7178,6 +7211,12 @@
             },
             "fixture": {
              "type": "string"
+            },
+            "limits": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
             },
             "next": {
              "additionalProperties": false,
@@ -7229,6 +7268,12 @@
             },
             "tool": {
              "type": "string"
+            },
+            "trial": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
             }
            },
            "required": [
@@ -7284,6 +7329,12 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "binding": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "files": {
              "items": {
               "type": "string"
@@ -7292,6 +7343,12 @@
             },
             "fixture": {
              "type": "string"
+            },
+            "limits": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
             },
             "next": {
              "additionalProperties": false,
@@ -7343,6 +7400,12 @@
             },
             "tool": {
              "type": "string"
+            },
+            "trial": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
             }
            },
            "required": [

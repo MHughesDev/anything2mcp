@@ -1036,9 +1036,7 @@ async fn trial_of(
     scout: RunId,
     found: &FoundTool,
     input: &Values,
-    try_number: usize,
-    environment: &Environment,
-    binding: &a2m_engine::BindingPin,
+    (try_number, environment, binding): (usize, &Environment, &a2m_engine::BindingPin),
 ) -> Result<(RunId, bool), Failure> {
     let hash = trial_hash(scout, found.plan_hash, try_number, input, binding);
     let principal = &call.caller.principal;
@@ -1057,19 +1055,17 @@ async fn trial_of(
         .await?;
     match earlier {
         Some(run) => Ok((run, false)),
-        None => {
-            super::tools::submit_trial_as(
-                kernel,
-                call,
-                found,
-                input,
-                environment.clone(),
-                hash,
-                Some(binding.clone()),
-            )
-            .await
-            .map(|run| (run, true))
-        }
+        None => super::tools::submit_trial_as(
+            kernel,
+            call,
+            found,
+            input,
+            environment.clone(),
+            hash,
+            Some(binding.clone()),
+        )
+        .await
+        .map(|run| (run, true)),
     }
 }
 
@@ -1344,9 +1340,7 @@ async fn try_reads(
                 scout,
                 &found,
                 &input,
-                try_number,
-                &environment,
-                &binding,
+                (try_number, &environment, &binding),
             )
             .await?;
             // A trial made before and found again does not count: the call

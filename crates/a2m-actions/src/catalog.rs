@@ -334,6 +334,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("files", list_of(text()))
                 .required("scrubbed", list_of(any_map()))
                 .required("test_state", text())
+                .optional("binding", any_map())
+                .optional("trial", any_map())
+                .optional("limits", list_of(text()))
                 .required("review", text()))
             .example(r#"{"target": "example", "tool": "example_order_get", "input": {"order_id": "A-100"}}"#)
             .done(),

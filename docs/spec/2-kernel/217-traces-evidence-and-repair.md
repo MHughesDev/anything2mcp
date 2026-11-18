@@ -119,7 +119,7 @@ When a canary or a run reports `drift`:
 
 `fixture.record` records a fixture for offline tests from one real read, run in the sandbox for that purpose: the evidence a trace keeps holds shapes and digests, not values ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)). Writes are not recorded.
 
-- Values pass the redactor, then are replaced with synthetic ones of the same field type by fixed rules, keeping structure, names, and length classes; a value whose type has no rule stops the recording, and nothing is written.
+- Values pass the redactor, then are replaced with synthetic ones of the same field type by fixed rules, chosen without looking at the original except for what the replay needs; names are kept only where the operation or the target's files declare them, and every other key is replaced; a value whose type has no rule stops the recording, and nothing is written ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)).
 - The fixture carries a marker stating that it was scrubbed, and a hash.
 - The linter refuses a fixture without the marker.
 

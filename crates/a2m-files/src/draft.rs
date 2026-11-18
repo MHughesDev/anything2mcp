@@ -20,11 +20,13 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
 
-use a2m_core::{Digest, EvidenceLevel, Failure, FailureClass, Finding, Redact, TargetName};
+use a2m_core::{
+    Digest, EvidenceLevel, Failure, FailureClass, FileKindName, Finding, Redact, TargetName,
+};
 
 use crate::compile::{DRAFT_VERSION, compile};
 use crate::diag::{DRAFT_CONFLICT, Diagnostics, PATH_NOT_ALLOWED, TARGET_UNREADABLE};
-use crate::doc::RelPath;
+use crate::doc::{Located, RelPath};
 use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FILES, KERNEL_FOLDER_KINDS, OPERATION};
 use crate::load::{Sources, TargetRoot, load};
 use crate::register::{CompileMode, CompilerSet};
@@ -400,6 +402,7 @@ impl<'a> Drafter<'a> {
             existing: existing.as_ref(),
             redact: self.redact,
         };
+        let surfaces = self.surfaces(existing.as_ref());
         let mut report = DraftReport::default();
         // Path to its documents and the findings they came from.
         let mut files: BTreeMap<RelPath, (Vec<DraftValue>, Vec<Digest>)> = BTreeMap::new();
@@ -456,6 +459,12 @@ impl<'a> Drafter<'a> {
                     }
                     if let Some(why) = self.drafts_a_write(file_kind.as_str(), &doc) {
                         report.refused.push((doc.path, why.to_owned()));
+                        continue;
+                    }
+                    if let Some(why) =
+                        self.drafts_for_another_pack(&rule.pack, file_kind, &doc, &surfaces)
+                    {
+                        report.refused.push((doc.path, why));
                         continue;
                     }
                     let entry = files.entry(doc.path).or_default();
@@ -549,8 +558,23 @@ impl Drafter<'_> {
             return Some(NOT_READABLE);
         };
         if file_kind == OPERATION {
-            return (parsed.text("effect") != Some("read")).then_some(
-                "the drafter drafts read operations only; a write is written by the developer",
+            if parsed.text("effect") != Some("read") {
+                return Some(
+                    "the drafter drafts read operations only; a write is written by the developer",
+                );
+            }
+            // A drafted binding is `draft`: only `binding.promote` makes one
+            // verified, on its evidence (audit finding PM-2).
+            let beyond_draft = parsed
+                .get("bindings")
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .any(|binding| {
+                    binding.get("status").is_some() && binding.text("status") != Some("draft")
+                });
+            return beyond_draft.then_some(
+                "the drafter drafts a binding as `draft` only; a binding is made verified by `binding.promote`",
             );
         }
         self.set
@@ -560,6 +584,93 @@ impl Drafter<'_> {
             .then_some(
                 "the drafter drafts nothing that writes; an entry that writes is written by the developer",
             )
+    }
+}
+
+impl Drafter<'_> {
+    /// The target's surfaces, each by its name and kind, in the order its
+    /// file declares them: from the target as loaded, or, where it does not
+    /// load as a whole, from its `target.yaml` alone.
+    fn surfaces(&self, existing: Option<&Sources>) -> Vec<(String, String)> {
+        let read = |target: &Located<crate::doc::Doc>| -> Vec<(String, String)> {
+            target
+                .get("surfaces")
+                .map(|surfaces| {
+                    surfaces
+                        .entries()
+                        .iter()
+                        .filter_map(|entry| {
+                            Some((
+                                entry.key.value.clone(),
+                                entry.value.text("kind")?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        if let Some(target) = existing.and_then(|sources| sources.docs_of("target").next()) {
+            return read(target);
+        }
+        let path = RelPath::target_file();
+        let file = self.root.path().join(path.as_str());
+        // A link is never followed out of the target.
+        if !fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_file()) {
+            return Vec::new();
+        }
+        fs::read(file)
+            .ok()
+            .and_then(|bytes| crate::load::SourceFile::read(path, &bytes, self.set).ok())
+            .and_then(|file| file.docs.first().map(read))
+            .unwrap_or_default()
+    }
+
+    /// Why a drafted document of a pack's file kind is one its rule may not
+    /// draft (decision 0203): it lives on a surface of a kind for which the
+    /// rule's own pack did not register that file kind, so another pack's
+    /// rules would compile it. The surface is found as the compiler finds
+    /// it: the one the document names, else the target's first surface of a
+    /// kind the file kind is registered for. A document that lives on no
+    /// surface of the target is refused too.
+    fn drafts_for_another_pack(
+        &self,
+        pack: &str,
+        file_kind: &FileKindName,
+        doc: &DraftDoc,
+        surfaces: &[(String, String)],
+    ) -> Option<String> {
+        if KERNEL_FILE_KINDS.contains(&file_kind.as_str()) {
+            return None;
+        }
+        let text = render(std::slice::from_ref(&doc.body), &[]);
+        let parsed = yaml::parse(&doc.path, &text).ok()?;
+        let named = parsed
+            .first()
+            .and_then(|doc| doc.text("surface").map(str::to_owned));
+        let kinds = self.set.surface_kinds_of(file_kind);
+        let surface = match &named {
+            Some(named) => surfaces.iter().find(|(name, _)| name == named),
+            None => surfaces
+                .iter()
+                .find(|(_, kind)| kinds.iter().any(|registered| registered.as_str() == kind)),
+        };
+        let Some((surface, kind)) = surface else {
+            return Some(format!(
+                "the `{file_kind}` draft lives on no surface of the target that `{pack}` registered `{file_kind}` files for"
+            ));
+        };
+        let own = self
+            .set
+            .file_kinds
+            .iter()
+            .any(|((name, surface_kind), owner)| {
+                name == file_kind && surface_kind.as_str() == kind && owner.pack == pack
+            });
+        (!own).then(|| {
+            format!(
+                "the `{file_kind}` draft lives on the surface `{surface}` of the kind `{kind}`, for which `{pack}` did not register `{file_kind}` files; another pack's rules would compile it"
+            )
+        })
     }
 }
 

@@ -510,7 +510,7 @@ impl a2m_files::DraftingRule for OperationFromCall {
                             "bindings",
                             DraftValue::List(vec![DraftValue::map(vec![
                                 ("mode", DraftValue::text("stand")),
-                                ("status", DraftValue::text("verified")),
+                                ("status", DraftValue::text("draft")),
                                 ("call", DraftValue::text(name)),
                             ])]),
                         ),
@@ -2568,8 +2568,16 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     // list's `A-7` is not the key's made-up text, which only the key's own
     // fields share (audit finding FX-3).
     let test = std::fs::read_to_string(target_dir.join("tests/order_lines_get.yaml")).unwrap();
-    assert!(!test.contains(&format!("\"order_id\":\"{}\"", codes[0])), "{test}\n{answer}");
-    assert!(result["limits"].as_array().is_some_and(|limits| !limits.is_empty()), "{result}");
+    assert!(
+        !test.contains(&format!("\"order_id\":\"{}\"", codes[0])),
+        "{test}\n{answer}"
+    );
+    assert!(
+        result["limits"]
+            .as_array()
+            .is_some_and(|limits| !limits.is_empty()),
+        "{result}"
+    );
     assert_eq!(result["trial"]["retention"], "short", "{result}");
     for file in result["files"].as_array().unwrap() {
         let text = std::fs::read_to_string(target_dir.join(file.as_str().unwrap())).unwrap();
@@ -2741,7 +2749,10 @@ async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
     let test = std::fs::read_to_string(&test_file).unwrap();
     write(
         "tests/order_get.yaml",
-        test.replace("kind: offline\n", "kind: offline\nbinding: {mode: stand, position: 1}\n"),
+        test.replace(
+            "kind: offline\n",
+            "kind: offline\nbinding: {mode: stand, position: 1}\n",
+        ),
     )
     .await;
     let refused = promote(first_run.clone()).await.error.unwrap();
@@ -2775,10 +2786,21 @@ async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
         .unwrap()
         .iter()
         .filter(|test| test["tool"] == "example_order_get")
-        .map(|test| (test["test"].as_str().unwrap().to_owned(), test["binding"]["position"].clone()))
+        .map(|test| {
+            (
+                test["test"].as_str().unwrap().to_owned(),
+                test["binding"]["position"].clone(),
+            )
+        })
         .collect();
-    assert!(ran.contains(&("order_get".to_owned(), json!(1))), "{tested}");
-    assert!(ran.contains(&("order_lookup".to_owned(), json!(2))), "{tested}");
+    assert!(
+        ran.contains(&("order_get".to_owned(), json!(1))),
+        "{tested}"
+    );
+    assert!(
+        ran.contains(&("order_lookup".to_owned(), json!(2))),
+        "{tested}"
+    );
     // The trial of the first binding is still no trial of the second.
     let refused = promote(first_run).await.error.unwrap();
     assert_eq!(refused.code, "promotion_unproven");
@@ -2823,7 +2845,9 @@ async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
         "bindings:\n  - mode: stand\n    verb: upsert\n    status: draft\n    call: line_item_put\n    args: {length: input.length}\n    read_back: {call: line_item_get}\n  - mode: stand\n    verb: upsert\n    status: verified\n    call: line_item_put_other\n",
     );
     assert_ne!(one, two);
-    write("operations/line_item_upsert.yaml", two).await;
+    // A person writes it in an editor: `draft.write` would refuse a
+    // binding written as verified (audit finding PM-2).
+    std::fs::write(&upsert, two).unwrap();
     let tested = world
         .call(&agent, "test.run", json!({"target": "example"}))
         .await
@@ -2837,5 +2861,96 @@ async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
         .unwrap();
     assert_eq!(upsert_test["binding"]["position"], 2, "{upsert_test}");
     assert_ne!(upsert_test["state"], "passed", "{upsert_test}");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Audit finding PM-2: `draft.write` never makes a binding verified, and
+/// never keeps one verified while changing it; only `binding.promote` makes
+/// a binding verified, on its evidence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_binding_is_never_written_verified_by_hand() {
+    let world = World::open().await;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    let write = |file: &'static str, content: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            world
+                .call(
+                    &agent,
+                    "draft.write",
+                    json!({"target": "example", "file": file, "content": content}),
+                )
+                .await
+        }
+    };
+    let order = std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap();
+    // A verified binding kept as it is: written.
+    let described = order.replace("Reads the status", "Reads the state");
+    let written = write("operations/order_get.yaml", described.clone()).await;
+    assert_eq!(written.result.unwrap()["written"], true);
+    // Changed and left verified: refused, and the file is as it was.
+    let changed = described.replace("call: order_get", "call: line_item_get");
+    let refused = write("operations/order_get.yaml", changed.clone())
+        .await
+        .error
+        .unwrap();
+    assert_eq!(refused.code, "binding_not_promotable");
+    assert!(refused.fix.contains("status: draft"), "{}", refused.fix);
+    assert_eq!(
+        std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap(),
+        described
+    );
+    // Changed and written as a draft: written.
+    let drafted = changed.replace("status: verified", "status: draft");
+    assert_eq!(
+        write("operations/order_get.yaml", drafted)
+            .await
+            .result
+            .unwrap()["written"],
+        true
+    );
+    // A shadow binding written as verified: refused, pointing at the act.
+    let upsert =
+        std::fs::read_to_string(target_dir.join("operations/line_item_upsert.yaml")).unwrap();
+    let refused = write(
+        "operations/line_item_upsert.yaml",
+        upsert.replace("status: shadow", "status: verified"),
+    )
+    .await
+    .error
+    .unwrap();
+    assert_eq!(refused.code, "binding_not_promotable");
+    assert!(refused.fix.contains("binding.promote"), "{}", refused.fix);
+    // Audit finding DD-1: a folder of the target that is a link, even to a
+    // folder inside the project, is never written or removed through.
+    #[cfg(unix)]
+    {
+        let calls = target_dir.join("calls");
+        let real = world.project.path().join("elsewhere");
+        std::fs::rename(&calls, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &calls).unwrap();
+        let removed = world
+            .call(
+                &agent,
+                "draft.delete",
+                json!({"target": "example", "file": "calls/orders.yaml"}),
+            )
+            .await
+            .error
+            .unwrap();
+        assert_eq!(removed.code, "path_not_allowed", "{}", removed.message);
+        assert!(real.join("orders.yaml").is_file());
+        let written = write(
+            "calls/more.yaml",
+            "call: more\npath: \"/more\"\neffect: read\n".to_owned(),
+        )
+        .await
+        .error
+        .unwrap();
+        assert_eq!(written.code, "path_not_allowed");
+        assert!(!real.join("more.yaml").exists());
+    }
     world.kernel.close(CloseReason::Asked).await;
 }

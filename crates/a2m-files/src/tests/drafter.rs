@@ -526,3 +526,154 @@ fn a_question_keeps_the_products_sentence_apart_from_the_systems_words() {
     );
     std::fs::remove_dir_all(&folder).unwrap();
 }
+
+/// A rule of a second pack that drafts a `call` on the surface it names, or
+/// on the target's first surface a `call` may live on.
+struct OtherCall(Option<&'static str>);
+
+impl DraftingRule for OtherCall {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("other_call").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new("call").unwrap()
+    }
+    fn draft(&self, finding: &Finding, _: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        let mut body = vec![
+            ("call", DraftValue::text(finding.found())),
+            ("path", DraftValue::text("/other")),
+            ("effect", DraftValue::text("read")),
+        ];
+        if let Some(surface) = self.0 {
+            body.push(("surface", DraftValue::text(surface)));
+        }
+        Ok(vec![DraftDoc {
+            path: RelPath::new(&format!("calls/{}.yaml", finding.found()))?,
+            body: DraftValue::map(body),
+        }])
+    }
+}
+
+/// Decision 0203's owed check: two packs register `call`, each for its own
+/// surface kind; a rule drafts a `call` only on a surface of a kind its own
+/// pack registered `call` for, and a draft for another pack's surface is
+/// refused by name where it is placed.
+#[test]
+fn a_pack_drafts_a_kind_of_a_shared_name_only_for_its_own_surfaces() {
+    let other = a2m_core::SurfaceKind::new("other_stand").unwrap();
+    let set_with = |rule: OtherCall| {
+        let mut builder = CompilerSet::builder();
+        register_stand(&mut builder).unwrap();
+        builder
+            .surface_kind(
+                "other",
+                crate::testing::surface_kind_spec_for(other.clone()),
+            )
+            .unwrap();
+        builder
+            .file_kind("other", crate::testing::file_kind_for(other.clone()))
+            .unwrap();
+        builder.drafting_rule("other", Arc::new(rule)).unwrap();
+        builder.build()
+    };
+    let folder = scratch("shared-kind");
+    let target = folder.join("target.yaml");
+    let text = std::fs::read_to_string(&target).unwrap();
+    std::fs::write(
+        &target,
+        text.replace(
+            "surfaces:\n",
+            "surfaces:\n  side:\n    kind: other_stand\n    address: \"https://side.example.com\"\n",
+        ),
+    )
+    .unwrap();
+    let root = TargetRoot::new(&folder);
+    let refused_on = |rule: OtherCall, call: &str| {
+        let set = set_with(rule);
+        let report = Drafter::new(&set, &root)
+            .draft(&[finding("other_call", call)])
+            .unwrap();
+        (report.written, report.refused)
+    };
+    // On the stand's own surface, named or found by default: refused.
+    let (written, refused) = refused_on(OtherCall(Some("desk")), "on_desk");
+    assert!(written.is_empty(), "{written:?}");
+    assert!(refused[0].1.contains("did not register"), "{refused:?}");
+    assert!(!folder.join("calls").join("on_desk.yaml").exists());
+    // `desk` comes first in the file: the default would be the stand's.
+    let text = std::fs::read_to_string(&target).unwrap();
+    std::fs::write(
+        &target,
+        text.replace("  side:\n    kind: other_stand\n    address: \"https://side.example.com\"\n", "")
+            .replace(
+                "    rate: {requests: 10, per_ms: 1000}\n",
+                "    rate: {requests: 10, per_ms: 1000}\n  side:\n    kind: other_stand\n    address: \"https://side.example.com\"\n",
+            ),
+    )
+    .unwrap();
+    let (written, refused) = refused_on(OtherCall(None), "by_default");
+    assert!(
+        written.is_empty() && refused.len() == 1,
+        "{written:?} {refused:?}"
+    );
+    // On its own surface: drafted.
+    let (written, refused) = refused_on(OtherCall(Some("side")), "on_side");
+    assert!(refused.is_empty(), "{refused:?}");
+    assert_eq!(written[0].as_str(), "calls/on_side.yaml");
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// A rule that drafts a read operation whose one binding states a status.
+struct StatusSeen;
+
+impl DraftingRule for StatusSeen {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("status_seen").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new("operation").unwrap()
+    }
+    fn draft(&self, finding: &Finding, _: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        Ok(vec![DraftDoc {
+            path: RelPath::new(&format!("operations/{}.yaml", finding.found()))?,
+            body: DraftValue::map(vec![
+                ("operation", DraftValue::text("example_status_seen")),
+                ("effect", DraftValue::text("read")),
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![
+                        ("mode", DraftValue::text("stand")),
+                        ("status", DraftValue::text(finding.found())),
+                        ("call", DraftValue::text("order_get")),
+                    ])]),
+                ),
+            ]),
+        }])
+    }
+}
+
+/// Audit finding PM-2: a drafted binding is `draft`; one drafted as
+/// anything else is refused, since only `binding.promote` makes a binding
+/// verified.
+#[test]
+fn a_binding_is_drafted_as_draft_and_never_as_verified() {
+    let folder = scratch("drafted-status");
+    let root = TargetRoot::new(&folder);
+    let mut builder = CompilerSet::builder();
+    register_stand(&mut builder).unwrap();
+    builder.drafting_rule("seer", Arc::new(StatusSeen)).unwrap();
+    let set = builder.build();
+    let report = Drafter::new(&set, &root)
+        .draft(&[finding("status_seen", "verified")])
+        .unwrap();
+    assert!(report.written.is_empty());
+    assert!(
+        report.refused[0].1.contains("binding.promote"),
+        "{report:?}"
+    );
+    let report = Drafter::new(&set, &root)
+        .draft(&[finding("status_seen", "draft")])
+        .unwrap();
+    assert_eq!(report.written.len(), 1, "{report:?}");
+    std::fs::remove_dir_all(&folder).unwrap();
+}

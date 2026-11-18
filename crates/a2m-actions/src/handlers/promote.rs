@@ -523,7 +523,8 @@ handler!(
             }
             kernel.presence(&call.caller, &def, found.effect).await?;
         }
-        let tests = offline_evidence(kernel, &call, project_folder.clone(), &target, &found).await?;
+        let tests =
+            offline_evidence(kernel, &call, project_folder.clone(), &target, &found).await?;
         let tried = if found.effect == EffectClass::Read {
             trial_evidence(kernel, &call, &target, &found).await?
         } else {

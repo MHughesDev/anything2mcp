@@ -75,9 +75,12 @@ impl BindingPin {
     #[must_use]
     pub fn holds_in(&self, plan: &Plan, operation: &OperationPlan) -> bool {
         operation.name == self.operation
-            && operation.bindings.get(self.position).is_some_and(|binding| {
-                binding.mode == self.mode && binding_digest(plan, binding) == Some(self.digest)
-            })
+            && operation
+                .bindings
+                .get(self.position)
+                .is_some_and(|binding| {
+                    binding.mode == self.mode && binding_digest(plan, binding) == Some(self.digest)
+                })
     }
 }
 

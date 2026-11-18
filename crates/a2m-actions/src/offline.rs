@@ -32,8 +32,9 @@ use a2m_core::{
     RunState, TestKind, TestPlan, ToolRuns, Value, Values, WorkspaceId,
 };
 use a2m_engine::{
-    BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence, GuardQuestion,
-    JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant, ToolRef,
+    BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence,
+    GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant,
+    ToolRef,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld, NewBlob,
@@ -1393,8 +1394,7 @@ fn untested_bindings(
                     && test["state"] == "passed"
                     && (!sends || test["path"] == PATH_SENDS)
                     && position.is_none_or(|position| {
-                        test["binding"]["position"].as_u64()
-                            == u64::try_from(position + 1).ok()
+                        test["binding"]["position"].as_u64() == u64::try_from(position + 1).ok()
                     })
             })
         };
@@ -1435,15 +1435,25 @@ fn untested_bindings(
                 continue;
             };
             let (state, reason) = if !tested(Some(position), false) {
-                ("binding_untested", format!(
-                    "No passing offline test ran the binding {} (`{}`) of this operation, which may act once published. Add a test that names it with `binding: {{mode: {}, position: {}}}`, or that names no binding when it is the operation's first verified one.",
-                    position + 1, pin.mode, pin.mode, position + 1
-                ))
+                (
+                    "binding_untested",
+                    format!(
+                        "No passing offline test ran the binding {} (`{}`) of this operation, which may act once published. Add a test that names it with `binding: {{mode: {}, position: {}}}`, or that names no binding when it is the operation's first verified one.",
+                        position + 1,
+                        pin.mode,
+                        pin.mode,
+                        position + 1
+                    ),
+                )
             } else if writes && !tested(Some(position), true) {
-                ("no_save_sent", format!(
-                    "No passing offline test sent this write's save through the binding {} (`{}`) and compared it. Add a test of that binding whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`.",
-                    position + 1, pin.mode
-                ))
+                (
+                    "no_save_sent",
+                    format!(
+                        "No passing offline test sent this write's save through the binding {} (`{}`) and compared it. Add a test of that binding whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`.",
+                        position + 1,
+                        pin.mode
+                    ),
+                )
             } else {
                 continue;
             };
@@ -1537,9 +1547,8 @@ pub(crate) async fn run_gates(
         runtime.block_on(async move {
             let mut outcomes = Vec::new();
             for ((test, fixture), pin) in runs_plan.tests.iter().zip(fixtures).zip(pins) {
-                outcomes.push(
-                    run_test(&engine, &runs_plan, hash, &world, (test, pin), fixture).await,
-                );
+                outcomes
+                    .push(run_test(&engine, &runs_plan, hash, &world, (test, pin), fixture).await);
             }
             outcomes
         })
