@@ -133,6 +133,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- A window that a page opens from a tab that may act is reported and closed at once. It was closed only after the 30-second limit of a call, because the engine's watcher waited for an answer the browser gives only after the window's first request is decided.
 - A web sign-in or step on a slow machine no longer stops with `unexpected_page` because the browser took over a quarter of a second to say what the page shows; the page is asked once and its answer is waited for within the step's own time ([decision 0288](docs/decisions/0288-whether-a-page-shows-a-sign-now-is-the-pages-own-answer-and-a-slow-answer-is-never-a-no.md)).
 - On macOS and Linux, a command that connects just as the engine stops is told `connection_lost`, and one that starts an engine on demand goes on looking for one; it was told `channel_unavailable`, as if this machine had refused the channel.
 - On Windows, a command started while the engine is still opening, or beside another command, waits for the engine's channel as long as its patience lasts instead of failing after a second, and a refusal of the system names the system's error by its number and words.

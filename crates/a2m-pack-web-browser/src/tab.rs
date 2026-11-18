@@ -2850,7 +2850,10 @@ fn fetch_documents() -> FetchEnable<'static> {
 ///   with that lock on, until the tab that opened it goes.
 ///
 /// Only the browser's own side can be set on a window that is held: its
-/// scripts answer nothing until it runs.
+/// scripts answer nothing until it runs. The browser answers the call that
+/// lets a window run only once the window's first request has been decided,
+/// so that answer is never awaited on the one stream of events that decides
+/// it.
 pub(crate) async fn watch_windows(
     browser: Weak<BrowserInner>,
     mut events: mpsc::UnboundedReceiver<Event>,
@@ -2905,7 +2908,17 @@ pub(crate) async fn watch_windows(
                         asked: false,
                     },
                 );
-                let _ = client.call(session, &RunIfWaiting {}, deadline).await;
+                // The browser answers this only once the window's first
+                // request has been decided, and deciding it is this loop's
+                // next event: awaited here, the two waited on each other
+                // until the deadline. So the answer is awaited apart, and
+                // the loop goes on to the window's first request.
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let _ = client
+                        .call(Some(&session_id), &RunIfWaiting {}, deadline)
+                        .await;
+                });
             }
             EventKind::RequestPaused(paused) => {
                 let session = event.session.as_deref();
