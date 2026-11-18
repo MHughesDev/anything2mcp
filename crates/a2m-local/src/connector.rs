@@ -125,7 +125,9 @@ impl Connector {
     /// `policy`/`peer_not_allowed` when what answers is not this user's;
     /// `input`/`local_api_mismatch` when the engine speaks another version
     /// of the local API; `transient`/`connection_lost` when the engine
-    /// went away, which for a hello means it stopped while starting;
+    /// went away, which for a hello means it stopped while starting, and,
+    /// on macOS and Linux, when it closed its channel with this connection
+    /// made and not yet taken, as an engine that is stopping does;
     /// `busy`/`engine_unreachable`, pointing at the engine's log, when an
     /// engine holds the channel and does not answer the hello within
     /// [`HELLO_PATIENCE`], or, on Windows, keeps every instance of the
@@ -217,6 +219,10 @@ impl Connector {
                 // the channel and does not answer, as a stalled hello.
                 #[cfg(windows)]
                 ConnectError::Busy => hello_unanswered(&self.log),
+                // The engine closed its channel with this connection made
+                // and untaken: it is stopping, and it had nothing.
+                #[cfg(unix)]
+                ConnectError::Lost => hello_lost(&self.log),
                 ConnectError::Io(error) => codes::unavailable("The local channel", &error),
             })?;
         Link::over(stream, self.version).await

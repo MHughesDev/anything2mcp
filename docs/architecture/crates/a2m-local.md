@@ -205,6 +205,8 @@ A pipe has no queue of connections as a socket has. The engine always has one in
 
 On macOS and Linux the socket's path must fit the system's address of a socket: at most 103 bytes on macOS and the BSDs, 107 on Linux, which the standard library's own check of `sockaddr_un` gives. Both ends check it before anything else: the engine before it takes a lock or makes a folder, a client before it connects or starts an engine; a path too long is `input`/`socket_path_too_long`, which names the path, its length, the limit, and `A2M_HOME` as the way to a shorter one.
 
+A socket queues a connection the engine has not yet taken. An engine that stops serving closes its socket with any queued connection still untaken, and the kernel reports each of those to its client as a reset, which the client can meet while it is still connecting. That is `connection_lost`, an engine that went away with nothing sent, so a client that starts an engine on demand goes on looking for one; it is never `channel_unavailable`, which is kept for what this machine refuses.
+
 **Client label.** The command line, a named MCP client (from what the client says of itself), or an SDK. It goes into the audit log and fair queuing and nowhere else. Every local client is the same principal, the operating-system user, and an agent: the product's layer makes no caller a person for what its label or a header says ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)).
 
 ## Lifecycle
