@@ -54,33 +54,66 @@ pub const WATCH_CHECK_UNFINISHED: FailureCode = FailureCode::fixed("watch_check_
 /// a `gap`, class `busy`.
 pub const WATCH_DUE_MISSED: FailureCode = FailureCode::fixed("watch_due_missed");
 
-/// Why a watch paused or ended, as its row keeps it. Each is a code, so a
-/// reason that came from a check's failure and one a person gave are kept
-/// alike.
-pub mod reasons {
-    use a2m_core::FailureCode;
+/// A check's run ended without completing and gave no failure: it was
+/// cancelled, or it expired. Class `busy`.
+pub const WATCH_CHECK_NOT_COMPLETED: FailureCode = FailureCode::fixed("watch_check_not_completed");
 
-    /// The person ended it.
-    pub const ENDED_BY_PERSON: FailureCode = FailureCode::fixed("ended_by_person");
-    /// The caller that asked for it ended it.
-    pub const ENDED_BY_CALLER: FailureCode = FailureCode::fixed("ended_by_caller");
-    /// It reached the end it was confirmed with.
-    pub const END_REACHED: FailureCode = FailureCode::fixed("end_reached");
-    /// Its read's version was withdrawn.
-    pub const VERSION_WITHDRAWN: FailureCode = FailureCode::fixed("version_withdrawn");
-    /// Its person declined it before confirming.
-    pub const DECLINED: FailureCode = FailureCode::fixed("declined");
-    /// A check found the session needs its person to sign in.
-    pub const NEEDS_LOGIN: FailureCode = FailureCode::fixed("needs_login");
-    /// A check's read needs input the watch cannot give.
-    pub const NEEDS_INPUT: FailureCode = FailureCode::fixed("needs_input");
-    /// The target's published version is no longer the one it was confirmed
-    /// for. Only a new watch, confirmed again, goes on.
-    pub const VERSION_CHANGED: FailureCode = FailureCode::fixed("version_changed");
-    /// A kill switch covers its target.
-    pub const ON_HOLD: FailureCode = FailureCode::fixed("on_hold");
-    /// Its person paused it.
-    pub const PAUSED_BY_PERSON: FailureCode = FailureCode::fixed("paused_by_person");
+/// Every failure code of a watch the ledger produces, with its one class.
+pub const ALL: &[(FailureClass, &str)] = &[
+    (FailureClass::Policy, "watch_not_a_read"),
+    (FailureClass::Policy, "watch_not_confirmed"),
+    (FailureClass::Policy, "watch_not_yours"),
+    (FailureClass::Busy, "watch_check_running"),
+    (FailureClass::Busy, "watch_paused"),
+    (FailureClass::Policy, "watch_ended"),
+    (FailureClass::Policy, "watch_run_not_its_own"),
+    (FailureClass::Policy, "watch_needs_confirmation"),
+    (FailureClass::Busy, "watch_check_unfinished"),
+    (FailureClass::Busy, "watch_due_missed"),
+    (FailureClass::Busy, "watch_check_not_completed"),
+    (FailureClass::UnknownVariant, "watch_key_repeated"),
+    (FailureClass::UnknownVariant, "watch_shapes_mixed"),
+];
+
+words! {
+    /// Why a watch paused or ended: a state of the watch, not a failure.
+    /// Where a check's failure lies behind it, the row keeps that failure's
+    /// class and code beside it.
+    WatchReason {
+        /// A check found the session needs its person to sign in.
+        NeedsLogin => "needs_login",
+        /// A check's read needs input the watch cannot give.
+        NeedsInput => "needs_input",
+        /// A check's read drifted. Only a new watch, confirmed again, goes
+        /// on.
+        Drifted => "drifted",
+        /// The target's published version is no longer the one it was
+        /// confirmed for. Only a new watch, confirmed again, goes on.
+        VersionChanged => "version_changed",
+        /// A kill switch covers its target.
+        OnHold => "on_hold",
+        /// Its person paused it.
+        PausedByPerson => "paused_by_person",
+        /// Its person ended it.
+        EndedByPerson => "ended_by_person",
+        /// The caller that asked for it ended it.
+        EndedByCaller => "ended_by_caller",
+        /// It reached the end it was asked with.
+        EndReached => "end_reached",
+        /// Its read's version was withdrawn.
+        VersionWithdrawn => "version_withdrawn",
+        /// Its person declined it before confirming.
+        Declined => "declined",
+    }
+}
+
+impl WatchReason {
+    /// Whether a watch paused for this reason may go on: never after its
+    /// read changed or drifted.
+    #[must_use]
+    pub const fn may_resume(self) -> bool {
+        !matches!(self, Self::Drifted | Self::VersionChanged)
+    }
 }
 
 /// One watch.
@@ -275,9 +308,10 @@ pub struct WatchRow {
     pub phase: Option<Duration>,
     /// Where it stands.
     pub state: WatchState,
-    /// Why it paused or ended: a class when a check's failure gave it, and
-    /// a code.
-    pub reason: Option<(Option<FailureClass>, FailureCode)>,
+    /// Why it paused or ended.
+    pub reason: Option<WatchReason>,
+    /// The failure of the check that made it pause, when one did.
+    pub reason_failure: Option<(FailureClass, FailureCode)>,
     /// Since when it stands so.
     pub state_since: Timestamp,
     /// The index of the next due time not yet handled.
@@ -387,9 +421,11 @@ pub struct ChangeRow {
     pub key: Option<WatchKey>,
     /// For `changed`, the outputs that differ, by name.
     pub outputs: Vec<String>,
-    /// For a gap, a pause, or an end: the class, when a failure gave it, and
-    /// the code.
-    pub why: Option<(Option<FailureClass>, FailureCode)>,
+    /// For a gap, and a pause a check's failure made: the failure's class
+    /// and code.
+    pub why: Option<(FailureClass, FailureCode)>,
+    /// For a pause or an end: why.
+    pub reason: Option<WatchReason>,
     /// For a gap of due times that passed: which.
     pub missed: Option<Missed>,
     /// When it was recorded.
@@ -475,13 +511,29 @@ fn state_refusal(state: WatchState) -> Failure {
     }
 }
 
-fn split(reason: Option<(Option<FailureClass>, FailureCode)>) -> (Option<String>, Option<String>) {
-    match reason {
+fn split(failure: Option<&(FailureClass, FailureCode)>) -> (Option<String>, Option<String>) {
+    match failure {
         Some((class, code)) => (
-            class.map(|class| class.as_str().to_owned()),
+            Some(class.as_str().to_owned()),
             Some(code.as_str().to_owned()),
         ),
         None => (None, None),
+    }
+}
+
+fn failure_of(
+    class: Option<&str>,
+    code: Option<&str>,
+) -> Result<Option<(FailureClass, FailureCode)>, Failure> {
+    match (class, code) {
+        (Some(class), Some(code)) => Ok(Some((
+            parse(class)?,
+            FailureCode::new(code).map_err(|_| failure::corrupt("a stored code"))?,
+        ))),
+        (None, None) => Ok(None),
+        _ => Err(failure::corrupt(
+            "a stored failure with no class or no code",
+        )),
     }
 }
 
@@ -529,8 +581,8 @@ macro_rules! watch_columns {
     () => {
         "id, workspace_id, target, environment, operation, target_version_hash, input_hash,
          input_ref, ignore_outputs, interval_seconds, ends_at, asked_by, acts_for, client_label,
-         asked_at, retention_class, confirmed_by, confirmed_at, phase_ms, state, reason_class,
-         reason_code, state_since, next_due_index, not_before, running_check, checks,
+         asked_at, retention_class, confirmed_by, confirmed_at, phase_ms, state, reason,
+         reason_failure_class, reason_failure_code, state_since, next_due_index, not_before, running_check, checks,
          baseline_through, baseline_complete"
     };
 }
@@ -545,13 +597,8 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
             ));
         }
     };
-    let reason = match row.opt_text(21)? {
-        Some(code) => Some((
-            parse_opt(row.opt_text(20)?)?,
-            FailureCode::new(code).map_err(|_| failure::corrupt("a stored reason"))?,
-        )),
-        None => None,
-    };
+    let reason = parse_opt(row.opt_text(20)?)?;
+    let reason_failure = failure_of(row.opt_text(21)?, row.opt_text(22)?)?;
     let names = read_names(row.text(8)?)?;
     Ok(WatchRow {
         id: parse(row.text(0)?)?,
@@ -577,13 +624,14 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
             .transpose()?,
         state: parse(row.text(19)?)?,
         reason,
-        state_since: moment(row.int(22)?),
-        next_due_index: count(row.int(23)?)?,
-        not_before: row.opt_int(24)?.map(moment),
-        running_check: row.opt_int(25)?.map(count).transpose()?,
-        checks: count(row.int(26)?)?,
-        baseline_through: row.opt_int(27)?.map(count).transpose()?,
-        baseline_complete: row.int(28)? != 0,
+        reason_failure,
+        state_since: moment(row.int(23)?),
+        next_due_index: count(row.int(24)?)?,
+        not_before: row.opt_int(25)?.map(moment),
+        running_check: row.opt_int(26)?.map(count).transpose()?,
+        checks: count(row.int(27)?)?,
+        baseline_through: row.opt_int(28)?.map(count).transpose()?,
+        baseline_complete: row.int(29)? != 0,
     })
 }
 
@@ -632,14 +680,9 @@ fn check_row(row: &Row) -> Result<CheckRow, Failure> {
 }
 
 fn change_row(row: &Row) -> Result<ChangeRow, Failure> {
-    let why = match row.opt_text(8)? {
-        Some(code) => Some((
-            parse_opt(row.opt_text(7)?)?,
-            FailureCode::new(code).map_err(|_| failure::corrupt("a stored code"))?,
-        )),
-        None => None,
-    };
-    let missed = match (row.opt_int(9)?, row.opt_int(10)?, row.opt_int(11)?) {
+    let why = failure_of(row.opt_text(7)?, row.opt_text(8)?)?;
+    let reason = parse_opt(row.opt_text(9)?)?;
+    let missed = match (row.opt_int(10)?, row.opt_int(11)?, row.opt_int(12)?) {
         (Some(first), Some(last), Some(missed)) => Some(Missed {
             first: moment(first),
             last: moment(last),
@@ -666,8 +709,9 @@ fn change_row(row: &Row) -> Result<ChangeRow, Failure> {
             .transpose()?
             .unwrap_or_default(),
         why,
+        reason,
         missed,
-        at: moment(row.int(12)?),
+        at: moment(row.int(13)?),
     })
 }
 
@@ -678,7 +722,8 @@ struct NewChange {
     older_check: Option<u64>,
     key: Option<WatchKey>,
     outputs: Option<Vec<String>>,
-    why: Option<(Option<FailureClass>, FailureCode)>,
+    why: Option<(FailureClass, FailureCode)>,
+    reason: Option<WatchReason>,
     missed: Option<Missed>,
 }
 
@@ -686,8 +731,12 @@ struct NewChange {
 /// row and never from the caller's word.
 enum RunEnd {
     Completed,
-    Pause(Option<FailureClass>, FailureCode),
+    Pause(WatchReason, (FailureClass, FailureCode)),
     Gap(FailureClass, FailureCode),
+}
+
+fn not_completed() -> (FailureClass, FailureCode) {
+    (FailureClass::Busy, WATCH_CHECK_NOT_COMPLETED)
 }
 
 fn run_end(
@@ -696,32 +745,33 @@ fn run_end(
 ) -> Result<RunEnd, Failure> {
     match (state, failure) {
         (RunState::Completed, _) => Ok(RunEnd::Completed),
-        (RunState::NeedsLogin, _) => Ok(RunEnd::Pause(
-            Some(FailureClass::SessionExpired),
-            reasons::NEEDS_LOGIN,
+        (RunState::NeedsLogin, failure) => Ok(RunEnd::Pause(
+            WatchReason::NeedsLogin,
+            failure.unwrap_or_else(not_completed),
         )),
-        (RunState::NeedsInput, _) => Ok(RunEnd::Pause(None, reasons::NEEDS_INPUT)),
-        (_, Some((FailureClass::SessionExpired, code))) => {
-            Ok(RunEnd::Pause(Some(FailureClass::SessionExpired), code))
-        }
-        (_, Some((FailureClass::Drift, code))) => {
-            Ok(RunEnd::Pause(Some(FailureClass::Drift), code))
-        }
-        (RunState::Failed | RunState::Stopped | RunState::Rejected, Some((class, code))) => {
+        (RunState::NeedsInput, failure) => Ok(RunEnd::Pause(
+            WatchReason::NeedsInput,
+            failure.unwrap_or_else(not_completed),
+        )),
+        (_, Some((FailureClass::SessionExpired, code))) => Ok(RunEnd::Pause(
+            WatchReason::NeedsLogin,
+            (FailureClass::SessionExpired, code),
+        )),
+        (_, Some((FailureClass::Drift, code))) => Ok(RunEnd::Pause(
+            WatchReason::Drifted,
+            (FailureClass::Drift, code),
+        )),
+        (
+            RunState::Failed
+            | RunState::Stopped
+            | RunState::Rejected
+            | RunState::Cancelled
+            | RunState::Expired,
+            failure,
+        ) => {
+            let (class, code) = failure.unwrap_or_else(not_completed);
             Ok(RunEnd::Gap(class, code))
         }
-        (
-            RunState::Cancelled
-            | RunState::Expired
-            | RunState::Failed
-            | RunState::Stopped
-            | RunState::Rejected,
-            None,
-        ) => Ok(RunEnd::Gap(
-            FailureClass::Busy,
-            FailureCode::new(state.as_str()).map_err(|_| failure::unexpected("a run state"))?,
-        )),
-        (_, Some((class, code))) if state.is_final() => Ok(RunEnd::Gap(class, code)),
         _ => Err(refused(
             FailureClass::Busy,
             WATCH_CHECK_UNFINISHED,
@@ -754,7 +804,7 @@ impl Watches<'_, '_> {
             .map(|names| serde_json::to_string(&names))
             .transpose()
             .map_err(|_| failure::invalid("the names of outputs"))?;
-        let (why_class, why_code) = split(change.why);
+        let (why_class, why_code) = split(change.why.as_ref());
         let missed_count = change
             .missed
             .map(|missed| stored(missed.count))
@@ -762,8 +812,8 @@ impl Watches<'_, '_> {
         self.tx.exec(
             "INSERT INTO watch_changes
                 (watch_id, kind, check_seq, older_check, key_digest, outputs, why_class, why_code,
-                 first_missed, last_missed, missed, at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 reason, first_missed, last_missed, missed, at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             &[
                 watch.to_string().into(),
                 kind.as_str().into(),
@@ -773,6 +823,7 @@ impl Watches<'_, '_> {
                 outputs.into(),
                 why_class.into(),
                 why_code.into(),
+                change.reason.map(WatchReason::as_str).into(),
                 change.missed.map(|missed| missed.first).into(),
                 change.missed.map(|missed| missed.last).into(),
                 missed_count.into(),
@@ -985,30 +1036,24 @@ impl Watches<'_, '_> {
         let observed = match end {
             RunEnd::Completed => observed
                 .ok_or_else(|| failure::invalid("a completed check with nothing observed"))?,
-            RunEnd::Pause(class, code) => {
-                self.close_check(
-                    id,
-                    seq,
-                    CheckOutcome::Failed,
-                    Some((class.unwrap_or(FailureClass::Busy), code.clone())),
-                    None,
-                    None,
-                )?;
+            RunEnd::Pause(reason, why) => {
+                self.close_check(id, seq, CheckOutcome::Failed, Some(why.clone()), None, None)?;
                 self.change(
                     id,
                     ChangeKind::Gap,
                     NewChange {
                         check: Some(seq),
-                        why: Some((class, code.clone())),
+                        why: Some(why.clone()),
                         ..NewChange::default()
                     },
                 )?;
-                self.leave_running(id, WatchState::Paused, Some((class, code.clone())))?;
+                self.leave_running(id, WatchState::Paused, Some(reason), Some(&why))?;
                 self.change(
                     id,
                     ChangeKind::Paused,
                     NewChange {
-                        why: Some((class, code)),
+                        why: Some(why),
+                        reason: Some(reason),
                         ..NewChange::default()
                     },
                 )?;
@@ -1028,11 +1073,11 @@ impl Watches<'_, '_> {
                     ChangeKind::Gap,
                     NewChange {
                         check: Some(seq),
-                        why: Some((Some(class), code)),
+                        why: Some((class, code)),
                         ..NewChange::default()
                     },
                 )?;
-                self.leave_running(id, WatchState::Confirmed, None)?;
+                self.leave_running(id, WatchState::Confirmed, None, None)?;
                 return self.ended(id, seq, None);
             }
         };
@@ -1139,7 +1184,7 @@ impl Watches<'_, '_> {
                 baseline.complete.into(),
             ],
         )?;
-        self.leave_running(id, WatchState::Confirmed, None)?;
+        self.leave_running(id, WatchState::Confirmed, None, None)?;
         self.ended(id, seq, comparison)
     }
 
@@ -1163,11 +1208,11 @@ impl Watches<'_, '_> {
             ChangeKind::Gap,
             NewChange {
                 check: Some(seq),
-                why: Some((Some(failure.class()), failure.code().clone())),
+                why: Some((failure.class(), failure.code().clone())),
                 ..NewChange::default()
             },
         )?;
-        self.leave_running(id, WatchState::Confirmed, None)?;
+        self.leave_running(id, WatchState::Confirmed, None, None)?;
         self.ended(id, seq, None)
     }
 
@@ -1192,16 +1237,18 @@ impl Watches<'_, '_> {
         &mut self,
         id: WatchId,
         state: WatchState,
-        reason: Option<(Option<FailureClass>, FailureCode)>,
+        reason: Option<WatchReason>,
+        failure: Option<&(FailureClass, FailureCode)>,
     ) -> Result<(), Failure> {
-        let (class, code) = split(reason);
+        let (class, code) = split(failure);
         self.tx.exec(
-            "UPDATE watches SET running_check = NULL, state = ?2, reason_class = ?3,
-                    reason_code = ?4, state_since = ?5
+            "UPDATE watches SET running_check = NULL, state = ?2, reason = ?3,
+                    reason_failure_class = ?4, reason_failure_code = ?5, state_since = ?6
              WHERE id = ?1",
             &[
                 id.to_string().into(),
                 state.as_str().into(),
+                reason.map(WatchReason::as_str).into(),
                 class.into(),
                 code.into(),
                 self.tx.now().into(),
@@ -1366,7 +1413,7 @@ impl Watches<'_, '_> {
             id,
             ChangeKind::Gap,
             NewChange {
-                why: Some((Some(FailureClass::Busy), WATCH_DUE_MISSED)),
+                why: Some((FailureClass::Busy, WATCH_DUE_MISSED)),
                 missed: Some(missed),
                 ..NewChange::default()
             },
@@ -1396,22 +1443,17 @@ impl Watches<'_, '_> {
     /// # Errors
     ///
     /// The refusal of its state unless it is `confirmed`.
-    pub fn pause(
-        &mut self,
-        id: WatchId,
-        class: Option<FailureClass>,
-        reason: FailureCode,
-    ) -> Result<WatchRow, Failure> {
+    pub fn pause(&mut self, id: WatchId, reason: WatchReason) -> Result<WatchRow, Failure> {
         let watch = self.load(id)?;
         if watch.state != WatchState::Confirmed {
             return Err(state_refusal(watch.state));
         }
-        self.leave_running(id, WatchState::Paused, Some((class, reason.clone())))?;
+        self.leave_running(id, WatchState::Paused, Some(reason), None)?;
         self.change(
             id,
             ChangeKind::Paused,
             NewChange {
-                why: Some((class, reason)),
+                reason: Some(reason),
                 ..NewChange::default()
             },
         )?;
@@ -1434,8 +1476,8 @@ impl Watches<'_, '_> {
             WatchState::Ended => return Err(state_refusal(WatchState::Ended)),
             _ => return Err(failure::invalid("a watch that is not paused")),
         }
-        if let Some((class, code)) = &watch.reason
-            && (*code == reasons::VERSION_CHANGED || *class == Some(FailureClass::Drift))
+        if let Some(reason) = watch.reason
+            && !reason.may_resume()
         {
             return Err(refused(
                 FailureClass::Policy,
@@ -1444,7 +1486,7 @@ impl Watches<'_, '_> {
                 "End this watch and ask for a new one.",
             ));
         }
-        self.leave_running(id, WatchState::Confirmed, None)?;
+        self.leave_running(id, WatchState::Confirmed, None, None)?;
         self.change(id, ChangeKind::Resumed, NewChange::default())?;
         self.load(id)
     }
@@ -1457,12 +1499,7 @@ impl Watches<'_, '_> {
     /// # Errors
     ///
     /// `policy`/`watch_ended` for a watch that ended already.
-    pub fn end(
-        &mut self,
-        id: WatchId,
-        class: Option<FailureClass>,
-        reason: FailureCode,
-    ) -> Result<WatchRow, Failure> {
+    pub fn end(&mut self, id: WatchId, reason: WatchReason) -> Result<WatchRow, Failure> {
         let watch = self.load(id)?;
         if watch.state == WatchState::Ended {
             return Err(state_refusal(WatchState::Ended));
@@ -1481,12 +1518,12 @@ impl Watches<'_, '_> {
             "DELETE FROM watch_baseline WHERE watch_id = ?1",
             &[id.to_string().into()],
         )?;
-        self.leave_running(id, WatchState::Ended, Some((class, reason.clone())))?;
+        self.leave_running(id, WatchState::Ended, Some(reason), None)?;
         self.change(
             id,
             ChangeKind::Ended,
             NewChange {
-                why: Some((class, reason)),
+                reason: Some(reason),
                 ..NewChange::default()
             },
         )?;
@@ -1525,7 +1562,7 @@ impl Watches<'_, '_> {
             if row.text(1)? == WatchState::Running.as_str() {
                 running.push(id);
             } else {
-                self.pause(id, None, reasons::VERSION_CHANGED)?;
+                self.pause(id, WatchReason::VersionChanged)?;
             }
         }
         Ok(running)
@@ -1680,7 +1717,7 @@ impl Watches<'_, '_> {
     ) -> Result<Vec<ChangeRow>, Failure> {
         let rows = self.tx.rows(
             "SELECT seq, watch_id, kind, check_seq, older_check, key_digest, outputs, why_class,
-                    why_code, first_missed, last_missed, missed, at
+                    why_code, reason, first_missed, last_missed, missed, at
              FROM watch_changes WHERE watch_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
             &[id.to_string().into(), stored(after)?.into(), limit.into()],
         )?;
@@ -1700,5 +1737,90 @@ impl Watches<'_, '_> {
     ) -> Result<WatchKey, Failure> {
         let digest = std::sync::Arc::clone(&self.tx.shared.attached()?.digest);
         Ok(WatchKey::of(digest.as_ref(), workspace, key))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words_of() -> Vec<&'static str> {
+        let mut words: Vec<&'static str> = Vec::new();
+        words.extend(WatchState::ALL.iter().map(|word| word.as_str()));
+        words.extend(CheckOutcome::ALL.iter().map(|word| word.as_str()));
+        words.extend(ChangeKind::ALL.iter().map(|word| word.as_str()));
+        words.extend(WatchReason::ALL.iter().map(|word| word.as_str()));
+        words
+    }
+
+    #[test]
+    fn every_word_of_a_watch_is_in_its_migration_and_the_ledger_schema() {
+        let migration = include_str!("../migrations/0021-ledger-watches-checks-and-changes.sql");
+        let schema = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("docs")
+                .join("reference")
+                .join("ledger-schema.md"),
+        )
+        .unwrap();
+        let section = schema
+            .split("## watches, watch_checks, watch_changes, watch_baseline")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        for word in words_of() {
+            assert!(
+                migration.contains(&format!("'{word}'")),
+                "the migration lacks `{word}`"
+            );
+            assert!(
+                section.contains(&format!("`{word}`")),
+                "the ledger schema lacks `{word}`"
+            );
+        }
+    }
+
+    #[test]
+    fn every_code_of_a_watch_is_declared_once_with_its_class() {
+        let constants = [
+            (WATCH_NOT_A_READ, FailureClass::Policy),
+            (WATCH_NOT_CONFIRMED, FailureClass::Policy),
+            (WATCH_NOT_YOURS, FailureClass::Policy),
+            (WATCH_CHECK_RUNNING, FailureClass::Busy),
+            (WATCH_PAUSED, FailureClass::Busy),
+            (WATCH_ENDED, FailureClass::Policy),
+            (WATCH_RUN_NOT_ITS_OWN, FailureClass::Policy),
+            (WATCH_NEEDS_CONFIRMATION, FailureClass::Policy),
+            (WATCH_CHECK_UNFINISHED, FailureClass::Busy),
+            (WATCH_DUE_MISSED, FailureClass::Busy),
+            (WATCH_CHECK_NOT_COMPLETED, FailureClass::Busy),
+            (
+                crate::watch_compare::WATCH_KEY_REPEATED,
+                FailureClass::UnknownVariant,
+            ),
+            (
+                crate::watch_compare::WATCH_SHAPES_MIXED,
+                FailureClass::UnknownVariant,
+            ),
+        ];
+        assert_eq!(constants.len(), ALL.len());
+        for (code, class) in constants {
+            assert!(ALL.contains(&(class, code.as_str())), "{code:?}");
+        }
+        for (class, code) in [
+            state_refusal(WatchState::Asked),
+            state_refusal(WatchState::Running),
+            state_refusal(WatchState::Paused),
+            state_refusal(WatchState::Ended),
+        ]
+        .iter()
+        .map(|failure| (failure.class(), failure.code().as_str()))
+        {
+            assert!(ALL.contains(&(class, code)));
+        }
     }
 }

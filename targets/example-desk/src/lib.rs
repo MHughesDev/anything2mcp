@@ -31,14 +31,14 @@
 //! password field, and Save are subclasses that count what AppKit's
 //! accessibility asks of them, which is what the stand can witness there.
 
-#[cfg(not(any(windows, target_os = "macos")))]
-mod session;
 #[cfg(any(windows, target_os = "macos"))]
 mod child;
-#[cfg(windows)]
-mod win;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(not(any(windows, target_os = "macos")))]
+mod session;
+#[cfg(windows)]
+mod win;
 
 #[cfg(target_os = "linux")]
 mod app;
@@ -111,6 +111,8 @@ pub const LATE: &str = "TRK-0001";
 pub const CUSTOMER_MOST: usize = 24;
 /// What the application shows under `Message` once Save has stored.
 pub const SAVED: &str = "Saved.";
+/// The title of the dialog [`Fault::DialogAfterRead`] raises.
+pub const DIALOG: &str = "Example notice";
 /// The variable that makes a missing program a failure rather than a skip,
 /// for the machine that must run these tests.
 pub const REQUIRE_ENV: &str = "A2M_REQUIRE_DESKTOP";
@@ -213,6 +215,14 @@ pub enum Fault {
     ConfirmLate(std::time::Duration),
     /// The field with this label takes no value from now on.
     ReadOnly(String),
+    /// Once the field labelled `Order number` has next been read, the
+    /// window shows the order of this number: the application moved to
+    /// another record between a reader's look and its act.
+    AnotherRecordAfterRead(String),
+    /// Once the field labelled `Order number` has next been read, the
+    /// application raises a dialog titled [`DIALOG`], which no screen of
+    /// the example target names.
+    DialogAfterRead,
 }
 
 impl Truth {

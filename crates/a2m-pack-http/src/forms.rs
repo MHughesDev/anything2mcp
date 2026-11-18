@@ -10,6 +10,7 @@
 //! read-back are the same machinery for every form.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use a2m_core::{Digest, Redact};
 use a2m_files::{Diagnostics, Doc, Located, Place, Stage};
@@ -331,18 +332,20 @@ pub(crate) fn typed(text: &str, kind: Kind) -> Option<Json> {
     }
 }
 
-/// The media type of a `Content-Type` header, lowercase, and its charset
-/// parameter, when it has one.
-fn media_type(header: &str) -> (String, Option<String>) {
+/// The media type of a `Content-Type` header, lowercase, and every charset
+/// parameter it has.
+fn media_type(header: &str) -> (String, Vec<String>) {
     let mut parts = header.split(';');
     let media = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
-    let charset = parts.find_map(|part| {
-        let (name, value) = part.split_once('=')?;
-        name.trim()
-            .eq_ignore_ascii_case("charset")
-            .then(|| value.trim().trim_matches('"').to_ascii_lowercase())
-    });
-    (media, charset)
+    let charsets = parts
+        .filter_map(|part| {
+            let (name, value) = part.split_once('=')?;
+            name.trim()
+                .eq_ignore_ascii_case("charset")
+                .then(|| value.trim().trim_matches('"').to_ascii_lowercase())
+        })
+        .collect();
+    (media, charsets)
 }
 
 fn type_matches(declared: &str, media: &str) -> bool {
@@ -356,17 +359,33 @@ fn type_matches(declared: &str, media: &str) -> bool {
 
 impl AnswerSpec {
     /// Checks the answer's `Content-Type` against the declared media types,
-    /// and its charset against the one the form decodes by.
-    pub(crate) fn check_content_type(&self, header: Option<&str>) -> Result<(), String> {
+    /// and its charset against the one the form decodes by. `headers` is
+    /// every `Content-Type` the answer carries: more than one, or a header
+    /// with more than one charset, is a disagreement and is refused. Gives
+    /// the character set the header names, which the body is then held to.
+    pub(crate) fn check_content_type(&self, headers: &[&str]) -> Result<Option<Charset>, String> {
         if self.content_types.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        let Some(header) = header else {
-            return Err(
-                "the answer states no content type, and the endpoint declares one".to_owned(),
-            );
+        let header = match headers {
+            [] => {
+                return Err(
+                    "the answer states no content type, and the endpoint declares one".to_owned(),
+                );
+            }
+            [one] => *one,
+            _ => return Err("the answer states more than one content type".to_owned()),
         };
-        let (media, charset) = media_type(header);
+        let (media, charsets) = media_type(header);
+        let charset = match charsets.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            _ => {
+                return Err(
+                    "the answer's content type names more than one character set".to_owned(),
+                );
+            }
+        };
         if !self
             .content_types
             .iter()
@@ -377,18 +396,20 @@ impl AnswerSpec {
                     .to_owned(),
             );
         }
+        // JSON is UTF-8 (RFC 8259); XML is read as UTF-8 only.
         let decoded_by = match &self.form {
             Form::Text(text) => Some(text.charset),
-            Form::Xml(_) => Some(Charset::Utf8),
-            Form::Json | Form::Bytes => None,
+            Form::Xml(_) | Form::Json => Some(Charset::Utf8),
+            Form::Bytes => None,
         };
-        if let (Some(expected), Some(charset)) = (decoded_by, charset) {
-            let fits = match Charset::from_word(&charset) {
-                Some(said) => {
-                    said == expected || (said == Charset::UsAscii && expected == Charset::Utf8)
-                }
-                None => false,
-            };
+        let Some(charset) = charset else {
+            return Ok(None);
+        };
+        let said = Charset::from_word(&charset);
+        if let Some(expected) = decoded_by {
+            let fits = said.is_some_and(|said| {
+                said == expected || (said == Charset::UsAscii && expected == Charset::Utf8)
+            });
             if !fits {
                 return Err(
                     "the answer's content type names a character set other than the one the endpoint declares"
@@ -396,34 +417,76 @@ impl AnswerSpec {
                 );
             }
         }
-        Ok(())
+        Ok(said)
     }
 
-    /// Reads a body that is not JSON into its record. The text of a `text`
-    /// answer passes the redactor whole before it is matched; every value
-    /// passes it again when the `extract` step returns it.
-    pub(crate) fn read(&self, body: &[u8], redact: &dyn Redact) -> Result<Json, Unread> {
+    /// Reads a body that is not JSON into its record. `said` is the
+    /// character set the answer's header names, which the body must agree
+    /// with. The text of a `text` answer passes the redactor whole before
+    /// it is matched; every value passes it again when the `extract` step
+    /// returns it. The read is bounded by `stop`, which the step's deadline
+    /// sets, and an XML read by its count of work as well.
+    pub(crate) fn read(
+        &self,
+        body: &[u8],
+        said: Option<Charset>,
+        redact: &dyn Redact,
+        stop: &AtomicBool,
+    ) -> Result<Json, Unread> {
+        if !matches!(self.form, Form::Bytes) {
+            ascii_if_said(body, said)?;
+        }
         match &self.form {
             Form::Json => Err(Unread::Shape(
                 "the endpoint's answer is JSON, and was read as another form".to_owned(),
             )),
-            Form::Xml(form) => crate::xml::read(body, form),
-            Form::Text(form) => read_text(body, form, redact),
-            Form::Bytes => Ok(Json::Object(vec![
-                (LENGTH.to_owned(), Json::Number(body.len().to_string())),
-                (DIGEST.to_owned(), Json::Text(Digest::of(body).to_string())),
-            ])),
+            Form::Xml(form) => crate::xml::read(body, form, said, stop),
+            Form::Text(form) => read_text(body, form, redact, stop),
+            Form::Bytes => {
+                // A body that holds a registered secret gives nothing: its
+                // length and digest would let a caller confirm a guess. A
+                // secret is text, and every part of a body that is UTF-8
+                // survives this reading whole.
+                if redact.contains_secret(&String::from_utf8_lossy(body)) {
+                    return Err(Unread::HoldsSecret);
+                }
+                Ok(Json::Object(vec![
+                    (LENGTH.to_owned(), Json::Number(body.len().to_string())),
+                    (DIGEST.to_owned(), Json::Text(body_digest(body).to_string())),
+                ]))
+            }
         }
     }
 }
 
-fn read_text(body: &[u8], form: &TextForm, redact: &dyn Redact) -> Result<Json, Unread> {
+/// A body whose header names US-ASCII is ASCII, or the two disagree.
+pub(crate) fn ascii_if_said(body: &[u8], said: Option<Charset>) -> Result<(), Unread> {
+    if said == Some(Charset::UsAscii) && !body.is_ascii() {
+        return Err(Unread::Shape(
+            "the answer's content type names US-ASCII, and the body is not ASCII".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_text(
+    body: &[u8],
+    form: &TextForm,
+    redact: &dyn Redact,
+    stop: &AtomicBool,
+) -> Result<Json, Unread> {
     let text = form.charset.decode(body).ok_or_else(|| {
         Unread::Shape(
             "the body does not decode by the character set the endpoint declares".to_owned(),
         )
     })?;
+    if stop.load(Ordering::Relaxed) {
+        return Err(Unread::Stopped);
+    }
     let text = redact.redact(&text);
+    if stop.load(Ordering::Relaxed) {
+        return Err(Unread::Stopped);
+    }
     let mut record = vec![(WHOLE_TEXT.to_owned(), Json::Text(text.clone()))];
     if let Some(pattern) = &form.pattern {
         let compiled = whole_pattern(pattern)

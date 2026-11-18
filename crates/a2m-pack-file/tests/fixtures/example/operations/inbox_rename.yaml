@@ -15,5 +15,6 @@ bindings:
     folder: inbox
     key: {name: input.name}
     fields: {name: input.new_name}
+    read_back: {record: entry}
 description: >
   Gives one note of the inbox another name in the same folder.

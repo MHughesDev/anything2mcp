@@ -357,7 +357,10 @@ mod on_linux {
         let truth = scene.desk().truth();
         assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
 
-        // Of another title: the write goes to the screen's window only.
+        // Of another title, which no screen names: no act is done while it
+        // is open, in either window (decision 0244). Before, the write went
+        // to the screen's window only; an unknown window may be a dialog
+        // that changes what the screen's window means.
         let Some(scene) = Scene::start("copy").await else {
             return;
         };
@@ -366,20 +369,75 @@ mod on_linux {
             .open_window("Example order (copy)")
             .await
             .unwrap();
-        act(&scene, &inputs("Example Traders", "held"), WITHIN)
+        let other = act(&scene, &inputs("Example Traders", "held"), WITHIN)
             .await
-            .unwrap();
-        let truth = scene.desk().truth();
-        assert_eq!(truth.stores, 1);
-        assert!(!truth.sets.is_empty());
-        assert!(
-            truth
-                .sets
-                .iter()
-                .all(|set| set.window == example_desk::WINDOW),
-            "{:?}",
-            truth.sets
+            .unwrap_err();
+        assert_eq!(
+            stopped(&other),
+            (
+                FailureClass::UnknownVariant,
+                "unexpected_page",
+                Sent::NotSent
+            )
         );
+        assert_eq!(other.failure.said(), Some("Example order (copy)"));
+        let truth = scene.desk().truth();
+        assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
+    }
+
+    /// Between the `wait` that proved the record and the act, the window
+    /// moves to another record, or the application raises a dialog no
+    /// screen names: each act proves both again, on the walk it acts on,
+    /// and stops before anything is set or pressed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_act_never_lands_on_another_record_or_under_an_unknown_dialog() {
+        let Some(scene) = Scene::start("moved").await else {
+            return;
+        };
+        scene
+            .desk()
+            .fault(&Fault::AnotherRecordAfterRead("B-200".to_owned()))
+            .unwrap();
+        let moved = act(&scene, &inputs("Example Traders", "held"), WITHIN)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            stopped(&moved),
+            (
+                FailureClass::UnknownVariant,
+                "unexpected_page",
+                Sent::NotSent
+            ),
+            "{}",
+            moved.failure
+        );
+        let truth = scene.desk().truth();
+        assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
+
+        let Some(scene) = Scene::start("dialog").await else {
+            return;
+        };
+        scene.desk().fault(&Fault::DialogAfterRead).unwrap();
+        let dialog = act(&scene, &inputs("Example Traders", "held"), WITHIN)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            stopped(&dialog),
+            (
+                FailureClass::UnknownVariant,
+                "unexpected_page",
+                Sent::NotSent
+            ),
+            "{}",
+            dialog.failure
+        );
+        assert!(
+            dialog.failure.message().contains("no screen"),
+            "{}",
+            dialog.failure
+        );
+        let truth = scene.desk().truth();
+        assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

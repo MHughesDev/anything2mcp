@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use a2m_core::{Digest, EffectClass, OperationName, RunState, Timestamp};
 use a2m_ledger::{
-    ChangeKind, Durability, NewRun, NewWatch, Observed, RetentionClass, WatchId, WatchRow,
-    WatchState, reasons,
+    ChangeKind, Durability, NewRun, NewWatch, Observed, RetentionClass, WatchId, WatchReason,
+    WatchRow, WatchState,
 };
 use a2m_sched::{
     BudgetKey, CheckAdmission, CheckStarted, DueCheck, HoldScope, JobKind, Priority, RateLimit,
@@ -195,6 +195,29 @@ fn due_times_are_regular_spread_by_the_watch_and_never_random() {
         assert_eq!(
             due_at(start, phase, interval, index).as_unix_millis(),
             START + 1234 + i64::try_from(index).unwrap() * 600_000
+        );
+    }
+}
+
+#[test]
+fn every_code_of_a_watch_the_scheduler_gives_is_in_its_table_once() {
+    let codes = [
+        (
+            codes::WATCH_INTERVAL_TOO_SHORT,
+            a2m_core::FailureClass::Input,
+        ),
+        (codes::WATCH_TOO_LONG, a2m_core::FailureClass::Input),
+        (codes::WATCH_TOO_MANY, a2m_core::FailureClass::Busy),
+        (codes::WATCH_OVER_BUDGET_SHARE, a2m_core::FailureClass::Busy),
+    ];
+    assert_eq!(codes.len(), codes::WATCH_CODES.len());
+    for (code, class) in codes {
+        assert!(codes::WATCH_CODES.contains(&(class, code.as_str())));
+        assert!(
+            !a2m_ledger::codes::WATCH_CODES
+                .iter()
+                .any(|(_, other)| *other == code.as_str()),
+            "declared once"
         );
     }
 }
@@ -468,7 +491,7 @@ async fn a_watch_ends_at_its_end_and_ending_leaves_nothing_due() {
         .await
         .unwrap();
     assert_eq!(row.state, WatchState::Ended);
-    assert_eq!(row.reason.unwrap().1, reasons::END_REACHED);
+    assert_eq!(row.reason, Some(WatchReason::EndReached));
     let told = kinds(&stand, watch.id).await;
     assert_eq!(
         told,

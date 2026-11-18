@@ -338,7 +338,8 @@ A watch: one published read with a fixed input, repeated on a schedule its perso
 | `asked_by`, `acts_for`, `client_label`, `asked_at` | id, id, text, ts | Who asked, whose watch it is, which client, when |
 | `confirmed_by`, `confirmed_at`, `phase_ms` | id, ts, int | Set once, while `asked`, by the person it acts for and no one else (check constraint and trigger). Due time `n` is `confirmed_at + phase_ms + n × interval` |
 | `state` | enum | `asked`, `confirmed`, `running`, `paused`, `ended`; `running` only from `confirmed`, one check at a time; `ended` never changes |
-| `reason_class`, `reason_code` | enum, text | Why it paused or ended |
+| `reason` | enum | Why it paused or ended, a state of the watch and not a failure: `needs_login`, `needs_input`, `drifted`, `version_changed`, `on_hold`, `paused_by_person`, `ended_by_person`, `ended_by_caller`, `end_reached`, `version_withdrawn`, `declined`. Only a watch paused `drifted` or `version_changed` never goes on |
+| `reason_failure_class`, `reason_failure_code` | enum, text | The failure of the check that made it pause, when one did |
 | `next_due_index`, `not_before` | int, ts | The next due time not yet handled, which only grows; a refused admission's retry moment |
 | `running_check`, `checks` | int, int | The check under way; how many were begun |
 | `baseline_through`, `baseline_complete` | int, bool | The last check the baseline took; whether a complete check is in it |
@@ -346,7 +347,7 @@ A watch: one published read with a fixed input, repeated on a schedule its perso
 
 `watch_checks` is one row per check, keyed by watch and number: the due time's index and moment, whether it was the one catch-up check after missed due times, the run of the read (a trigger refuses any run but the watch's own read: its operation, version, and input, for the person it acts for), when it began and ended, the outcome (`running`, `complete`, `cut_short`, `failed`, `faulted`), the class and code of a failure or fault, the count of records seen, and the counts of added, changed, removed, unseen, and unchanged records. One check per due time (unique index). Written when it begins and once when it ends, then never again.
 
-`watch_changes` is one row per change, in one sequence: `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, `ended`; the check that found it and the one that last saw the record before; the record's key as the workspace's keyed digest under the purpose `record_key` (as a record row names it), or `whole`; for `changed`, the names of the outputs that differ; for a gap, a pause, or an end, the class and code; for due times missed, the first, the last, and how many. Never changed (trigger).
+`watch_changes` is one row per change, in one sequence: `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, `ended`; the check that found it and the one that last saw the record before; the record's key as the workspace's keyed digest under the purpose `record_key` (as a record row names it), or `whole`; for `changed`, the names of the outputs that differ; for a gap, the class and code of the failure that made it (a failed check, a fault, or `watch_due_missed`); for a pause or an end, its `reason`; for due times missed, the first, the last, and how many. Never changed (trigger).
 
 `watch_baseline` is the working state a check is compared with, one row per record the watch has seen: the keyed digest of its compared values together and of each output, and the check that last saw it. A newer check replaces the digests of the records it saw; a record proven removed is deleted; the whole baseline is deleted when the watch ends, and a trigger refuses a row for a watch with no check under way.
 

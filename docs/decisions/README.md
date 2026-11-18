@@ -241,3 +241,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0221 | [The repository is cleaned, and its names say what each thing holds](0221-the-repository-is-cleaned-and-its-names-say-what-each-thing-holds.md) | Accepted (design decision) |
 | 0242 | [The owner takes the recommended answer to every open question](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) | Accepted (owner decision) |
 | 0240 | [One typed reading of where an address is, and one question of a plain link](0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md) | Accepted (design decision) |
+| 0243 | [The machine reads its own network state, and sends nothing](0243-the-machine-reads-its-own-network-state-and-sends-nothing.md) | Accepted (design decision) |
+| 0247 | [A watch keeps only digests, and its due times come from the store's clock](0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md) | Accepted (design decision) |

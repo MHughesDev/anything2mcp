@@ -45,6 +45,7 @@ use crate::{CUSTOMER_MOST, Fault, FieldSet, LATE, Order, SAVED, SECRET, StandErr
 
 /// AT-SPI role numbers, as the interface's enumeration gives them.
 mod role {
+    pub const DIALOG: u32 = 16;
     pub const FRAME: u32 = 23;
     pub const LABEL: u32 = 29;
     pub const PANEL: u32 = 39;
@@ -83,6 +84,8 @@ pub(crate) const STATUS_REFUSED: &str = "Status must be open, held, or closed.";
 pub(crate) const CUSTOMER_REFUSED: &str = "Customer must not be empty.";
 /// The statuses the application stores.
 const STATUSES: &[&str] = &["open", "held", "closed"];
+/// The title of the dialog a fault raises.
+const DIALOG: &str = crate::DIALOG;
 
 fn path_of(id: usize) -> String {
     if id == 0 {
@@ -118,6 +121,12 @@ struct Faults {
     silent: bool,
     exit: bool,
     late: Option<Duration>,
+    /// The order number the window shows once its order number has next
+    /// been read: the application moved to another record.
+    record_after_read: Option<String>,
+    /// Whether the application raises its dialog once the order number
+    /// has next been read.
+    dialog_after_read: bool,
 }
 
 #[derive(Debug, Default)]
@@ -125,6 +134,11 @@ struct Model {
     nodes: Vec<Node>,
     truth: Truth,
     tracking: usize,
+    /// The entry that shows the order's number: the record's key.
+    order_number: usize,
+    /// A dialog of the application, built with it and shown only when a
+    /// fault raises it.
+    dialog: usize,
     /// The entries that show what is stored.
     customer: usize,
     status: usize,
@@ -232,7 +246,7 @@ impl Model {
                 ..Node::default()
             },
         );
-        model.labelled(panel, "Order number", &order.number, Kind::Shown);
+        model.order_number = model.labelled(panel, "Order number", &order.number, Kind::Shown);
         model.customer = model.labelled(panel, "Customer", &order.customer, Kind::Shown);
         model.status = model.labelled(panel, "Status", &order.status, Kind::Shown);
         model.tracking = model.labelled(panel, "Tracking", "", Kind::Shown);
@@ -315,6 +329,36 @@ impl Model {
         model.message = model.labelled(panel, "Message", "", Kind::Shown);
         model.problem = model.labelled(panel, "Problem", "", Kind::Shown);
         model.nodes[model.problem].states &= !state::SHOWING;
+        // Last, and under nothing until a fault raises it, so that every
+        // element before it keeps its place.
+        model.dialog = model.add(
+            None,
+            Node {
+                role: role::DIALOG,
+                name: DIALOG.to_owned(),
+                states: shown,
+                ..Node::default()
+            },
+        );
+        let notice = model.dialog;
+        model.add(
+            Some(notice),
+            Node {
+                role: role::LABEL,
+                name: "The order shown has changed.".to_owned(),
+                states: shown,
+                ..Node::default()
+            },
+        );
+        model.add(
+            Some(notice),
+            Node {
+                role: role::PUSH_BUTTON,
+                name: "OK".to_owned(),
+                states: shown | state::FOCUSABLE,
+                ..Node::default()
+            },
+        );
         model
             .truth
             .stored
@@ -448,6 +492,23 @@ impl Model {
             pressed.changed.extend(self.set_text(message, SAVED));
         }
         pressed
+    }
+
+    /// What the faults armed for the next read of the order number do once
+    /// it has been answered: the window moves to another record, or the
+    /// application raises its dialog.
+    fn after_key_read(&mut self) {
+        if let Some(other) = self.faults.record_after_read.take() {
+            let key = self.order_number;
+            self.set_text(key, &other);
+        }
+        if std::mem::take(&mut self.faults.dialog_after_read) {
+            let dialog = self.dialog;
+            if self.nodes[dialog].parent.is_none() {
+                self.nodes[dialog].parent = Some(0);
+                self.nodes[0].children.push(dialog);
+            }
+        }
     }
 
     /// As a restarted application shows itself: the stored values in its
@@ -737,6 +798,9 @@ impl Text {
         let node = model.nodes[self.id].clone();
         if node.secret {
             model.truth.secret_reads += 1;
+        }
+        if self.id == model.order_number {
+            model.after_key_read();
         }
         node.text.unwrap_or_default()
     }
@@ -1065,6 +1129,10 @@ impl App {
             Fault::SaveSilently => model.faults.silent = true,
             Fault::ExitAfterSave => model.faults.exit = true,
             Fault::ConfirmLate(after) => model.faults.late = Some(*after),
+            Fault::AnotherRecordAfterRead(number) => {
+                model.faults.record_after_read = Some(number.clone());
+            }
+            Fault::DialogAfterRead => model.faults.dialog_after_read = true,
             Fault::ReadOnly(label) => {
                 let field = (0..model.nodes.len())
                     .find(|id| model.nodes[*id].editable && model.label_of(*id) == *label)

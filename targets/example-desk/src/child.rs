@@ -273,14 +273,12 @@ impl Stand {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             command.creation_flags(CREATE_NO_WINDOW);
         }
-        let mut child = command
-            .spawn()
-            .map_err(|error| {
-                StandError(format!(
-                    "starting the stand's program {}: {error}",
-                    program.display()
-                ))
-            })?;
+        let mut child = command.spawn().map_err(|error| {
+            StandError(format!(
+                "starting the stand's program {}: {error}",
+                program.display()
+            ))
+        })?;
         let (Some(input), Some(output), Some(mut error_output)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {

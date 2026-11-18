@@ -68,7 +68,10 @@ const CODE_SCREEN: &str = "code_screen";
 const CODE_FIELD: &str = "code_field";
 const CODE_SUBMIT: &str = "code_submit";
 const CODE_REFUSED: &str = "code_refused";
+/// How long, in milliseconds, each wait for the page may take.
+const WAIT_MS: &str = "wait_ms";
 const SETTINGS: &[&str] = &[
+    WAIT_MS,
     SCREEN,
     USER_FIELD,
     PASSWORD_FIELD,
@@ -82,9 +85,9 @@ const SETTINGS: &[&str] = &[
 ];
 const CODE_SETTINGS: &[&str] = &[CODE_SCREEN, CODE_FIELD, CODE_SUBMIT];
 
-/// How long the sign-in may take, from opening the page to the last sign,
-/// the person's code apart: the person's wait is the surface's own.
-const PAGE_TIME: Duration = Duration::from_secs(60);
+/// How long each wait for the page may take when the entry does not say:
+/// for the sign-in page, and for a sign after each press.
+const PAGE_TIME: Duration = Duration::from_secs(30);
 
 /// How long the page is given to say a sign already holds, when it is
 /// asked once.
@@ -287,6 +290,19 @@ impl Pages {
     }
 }
 
+/// How long each wait for the page may take.
+fn page_time(entry: &AuthEntry) -> Result<Duration, Failure> {
+    match entry.optional(WAIT_MS) {
+        None => Ok(PAGE_TIME),
+        Some(text) => text
+            .parse::<u64>()
+            .ok()
+            .filter(|ms| (100..=600_000).contains(ms))
+            .map(Duration::from_millis)
+            .ok_or_else(|| invalid("`wait_ms` is not a whole number from 100 to 600000")),
+    }
+}
+
 /// The path of a screen that takes no input.
 fn fixed_path(screen: &Screen) -> Result<String, Failure> {
     let mut path = String::new();
@@ -455,7 +471,9 @@ impl FormLogin {
             .acting_tab(&PageEnvironment::default(), &origins)
             .await
             .map_err(|error| page_lost(&error, "the opening of a tab"))?;
-        let deadline = Deadline::after(PAGE_TIME);
+        // Each wait for the page has the time the entry gives it.
+        let wait = page_time(entry)?;
+        let deadline = Deadline::after(wait);
         let signs = Signs::of(&pages);
 
         tab.goto(&pages.page, deadline)
@@ -479,6 +497,7 @@ impl FormLogin {
         fill(&tab, &pages.password, &password, deadline, "the password").await?;
         press(&tab, &pages.submit, deadline).await?;
 
+        let deadline = Deadline::after(wait);
         let mut sign = signs.next(&tab, deadline, "after the credential was sent").await?;
         if sign == Sign::Code {
             let Some(code_pages) = &pages.code else {
@@ -501,9 +520,12 @@ impl FormLogin {
                 }
             };
             cx.register(&code);
+            // The person's answer took the person's time, not the page's.
+            let deadline = Deadline::after(wait);
             fill(&tab, &code_pages.field, &code, deadline, "the code").await?;
             drop(code);
             press(&tab, &code_pages.submit, deadline).await?;
+            let deadline = Deadline::after(wait);
             sign = signs.next(&tab, deadline, "after the code was sent").await?;
         }
         match sign {
@@ -518,7 +540,7 @@ impl FormLogin {
         }
 
         let state = browser
-            .export_state(&origins, deadline)
+            .export_state(&origins, Deadline::after(wait))
             .await
             .map_err(|error| page_lost(&error, "the reading of the session's state"))?;
         drop(tab);
@@ -720,6 +742,7 @@ impl AuthProvider for FormLogin {
                 "`attempt_limit` is not 1; a form sign-in tries a stored credential once",
             ));
         }
+        page_time(entry)?;
         Pages::of(entry).map(|_| ())
     }
 

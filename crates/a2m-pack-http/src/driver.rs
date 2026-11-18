@@ -16,19 +16,21 @@ use a2m_auth::{ChallengeScheme, CredentialSink, RawSign, SessionLease};
 use a2m_core::{
     Failure, FailureClass, FailureCode, Redact, Secret, Step, SurfaceIndex, Value, Values,
 };
+use a2m_core::EnvironmentKind;
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, PrepareContext, Prepared,
-    StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext,
+    Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail, record_headers};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
-use crate::forms::{Form, Unread};
+use crate::forms::{AnswerSpec, Charset, Form, Unread, ascii_if_said, refused_control};
 use crate::json::Json;
 use crate::link;
 use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
+use crate::shape::Shape;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
     ProbeStep, RequestStep, Take, VersionSource, build, parse_path,
@@ -209,6 +211,15 @@ impl Answer {
             .find(|(known, _)| known == name)
             .map(|(_, value)| value.as_str())
     }
+
+    /// Every value of a header the answer carries, in order.
+    fn headers_named(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(known, _)| known == name)
+            .map(|(_, value)| value.as_str())
+            .collect()
+    }
 }
 
 /// What `prepare` acquires: the client, the surface's address, the
@@ -228,6 +239,10 @@ struct Session {
     /// What this pass knows of a record's version: by the endpoint that
     /// read the record and the record's key.
     versions: BTreeMap<(String, Vec<u8>), Known>,
+    /// What the run may do to the system, and whether its environment is
+    /// of kind `test`: the driver's own read-only guard (decision 0249).
+    posture: Posture,
+    test_environment: bool,
 }
 
 /// What a pass knows of one record's version, from reading the record
@@ -455,6 +470,11 @@ impl HttpDriver {
             expiry,
             answer: None,
             versions: BTreeMap::new(),
+            posture: cx.posture,
+            test_environment: cx
+                .plan
+                .environment_named(&cx.surface.environment)
+                .is_some_and(|environment| environment.kind == EnvironmentKind::Test),
         })
     }
 }
@@ -885,6 +905,7 @@ impl HttpDriver {
                 "the endpoint `{name}` writes, and the step is not marked as a commit point"
             )));
         }
+        may_send(session, &name, &template, step)?;
         let payload: RequestStep = step
             .payload
             .decode()
@@ -1023,6 +1044,52 @@ impl HttpDriver {
             StepOutcome::Done(observed)
         })
     }
+}
+
+/// The driver's own read-only guard (decision 0249). A request that may
+/// change something, by its method or by its endpoint's `effect`, is sent
+/// in a live run; outside one it is sent only as the commit point of a
+/// write to a declared test record, in the context the engine prepared for
+/// that write, or, for an endpoint whose `read_asserted` says that a
+/// method HTTP does not mark safe only reads, against an environment of
+/// kind `test`. A discovery sends none. Refused, nothing is sent.
+fn may_send(
+    session: &Session,
+    name: &str,
+    template: &EndpointTemplate,
+    step: &Step,
+) -> Result<(), StepFailure> {
+    let may_change = template.writes || !template.method.is_safe();
+    if !may_change {
+        return Ok(());
+    }
+    let allowed = match session.posture {
+        Posture::Live => true,
+        Posture::Sandbox { test_records } => {
+            if step.commits {
+                test_records
+            } else {
+                template.read_asserted && session.test_environment
+            }
+        }
+        Posture::Discovery => false,
+    };
+    if allowed {
+        return Ok(());
+    }
+    Err(StepFailure::not_sent(codes::failure(
+        FailureClass::Policy,
+        a2m_provider::codes::READ_ONLY_POSTURE,
+        format!(
+            "The endpoint `{name}` is reached by {}, which may change the system, and this run may not change it; nothing was sent.",
+            template.method.word()
+        ),
+        if template.read_asserted {
+            "Run the operation live, or try it against an environment of kind `test`."
+        } else {
+            "Run the operation live, or against a declared test record."
+        },
+    )))
 }
 
 /// A step that judges a held answer and cannot be carried out as written.

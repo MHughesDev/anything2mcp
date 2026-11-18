@@ -572,9 +572,20 @@ impl Lowering for DesktopLowering {
             }
             lowered.act = vec![lower.goto(&found), lower.wait(&found), lower.read(&found)];
         } else {
-            let mut act = vec![lower.goto(&found), lower.wait(&found)];
-            act.extend(lower.sets(&found, binding.doc));
-            act.extend(lower.invoke(&found, binding.doc));
+            let wait = lower.wait(&found);
+            // Every act carries the record's key the `wait` proves, so that
+            // it proves it again on the walk it acts on, just before it
+            // acts: the window may have moved to another record since.
+            let keys = wait.args.clone();
+            let mut act = vec![lower.goto(&found), wait];
+            for mut step in lower
+                .sets(&found, binding.doc)
+                .into_iter()
+                .chain(lower.invoke(&found, binding.doc))
+            {
+                step.args.extend(keys.iter().cloned());
+                act.push(step);
+            }
             lowered.act = act;
             // The read-back is a new visit: the window found again, waited
             // for again, and read where it shows what is stored, never in

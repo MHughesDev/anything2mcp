@@ -15,5 +15,6 @@ bindings:
     folder: inbox
     key: {name: input.name}
     fields: {content: input.content}
+    read_back: {record: entry}
 description: >
   Adds a new note to the inbox, where no entry has its name.

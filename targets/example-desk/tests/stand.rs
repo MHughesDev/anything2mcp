@@ -393,7 +393,10 @@ mod on_windows {
 /// process.
 #[cfg(target_os = "macos")]
 mod on_macos {
-    #![allow(unsafe_code, reason = "a client of the accessibility interface; each call is explained")]
+    #![allow(
+        unsafe_code,
+        reason = "a client of the accessibility interface; each call is explained"
+    )]
 
     use std::ptr::NonNull;
     use std::time::{Duration, Instant};
@@ -423,7 +426,8 @@ mod on_macos {
     }
 
     fn elements(element: &AXUIElement, attribute: &str) -> Vec<CFRetained<AXUIElement>> {
-        let Some(array) = copy(element, attribute).and_then(|value| value.downcast::<CFArray>().ok())
+        let Some(array) =
+            copy(element, attribute).and_then(|value| value.downcast::<CFArray>().ok())
         else {
             return Vec::new();
         };

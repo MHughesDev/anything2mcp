@@ -13,5 +13,6 @@ bindings:
     status: shadow
     folder: inbox
     key: {name: input.name}
+    read_back: {record: entry}
 description: >
   Removes one note, or an empty folder, from the inbox.

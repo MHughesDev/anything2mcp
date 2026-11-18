@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use a2m_core::{Digest, Failure, FailureClass, FailureCode, JobId, RunId, Timestamp};
 use a2m_ledger::{
-    CheckRow, Due, Durability, Missed, NewWatch, Tx, WatchId, WatchRow, WatchState, reasons,
+    CheckRow, Due, Durability, Missed, NewWatch, Tx, WatchId, WatchReason, WatchRow, WatchState,
 };
 
 use crate::failure;
@@ -40,6 +40,16 @@ pub const WATCH_TOO_MANY: FailureCode = FailureCode::fixed("watch_too_many");
 /// The watches on one surface would take more of its budget than their
 /// share. Class `busy`.
 pub const WATCH_OVER_BUDGET_SHARE: FailureCode = FailureCode::fixed("watch_over_budget_share");
+
+/// Every failure code of a watch the scheduler produces, with its one class.
+/// The ledger's codes of a watch are in `a2m_ledger::codes::WATCH_CODES`;
+/// no code is in both.
+pub const ALL: &[(FailureClass, &str)] = &[
+    (FailureClass::Input, "watch_interval_too_short"),
+    (FailureClass::Input, "watch_too_long"),
+    (FailureClass::Busy, "watch_too_many"),
+    (FailureClass::Busy, "watch_over_budget_share"),
+];
 
 const DAY_MS: u128 = 86_400_000;
 
@@ -455,7 +465,7 @@ impl Scheduler {
                             if let Some((from, until, missed)) = missed {
                                 tx.watches().missed(watch.id, from, until, missed)?;
                             }
-                            tx.watches().end(watch.id, None, reasons::END_REACHED)?;
+                            tx.watches().end(watch.id, WatchReason::EndReached)?;
                         }
                     }
                 }

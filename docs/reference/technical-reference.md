@@ -694,6 +694,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `busy` | `system_not_built` | `a2m-pack-desktop` | This pack has no back end for the operating system it runs on. |
 | `busy` | `target_elevated` | `a2m-pack-desktop` | The application runs at a higher level than the engine, as administrator. Windows only; the pack does not reach it. |
 | `busy` | `tool_changed` | `a2m-actions` | A published tool changed between the decision about a call and the call. |
+| `busy` | `watch_check_not_completed` | `a2m-ledger` | A check's run ended without completing and gave no failure: it was cancelled, or it expired. |
 | `busy` | `watch_check_running` | `a2m-ledger` | A check of the watch is under way already. |
 | `busy` | `watch_check_unfinished` | `a2m-ledger` | A check's run has not reached an end the watch can take. |
 | `busy` | `watch_due_missed` | `a2m-ledger` | Due times passed with no check: the engine was not running, the watch was paused or held, or a check could not be admitted in time. The code of a `gap`, |

@@ -446,6 +446,21 @@ fn digest_of(program: &Path) -> Option<String> {
     )
 }
 
+/// The digest of the program a process runs: of the file at `want`, the
+/// path the system gave for the process's image, taken only when the
+/// system still gives that path once the file is read. The system's path
+/// follows the image's file, and the system refuses to write a file that
+/// is mapped as a running image, so a file moved away and another put in
+/// its place while it was read is not taken for the running one
+/// (decision 0244).
+fn running_digest(process: u32, want: &Path) -> Option<String> {
+    let digest = digest_of(want)?;
+    image_of(process)
+        .and_then(|image| resolved_path(&image).ok())
+        .is_some_and(|image| image == want)
+        .then_some(digest)
+}
+
 /// The process an element of the walk belongs to, from its key.
 fn process_of(el: &El) -> Result<u32, AxError> {
     el.bus
@@ -544,7 +559,7 @@ impl Uia {
             }
             if let Some(stated) = digest {
                 let stated = stated.strip_prefix("sha256:").unwrap_or(stated);
-                if digest_of(&want).as_deref() != Some(stated) {
+                if running_digest(process, &want).as_deref() != Some(stated) {
                     return Err(AxError::NotProven);
                 }
             }

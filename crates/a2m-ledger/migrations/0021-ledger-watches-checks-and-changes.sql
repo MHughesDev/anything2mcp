@@ -37,8 +37,11 @@ CREATE TABLE watches (
     confirmed_at INTEGER,
     phase_ms INTEGER,
     state TEXT NOT NULL CHECK (state IN ('asked', 'confirmed', 'running', 'paused', 'ended')),
-    reason_class TEXT,
-    reason_code TEXT,
+    reason TEXT CHECK (reason IS NULL OR reason IN (
+        'needs_login', 'needs_input', 'drifted', 'version_changed', 'on_hold', 'paused_by_person',
+        'ended_by_person', 'ended_by_caller', 'end_reached', 'version_withdrawn', 'declined')),
+    reason_failure_class TEXT,
+    reason_failure_code TEXT,
     state_since INTEGER NOT NULL,
     next_due_index INTEGER NOT NULL DEFAULT 0 CHECK (next_due_index >= 0),
     not_before INTEGER,
@@ -53,7 +56,8 @@ CREATE TABLE watches (
     CHECK (phase_ms IS NULL OR (phase_ms >= 0 AND phase_ms < interval_seconds * 1000)),
     CHECK (confirmed_by IS NULL OR confirmed_by = acts_for),
     CHECK (state IN ('asked', 'ended') OR confirmed_by IS NOT NULL),
-    CHECK ((state IN ('paused', 'ended')) = (reason_code IS NOT NULL)),
+    CHECK ((state IN ('paused', 'ended')) = (reason IS NOT NULL)),
+    CHECK ((reason_failure_class IS NULL) = (reason_failure_code IS NULL)),
     CHECK ((state = 'running') = (running_check IS NOT NULL))
 ) STRICT;
 
@@ -98,8 +102,9 @@ CREATE INDEX watch_checks_by_run ON watch_checks (run_id);
 -- `whole` for a read compared whole. `outputs` holds, for `changed`, the
 -- names of the outputs that differ, as canonical JSON, never their values.
 -- `older_check` is the check that last saw the record. A gap keeps the
--- class and code of what made it and, for due times that passed, the first
--- and last of them and how many.
+-- class and code of the failure that made it and, for due times that
+-- passed, the first and last of them and how many. A pause or an end keeps
+-- its reason, a state of the watch and not a failure.
 CREATE TABLE watch_changes (
     seq INTEGER PRIMARY KEY,
     watch_id TEXT NOT NULL REFERENCES watches (id),
@@ -112,6 +117,9 @@ CREATE TABLE watch_changes (
     outputs TEXT,
     why_class TEXT,
     why_code TEXT,
+    reason TEXT CHECK (reason IS NULL OR reason IN (
+        'needs_login', 'needs_input', 'drifted', 'version_changed', 'on_hold', 'paused_by_person',
+        'ended_by_person', 'ended_by_caller', 'end_reached', 'version_withdrawn', 'declined')),
     first_missed INTEGER,
     last_missed INTEGER,
     missed INTEGER CHECK (missed IS NULL OR missed > 0),
@@ -121,7 +129,9 @@ CREATE TABLE watch_changes (
            OR (check_seq IS NOT NULL AND key_digest IS NOT NULL)),
     CHECK ((first_missed IS NULL) = (last_missed IS NULL)),
     CHECK ((first_missed IS NULL) = (missed IS NULL)),
-    CHECK (kind NOT IN ('gap', 'paused', 'ended') OR why_code IS NOT NULL)
+    CHECK ((why_class IS NULL) = (why_code IS NULL)),
+    CHECK (kind <> 'gap' OR why_code IS NOT NULL),
+    CHECK ((kind IN ('paused', 'ended')) = (reason IS NOT NULL))
 ) STRICT;
 
 CREATE INDEX watch_changes_by_watch ON watch_changes (watch_id, seq);
@@ -201,8 +211,9 @@ CREATE TRIGGER watches_ended_never_change
 BEFORE UPDATE ON watches
 WHEN OLD.state = 'ended'
   AND (NEW.state IS NOT OLD.state
-       OR NEW.reason_class IS NOT OLD.reason_class
-       OR NEW.reason_code IS NOT OLD.reason_code
+       OR NEW.reason IS NOT OLD.reason
+       OR NEW.reason_failure_class IS NOT OLD.reason_failure_class
+       OR NEW.reason_failure_code IS NOT OLD.reason_failure_code
        OR NEW.state_since IS NOT OLD.state_since
        OR NEW.next_due_index IS NOT OLD.next_due_index
        OR NEW.not_before IS NOT OLD.not_before

@@ -242,7 +242,10 @@ fn ask<T>(call: &'static str, make: impl FnOnce() -> T) -> Result<T, AxError> {
 /// The value of one attribute of [`READ_ATTRIBUTES`], or `None` when the
 /// element has no such attribute or no value for it.
 #[allow(unsafe_code)] // one call into the accessibility interface, explained below
-fn copy(element: &AXUIElement, attribute: &'static str) -> Result<Option<CFRetained<CFType>>, AxError> {
+fn copy(
+    element: &AXUIElement,
+    attribute: &'static str,
+) -> Result<Option<CFRetained<CFType>>, AxError> {
     if !READ_ATTRIBUTES.contains(&attribute) {
         return Err(AxError::Lost(format!("`{attribute}` is not read")));
     }
@@ -257,9 +260,17 @@ fn copy(element: &AXUIElement, attribute: &'static str) -> Result<Option<CFRetai
     if answer == Said::Success {
         // SAFETY: on success the value is an object the caller owns (the
         // "copy" rule), or null.
-        return Ok(NonNull::new(value.cast_mut()).map(|value| unsafe { CFRetained::from_raw(value) }));
+        return Ok(
+            NonNull::new(value.cast_mut()).map(|value| unsafe { CFRetained::from_raw(value) })
+        );
     }
-    if [Said::AttributeUnsupported, Said::NoValue, Said::NotImplemented].contains(&answer) {
+    if [
+        Said::AttributeUnsupported,
+        Said::NoValue,
+        Said::NotImplemented,
+    ]
+    .contains(&answer)
+    {
         return Ok(None);
     }
     Err(said(attribute, answer))
@@ -278,7 +289,10 @@ fn named(element: &AXUIElement, attribute: &'static str) -> Result<Option<String
 }
 
 /// An attribute's value as one element, when it is one.
-fn element_of(element: &AXUIElement, attribute: &'static str) -> Result<Option<CFRetained<AXUIElement>>, AxError> {
+fn element_of(
+    element: &AXUIElement,
+    attribute: &'static str,
+) -> Result<Option<CFRetained<AXUIElement>>, AxError> {
     Ok(copy(element, attribute)?.and_then(|value| value.downcast::<AXUIElement>().ok()))
 }
 
@@ -318,7 +332,10 @@ fn processes() -> Vec<i32> {
     // SAFETY: with no buffer the call writes nothing and says how many
     // processes there are.
     let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
-    let room = usize::try_from(count).unwrap_or(0).saturating_add(64).min(MOST_PROCESSES);
+    let room = usize::try_from(count)
+        .unwrap_or(0)
+        .saturating_add(64)
+        .min(MOST_PROCESSES);
     let mut listed: Vec<libc::pid_t> = vec![0; room];
     let bytes = c_int::try_from(room * size_of::<libc::pid_t>()).unwrap_or(c_int::MAX);
     // SAFETY: `listed` is writable for `bytes` bytes and outlives the call,
@@ -396,6 +413,19 @@ fn digest_of(program: &Path) -> Option<String> {
     )
 }
 
+/// The digest of the program a process runs: of the file at `want`, the
+/// path the system gave for the process's program, taken only when the
+/// system still gives that path once the file is read. The system's path
+/// follows the program's file, so a file moved away and another put in its
+/// place while it was read is not taken for the running one.
+fn running_digest(process: i32, want: &Path) -> Option<String> {
+    let digest = digest_of(want)?;
+    program_of(process)
+        .and_then(|running| resolved_path(&running).ok())
+        .is_some_and(|running| running == want)
+        .then_some(digest)
+}
+
 /// The process an element belongs to, from its key.
 fn process_of(el: &El) -> Result<i32, AxError> {
     el.bus
@@ -453,11 +483,15 @@ impl Ax {
         }
         // SAFETY: makes this client's element for the whole system, which
         // asks no application anything.
-        let system = ask("AXUIElementCreateSystemWide", || unsafe { AXUIElement::new_system_wide() })?;
+        let system = ask("AXUIElementCreateSystemWide", || unsafe {
+            AXUIElement::new_system_wide()
+        })?;
         let limit = CALL_LIMIT.as_secs_f32();
         // SAFETY: on the system-wide element, the timeout is this client's
         // own, for every element it asks; it reaches no application.
-        let set = ask("AXUIElementSetMessagingTimeout", || unsafe { system.set_messaging_timeout(limit) })?;
+        let set = ask("AXUIElementSetMessagingTimeout", || unsafe {
+            system.set_messaging_timeout(limit)
+        })?;
         if set != Said::Success {
             return Err(said("AXUIElementSetMessagingTimeout", set));
         }
@@ -478,7 +512,12 @@ impl Ax {
     /// processes that are not it, and the application is asked nothing
     /// until it is proven.
     #[allow(unsafe_code)] // one call into the accessibility interface, explained below
-    fn application(&mut self, program: &str, name: &str, digest: Option<&str>) -> Result<App, AxError> {
+    fn application(
+        &mut self,
+        program: &str,
+        name: &str,
+        digest: Option<&str>,
+    ) -> Result<App, AxError> {
         let Ok(want) = resolved_path(Path::new(program)) else {
             return Err(AxError::NotRunning);
         };
@@ -503,7 +542,7 @@ impl Ax {
             }
             if let Some(stated) = digest {
                 let stated = stated.strip_prefix("sha256:").unwrap_or(stated);
-                if digest_of(&want).as_deref() != Some(stated) {
+                if running_digest(process, &want).as_deref() != Some(stated) {
                     return Err(AxError::NotProven);
                 }
             }
@@ -518,7 +557,9 @@ impl Ax {
         };
         // SAFETY: makes this client's element for the proven process; the
         // call asks the application nothing.
-        let element = ask("AXUIElementCreateApplication", || unsafe { AXUIElement::new_application(process) })?;
+        let element = ask("AXUIElementCreateApplication", || unsafe {
+            AXUIElement::new_application(process)
+        })?;
         // One real read: the interface may say a process is allowed and
         // still refuse it, which this names.
         copy(&element, "AXRole")?;
@@ -545,10 +586,9 @@ impl Ax {
     /// time and the same program, so a process that ended and whose number
     /// went to another is never asked.
     fn again(&self, process: i32) -> Result<&Proven, AxError> {
-        let proven = self
-            .proven
-            .get(&process)
-            .ok_or_else(|| AxError::Lost("an application this back end did not prove".to_owned()))?;
+        let proven = self.proven.get(&process).ok_or_else(|| {
+            AxError::Lost("an application this back end did not prove".to_owned())
+        })?;
         let same = facts_of(process).is_some_and(|facts| facts.started == proven.started)
             && program_of(process)
                 .and_then(|running| resolved_path(&running).ok())
@@ -717,7 +757,11 @@ impl Ax {
             );
             return Ok(out);
         }
-        let below = if role == "AXRow" { Place::InRow } else { Place::Plain };
+        let below = if role == "AXRow" {
+            Place::InRow
+        } else {
+            Place::Plain
+        };
         Ok(elements_of(element, "AXChildren", most)?
             .into_iter()
             .map(|child| Item::Element(child, below))
@@ -733,7 +777,8 @@ impl Ax {
         let mut tree = Tree::default();
         let mut kept: Vec<CFRetained<AXUIElement>> = Vec::new();
         let mut labelling: Vec<CFRetained<AXUIElement>> = Vec::new();
-        let mut stack: Vec<(Item, u32, Option<usize>)> = vec![(Item::Element(first, Place::Plain), 0, None)];
+        let mut stack: Vec<(Item, u32, Option<usize>)> =
+            vec![(Item::Element(first, Place::Plain), 0, None)];
         #[cfg(test)]
         self.seen.clear();
         while let Some((item, depth, parent)) = stack.pop() {
@@ -845,9 +890,7 @@ impl Ax {
             Some(value) => match value.downcast::<CFString>() {
                 Ok(text) => text.to_string(),
                 Err(_) => {
-                    return Err(AxError::Lost(
-                        "the field's value is not text".to_owned(),
-                    ));
+                    return Err(AxError::Lost("the field's value is not text".to_owned()));
                 }
             },
         };
@@ -965,17 +1008,25 @@ unsafe extern "C-unwind" fn woke(
 /// The listener thread: an observer of one application's notifications on
 /// this thread's run loop, which it runs until the watch stops it.
 #[allow(unsafe_code)] // calls into the accessibility interface and Core Foundation, explained below
-fn listen(process: i32, wake: tokio::sync::mpsc::Sender<()>, ready: oneshot::Sender<Result<Stopper, AxError>>) {
+fn listen(
+    process: i32,
+    wake: tokio::sync::mpsc::Sender<()>,
+    ready: oneshot::Sender<Result<Stopper, AxError>>,
+) {
     let wake = Box::new(Wake(wake));
     let refcon: *mut c_void = std::ptr::from_ref::<Wake>(&wake).cast_mut().cast();
     let made = (|| {
         // SAFETY: makes this thread's own element for the process, which
         // asks the application nothing.
-        let application = ask("AXUIElementCreateApplication", || unsafe { AXUIElement::new_application(process) })?;
+        let application = ask("AXUIElementCreateApplication", || unsafe {
+            AXUIElement::new_application(process)
+        })?;
         let mut raw: *mut AXObserver = std::ptr::null_mut();
         // SAFETY: `raw` is ours; on success the call writes an observer we
         // own (the "create" rule) whose callback is `woke`.
-        let answer = ask("AXObserverCreate", || unsafe { AXObserver::create(process, Some(woke), NonNull::from(&mut raw)) })?;
+        let answer = ask("AXObserverCreate", || unsafe {
+            AXObserver::create(process, Some(woke), NonNull::from(&mut raw))
+        })?;
         if answer != Said::Success {
             return Err(said("AXObserverCreate", answer));
         }
@@ -993,7 +1044,9 @@ fn listen(process: i32, wake: tokio::sync::mpsc::Sender<()>, ready: oneshot::Sen
                 // SAFETY: the observer and the element are this thread's;
                 // the name outlives the call; `refcon` outlives the
                 // observer, as `woke` says.
-                let answer = ask("AXObserverAddNotification", || unsafe { observer.add_notification(element, &name, refcon) })?;
+                let answer = ask("AXObserverAddNotification", || unsafe {
+                    observer.add_notification(element, &name, refcon)
+                })?;
                 if answer == Said::Success || answer == Said::NotificationAlreadyRegistered {
                     added += 1;
                 } else if answer == Said::APIDisabled {
@@ -1008,7 +1061,9 @@ fn listen(process: i32, wake: tokio::sync::mpsc::Sender<()>, ready: oneshot::Sen
         }
         // SAFETY: the observer is this thread's; the source it gives is
         // retained for us.
-        let source = ask("AXObserverGetRunLoopSource", || unsafe { observer.run_loop_source() })?;
+        let source = ask("AXObserverGetRunLoopSource", || unsafe {
+            observer.run_loop_source()
+        })?;
         let run_loop = CFRunLoop::current()
             .ok_or_else(|| AxError::Lost("this thread has no run loop".to_owned()))?;
         // SAFETY: the default mode is the system's own constant.
@@ -1155,7 +1210,9 @@ impl Look {
         std::thread::Builder::new()
             .name("a2m-desktop-ax".to_owned())
             .spawn(move || serve(said_ready, taken))
-            .map_err(|error| AxError::Lost(format!("starting the accessibility thread: {error}")))?;
+            .map_err(|error| {
+                AxError::Lost(format!("starting the accessibility thread: {error}"))
+            })?;
         match tokio::time::timeout(CALL_LIMIT, ready).await {
             Ok(Ok(Ok(()))) => Ok(Self { jobs }),
             Ok(Ok(Err(error))) => Err(error),
@@ -1263,7 +1320,9 @@ impl Look {
             .spawn(move || listen(process, wake, said_ready));
         if let Err(error) = spawned {
             trigger(&queue);
-            return Err(AxError::Lost(format!("starting the event listener: {error}")));
+            return Err(AxError::Lost(format!(
+                "starting the event listener: {error}"
+            )));
         }
         match tokio::time::timeout(CALL_LIMIT, ready).await {
             Ok(Ok(Ok(run_loop))) => Ok(Watch {
@@ -1276,7 +1335,9 @@ impl Look {
                 trigger(&queue);
                 Err(match outcome {
                     Ok(Ok(Err(error))) => error,
-                    Ok(Err(_)) => AxError::Lost("the event listener ended before it began".to_owned()),
+                    Ok(Err(_)) => {
+                        AxError::Lost("the event listener ended before it began".to_owned())
+                    }
                     _ => AxError::Timeout,
                 })
             }
@@ -1389,7 +1450,10 @@ mod tests {
         }
         assert!(spans.len() >= 10, "{} asks found", spans.len());
         for (start, end, call) in &spans {
-            assert!(READ_CALLS.contains(call), "`{call}` is asked and not on the list");
+            assert!(
+                READ_CALLS.contains(call),
+                "`{call}` is asked and not on the list"
+            );
             let made = &code[*start..*end];
             let (method, _) = BOUND
                 .iter()
@@ -1440,14 +1504,26 @@ mod tests {
                 }
             }
         }
-        assert_eq!(role_word("AXTextField", SECURE, Place::Plain), "password_text");
-        assert_eq!(role_word("AXTextField", SECURE, Place::InRow), "password_text");
+        assert_eq!(
+            role_word("AXTextField", SECURE, Place::Plain),
+            "password_text"
+        );
+        assert_eq!(
+            role_word("AXTextField", SECURE, Place::InRow),
+            "password_text"
+        );
         assert_eq!(role_word("AXTextField", "", Place::Plain), "entry");
         assert_eq!(role_word("AXStaticText", "", Place::InRow), "table_cell");
         assert_eq!(role_word("AXStaticText", "", Place::Plain), "label");
-        assert_eq!(role_word("AXWindow", "AXStandardWindow", Place::Plain), "frame");
+        assert_eq!(
+            role_word("AXWindow", "AXStandardWindow", Place::Plain),
+            "frame"
+        );
         assert_eq!(role_word("AXWindow", "AXDialog", Place::Plain), "dialog");
-        assert_eq!(role_word("AXButton", "AXSortButton", Place::InHeading), "table_column_header");
+        assert_eq!(
+            role_word("AXButton", "AXSortButton", Place::InHeading),
+            "table_column_header"
+        );
         // Unknown means stop: a role with no word is never a role a locator
         // can name.
         assert_eq!(role_word("AXWebArea", "", Place::Plain), roles::OTHER);
@@ -1512,10 +1588,7 @@ mod tests {
         let program = session.program();
         let look = match Look::connect(None).await {
             Ok(look) => look,
-            Err(error) => panic!(
-                "{}",
-                error.failure(&program)
-            ),
+            Err(error) => panic!("{}", error.failure(&program)),
         };
         // Another name, another digest: named stops, before anything is
         // asked of the window.

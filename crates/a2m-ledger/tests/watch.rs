@@ -19,7 +19,7 @@ use a2m_core::{
 };
 use a2m_ledger::{
     ChangeKind, CheckOutcome, Due, Durability, Missed, NewRun, NewWatch, Observed, ObservedRecord,
-    Opened, RetentionClass, Store, ToolKind, WatchId, WatchRow, WatchState, codes, reasons,
+    Opened, RetentionClass, Store, ToolKind, WatchId, WatchReason, WatchRow, WatchState, codes,
 };
 use common::*;
 
@@ -495,7 +495,7 @@ async fn a_failed_check_is_a_gap_and_a_sign_in_pauses_the_watch() {
     assert_eq!(
         gap.why,
         Some((
-            Some(FailureClass::Transient),
+            FailureClass::Transient,
             FailureCode::fixed("connection_lost")
         ))
     );
@@ -532,7 +532,7 @@ async fn a_failed_check_is_a_gap_and_a_sign_in_pauses_the_watch() {
     assert!(running.is_empty());
     let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
     assert_eq!(row.state, WatchState::Paused);
-    assert_eq!(row.reason.unwrap().1, reasons::VERSION_CHANGED);
+    assert_eq!(row.reason, Some(WatchReason::VersionChanged));
     refused(
         store
             .write(Durability::Synced, move |tx| tx.watches().resume(watch))
@@ -589,14 +589,14 @@ async fn ending_is_always_possible_and_leaves_the_history() {
     let paused = confirmed(&store).await;
     store
         .write(Durability::Synced, move |tx| {
-            tx.watches().pause(paused, None, reasons::PAUSED_BY_PERSON)
+            tx.watches().pause(paused, WatchReason::PausedByPerson)
         })
         .await
         .unwrap();
     for watch in [asked, running, paused] {
         let row = store
             .write(Durability::Synced, move |tx| {
-                tx.watches().end(watch, None, reasons::ENDED_BY_PERSON)
+                tx.watches().end(watch, WatchReason::EndedByPerson)
             })
             .await
             .unwrap();
@@ -604,7 +604,7 @@ async fn ending_is_always_possible_and_leaves_the_history() {
         refused(
             store
                 .write(Durability::Synced, move |tx| {
-                    tx.watches().end(watch, None, reasons::ENDED_BY_PERSON)
+                    tx.watches().end(watch, WatchReason::EndedByPerson)
                 })
                 .await,
             &codes::WATCH_ENDED,

@@ -18,6 +18,7 @@ auth:
       code_field: code
       code_submit: continue
       code_refused: refused
+      wait_ms: 5000
     credentials:
       user: "vault://example/app/user"
       password: "vault://example/app/password"

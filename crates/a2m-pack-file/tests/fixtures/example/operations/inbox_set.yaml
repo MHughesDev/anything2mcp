@@ -15,5 +15,6 @@ bindings:
     folder: inbox
     key: {name: input.name}
     fields: {content: input.content}
+    read_back: {record: entry}
 description: >
   Replaces the content of one note of the inbox.

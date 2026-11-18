@@ -374,6 +374,49 @@ impl Held {
         Ok(())
     }
 
+    /// What every act proves on the walk it acts on, just before it acts,
+    /// whatever system's acting half carries it out: that the window still
+    /// shows the record the run is for (the check `wait` makes, again,
+    /// since the application may have moved to another record since), and
+    /// that the application shows no window that no screen of the target
+    /// names, such as a dialog raised since the `wait`. Either is a stop,
+    /// with nothing sent (unknown means stop).
+    // Only Linux has an acting half in this version; Windows and macOS
+    // reach this once theirs are built, and until then it has no caller
+    // there.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    async fn before_act(
+        &self,
+        step: &Step,
+        screen: &Screen,
+        tree: &Tree,
+        input: &StepInput<'_>,
+    ) -> Result<(), StepFailure> {
+        self.shows_record(step, screen, tree, input).await?;
+        let windows = self
+            .look
+            .windows(&self.app)
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let known = |role: &str, title: &str| {
+            self.sections
+                .values()
+                .flat_map(|section| section.values())
+                .any(|screen| screen.window.role == role && screen.window.title == title)
+        };
+        if let Some(stranger) = windows
+            .iter()
+            .find(|window| !known(window.role, &window.title))
+        {
+            return Err(unexpected(format!(
+                "The application shows a window of the role `{}` that no screen of the target names, such as a dialog; nothing is done while one is open. Nothing was sent.",
+                stranger.role
+            ))
+            .with_said(stranger.title.clone()));
+        }
+        Ok(())
+    }
+
     /// Whether the run's posture lets a step act on the application. A
     /// field is set in a live run and against a declared test record; an
     /// action is done in a live run, and, against a test record, only when
@@ -520,6 +563,8 @@ impl Held {
             .one(&field.locate)
             .map_err(|miss| missed(miss, &what))?;
         let node = tree.nodes[at].clone();
+        let (_, screen) = self.screen(step)?;
+        self.before_act(step, screen, &tree, input).await?;
         if node.secret {
             return Err(StepFailure::not_sent(codes::failure(
                 FailureClass::Policy,
@@ -582,7 +627,10 @@ impl Held {
         }
         // The field is asked what it holds now: an application that
         // changed the value (cut it, formatted it) stops the run here,
-        // before anything is saved.
+        // before anything is saved. This proves the field took the value,
+        // never that the application stored it: the operation's read-back,
+        // a window reached afresh and read where it shows what is stored,
+        // is that proof.
         let held = self
             .look
             .text(&node, &self.limits)
@@ -617,7 +665,7 @@ impl Held {
     ) -> Result<Observed, StepFailure> {
         self.may_act(step)?;
         self.hold(input.deadline).await?;
-        let result = self.invoke_held(step, input.deadline).await;
+        let result = self.invoke_held(step, input).await;
         // A write holds the desktop until its commit point is done, as it
         // ended.
         if step.commits {
@@ -627,10 +675,15 @@ impl Held {
     }
 
     #[cfg(target_os = "linux")]
-    async fn invoke_held(&self, step: &Step, deadline: Deadline) -> Result<Observed, StepFailure> {
+    async fn invoke_held(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<Observed, StepFailure> {
         use crate::backend::{Acted, Heard};
         use crate::model::InvokeStep;
 
+        let deadline = input.deadline;
         let (name, screen) = self.screen(step)?;
         let payload: InvokeStep = step
             .payload
@@ -691,6 +744,9 @@ impl Held {
                 None => refused,
             });
         }
+        // Last before the act, on the walk it acts on: the record, and no
+        // window the screens do not name.
+        self.before_act(step, screen, &tree, input).await?;
         match hands.perform(&node, &action.perform).await {
             Ok(Some(true)) => {}
             Ok(None) => {

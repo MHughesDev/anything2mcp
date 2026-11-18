@@ -63,7 +63,7 @@ pub use tx::{Durability, Owner, PolicyKey, Row, SqlValue, Tables, Tx};
 pub use version::{PublishedVersion, VersionRow, Versions};
 pub use watch::{
     ChangeCounts, ChangeKind, ChangeRow, CheckEnded, CheckOutcome, CheckRow, Due, Missed, NewWatch,
-    Observed, ObservedRecord, WatchId, WatchRow, WatchState, Watches, reasons,
+    Observed, ObservedRecord, WatchId, WatchReason, WatchRow, WatchState, Watches,
 };
 pub use watch_compare::{
     Baseline, ChangedRecord, CheckDigests, CheckFault, Comparison, Held, MissingRecord,
@@ -80,9 +80,9 @@ pub mod codes {
     pub use crate::listing::IDEMPOTENCY_KEY_INVALID;
     pub use crate::shadow::{SHADOW_NOT_COUNTED, SHADOW_NOT_PROMOTABLE, SHADOW_WRITE_NOT_BUILT};
     pub use crate::watch::{
-        WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED, WATCH_DUE_MISSED, WATCH_ENDED,
-        WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ, WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS,
-        WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
+        ALL as WATCH_CODES, WATCH_CHECK_NOT_COMPLETED, WATCH_CHECK_RUNNING, WATCH_CHECK_UNFINISHED,
+        WATCH_DUE_MISSED, WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ,
+        WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS, WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
     };
     pub use crate::watch_compare::{WATCH_KEY_REPEATED, WATCH_SHAPES_MIXED};
 }

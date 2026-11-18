@@ -10,6 +10,9 @@ use a2m_core::{SurfaceName, ValueType};
 use a2m_files::{Diagnostic, Diagnostics, Located, LowerContext, Lowered, ResolvedBinding};
 
 use crate::codes;
+
+/// The one record kind of a folder: an entry, by its name.
+pub(crate) const FOLDER_RECORD: &str = "entry";
 use crate::lower::{LIST_LIMIT, STEP_TIMEOUT_MS, Steps, problem};
 use crate::model::{
     ENTRY_CONTENT, ENTRY_NAME, Expect, FOLDER_KIND, FolderChange, FolderSection, FolderSpec,
