@@ -281,10 +281,11 @@ class AuditCatches(unittest.TestCase):
     def test_a_code_declared_with_two_classes_is_refused(self):
         table = self.root / "crates" / "a2m-engine" / "src" / "codes.rs"
         text = table.read_text(encoding="utf-8")
-        planted = text.replace('(FailureClass::Busy, "no_binding")', '(FailureClass::Input, "no_binding")', 1)
+        # `engine_degraded` is declared by the scheduler too, as `busy`.
+        planted = text.replace('ENGINE_DEGRADED = Busy, "engine_degraded",', 'ENGINE_DEGRADED = Input, "engine_degraded",', 1)
         self.assertNotEqual(text, planted)
         table.write_text(planted, encoding="utf-8")
-        self.assert_finding("codes", "`no_binding` is declared with more than one class")
+        self.assert_finding("codes", "`engine_degraded` is declared with more than one class")
 
     def test_a_macro_row_with_no_next_is_a_fault(self):
         table = self.root / "crates" / "a2m-expr" / "src" / "codes.rs"

@@ -362,6 +362,175 @@ pub struct SentAddress {
 }
 
 impl ReviewSummary {
+    /// The summary with every text it holds passed through `f`: each
+    /// address, path, argument, variable's name and value, place, file
+    /// name, credential's role, probe's name, and what a sign-in sends
+    /// where. A caller passes the redactor, so that no secret a target's
+    /// file happens to quote reaches a page. The fixed sentences are this
+    /// module's constants and stay as they are; checked names (tools,
+    /// surfaces, modes, providers, environments, references) and digests
+    /// are not text a target can fill with anything, and stay too.
+    #[must_use]
+    pub fn map_text(&self, f: &dyn Fn(&str) -> String) -> Self {
+        let all = |texts: &[String]| -> Vec<String> { texts.iter().map(|text| f(text)).collect() };
+        let variable = |variable: &EnvironmentVariable| EnvironmentVariable {
+            name: f(&variable.name),
+            value: match &variable.value {
+                VariableValue::Set(value) => VariableValue::Set(f(value)),
+                VariableValue::Secret => VariableValue::Secret,
+                VariableValue::Passed => VariableValue::Passed,
+            },
+        };
+        let reach_groups = |groups: &[ReachGroup]| -> Vec<ReachGroup> {
+            groups
+                .iter()
+                .map(|group| ReachGroup {
+                    scope: group.scope,
+                    addresses: all(&group.addresses),
+                })
+                .collect()
+        };
+        let run = |run: &ProgramRun| match run {
+            ProgramRun::Program { path, digests } => ProgramRun::Program {
+                path: f(path),
+                digests: digests.clone(),
+            },
+            ProgramRun::Script {
+                interpreter,
+                interpreter_digests,
+                arguments,
+                script,
+                script_digest,
+            } => ProgramRun::Script {
+                interpreter: f(interpreter),
+                interpreter_digests: interpreter_digests.clone(),
+                arguments: all(arguments),
+                script: f(script),
+                script_digest: *script_digest,
+            },
+        };
+        let items = self
+            .items
+            .iter()
+            .map(|item| ReviewItem {
+                tool: item.tool.clone(),
+                effect: item.effect,
+                hazard: item.hazard,
+                commit_points: item.commit_points,
+                surfaces: item.surfaces.clone(),
+                destinations: all(&item.destinations),
+                uploads: all(&item.uploads),
+                downloads: all(&item.downloads),
+                place: item.place.as_ref().map(|place| PlaceReview {
+                    surface: place.surface.clone(),
+                    kind: place.kind.clone(),
+                    name: f(&place.name),
+                }),
+                bindings: item
+                    .bindings
+                    .iter()
+                    .map(|binding| BindingReview {
+                        operation: binding.operation.clone(),
+                        mode: binding.mode.clone(),
+                        surface: binding.surface.clone(),
+                        surface_programs: binding
+                            .surface_programs
+                            .iter()
+                            .map(|program| DeclaredProgram {
+                                path: f(&program.path),
+                                digest: program.digest,
+                            })
+                            .collect(),
+                        states: match &binding.states {
+                            BindingStates::NotStated { says } => {
+                                BindingStates::NotStated { says }
+                            }
+                            BindingStates::Stated { runs, environment } => BindingStates::Stated {
+                                runs: runs
+                                    .iter()
+                                    .map(|one| RunReview {
+                                        run: run(&one.run),
+                                        notice: one.notice,
+                                    })
+                                    .collect(),
+                                environment: environment.iter().map(variable).collect(),
+                            },
+                        },
+                    })
+                    .collect(),
+                reach: match &item.reach {
+                    Reach::Stated {
+                        groups,
+                        leaves_this_machine,
+                    } => Reach::Stated {
+                        groups: reach_groups(groups),
+                        leaves_this_machine: *leaves_this_machine,
+                    },
+                    Reach::Partly { known, says } => Reach::Partly {
+                        known: reach_groups(known),
+                        says,
+                    },
+                },
+            })
+            .collect();
+        let sign_ins = self
+            .sign_ins
+            .iter()
+            .map(|sign_in| SignInReview {
+                entry: sign_in.entry,
+                surfaces: sign_in.surfaces.clone(),
+                provider: sign_in.provider.clone(),
+                mode: sign_in.mode,
+                credentials: sign_in
+                    .credentials
+                    .iter()
+                    .map(|credential| CredentialShown {
+                        role: f(&credential.role),
+                        reference: credential.reference.clone(),
+                    })
+                    .collect(),
+                probe: match &sign_in.probe {
+                    ProbeReview::Declared { name } => ProbeReview::Declared { name: f(name) },
+                    ProbeReview::Pending { name, says } => ProbeReview::Pending {
+                        name: f(name),
+                        says,
+                    },
+                },
+                sent_to: sign_in
+                    .sent_to
+                    .iter()
+                    .map(|sent_to| SentToReview {
+                        environment: sent_to.environment.clone(),
+                        sent_to: match &sent_to.sent_to {
+                            SentTo::Addresses {
+                                groups,
+                                leaves_this_machine,
+                            } => SentTo::Addresses {
+                                groups: groups
+                                    .iter()
+                                    .map(|group| SentGroup {
+                                        scope: group.scope,
+                                        addresses: group
+                                            .addresses
+                                            .iter()
+                                            .map(|sent| SentAddress {
+                                                address: f(&sent.address),
+                                                what: f(&sent.what),
+                                            })
+                                            .collect(),
+                                    })
+                                    .collect(),
+                                leaves_this_machine: *leaves_this_machine,
+                            },
+                            other => other.clone(),
+                        },
+                    })
+                    .collect(),
+            })
+            .collect();
+        Self { items, sign_ins }
+    }
+
     /// States where a sign-in sends in one environment: the addresses the
     /// session keeper gives, or `None` when the provider is not held. The
     /// caller is `a2m-actions`, which asks `a2m-auth`; the compiler cannot

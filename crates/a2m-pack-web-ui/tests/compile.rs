@@ -315,3 +315,31 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         "web.read_back_never_absent",
     );
 }
+
+/// The review does not say a web tool sends only to its surface: the
+/// browser lets a page's other requests pass to any origin, so the pack
+/// states nothing, and the review says so in its fixed words (decisions
+/// 0252 and 0264).
+#[test]
+fn the_review_does_not_state_where_a_web_tool_sends() {
+    let stand = stand("review");
+    let compiled = compile(&stand.registry, "example");
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        for binding in &item.bindings {
+            assert_eq!(
+                binding.states,
+                a2m_files::BindingStates::NotStated {
+                    says: a2m_files::NOT_STATED
+                },
+                "{}",
+                item.tool
+            );
+        }
+        assert!(
+            matches!(item.reach, a2m_files::Reach::Partly { .. }),
+            "{}",
+            item.tool
+        );
+    }
+}

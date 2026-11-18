@@ -42,7 +42,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, StepCommits,
+    ResolvedBinding, Stage, Statement, StepCommits,
 };
 use a2m_pack_web_browser::{
     ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
@@ -592,6 +592,18 @@ fn body_of(
 impl Lowering for PageHttpLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
+    }
+
+    /// Not stated, for the reason the `ui` mode gives
+    /// (`UiLowering::statement`): the request is made from inside a page,
+    /// and the browser lets that page's other requests pass to any origin.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::NotStated
     }
 
     fn verbs(&self) -> &[Verb] {
