@@ -182,6 +182,10 @@ fn under(prefix: &str, address: &str) -> bool {
 pub(crate) enum Posture {
     Act,
     Observe(SafeRequests),
+    /// A tab a person signs in in, in a window (decision 0254): held to its
+    /// origins as an acting tab is, and with no network event on, since
+    /// nothing in it writes and what the person types would cross in them.
+    SignIn,
 }
 
 /// How one element is matched. Every variant must match exactly one
@@ -842,6 +846,10 @@ pub(crate) struct Page {
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
+    /// How many documents of the tab's own frame have loaded, and how many
+    /// things the tab refused, together: what a wait for the next change of
+    /// the tab waits on.
+    changes: watch::Sender<u64>,
     /// The page's own requests heard and not yet answered whole, by the
     /// browser's number for them, and how many there are.
     pending: Mutex<BTreeMap<String, Pending>>,
@@ -859,6 +867,8 @@ pub(crate) struct Page {
     /// browser's headers from the page's.
     document: Mutex<Option<DocumentHeaders>>,
     safe: Option<SafeRequests>,
+    /// Whether the tab hears no network event (a sign-in tab).
+    quiet: bool,
     /// The origins the tab was opened for.
     origins: Origins,
     /// The helper's source, with those origins written in.
@@ -2094,6 +2104,7 @@ impl Page {
                 blocked.push(shape);
             }
         }
+        self.changes.send_modify(|count| *count += 1);
     }
 
     /// Puts the lock on a worker or a frame that attached under an
@@ -2243,6 +2254,7 @@ impl Page {
                 if lifecycle.frame_id == self.target && lifecycle.name == "DOMContentLoaded" {
                     self.nav
                         .send_modify(|nav| nav.loaded = Some(lifecycle.loader_id));
+                    self.changes.send_modify(|count| *count += 1);
                 }
             }
             EventKind::ResponseReceived(received) if own => {
@@ -2915,6 +2927,7 @@ pub(crate) async fn open_page(
     env: &PageEnvironment,
     posture: Posture,
     origins: &Origins,
+    look_on: Option<&Origins>,
 ) -> Result<Arc<Page>, BrowserError> {
     let client = browser.client.clone();
     let settings = &shared.settings;
@@ -2973,18 +2986,20 @@ pub(crate) async fn open_page(
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
         blocked: Mutex::new(Vec::new()),
+        changes: watch::Sender::new(0),
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
         recording: AtomicBool::new(false),
         dropped: AtomicUsize::new(0),
         document: Mutex::new(None),
+        quiet: matches!(posture, Posture::SignIn),
         safe: match posture {
-            Posture::Act => None,
+            Posture::Act | Posture::SignIn => None,
             Posture::Observe(safe) => Some(safe),
         },
         origins: origins.clone(),
-        helper: helper_for(origins),
+        helper: helper_for(look_on.unwrap_or(origins)),
         moves: Mutex::new(Moves::default()),
         released: AtomicBool::new(false),
         browser: Arc::clone(browser),
@@ -3047,6 +3062,11 @@ async fn prepare(
             deadline,
         )
         .await?;
+    } else if page.quiet {
+        // A tab a person signs in in holds the requests of documents, as a
+        // tab that may act does, and hears no network event at all.
+        page.call(&fetch_documents(), deadline).await?;
+        page.call(&RuntimeEnable {}, deadline).await?;
     } else {
         // A tab that may act holds only the requests of documents: that is
         // where it is kept on the origins it was opened for. The page's
@@ -3405,6 +3425,48 @@ impl ActTab {
 }
 
 impl ActTab {
+    /// How many documents of the tab have loaded and how many things it
+    /// refused, together, so far. [`ActTab::changed_since`] waits for it to
+    /// grow.
+    #[must_use]
+    pub fn changes(&self) -> u64 {
+        *self.page.changes.borrow()
+    }
+
+    /// Waits until a document of the tab loads, or the tab refuses
+    /// something, after the count `seen` that [`ActTab::changes`] gave: a
+    /// protocol event, never a guess at how long a page takes.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Timeout`] at the deadline; [`BrowserError::Crashed`]
+    /// or [`BrowserError::Disconnected`] when the tab goes.
+    pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError> {
+        let mut changes = self.page.changes.subscribe();
+        let mut status = self.page.status.subscribe();
+        loop {
+            if *changes.borrow_and_update() > seen {
+                return Ok(());
+            }
+            if let Some(error) =
+                Page::interrupted(*status.borrow_and_update(), false, Dispatch::NotSent)
+            {
+                return Err(error);
+            }
+            tokio::select! {
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return Err(BrowserError::Disconnected { dispatch: Dispatch::NotSent });
+                    }
+                }
+                _ = status.changed() => {}
+                () = tokio::time::sleep_until(deadline.at()) => {
+                    return Err(BrowserError::Timeout { dispatch: Dispatch::NotSent });
+                }
+            }
+        }
+    }
+
     /// What this tab refused since the last call, oldest first: a move of
     /// the tab to an origin it was not opened for (`NAVIGATION`), a window
     /// its page opened, which was closed before it fetched anything
