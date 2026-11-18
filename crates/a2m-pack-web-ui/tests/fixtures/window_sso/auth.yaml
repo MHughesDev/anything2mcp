@@ -1,0 +1,17 @@
+# Single sign-on as a person meets it in a browser: the application sends
+# the window to its identity provider, the person signs in there, and the
+# provider sends the window back with a one-use code. The engine reads
+# nothing on the provider's pages and fills nothing anywhere.
+auth:
+  - surfaces: [app]
+    mode: custom
+    provider: sso_oidc
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: single_sign_on
+      signed_in: account
+      identity_providers: "http://localhost:4011"
+      wait_ms: 20000
+    attempt_limit: 1

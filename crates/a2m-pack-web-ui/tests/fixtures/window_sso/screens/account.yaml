@@ -1,0 +1,13 @@
+# The first page a signed-in person sees, which says who is signed in.
+screen: account
+surface: app
+reach: {url: "/secure/orders"}
+ready: {visible: {role: heading, name: "Orders"}}
+fields:
+  signed_in_as:
+    type: text
+    control: text
+    read: text
+    locate:
+      - {text: "Signed in as", contains: true}
+    fingerprint: {section: {role: main, name: ""}}

@@ -32,6 +32,7 @@ use a2m_core::{
     Secret, SessionState, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
+use a2m_pack_web_browser::test_support::{self, Screen, screen_required};
 use a2m_provider::{Posture, Sent, StepFailure};
 use a2m_telemetry::ManualClock;
 use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
@@ -81,7 +82,7 @@ impl AskPerson for Person {
                 (PersonAsk::EnterCode { .. }, There::WithCode) => PersonAnswer::Done(
                     Returned::new().with("code", Secret::new(SECOND_FACTOR_CODE)),
                 ),
-                (PersonAsk::Notify { .. }, _) => PersonAnswer::Done(Returned::new()),
+                (PersonAsk::Notify { .. }, There::WithCode) => PersonAnswer::Done(Returned::new()),
                 _ => PersonAnswer::Unreachable,
             }
         })
@@ -187,6 +188,37 @@ impl World {
     /// The same, with `password` stored as the person's password.
     async fn storing(name: &str, published: bool, password: &str) -> Self {
         let app = TestApp::start().await.unwrap();
+        Self::built(name, published, password, "secure", app).await
+    }
+
+    /// The same, for the fixture target `fixture` over `app`: each surface
+    /// at the address `app` serves it from.
+    async fn built(
+        name: &str,
+        published: bool,
+        password: &str,
+        fixture: &str,
+        app: TestApp,
+    ) -> Self {
+        Self::shown(name, published, password, fixture, app, None).await
+    }
+
+    /// A sign-in the person carries out in a window on `screen`: from the
+    /// published version, or from drafts the person was shown on their page.
+    async fn window(name: &str, published: bool, fixture: &str, screen: &Screen) -> Self {
+        let app = TestApp::start_with_identity_provider().await.unwrap();
+        Self::shown(name, published, PASSWORD, fixture, app, Some(screen)).await
+    }
+
+    /// The same, with the browsers showing a window on `screen`.
+    async fn shown(
+        name: &str,
+        published: bool,
+        password: &str,
+        fixture: &str,
+        app: TestApp,
+        screen: Option<&Screen>,
+    ) -> Self {
         let home = Folder::new(&format!("{name}-home"));
         let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
             1_800_000_000_000,
@@ -201,16 +233,44 @@ impl World {
         ledger.attach(Arc::clone(&vault)).await.unwrap();
         // The pack's browsers redact with the vault's redactor, as the
         // product's do.
-        let stand = Stand::new(name, vault.redactor() as Arc<dyn Redact>);
-        let mut plan: Plan = compile(&stand.registry, "secure").plan;
+        let settings = screen.map_or_else(test_support::settings, Screen::settings);
+        let stand = Stand::with_settings(
+            name,
+            vault.redactor() as Arc<dyn Redact>,
+            Vec::new(),
+            settings,
+        );
+        let mut plan: Plan = compile(&stand.registry, fixture).plan;
         let origin = app.url("").trim_end_matches('/').to_owned();
-        plan.surfaces[0].address.clone_from(&origin);
+        for surface in &mut plan.surfaces {
+            match surface.name.as_str() {
+                "app" => surface.address.clone_from(&origin),
+                _ => {
+                    surface.address = app
+                        .provider_url("")
+                        .unwrap_or_default()
+                        .trim_end_matches('/')
+                        .to_owned();
+                }
+            }
+        }
+        // The identity provider a window's sign-in passes through is where
+        // the stand serves it.
+        if let Some(provider) = app.provider_url("") {
+            for setting in &mut plan.auth[0].settings {
+                if setting.name == "identity_providers" {
+                    setting.value = provider.trim_end_matches('/').to_owned();
+                }
+            }
+        }
         let surfaces = EntrySurfaces::of(&plan, &plan.auth[0], &key().environment);
         let mut entry = entry_of(&plan.auth[0]);
-        entry.surfaces = if published {
-            surfaces.published()
-        } else {
-            surfaces
+        entry.surfaces = match (published, screen.is_some()) {
+            (true, _) => surfaces.published(),
+            // A drafts' sign-in in a window: the person's page showed every
+            // address before the press (decision 0248).
+            (false, true) => surfaces.shown_to_person(),
+            (false, false) => surfaces,
         };
         let entry = Arc::new(entry);
         let telemetry_dir = stand.folder.path().to_path_buf();
@@ -649,5 +709,135 @@ async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_
         assert_eq!(refused.sent, Sent::NotSent);
         unknown.stand.end().await;
     }
+    world.end().await;
+}
+
+/// A screen for a window, or `None` when this machine has none and none is
+/// required: then the test says it did not run.
+fn screen() -> Option<Screen> {
+    match Screen::start() {
+        Ok(screen) => Some(screen),
+        Err(why) if !screen_required() => {
+            eprintln!("NOT RUN, no screen on this machine: {why}");
+            None
+        }
+        Err(why) => panic!("no screen, and A2M_REQUIRE_DESKTOP=1 says one must be had: {why}"),
+    }
+}
+
+/// Every file under the engine's home and the logs holds none of these.
+fn written_nowhere(world: &World, secrets: &[&str]) {
+    for secret in secrets {
+        for folder in [world.home.path(), world.telemetry_dir.as_path()] {
+            let written = files_holding(folder, secret);
+            assert!(written.is_empty(), "{secret} is written in {written:?}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_signs_in_in_a_window_from_drafts_and_the_engine_types_and_reads_nothing() {
+    let Some(screen) = screen() else {
+        return;
+    };
+    // Nobody there: no window is opened, and the application hears nothing.
+    let world = World::window("window-away", false, "window", &screen).await;
+    *world.person.there.lock().unwrap() = There::Away;
+    let stopped = world.sign_in().await.unwrap_err();
+    assert_eq!(stopped.class(), FailureClass::SessionExpired);
+    assert_eq!(stopped.code().as_str(), "needs_login");
+    assert_eq!(world.app.auth_report().await.unwrap().sign_in_attempts, 0);
+    assert!(world.scene.stand.supervisor.list().is_empty());
+    world.end().await;
+
+    // The person signs in on the application's own page, which a script of
+    // the stand types into, as a person would: the engine sent no key.
+    let world = World::window("window-own", false, "window", &screen).await;
+    world
+        .app
+        .set_auth_settings(&AuthSettings {
+            person_at_the_window: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (1, 1));
+    // The person was told once, and asked for nothing.
+    let asked = world.person.asked.lock().unwrap().clone();
+    assert!(
+        matches!(asked.as_slice(), [PersonAsk::Notify { .. }]),
+        "{asked:?}"
+    );
+    // The window is gone; a run reads in the background with the state.
+    assert!(world.scene.stand.supervisor.list().is_empty());
+    let lease = world.lease().await.unwrap();
+    let values = read(&world.scene, &lease).await.unwrap();
+    assert!(format!("{values:?}").contains("Signed in as"), "{values:?}");
+    let timeline = world.keeper.timeline(lease.session()).await.unwrap();
+    let told = format!("{values:?} {timeline:?} {lease:?}");
+    assert!(!told.contains(PASSWORD), "{told}");
+    assert!(!told.contains(COOKIE_PREFIX), "{told}");
+    world.keeper.idle().await;
+    written_nowhere(&world, &[PASSWORD, COOKIE_PREFIX]);
+    world.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn single_sign_on_crosses_to_the_identity_provider_and_back_and_a_stray_origin_is_a_named_stop()
+ {
+    let Some(screen) = screen() else {
+        return;
+    };
+    let world = World::window("window-sso", true, "window_sso", &screen).await;
+    world
+        .app
+        .set_auth_settings(&AuthSettings {
+            person_at_the_window: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let report = world.app.auth_report().await.unwrap();
+    // The person signed in at the identity provider, once; its one-use
+    // code came back to the application once; nothing was refused.
+    assert_eq!(report.identity_provider_sign_ins, 1);
+    assert_eq!((report.codes_used, report.returns_refused), (1, 0));
+    assert_eq!(report.sign_ins, 1);
+    let lease = world.lease().await.unwrap();
+    let values = read(&world.scene, &lease).await.unwrap();
+    assert!(format!("{values:?}").contains("Signed in as"), "{values:?}");
+    world.keeper.idle().await;
+    // The identity provider's own cookie is not the session's: only the
+    // application's origin's cookies were taken.
+    written_nowhere(
+        &world,
+        &[PASSWORD, COOKIE_PREFIX, "example-provider-session-"],
+    );
+    let timeline = world.keeper.timeline(lease.session()).await.unwrap();
+    assert!(!format!("{timeline:?}").contains("provider-session"));
+    world.end().await;
+
+    // The identity provider sends the window to an origin nobody declared:
+    // the browser ends the move before it leaves, and the sign-in stops by
+    // name.
+    let world = World::window("window-stray", true, "window_sso", &screen).await;
+    world
+        .app
+        .set_auth_settings(&AuthSettings {
+            person_at_the_window: true,
+            identity_provider_strays: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+    let stopped = world.sign_in().await.unwrap_err();
+    assert_eq!(stopped.class(), FailureClass::Policy, "{stopped:?}");
+    assert_eq!(stopped.code().as_str(), "surface_not_declared");
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!(report.identity_provider_sign_ins, 1);
+    assert_eq!((report.strays_arrived, report.sign_ins), (0, 0));
     world.end().await;
 }

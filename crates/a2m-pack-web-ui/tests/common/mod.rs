@@ -73,6 +73,7 @@ impl Drop for Folder {
 struct TestPack {
     manifest: &'static str,
     browsers: SharedBrowsers,
+    settings: a2m_pack_web_browser::BrowserSettings,
     /// Drafting rules a test adds to the pack's own, each declared in the
     /// manifest.
     rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
@@ -84,7 +85,7 @@ impl Pack for TestPack {
     }
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
-        self.browsers.get_or_create(cx, test_support::settings())?;
+        self.browsers.get_or_create(cx, self.settings.clone())?;
         a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)?;
         if self.rules.is_empty() {
             return Ok(());
@@ -128,6 +129,16 @@ impl Stand {
         redact: Arc<dyn Redact>,
         rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
     ) -> Self {
+        Self::with_settings(name, redact, rules, test_support::settings())
+    }
+
+    /// The same, with the browsers' settings given: a test's screen.
+    pub fn with_settings(
+        name: &str,
+        redact: Arc<dyn Redact>,
+        rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
+        settings: a2m_pack_web_browser::BrowserSettings,
+    ) -> Self {
         let folder = Folder::new(name);
         let profiles = folder.path().join("profiles");
         let logs = folder.path().join("logs");
@@ -163,6 +174,7 @@ impl Stand {
         builder.add_pack(&TestPack {
             manifest: test_manifest(&declared),
             browsers: browsers.clone(),
+            settings,
             rules,
         });
         let (registry, problems) = builder.build();

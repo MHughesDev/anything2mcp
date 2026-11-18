@@ -1,0 +1,32 @@
+# The application's sign-in page. Its variants are the signs a sign-in
+# ends on besides success: a refused credential, and a locked account.
+screen: sign_in
+surface: app
+reach: {url: "/secure/sign-in"}
+ready: {visible: {role: heading, name: "Sign in"}}
+fields:
+  username:
+    type: text
+    control: text
+    locate:
+      - {label: Username}
+    fingerprint: {section: {role: form, name: ""}}
+  password:
+    type: text
+    control: text
+    locate:
+      - {label: Password}
+    fingerprint: {section: {role: form, name: ""}}
+actions:
+  sign_in:
+    locate:
+      - {role: button, name: "Sign in"}
+    fingerprint: {section: {role: form, name: ""}}
+    confirm: {visible: {role: heading, name: "Orders"}}
+variants:
+  refused:
+    when: {visible: {text: "The username or password is not right.", contains: false}}
+    handling: stop
+  locked:
+    when: {visible: {text: "locked after too many failed sign-ins", contains: true}}
+    handling: stop
