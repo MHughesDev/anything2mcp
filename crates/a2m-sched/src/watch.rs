@@ -639,9 +639,7 @@ impl Scheduler {
                 };
                 // The check opened its run exactly when admission placed a
                 // job for it; a run handed back by rule 6 is only joined.
-                let check = tx
-                    .watches()
-                    .begin_check(watch, due, run, job.is_some())?;
+                let check = tx.watches().begin_check(watch, due, run, job.is_some())?;
                 Ok(CheckStarted { run, job, check })
             })
             .await;

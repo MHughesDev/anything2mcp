@@ -88,8 +88,8 @@ impl World {
     }
 }
 
-/// A world whose runner is not started: a check's run stays queued, and so
-/// unfinished, until the test starts it. What the watches stored is read
+/// A world whose runner is enrolled and claims nothing: a check's run stays
+/// queued, and so unfinished, until the test starts the runner's loop. What the watches stored is read
 /// from the ledger itself.
 impl World {
     async fn held() -> Self {
@@ -100,6 +100,15 @@ impl World {
             .await
             .unwrap();
         *world.surface.pages.lock().unwrap() = true;
+        // The runner is enrolled, so that a check is admitted, and claims
+        // nothing until the test starts its loop again.
+        world
+            .kernel
+            .start_runner_loop(4)
+            .await
+            .unwrap()
+            .stop()
+            .await;
         world
     }
 
@@ -170,8 +179,6 @@ impl World {
         let second = self.confirmed_watch(Duration::from_secs(7_200)).await;
         self.clock.advance(Duration::from_secs(10));
         self.kernel.tend().await;
-        eprintln!("DEBUG {:?}", self.stored_watch(first).await);
-        eprintln!("DEBUG health {:?}", self.kernel.health());
         let (one, two) = (
             self.stored_checks(first).await,
             self.stored_checks(second).await,
@@ -392,7 +399,8 @@ async fn ending_one_watch_leaves_the_run_another_rests_on_and_it_ends_with_its_r
     assert_eq!(world.stored_watch(other).await.state, WatchState::Running);
 
     // The run is carried out once; the other watch's check ends with its
-    // result, and records no gap.
+    // result, and records no gap. It is cut short, as every check is while
+    // the engine records no completeness (decision 0262).
     world.kernel.start_runner_loop(4).await.unwrap();
     for _ in 0..PASSES {
         world.kernel.tend().await;
@@ -402,7 +410,8 @@ async fn ending_one_watch_leaves_the_run_another_rests_on_and_it_ends_with_its_r
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let check = &world.stored_checks(other).await[0];
-    assert_eq!(check.outcome, CheckOutcome::Complete, "{check:?}");
+    assert_eq!(check.outcome, CheckOutcome::CutShort, "{check:?}");
+    assert_eq!(check.records_seen, Some(1), "{check:?}");
     assert_eq!(check.run, run);
     assert_eq!(world.run_state(run).await, RunState::Completed);
     assert_eq!(world.stored_kinds(other).await, [ChangeKind::Confirmed]);
@@ -454,6 +463,18 @@ async fn a_shared_run_that_waits_for_a_sign_in_pauses_every_watch_resting_on_it(
         assert_eq!(
             world.stored_kinds(id).await,
             [ChangeKind::Confirmed, ChangeKind::Gap, ChangeKind::Paused]
+        );
+        // What each watch tells its agent names the one run.
+        let told = world
+            .ok("watch.changes", json!({"watch_id": id.to_string()}))
+            .await;
+        assert!(
+            told["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| change["run_id"] == run.to_string()),
+            "{told}"
         );
     }
     // The run waits for no watch once the last check on it has ended.

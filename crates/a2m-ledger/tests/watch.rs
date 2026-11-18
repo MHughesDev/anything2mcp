@@ -1123,7 +1123,9 @@ async fn two_watches_of_one_read_share_a_run_and_only_the_opener_is_marked() {
         ))
         .unwrap_err();
     assert!(
-        planted.to_string().contains("opens only a run no check names yet"),
+        planted
+            .to_string()
+            .contains("opens only a run no check names yet"),
         "{planted}"
     );
     let changed = raw

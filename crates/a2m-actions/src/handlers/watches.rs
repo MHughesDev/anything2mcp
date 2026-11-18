@@ -529,12 +529,11 @@ impl Kernel {
             .await
         {
             Ok(CheckAdmission::Started(_)) => true,
-            Ok(CheckAdmission::Deferred { refused, .. }) => { eprintln!("DEBUG deferred {refused:?}"); false }
+            Ok(CheckAdmission::Deferred { .. }) => false,
             // A refusal the scheduler does not wait out, such as a check its
             // ledger refuses, is tried again after a minute at most, and
             // never at once: the tending task does not spin on it.
-            Err(e) => {
-                eprintln!("DEBUG submit refused {e:?}");
+            Err(_) => {
                 if let Ok(store) = self.store() {
                     let id = watch.id;
                     let until = Timestamp::from_unix_millis(
@@ -1183,8 +1182,8 @@ handler!(
 
 handler!(
     /// `watch.end`: its person ends it, or the caller that asked for it.
-    /// A check under way is closed, and its run cancelled when that check
-    /// or another watch's opened it and no other check rests on it
+    /// A check under way is closed, and its run cancelled only when a
+    /// watch's check opened it and no other check under way rests on it
     /// (decisions 0285 and 0287).
     watch_end,
     |kernel, call| {

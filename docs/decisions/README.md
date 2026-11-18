@@ -278,3 +278,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0284 | [The command pack's scout reads a fish completion file and a manual page it is handed](0284-the-command-packs-scout-reads-a-fish-completion-file-and-a-manual-page-it-is-handed.md) | Accepted (design decision) |
 | 0285 | [Two watches of the same read for one person share a run, and ending one never cancels a run another rests on](0285-two-watches-of-the-same-read-for-one-person-share-a-run-and-ending-one-never-cancels-a-run-another-rests-on.md) | Accepted (design decision) |
 | 0286 | [The macOS walk lists a title bar's buttons and walks nothing under them](0286-the-macos-walk-lists-a-title-bars-buttons-and-walks-nothing-under-them.md) | Accepted (design decision) |
+| 0287 | [The last check under way on a run a check opened cancels it](0287-the-last-check-under-way-on-a-run-a-check-opened-cancels-it.md) | Accepted (design decision) |

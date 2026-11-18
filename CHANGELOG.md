@@ -163,6 +163,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - When a command's request may have reached the engine and its answer was lost, or the connection ended before the request was sent, the failure now also says what the client saw, in one of six fixed phrases.
 - Sixteen more crates declare their failure codes in the one table form, each code with what it means, what to do about it, and, for a `busy` code, whether calling again unchanged may pass. The technical reference's table of failure codes shows both for them, and the scheduler's busy refusals carry their wait as data.
 - A watch's check refused because its share of a surface's budget is spent now waits only until the share refills, never past its next due time, so it no longer becomes a gap.
+- Two watches of the same read and input share one run of it. Ending one no longer cancels the run the other is waiting on, so the other's check ends with that run's result instead of a gap; when the shared run waits for a sign-in, every watch on it pauses for the sign-in; and a watch's check that joined a run it did not open never cancels it (decisions 0285, 0287).
 
 ### Safety fixes
 
