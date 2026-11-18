@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use a2m_actions::settings::InstallationKeeper;
 use a2m_actions::{
     ActionRegistry, Caller, CallerCredential, CloseReason, FrontDoor, Kernel, KernelParts, Paths,
     PersonSurface, Principal, Request, Response, Settings, Sources, StorePlace,
@@ -118,6 +119,11 @@ pub struct EngineOptions {
     pub os_user: String,
     /// How a person is reached.
     pub person: Arc<dyn PersonSurface>,
+    /// Who keeps the installation's settings file, when a test says so in
+    /// place of the check of the file on disk. Private: only
+    /// [`EngineOptions::with_installation_kept_by_an_administrator_for_tests`]
+    /// sets it, which no product code calls (decision 0241).
+    installation_keeper: Option<InstallationKeeper>,
 }
 
 impl std::fmt::Debug for EngineOptions {
@@ -150,7 +156,21 @@ impl EngineOptions {
             random: Arc::new(OsRandom),
             os_user,
             person,
+            installation_keeper: None,
         }
+    }
+
+    /// The same options, with the installation's settings file taken as an
+    /// administrator's, whoever may change it on disk: it may then loosen a
+    /// protected setting. For a test of the product that stands for an
+    /// installation an administrator set up, in a temporary folder the
+    /// test's own account owns (decision 0241). The shipped program never
+    /// calls it: no file, variable, or flag reaches it, and a test of the
+    /// workspace holds that no product source names it but this one.
+    #[must_use]
+    pub fn with_installation_kept_by_an_administrator_for_tests(mut self) -> Self {
+        self.installation_keeper = Some(InstallationKeeper::Administrator);
+        self
     }
 }
 
@@ -198,6 +218,9 @@ fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
     )?;
     for (key, value) in &options.flags {
         sources = sources.with_flag(key, value);
+    }
+    if let Some(keeper) = &options.installation_keeper {
+        sources.installation_keeper = keeper.clone();
     }
     Ok(sources)
 }

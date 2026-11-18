@@ -51,7 +51,7 @@ Pull request 12 carries waves 5 and 6. It merged green on the three operating sy
 
 **Wave 7: the safety audits, the doors joined, the first clients, and pull request 13.** Pull request 13 carries everything between pull request 12 and its merge: decisions 0131 to 0175 and 0176 to 0204, in large part. The parts that matter most:
 
-- **Read-only audits by readers who had not built the crate.** Each kernel crate and pack was read against the documents and the ten rules. The audits found about six critical and twenty-five serious gaps in crates whose own tests all passed, and the fixes are the "after their safety audit" records, 0138 to 0153. A later round of audits (the fourth, on the kernel) found three serious faults that were fixed in 0200 and 0201.
+- **Read-only audits by readers who had not built the crate.** Each kernel crate and pack was read against the documents and the ten rules. The audits found about six critical and twenty-five serious gaps in crates whose own tests all passed, and the fixes are the "after their safety audit" records, 0138 to 0153. A fourth round, on the kernel, found three serious faults; they were fixed in 0201 (in this pull request) and in 0200 (after it).
 - **The doors joined** (0131): `serve`, the thin client, and the stdio bridge, with two unrelated MCP client libraries calling through the bridge. A decline ends a run, a resume is never lost, a lost answer is a write in doubt at the doors and in the clients (0132, 0159).
 - **The presence prompt on each system** (0133, 0142, 0146), the wheel and the npm packages (0135, 0186), the clients generated from the served document (0156), a client that starts the engine on demand (0165), and HTTPS in the product (0157, 0166).
 - **The stream pack speaks a real broker's wire protocol through a client of our own**, and the data pack reaches a server database (0167, 0168). Both ran in CI against a real server for the first time on this pull request; neither had been run against one before.
@@ -85,7 +85,7 @@ Pull request 12 carries waves 5 and 6. It merged green on the three operating sy
 ## Noticed, not acted on
 
 - **The session's usage limit was reached once,** with the engine, the action registry, and eight packs half-built. All twelve agents stopped at once. Their files were on disk and each was resumed from where it stopped when the owner reset the limit.
-- **TLS is off.** With the TLS feature on, every HTTP client in a build must have a cryptography provider installed in its process, or it stops when it is made. Until one change installs it everywhere, an `https` identity service is refused by name, and only loopback endpoints are used.
+- **TLS needs one provider per process.** A build with the TLS feature needs a cryptography provider installed in every process that makes an HTTP client, or the client stops when it is made. Decisions 0157 and 0166 settled this for the product: one maker of clients, and trust roots read at engine start.
 - **Named time zones are not built;** a target's zone is `UTC` or a fixed offset.
 - **The ledger grants a record lock to whoever asks first,** so a run woken by the scheduler can lose the lock to a run that never waited.
 - `a2m-telemetry` and `a2m-policy` each define a vocabulary that `a2m-core` now also has, and three crates still carry their own shape checks for names that the core's macro can make.
@@ -102,4 +102,4 @@ Nothing new. The three items from before still stand: the pending publisher on P
 
 1. Validate the whole tree that came after the merge and take it through CI on three systems: the work of [the wider reach](2026-11-18-the-wider-reach.md) has not been through CI.
 2. Fix what the audits of that work find, then the order the reviews ranked, as that entry lists.
-3. Still open from this entry: TLS is on in a default build but each client must install its cryptography provider; named time zones are not built; the ledger grants a record lock to whoever asks first.
+3. Still open from this entry: named time zones are not built; the ledger grants a record lock to whoever asks first.
