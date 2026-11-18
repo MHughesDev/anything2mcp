@@ -2618,6 +2618,8 @@ pub struct Scene {
     pub attempt: AtomicU32,
     pub conditions: Mutex<Conditions>,
     pub pin: Mutex<Option<Mode>>,
+    /// The one binding the next jobs run, when a test names one.
+    pub binding: Mutex<Option<a2m_engine::BindingPin>>,
     pub lease: LeaseClock,
     /// The engine's clock: a test moves it.
     pub clock: Arc<ManualClock>,
@@ -2775,6 +2777,7 @@ impl Scene {
             attempt: AtomicU32::new(1),
             conditions: Mutex::new(Conditions::default()),
             pin: Mutex::new(None),
+            binding: Mutex::new(None),
             lease: LeaseClock::unbounded(),
             clock,
             source: Mutex::new(None),
@@ -2981,6 +2984,7 @@ impl Scene {
             snapshot: self.snapshot().await,
             conditions: self.conditions.lock().unwrap().clone(),
             pin: self.pin.lock().unwrap().clone(),
+            binding: self.binding.lock().unwrap().clone(),
             parallelism: Parallelism::default(),
             lease: self.lease.clone(),
             capture: CaptureLevel::Standard,

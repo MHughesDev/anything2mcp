@@ -366,6 +366,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.test_binding_unknown",
+            Case::Edit(
+                "tests/order_get.yaml",
+                "kind: offline",
+                "kind: offline\nbinding: {mode: stand, position: 2}",
+            ),
+        ),
+        (
             "kernel.tool_name_scheme",
             Case::Edit(
                 ORDER_GET,

@@ -595,6 +595,7 @@ pub(crate) async fn proven_by_scout(
                 "scout_id": scout.to_string(),
                 "level": "executed",
                 "tries": entry["tries"],
+                "binding": entry["binding"],
             })
         }))
 }
@@ -1009,13 +1010,20 @@ enum TryInput {
 /// plan tried, the read, which try it is, and the input. A continuation of
 /// the scout finds the same trial by it, ended or not, and submits none
 /// again (ledger rule 6).
-fn trial_hash(scout: RunId, plan: Digest, try_number: usize, input: &Values) -> Digest {
+fn trial_hash(
+    scout: RunId,
+    plan: Digest,
+    try_number: usize,
+    input: &Values,
+    binding: &a2m_engine::BindingPin,
+) -> Digest {
     let mut hasher = a2m_core::FieldHasher::new();
-    hasher.field("purpose", b"anything2mcp scout trial 1");
+    hasher.field("purpose", b"anything2mcp scout trial 2");
     hasher.field("scout", scout.to_string().as_bytes());
     hasher.field("plan", plan.to_string().as_bytes());
     hasher.field("try", try_number.to_string().as_bytes());
     hasher.field("input", input.digest().to_string().as_bytes());
+    hasher.field("binding", binding.to_json().to_string().as_bytes());
     hasher.finish()
 }
 
@@ -1030,8 +1038,9 @@ async fn trial_of(
     input: &Values,
     try_number: usize,
     environment: &Environment,
+    binding: &a2m_engine::BindingPin,
 ) -> Result<(RunId, bool), Failure> {
-    let hash = trial_hash(scout, found.plan_hash, try_number, input);
+    let hash = trial_hash(scout, found.plan_hash, try_number, input, binding);
     let principal = &call.caller.principal;
     let (workspace, person) = (principal.workspace, principal.principal.id);
     let (tool, at) = (found.tool.name.clone(), environment.clone());
@@ -1049,9 +1058,17 @@ async fn trial_of(
     match earlier {
         Some(run) => Ok((run, false)),
         None => {
-            super::tools::submit_trial_as(kernel, call, found, input, environment.clone(), hash)
-                .await
-                .map(|run| (run, true))
+            super::tools::submit_trial_as(
+                kernel,
+                call,
+                found,
+                input,
+                environment.clone(),
+                hash,
+                Some(binding.clone()),
+            )
+            .await
+            .map(|run| (run, true))
         }
     }
 }
@@ -1106,7 +1123,10 @@ fn key_from_list(operation: &a2m_core::OperationPlan, proven: &[Proven]) -> TryI
             "It takes an input besides its key that it states no example of; the scout has no value for it.",
         );
     }
-    let Some(surface) = operation.bindings.first().map(|binding| binding.surface) else {
+    let Some(surface) = a2m_engine::default_binding(operation)
+        .and_then(|at| operation.bindings.get(at))
+        .map(|binding| binding.surface)
+    else {
         return TryInput::None("It has no binding to try.");
     };
     let lists: Vec<&Proven> = proven
@@ -1296,6 +1316,15 @@ async fn try_reads(
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "The drafts declare no environment to try it in."}));
             continue;
         };
+        // The scout tries the binding that would act live, and its proof
+        // names that binding and the digest of what it does (audit finding
+        // AC-6).
+        let Some(binding) = a2m_engine::default_binding(operation)
+            .and_then(|at| a2m_engine::BindingPin::of(&plan, operation, at))
+        else {
+            tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Every binding of it is retired."}));
+            continue;
+        };
         let mut results: Vec<Json> = Vec::new();
         let mut kept = Vec::new();
         let mut not_ended = false;
@@ -1317,6 +1346,7 @@ async fn try_reads(
                 &input,
                 try_number,
                 &environment,
+                &binding,
             )
             .await?;
             // A trial made before and found again does not count: the call
@@ -1361,6 +1391,7 @@ async fn try_reads(
             "completed": completed,
             "same": same,
             "level": if state == "proven" { "executed" } else { "reconstructed" },
+            "binding": binding.to_json(),
         });
         if not_ended {
             entry["why"] = json!(format!(
@@ -1382,11 +1413,12 @@ async fn try_reads(
             entry["failure"] = json!({"class": failure["class"], "code": failure["code"]});
         }
         if state == "proven"
-            && let (Some(binding), Some(first)) = (operation.bindings.first(), results.first())
+            && let (Some(acted), Some(first)) =
+                (operation.bindings.get(binding.position), results.first())
         {
             proven.push(Proven {
                 tool: name.clone(),
-                surface: binding.surface,
+                surface: acted.surface,
                 lists: operation
                     .outputs
                     .iter()

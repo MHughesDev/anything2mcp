@@ -1723,8 +1723,9 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
+        let binding = named_binding(&plan, &found.tool, &call)?;
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
-        let run = submit_trial(kernel, &call, &found, &input, environment).await?;
+        let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
         let output = run_output(kernel, &call, row, Tell::Person).await?;
         Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
@@ -1740,12 +1741,88 @@ pub(crate) async fn submit_trial(
     found: &FoundTool,
     input: &Values,
     environment: Environment,
+    binding: Option<a2m_engine::BindingPin>,
 ) -> Result<RunId, Failure> {
-    // A trial is another run than a call of the same input.
+    // A trial is another run than a call of the same input, and a trial of
+    // one binding another than a trial of another.
     let mut hasher = FieldHasher::new();
-    hasher.field("purpose", b"anything2mcp draft try 1");
+    hasher.field("purpose", b"anything2mcp draft try 2");
     hasher.field("input", input.digest().to_string().as_bytes());
-    submit_trial_as(kernel, call, found, input, environment, hasher.finish()).await
+    if let Some(binding) = &binding {
+        hasher.field("binding", binding.to_json().to_string().as_bytes());
+    }
+    submit_trial_as(kernel, call, found, input, environment, hasher.finish(), binding).await
+}
+
+/// The binding of an operation a trial or a recording runs (audit finding
+/// AC-6): the one the call names by `mode`, and by `position` (from 1)
+/// where two share the mode; with neither, the one that would act if the
+/// operation were called live, the first `verified`, else the first not
+/// retired. A retired binding is refused. `None` for a pipeline, whose
+/// operations are chosen for as live.
+pub(crate) fn named_binding(
+    plan: &a2m_core::Plan,
+    tool: &a2m_core::ToolPlan,
+    call: &Call,
+) -> Result<Option<a2m_engine::BindingPin>, Failure> {
+    let ToolRuns::Operation(index) = tool.runs else {
+        return Ok(None);
+    };
+    let Some(operation) = plan.operation(index) else {
+        return Ok(None);
+    };
+    let mode = call.text("mode");
+    let position = call
+        .int("position")
+        .and_then(|position| usize::try_from(position).ok())
+        .and_then(|position| position.checked_sub(1));
+    let unnamed = || {
+        codes::input(
+            codes::NOT_FOUND,
+            format!(
+                "The operation `{}` has no binding{}{} that may run.",
+                operation.name,
+                mode.map(|mode| format!(" of the mode `{}`", codes::shown(mode)))
+                    .unwrap_or_default(),
+                position
+                    .map(|at| format!(" at position {}", at + 1))
+                    .unwrap_or_default()
+            ),
+            "Name the binding by `mode`, and by `position` counted from 1 where two share the mode; a retired binding never runs.",
+        )
+    };
+    let chosen = if mode.is_none() && position.is_none() {
+        a2m_engine::default_binding(operation).ok_or_else(unnamed)?
+    } else {
+        let matching: Vec<usize> = operation
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(at, binding)| {
+                mode.is_none_or(|mode| binding.mode.as_str() == mode)
+                    && position.is_none_or(|position| position == *at)
+                    && binding.status != a2m_core::BindingStatus::Retired
+            })
+            .map(|(at, _)| at)
+            .collect();
+        match matching.as_slice() {
+            [one] => *one,
+            [] => return Err(unnamed()),
+            _ => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!(
+                        "The operation `{}` has more than one binding of that mode, and the call does not say which.",
+                        operation.name
+                    ),
+                    "Give `position`, counted from 1 among the operation's bindings.",
+                ));
+            }
+        }
+    };
+    a2m_engine::BindingPin::of(plan, operation, chosen)
+        .map(Some)
+        .ok_or_else(unnamed)
 }
 
 /// The same, with the digest that makes the trial the run it is (ledger
@@ -1758,6 +1835,7 @@ pub(crate) async fn submit_trial_as(
     input: &Values,
     environment: Environment,
     input_hash: a2m_core::Digest,
+    binding: Option<a2m_engine::BindingPin>,
 ) -> Result<RunId, Failure> {
     let (name, target, effect) = (
         found.tool.name.clone(),
@@ -1795,7 +1873,9 @@ pub(crate) async fn submit_trial_as(
         input: Some(stored),
         retention: RetentionClass::Long,
     };
-    let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
+    let facts = CallerFacts::of(&call.caller, call.decision)
+        .with_project(call.project.clone())
+        .with_binding(binding.as_ref());
     let kept = run.clone();
     store
         .write(Durability::Synced, move |tx| {

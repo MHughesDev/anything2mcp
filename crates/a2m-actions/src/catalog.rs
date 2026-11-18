@@ -15,6 +15,7 @@ const TEXT: FieldType = FieldType::Text;
 const BOOL: FieldType = FieldType::Bool;
 const LIST: FieldType = FieldType::TextList;
 const MAP: FieldType = FieldType::Map;
+const POSITION: FieldType = FieldType::Int { min: 1, max: 64 };
 const COUNT: FieldType = FieldType::Int { min: 1, max: 1_000 };
 const OFFSET: FieldType = FieldType::Int {
     min: 0,
@@ -307,6 +308,8 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .req("tool", TEXT, "The drafted tool's name.")
             .opt("input", MAP, "The tool's own input.")
+            .opt("mode", TEXT, "The binding to try, by its mode; the one that would act live when left out.")
+            .opt("position", POSITION, "The binding's place among the operation's bindings, from 1, where two share the mode.")
             .long_running()
             .done(),
         act("test.run", "Run the publish gates on a target's drafts and return the evidence.", BUILDER, Build, "3", Observe)
@@ -318,6 +321,8 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .req("tool", TEXT, "The drafted or published read to record, by name.")
             .opt("input", MAP, "The read's input, as for `tool.call`.")
             .opt("name", TEXT, "The fixture's and the test's name; the tool's name without the target's when left out.")
+            .opt("mode", TEXT, "The binding to record through, by its mode; the one that would act live when left out. A binding named is named in the test written.")
+            .opt("position", POSITION, "The binding's place among the operation's bindings, from 1, where two share the mode.")
             .long_running()
             .writes()
             .needs(HealthNeed::Reads)
@@ -442,11 +447,13 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .req("tool", TEXT, "The tool's name.")
             .req("mode", TEXT, "The binding's mode.")
+            .opt("position", POSITION, "The binding's place among the operation's bindings, from 1, where two share the mode.")
             .opt("run_id", TEXT, "A trial of the read that completed, to show it was proven; the newest scout's proof is used without one.")
             .output(JsonSchema::object()
                 .required("target", text())
                 .required("tool", text())
                 .required("mode", text())
+                .optional("position", JsonSchema::int())
                 .required("file", text())
                 .required("promoted", JsonSchema::bool())
                 .required("status", text())

@@ -361,6 +361,12 @@ fn test() -> JsonSchema {
         .required("inputs", JsonSchema::map_of(JsonSchema::scalar()))
         .required("expect", JsonSchema::any())
         .optional("restore", JsonSchema::bool())
+        .optional(
+            "binding",
+            JsonSchema::object()
+                .required("mode", JsonSchema::text())
+                .optional("position", JsonSchema::int_between(1, 64)),
+        )
 }
 
 fn fixture() -> JsonSchema {

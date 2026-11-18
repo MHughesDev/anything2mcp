@@ -73,7 +73,12 @@ function targetMatchesKey(rust, p) {
 }
 
 function main() {
-  const { dir, version, install } = args(process.argv.slice(2));
+  const given = args(process.argv.slice(2));
+  const { version, install } = given;
+  // An absolute folder: the install below runs in a folder of its own, and
+  // npm reads a relative `folder/file.tgz` as the short name of a
+  // repository on a code host, not as a file.
+  const dir = path.resolve(given.dir);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "a2m-npm-check-"));
   const tgzs = fs.readdirSync(dir).filter((name) => name.endsWith(".tgz")).sort();
   const expectedNames = [LAUNCHER, ...Object.values(PLATFORMS).map((p) => p.name)].sort();

@@ -640,6 +640,10 @@ handler!(
             plan: Arc::clone(&plan),
             tool: tool.clone(),
         };
+        // The binding recorded is the one named, else the one that would
+        // act live; the trial, the test, and the recorded test name it
+        // (audit finding AC-6).
+        let binding = crate::handlers::tools::named_binding(&plan, &tool, &call)?;
         kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&plan));
         let recorder = Recorder::start(kernel, digest);
         let run = crate::handlers::tools::submit_trial_as(
@@ -649,6 +653,7 @@ handler!(
             &input,
             environment,
             digest,
+            binding.clone(),
         )
         .await?;
         let row = kernel
@@ -724,6 +729,7 @@ handler!(
         let engine = kernel.engine().await?;
         let (runs_plan, hash) = (Arc::clone(&plan), compiled.encoded.hash);
         let first = test.clone();
+        let (first_binding, second_binding) = (binding.clone(), binding.clone());
         let (runs_replayed, runs_world) = (replayed.clone(), world.clone());
         let runtime = tokio::runtime::Handle::current();
         let interrupted = || {
@@ -740,7 +746,7 @@ handler!(
                 &runs_plan,
                 hash,
                 &runs_world,
-                &first,
+                (&first, first_binding),
                 Some(Ok(crate::offline::Fixture::recorded(runs_replayed))),
             ))
         })
@@ -762,7 +768,7 @@ handler!(
                 &runs_plan,
                 hash,
                 &runs_world,
-                &second,
+                (&second, second_binding),
                 Some(Ok(crate::offline::Fixture::recorded(replayed))),
             ))
         })
@@ -835,7 +841,7 @@ handler!(
         .await?
         .map_err(a2m_core::Failure::from)?;
         let gates =
-            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world, None).await?;
         let state = gates.gates[1]["tests"]
             .as_array()
             .and_then(|tests| tests.iter().find(|shown| shown["test"] == name.as_str()))

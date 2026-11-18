@@ -600,6 +600,7 @@ impl Kernel {
                 principal: caller.principal.principal.id,
                 vault: self.inner.vault.clone(),
             },
+            None,
         )
         .await?;
         if !gates.passed {

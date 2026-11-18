@@ -485,7 +485,7 @@ handler!(
             vault: kernel.inner.vault.clone(),
         };
         let gates =
-            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world, None).await?;
         let all_passed = gates.passed;
         let output = Output::ok(json!({
             "target": target.as_str(),
