@@ -156,7 +156,7 @@ pub(crate) enum Charset {
 }
 
 impl Charset {
-    fn from_word(word: &str) -> Option<Self> {
+    pub(crate) fn from_word(word: &str) -> Option<Self> {
         Some(match word.to_ascii_lowercase().as_str() {
             "utf-8" | "utf8" => Self::Utf8,
             "us-ascii" | "ascii" => Self::UsAscii,
@@ -166,8 +166,13 @@ impl Charset {
     }
 
     /// The body as text, or `None` when it does not decode. No character
-    /// is ever replaced.
+    /// is ever replaced. A byte-order mark is the UTF-8 one, and only for
+    /// UTF-8: any other, or one before a body declared in another set, is
+    /// a disagreement about the character set, and the body is refused.
     fn decode(self, body: &[u8]) -> Option<String> {
+        if self != Self::Utf8 && byte_order_mark(body) {
+            return None;
+        }
         match self {
             Self::Utf8 => {
                 let body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(body);
@@ -178,6 +183,77 @@ impl Charset {
                 .then(|| body.iter().map(|byte| char::from(*byte)).collect()),
             Self::Iso8859_1 => Some(body.iter().map(|byte| char::from(*byte)).collect()),
         }
+    }
+}
+
+/// Whether a body starts with a byte-order mark of UTF-8, UTF-16, or
+/// UTF-32.
+fn byte_order_mark(body: &[u8]) -> bool {
+    [&b"\xEF\xBB\xBF"[..], b"\xFE\xFF", b"\xFF\xFE", b"\x00\x00\xFE\xFF"]
+        .iter()
+        .any(|mark| body.starts_with(mark))
+}
+
+/// Whether text holds a control character this pack never returns: any
+/// of Unicode's control characters but the tab, the line feed, and the
+/// carriage return, which are ordinary in text (decision 0249). The one
+/// check of every value of every form, made where a value is taken.
+pub(crate) fn refused_control(text: &str) -> bool {
+    text.chars()
+        .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+}
+
+/// The digest of a `bytes` answer's body. The one place it is made: it is
+/// the plain SHA-256 of the body, because no keyed digest reaches a driver
+/// (decision 0249 says what is owed).
+pub(crate) fn body_digest(body: &[u8]) -> Digest {
+    Digest::of(body)
+}
+
+/// A bounded count of the work one read of an answer does, and the flag
+/// the step's deadline sets. A reader spends before it works, and stops
+/// past its budget or once the flag is set.
+pub(crate) struct Work<'a> {
+    used: u64,
+    budget: u64,
+    stop: &'a AtomicBool,
+}
+
+impl<'a> Work<'a> {
+    /// The budget of an answer of `bytes` bytes read for `fields` declared
+    /// fields.
+    pub(crate) fn for_answer(bytes: usize, fields: usize, stop: &'a AtomicBool) -> Self {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let fields = u64::try_from(fields).unwrap_or(u64::MAX);
+        Self {
+            used: 0,
+            budget: bytes
+                .saturating_add(1)
+                .saturating_mul(WORK_PER_BYTE)
+                .saturating_mul(fields.saturating_add(1))
+                .saturating_add(WORK_BASE),
+            stop,
+        }
+    }
+
+    /// Spends `units`, or says why the read stops.
+    pub(crate) fn spend(&mut self, units: u64) -> Result<(), Unread> {
+        self.used = self.used.saturating_add(units);
+        if self.used > self.budget {
+            return Err(Unread::TooLarge(
+                "reading it takes more work than an answer of its size may".to_owned(),
+            ));
+        }
+        if self.stop.load(Ordering::Relaxed) {
+            return Err(Unread::Stopped);
+        }
+        Ok(())
+    }
+
+    /// The units spent so far.
+    #[cfg(test)]
+    pub(crate) const fn used(&self) -> u64 {
+        self.used
     }
 }
 
@@ -220,8 +296,16 @@ pub(crate) enum Unread {
     Shape(String),
     /// An XML answer that declares a document type.
     DocumentType,
-    /// An XML answer past a bound on its depth or its number of elements.
+    /// An answer past a bound on what is read: an XML answer's depth, its
+    /// number of elements or of namespaces, the length of a name, of a
+    /// namespace's address, or of an attribute's value, or the work its
+    /// reading takes.
     TooLarge(String),
+    /// A `bytes` answer whose body holds a registered secret: neither its
+    /// length nor its digest is returned.
+    HoldsSecret,
+    /// The step's deadline passed while the answer was read.
+    Stopped,
 }
 
 /// A field type's text as the JSON value of that type. `None` when the
