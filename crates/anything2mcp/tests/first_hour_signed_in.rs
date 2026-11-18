@@ -367,7 +367,11 @@ async fn the_signed_in_first_hour_from_an_empty_folder_to_a_read_called_under_th
 
     // 8. The drafts not wanted removed, as the gates say; the read's
     // offline test recorded from one signed-in read.
-    let untested = desk.ok(&["test", "example"]).await;
+    // Gates that did not pass are a failed action: exit code 1, with the
+    // refusal a publish would give (decision 0219).
+    let (code, untested) = desk.run(&["test", "example"]).await;
+    assert_eq!(code, Some(1), "{untested}");
+    assert_eq!(untested["error"]["code"], "publish_gates_not_passed");
     for entry in untested["result"]["missing"].as_array().unwrap() {
         let file = entry["file"].as_str().unwrap();
         if KEPT.contains(&file) {

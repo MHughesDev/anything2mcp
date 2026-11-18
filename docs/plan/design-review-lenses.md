@@ -9,7 +9,7 @@ A design review round looks at the whole design through one question, finds what
 3. List findings. For each: what is wrong, where, and how serious.
 4. Fix what can be fixed in the documents. Put what needs evidence into the [hypothesis register](../hypotheses/README.md). Put what needs the owner into a decision record with status Proposed.
 5. Run `python3 tools/docs_audit.py`.
-6. Record the round in the journal and update the last-used date below.
+6. Record the round in the journal and update the last-used date below. A round that writes a report files it in [docs/reviews/](../reviews/README.md) and lists it in that folder's index.
 
 A round that finds nothing has probably not looked hard enough. A round that rewrites everything has gone too far: prefer the smallest change that fixes each finding.
 
