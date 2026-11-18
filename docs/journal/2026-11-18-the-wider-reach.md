@@ -1,83 +1,109 @@
 # 2026-11-18: the wider reach
 
-This entry covers the work after pull request 13 merged into `main` (merge commit 631d3ea). It is written while that work is still running, and says at each point what is proven and what is not. The entry before it is [the overnight build](2026-11-17-the-overnight-build.md).
+This entry covers the work after pull request 13 merged into `main` (merge commit 631d3ea). The entry before it is [the overnight build](2026-11-17-the-overnight-build.md). Its author ran no tests: every count below is taken from a record, a test file, CI's result, or the lead agent's notes, and the last are marked.
 
 ## State at the end
 
-- **On `main`:** the build of the previous entry, as merged: every check green on Windows, macOS, and Linux.
-- **On the branch, as snapshots:** everything below. Pull request 14 is open as a draft and holds it. **Pull request 14 has had no CI run on this work.** The only validation is on Linux, in this container: formatting, lints, and tests passed on a validated commit before the audit fixes of decision 0200 (1,742 tests, none failing, and the lints clean for the macOS and Windows targets). The work since has not been validated as a whole tree.
-- **Written and never run:** the Windows desktop back end (0209), the Windows check of the command pack (0216), and a PowerShell argument path in the kept-script feature. Linux cannot run them. Their first run is the first CI run of the branch, and failures are expected there.
-- **Still being built when this was written:** the settings fix (0241); one typed place for every destination (0240); the network readers (0243); the macOS desktop back end (0244); web sign-in (0245); the file pack's new modes (0246); watches (0247); and a fifth round of safety audits. These numbers are reserved by the lead; none of them has a decision record yet.
-- **What the entry cannot vouch for:** its author ran no tests. Every count below is taken from a record, a test file, or the lead's notes, and is marked where it is the last.
+- **On `main`:** pull request 14, merged at its head 07eda99 (merge commit b487c6e) after five CI rounds. Every check passed on Windows, macOS, and Linux: 40 checks, with the two publish jobs skipped. It holds the work of decisions 0200 and 0205 to 0255.
+- **Open:** pull request 15, a draft, at the validated commit 42eea49, with CI running when this was written. It holds decisions 0258 to 0277 and their code. The whole tree was validated on Linux at that commit: 2,119 tests, none failing (the lead's count). Nothing in it has run on Windows or macOS.
+- **Written after that commit:** records 0278 to 0282, the documents they change, and this entry. They change no code.
+- **What works that did not before, proven in CI on all three systems:** the desktop pack reads Windows and macOS applications against its stand; the MCP pack starts a local server program on Windows; the shared check of who may change a program runs on Windows; the network readers run on Windows and macOS.
 
-## What the session set out to do
+## Done
 
-The owner widened the product's scope and asked for the work to keep going with every resource. The scope question was answered first, and the rest followed from it: a person's machine is the measure of what the product can be set around, so the product should reach whatever that machine reaches, on all three systems; and it should be built, reviewed, and cleaned to match.
+### Merged in pull request 14
 
-## What the owner decided
+- **Sign-in.** An agent asks and its person signs in on the engine's page (0205); a web application through its own sign-in form, with a credential stored for the person (0245); a person signing in in a window of the engine's own browser, single sign-on included, with every declared sign of expiry a stop (0254); a sign-in goes only where a published version says, and a credential belongs to its target (0248, the answer to the critical finding below).
+- **Writes and shadow bindings.** Writes from inside a page by `PUT` with the page's own token (0206); a shadow binding beside the verified one, promoted by a person (0207, 0219), its evidence counted by distinct inputs in each environment (0251).
+- **Three systems.** The desktop pack on Windows (0209) and macOS (0244), with every act proving its record again; desktop writes on Linux (0218); the command pack on three systems (0216); one check of who may change a program, in the provider contract, and the MCP pack's local server on Windows (0250).
+- **More kinds of answer and file.** Answers that are not JSON (0217); the HTTP pack reading in bounded work and sending nothing that may write outside a live run (0249); INI files, property lists, folders, and growing files (0246), discovered and drafted as reads (0255).
+- **The machine and its network.** One typed reading of where an address is, over a corpus of 103 spellings (0240); the machine's own network state, read and sending nothing (0243).
+- **Settings and the first run.** A first run on Linux needs no administrator's file (0220); protected settings loosen only from an administrator's file, and every key says whether it is built (0241); a fixed place, a review summary that shows what a tool runs, and a sign-in declared before its probe (0252); the key derivation compiled for speed in every build (0253).
+- **Watches, the ledger's and the scheduler's halves** (0247). The fourth audit's fixes (0200). The repository cleanup (0221).
 
-Written in the lead's words, as [decision 0231](../decisions/0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md) requires; none of the owner's speech is quoted.
+### In pull request 15
 
-- **0208, what "on the person's machine" means.** Outward, the machine is the measure of reach: an installed application, a website, or any endpoint the machine can reach may be set around. Inward, it is the boundary of service: the tools are offered on that machine and nowhere else; there is no network door. This put the desktop pack in the first release on all three systems.
-- **0222, the product knows its network.** The scout may look across the networks the machine is on; agents get tools to see where they are; the network is one general idea held in one way, with a website as one instance of it. The lead read it as being about what the product reaches, not who reaches it, so 0208's second half stands. The owner asked for research, then design, in rounds.
-- **0230, the scope is written on both sides and describes without ruling.** SCOPE.md says what the product answers for and what it does not. Every "does not" is marked rule, choice, or not yet, and no agent turns an idea down because such a line exists.
-- **0231, the owner's direction is recorded in exact words of the agent's own.** The records that had quoted the owner were rewritten. The same reading changed rule 3, which now says every write is recorded first and proven after, and that a write with nothing to read back is declared `irreversible`. That rewording is more than polish, because it matches what decision 0161 already built.
-- **0242, the owner took the recommended answer to each of eighteen open questions** that had been gathered on one page, as the page stood. The lead read one direction as covering them all, and said so in the record. The answers are mostly "no", and each "yes" is narrow: the macOS desktop back end may be built on a permission the person grants; a target someone else wrote may be loaded under section 502's rules; integrated sign-in and passkeys are allowed with the person present; standing approval is allowed only narrowly and is built only if few actions need it; the first version is 0.1.0; the product is not published to crates.io.
+- **The registry's wiring.** The seven network facts served as reads of the local user, `net.standing` listed (0260); a person hands the scout files of the project's `sources` folder, by names the discoverers declare, and `spec.import` is that scout (0263).
+- **The command line.** The engine's log says each start and stop and what asked for it, and `engine logs` reads it where the engine runs; help says each action's effect, who may run it, and whether it is built; a completion script for four shells (0266). One table form for failure codes, the `failure_codes!` macro in `a2m-core` (0258), with four crates moved to it (`a2m-core`, `a2m-expr`, `a2m-sources`, `a2m-telemetry`).
+- **The sixth audit's answers:** 0261, 0262, 0269, 0270, 0271, 0272, 0273 (below).
+- **What the scout may learn from a program itself** (0276) and research note 30 behind it, with the roadmap packages X1 to X7.
 
-## What was built
+### The five CI rounds of pull request 14
 
-Each item has its record; the proof is the test named there, run on Linux unless stated.
+1. The validated commit 0dce455 (2,022 tests on Linux, none failing; the lead's count). What failed on it was mended by the four commits below.
+2. ed2c47a: five desktop files.
+3. b55ff9f: nine files. Among them the two test stands now place their programs under the system's temporary folder, and a real Windows fault of the file pack, a file's identity taken before its write (finding C2 of the sixth audit had predicted it).
+4. 8d61828: four desktop files: a report-view list read by its shape on Windows, the password edit's refusal asserted, and the macOS title element. The macOS desktop job passed.
+5. 07eda99: a test that waited on a race on macOS now waits on the engine's lock coming free, and three files of the desktop stand. Every check passed.
 
-- **Audit fixes, 0200 and 0201.** The fourth audit's three serious faults: a test or trial could run the first binding in file order and let its evidence promote another (now each runs the one binding it is evidence for, and the evidence names it); a recorded fixture kept a system's own map keys, and a choice was replaced by "the first code that is not the original", which reversed it (now keys are made-up and a choice is the first declared code). Also a resume's wake lost in a race (a test with no sleep), and the browser taking the system's proxy (it is launched with no proxy and no extensions; a machine policy still outranks that, and a check for it is owed). 0201 was in pull request 13; 0200 was not.
-- **0205, sign-in an agent asks for is carried out by its person.** `session.login`, `.revoke`, `.list`, `.end`; the credential is typed on the engine's own page, never in a tool input; the scout stops at `needs_sign_in`. The signed-in first hour is a test (4.8 s, from the lead's notes).
-- **0206, writes from inside a page.** The page's own token, an acting tab, and `PUT` only. The write is never drafted. Finding: the browser may resend a `PUT` by itself after a lost connection, so a token refusal is a write in doubt and never "not written". Its product test was owed to the registry and is part of 0219.
-- **0207 and 0219, shadow bindings.** A second binding reads beside the verified one; the caller always gets the verified answer; five matches in a row for a read (twenty for a write, which is not built) let a person promote it. 0207 is the engine and ledger half, 0219 the product half (`shadow.report`, `binding.promote`), with a product test.
-- **0209, the Windows desktop back end.** UI Automation on a thread of its own, a fixed list of read calls, a password edit never read, a stand of plain Win32 controls. Written and linted for Windows; never run. CI has a new job for it.
-- **0216, the command pack on three systems.** The Windows path check that had passed everything (found by the coverage review, and confirmed in the code) is replaced by a check of owners and access lists; macOS counts its administrators' group; Linux counts none unless a protected setting names one; a script the target keeps runs as a fixed interpreter-and-script pair by digest. Windows and macOS parts are CI-only.
-- **0217, answers that are not JSON.** An endpoint declares `xml`, `text`, or `bytes`; a document type in XML is refused. The lead's premise that JSON had a content-type check did not hold, and the record says so.
-- **0218, desktop writes on Linux.** A second closed list reached through one function, the process proven again before every act, and a read-back of a window reached afresh, because a field read back would show what was typed even if Save stored nothing. The stand has a Save that stores nothing and says nothing, to prove the difference.
-- **0219, the first-hour fixes and `connect`.** Hints that read the publish gates, `test.run` exiting 1 when a gate fails, bridge instructions made from the action's own field names, `draft.delete` for several files, and `client.connect`, which prints a server entry and writes a client file only when a person says yes. No profile of a real client ships.
-- **0220, a first run on Linux.** Where the build has no key store the passphrase route is the default; an engine that cannot open its vault stops and says why; the presence prompt writes its policy file where a person can install it. Proven against a real authorization service in five stages.
+What the rounds showed is recorded in [decision 0278](../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md).
 
-## What was researched and reviewed
+## Measured
 
-- **Research notes 27 to 29.** 27 is a survey of about 45 public agent-tool projects: what makes them used and what they lack. 28 is how a network can be seen from one machine (local state is readable unprivileged on all three systems; no network identity signal is both stable and unspoofable; announcements are claims). 29 is how existing agent tools bound where they look (almost none do; the pattern to copy is a scope the operator sets and the model cannot change).
-- **Three design reviews.** Coverage (lens 15, a map of about 110 mechanisms, 14 findings, records 0211 to 0215); breadth (lens 16, ten ranked additions, records 0232 to 0234, the first being watches); configurability (lens 17, records 0236 to 0239). They are filed in `docs/reviews/`.
-- **The network design.** Round 1 gave a plan and records 0223 to 0226 (a network as a place, a recognized network, and a reach; three owner questions) and four hypotheses. **Round 2 was stopped by a safety check** partway through a rewrite of the section on listening for announcements. The agent restored round 1's text, nothing of its work remains, and no record was written. It was not worked around and not retried. What it would have reconciled stays open; 0242 allows the rest of the design to be taken up again in small pieces.
+- The cold start of a command was one key derivation (Argon2id, 64 MiB, three passes): 1.9 s in an unoptimized build, 0.19 s optimized for size, 0.13 s fully optimized. Decision 0253 compiles it optimized in every build.
+- The `use` toolset's list was 8,431 bytes for eleven tools, about 2,100 tokens; the `build` toolset's 10,424 bytes for fifteen (round 2 of the [idea rounds](../plan/idea-rounds.md)).
+- The generator of the failure-code table found 356 codes where round 1 had counted 136; it finds 368 on the tree as it stands, 23 crates of them still outside the one table form (`tools/failure_codes.py --list`).
+- 107 of 111 entries of the engine's home were readable by group and others, none of them in the clear (round 14); decision 0241 made the home the owner's alone.
+- The engine's log was empty after about 300 commands at the default level (round 16); decision 0266.
+- 38 of the catalog's 99 actions are not built (counted from the catalog and the handlers for [section 704](../spec/7-project/704-readiness.md)).
+- Nothing was measured on Windows or macOS beyond CI's pass or fail, and no budget of section 225 was measured.
 
-## The repository cleanup, 0221
+## The two audit rounds, and what answered each
 
-It ran as a pipeline the owner asked for, and it did not run as asked. Five small-model audits read the repository (about 115 findings in all); one verifier checked them, confirmed 31 of the 41 documentation findings with 8 amended, and rejected every rename on cost. A planner then wrote the plan and was to start a worker for the edits. **It could not start one**, because a session started by another cannot start sessions of its own, so it made every edit itself. The lead then started the worker, which moved the three review reports and the coverage map to `docs/reviews/` and corrected seven of the planner's statements. The planner checked the worker and agreed with all seven. **Its check also found that its own edits to section 704 had been reported done and had never been saved**; they were made then. The record was written knowing this, and the lesson is below.
+**The fifth round** (three readers: programs and desktops; the person and the first run; answers, page writes, and shadow): one critical finding, 11 serious, 25 minor.
 
-## What was measured
+- Critical, F1: `session.login` took its sign-in from drafts, so a steered building agent could send a stored secret to a drafted address with no person asked. Answered with F2 and F3 by 0248.
+- S1 and S2 (an XML answer that stalls a thread; no guard against a write outside a live run) and M1 to M5: 0249. S3, S4, M6, M7: 0245. S5 and M8 to M12 (shadow evidence made cheaply): 0251. PR-1, PR-2, PR-4 (an interpreter that could be a shell; variables that redirect loading; run folders made open): 0250. PR-3 (an act landing on another record): 0244.
 
-- 1,742 tests passed on Linux on the validated commit before 0200; the lead's count, not rerun here.
-- The settings table has 95 kernel keys: 17 are proven to work, 23 are read and unproven, 20 are accepted and do nothing, and 35 are for features not built. Of 28 pack keys, all are read. (The configurability review's count; the 55 that are not proven or read make "no setting is silently without effect" untrue today.)
-- Nothing was measured on Windows or macOS, and no performance figure was taken.
+**The sixth round** (two readers: sign-in, browser state, and settings; network, watches, files, and programs): one critical finding, latent, 18 serious, 32 minor, all in code written that day.
 
-## What went wrong, and what it taught
+- Critical, A1 of the network reader: the proxy cleaner cut a value before it looked for its credentials, so part of a password could survive. Fixed before the network facts were served: 0261.
+- Watches B1 to B9: 0262. Files C1 to C8: 0272. Programs D1 to D6: 0271; D7 and D8 are not done. Sign-in A2, A3, A6: 0269; A1, A4, A5 in part, A7, A8: 0254. Settings B1 to B4 and the registry's half of C1: 0273. The HTTP pack's C1 to C4, and the refusal of the product's own headers in the HTTP and MCP packs: 0270.
 
-- **The container restarted once.** Nothing on disk was lost and the agents were resumed by name; local services started by hand were gone and were restarted when needed.
-- **Settings faults found by review and not yet fixed when this was written.** The engine's home-folder variable can put the installation settings file, which can loosen every protected setting, where the person's own programs can write it; the two-person rule for irreversible operations can be switched off from a lower layer; settings load once, so "at once" is untrue; and the project file applied is the one of the folder the engine started in. Records 0236 and 0237 are accepted and the fix (0241) is being built. Until it lands, the first two are open safety faults on the branch.
-- **A planner checking its own work.** A report of "done" that had not been saved was found only because a second reader checked. Check the file, not the report, and have someone other than the author do it.
-- **A safety check stopped a design round.** The right response was to stop and tell the owner, and that was done.
-- **A join between two agents' work broke.** Two packs registered one file-kind name, which unregistered the web pack's drafting until decision 0203 let each pack draft a kind it registered for its own surface kind; a check that a drafted file names one of the pack's own surfaces is still owed.
+## Learned
+
+- **A push cancels the CI runs in progress on a branch.** The first Windows Rust run was lost that way. A fix is held until the running jobs end, and a CI fix commit is built on the validated head from the named files alone, so that work in flight never reaches the pull request.
+- **Validate the whole tree before more stacks up.** A regression from decision 0200 in three packs' drafting tests was found only by another package's run.
+- **The runners differ from the assumptions in four places** (decision 0278): a report-view list view's shape on Windows; Windows refusing another process's request for a password edit's text; macOS's title element; and the checkout drive of a hosted Windows runner, which every signed-in user may change. The hosted macOS runner did allow the Accessibility grant by an administrator's write.
+- **Disk was the binding limit.** The build folder reached about 19 GB and the disk filled once; at most three building agents ran at a time after that.
+- **The container restarted three times.** Nothing on disk was lost; the agents in flight were started again from what was on disk.
+- **An engine was stopped from outside in the middle of another agent's test,** most likely by a stop by name. The working method now says that no agent stops a process by name on a shared machine.
+- **A safety check stopped a network design round, and blocked one auditor's first report** for its phrasing; the report was written again in terms of mechanism and fix. Neither was worked around.
+
+## Changed in the design
+
+- **The owner's decisions:** 0208 (the machine is the measure of reach and the boundary of service), 0222 (the product knows its network), 0230 (the scope on both sides, describing without ruling), 0231 (the owner's direction in exact words of the agent's own), 0242 (the recommended answer to each of eighteen questions), and 0277 (the North Star). The owner handed the choice of 0276 to the agents, and stopped the idea rounds after round 25.
+- **Records written by agents,** each with its own status line: 0200, 0205 to 0207, 0209, 0211 to 0221, 0223 to 0226, 0232 to 0234, 0236 to 0241, 0243 to 0255, 0258, 0260 to 0263, 0266, 0269 to 0273, 0276, and in this pass:
+  - [0278](../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md), what the first runs on Windows and macOS showed (it supersedes points 5 and 8 of 0209 in part);
+  - [0279](../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md), what the surveys left open against 0276 (type libraries read from their bytes, the D-Bus reader on `quick-xml`, fish completions only, E6 withdrawn, one interception question left open, four interfaces and not five);
+  - [0280](../decisions/0280-the-use-toolset-lists-at-most-twelve-tools.md), the `use` toolset lists at most twelve tools (it supersedes the last sentence of 0094 point 3);
+  - [0281](../decisions/0281-an-mcp-result-is-to-carry-its-decision-so-that-a-call-at-the-mcp-door-can-be-explained.md), an MCP result is to carry its decision (not built);
+  - [0282](../decisions/0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md), Proposed: whether the command pack may start programs that run what their arguments name.
+- **Numbers held for planned work and not yet written:** 0256, 0257, 0259, 0267, and 0268 (the command-line package), 0264 (the publish page), 0265 (a keyed digest of a body), 0274 (bounding a system's words in a tool's result), and 0275 (what the product holds for a person).
+- **Research:** notes 27 to 30. Note 30 compares three ways for each thing the scout might learn from a compiled program: use existing software, take a part and adapt it, or build it.
+- **Reviews:** coverage, breadth, and configurability, in `docs/reviews/`, and the two audit rounds above.
+
+## Noticed, not acted on
+
+- The plans of the wiring packages and of the command-line package exist only in the lead's scratch space, not in the repository. What remains of them is listed under Next.
+- The transitive dependency `dispatch2` entered the lock with the macOS desktop work, and no decision names it.
+- `is_share_path` of `a2m-core` counts `\\?\C:\` as another machine's share, the safe side; a more exact rule and a test are owed.
+- The CI run of the network readers' namespace test with `A2M_REQUIRE_NAMESPACE=1` may need the runner's limit on unprivileged namespaces lifted first; untried.
+- The wheel and source-package steps of the Python package were not run in this container.
+- Section 221 says the listed tools are configurable per caller; `tools.listed_limit` is a setting of the user's scope, not of a caller.
 
 ## Decided without the owner having read it
 
-Records 0200 to 0221 are design decisions the owner has not read. 0222, 0230, 0231, and 0242 are the owner's. The widest-reaching of the others: evidence names its binding (0200); a shadow binding is promoted only by a person (0207, 0219); the command pack's Windows check and its fixed-pair scripts (0216); the closed list for desktop writes (0218); the cleanup's moves (0221).
+Every record above that is not the owner's. The widest-reaching: a sign-in goes only where a published version says (0248); the check of who may change a program and the programs it refuses by kind (0250, 0271), which narrow what the command pack reaches and are put to the owner in 0282; what the scout may learn from a program, with the studied project out of the design (0276, 0279); and the cap of twelve tools (0280).
 
 ## For the owner
 
-- The publishing setup is still the owner's own act, and the first version is 0.1.0 (0242).
-- Reword of rule 3 stands by 0242, point 13.
+- Decision 0282 asks whether to widen what the command pack may start; it is on [the page of questions](../plan/open-questions-for-the-owner.md).
+- Decision 0277 says what the lead agent inferred from the North Star; the owner corrects it by saying so.
+- The publishing setup is still the owner's own act.
 
 ## Next
 
-In this order:
-
-1. **Validate the whole tree** (format, lints, all tests, no-TLS, the database and desktop jobs, lint for the other two systems), push it to pull request 14, and take it through CI on the three systems. Expect the first Windows runs of the desktop back end, the command pack's access-list check, and the PowerShell argument test to fail.
-2. **Fix what the fifth round of audits finds,** and the settings faults first (0241).
-3. **Wire watches (0247) and the network readers (0243) into the action registry.**
-4. **The unbuilt publish gates:** ten of twelve are not built.
-5. **What the reviews ranked:** after parity (macOS and Windows desktop, the MCP pack's local program on Windows), the proxy setting, non-JSON answers' drafting, the described-operation shape, and the file pack's new modes (0246).
+1. **Read this entry, then pull request 15's CI result.** Mend what fails on Windows and macOS with commits built on 42eea49 from the named files alone, and merge when every check passes. Expect first runs of the held folder chain on Windows (0272), the macOS access lists and the Windows fixed-disk check (0271), and the Windows proxy lists (0261).
+2. **Then the registry lane, one package at a time in `a2m-actions`:** the watches' wiring (package W2, with what decision 0262 leaves to the registry); the publish page from the typed review summary (0264); the command-line package, its answers carrying their next step and a retry hint, and an MCP failure carrying the same data as every face, with the decision of 0281.
+3. **Alongside, in crates nobody holds:** the failure tables for the 23 crates outside the form; the scout's readers X1, X4, and the spike X7; package N2b; D7 and D8 of decision 0271.

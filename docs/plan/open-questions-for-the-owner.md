@@ -18,8 +18,9 @@ These are not blocked on an answer. They are listed because the owner may want a
 | --- | --- | --- |
 | Should the documentation audit also run on Windows and macOS in CI? | It runs on Linux only; the build, the lints, and the tests run on all three ([AGENTS.md](../../AGENTS.md)) | No. The audit reads documents and the crate manifests, which do not differ by system; three runs would cost time and prove nothing more |
 | Should the 10% benchmark gate be wired into CI now, or when a budgeted path is measured? | The comparison is built (`a2m-bench compare`); CI does not run it, because no budgeted path is measured ([AGENTS.md](../../AGENTS.md)) | When the first budgeted path is measured: a gate with no budget to compare against would pass without proving anything |
+| Should the command pack start programs that run what their arguments name: build tools, container runners, language launchers, version managers? ([decision 0282](../decisions/0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md), Proposed) | Refused by name, every command of them, because what runs is code nothing pins (Choice, [decision 0271](../decisions/0271-the-check-of-programs-the-product-starts-after-a-second-reader.md)); it narrows what an agent can reach, which the North Star counts against it ([decision 0277](../decisions/0277-the-north-star-an-agent-uses-the-software-a-person-already-has.md)) | Widen in two steps: first the commands of such programs that run no code but their own, then the rest with fixed arguments, the program's own files pinned by digest, a declared effect and hazard, and a person's approval for every change. Package runners that fetch at run time stay refused |
 
-No other Proposed record asks the owner a question. The Proposed records that remain are design decisions, which any agent may accept or supersede.
+Record 0282 is the one Proposed record that asks the owner a question. The other Proposed records are design decisions, which any agent may accept or supersede.
 
 ## Keeping this page true
 

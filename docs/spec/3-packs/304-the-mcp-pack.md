@@ -134,7 +134,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 
 As built, the drafter writes the mapping entry for either kind of tool, and the pass-through read operation for a read-only tool whose entry holds no question ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)); an entry that holds one is drafted into a mapping file of its own. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string it leaves `free_text` as an open question.
 
-`spec.import` accepts an upstream server's tool list as well as a published description. A server mapped with `purpose: discovery` is a discovery provider: its results are stored as findings at `inferred` and never bound (hypothesis H-27).
+`spec.import` is to accept an upstream server's tool list as well as a published description; that is not built. As built, `spec.import` is a scout handed one file of the project's `sources` folder under the name `description`, and the only discoverer that reads that name is the HTTP pack's reader of an OpenAPI description ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)). An upstream server's tools are found today by the scout's discovery of an MCP surface. A server mapped with `purpose: discovery` is a discovery provider: its results are to be stored as findings at `inferred`, and its tools are never bound or called. As built, a binding to one of its tools does not compile (`mcp.discovery_bound`) and the driver refuses to call one; taking its results as findings is not built, and has no package of its own since package E6 was withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)).
 
 ## Lint rules
 
@@ -211,7 +211,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 ## Build order
 
-The test stand with its control interface first. Then package 8.2: the mapping schema, the driver for reads against a local stand program, and change detection; writes with read-back and the fault cases; `mcp_tools` and its drafting rule; `upstream_mcp` against a remote stand. Package E6, a `discovery` mapping, comes after.
+The test stand with its control interface first. Then package 8.2: the mapping schema, the driver for reads against a local stand program, and change detection; writes with read-back and the fault cases; `mcp_tools` and its drafting rule; `upstream_mcp` against a remote stand. A `discovery` mapping comes after; package E6, which was to build one for the outside project of research note 16, is withdrawn (decision 0279).
 
 Package 8.2 is built in `a2m-pack-mcp`, except what the [crate's design](../../architecture/crates/a2m-pack-mcp.md) lists as not built. Its tests drive the driver through the kernel's handle; the engine loop has not run the mode.
 

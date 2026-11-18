@@ -268,3 +268,8 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0263 | [A person hands the scout files of the project's sources folder, by names the discoverers declare](0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) | Accepted (design decision) |
 | 0272 | [The file pack's folder writes act through a held folder, after a second reader](0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md) | Accepted (design decision) |
 | 0260 | [The machine's network facts are served as reads of the local user, and one of them is listed](0260-the-machines-network-facts-are-served-as-reads-of-the-local-user-one-listed.md) | Accepted (design decision) |
+| 0278 | [What the first runs on Windows and macOS showed about the desktop pack and the check of programs](0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md) | Accepted (design decision) |
+| 0279 | [What the three surveys left open against decision 0276 is settled](0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md) | Accepted (design decision) |
+| 0280 | [The `use` toolset lists at most twelve tools](0280-the-use-toolset-lists-at-most-twelve-tools.md) | Accepted (design decision) |
+| 0281 | [An MCP result is to carry its decision, so that a call at the MCP door can be explained](0281-an-mcp-result-is-to-carry-its-decision-so-that-a-call-at-the-mcp-door-can-be-explained.md) | Accepted (design decision) |
+| 0282 | [Whether the command pack may start programs that run what their arguments name](0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md) | Proposed (design decision) |

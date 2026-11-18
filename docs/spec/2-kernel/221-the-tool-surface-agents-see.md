@@ -23,6 +23,9 @@ Every tool is generated from published files, so names, descriptions, and result
 | `a2m_run_cancel` | Stop a running or waiting run |
 | `a2m_session_status` | Whether each target is signed in, without exposing anything |
 | `a2m_session_login` | Ask the person to sign in to a target |
+| `a2m_net_standing` | What kind of place each of this machine's addresses is, and which interface carries each address family's preferred default route, read from the operating system; it sends nothing ([decision 0260](../../decisions/0260-the-machines-network-facts-are-served-as-reads-of-the-local-user-one-listed.md)) |
+
+The `use` toolset lists these eight, `a2m_tool_describe`, and the three `a2m_action_*` tools: twelve, which is its cap. Every other action is reached through `a2m_action_run`, and the list's limit `tools.listed_limit` (19 by default) leaves the rest of its places to a target's pipelines ([decision 0280](../../decisions/0280-the-use-toolset-lists-at-most-twelve-tools.md)).
 
 **Names.** `{target}_{module}_{object}_{verb}` in lowercase with underscores, at most about 60 characters; pipelines are named for their outcome. The build fails on duplicates or near-duplicates.
 
