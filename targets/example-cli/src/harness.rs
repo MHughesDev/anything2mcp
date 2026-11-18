@@ -229,23 +229,20 @@ impl Stand {
         Self::start_with(Programs::built()?)
     }
 
-    /// Starts a stand with binaries the caller names. The stand's folder is
-    /// made beside the first binary, so it is on the same disk and is owned by
-    /// whoever built it; the system's temporary folder is used if that fails.
+    /// Starts a stand with binaries the caller names, in a folder of its own
+    /// under the system's temporary folder, on every system. The engine
+    /// refuses a program that another user could replace, and the folder a
+    /// build writes to need not be closed to other users: on a Windows
+    /// machine whose checkout is on a drive other than the system's, every
+    /// signed-in user may change it, as on a hosted CI runner. The user's
+    /// temporary folder is closed to them on Windows and macOS, and on Linux
+    /// it is a folder with the sticky mark, where only an entry's owner may
+    /// replace it.
     ///
     /// # Errors
     ///
     /// Returns an error if the folders cannot be made.
     pub fn start_with(programs: Programs) -> Result<Self, StandError> {
-        let beside = programs
-            .first
-            .parent()
-            .map(|folder| folder.join("example-cli-stands"));
-        if let Some(parent) = beside
-            && let Ok(stand) = Self::start_in(programs.clone(), &parent)
-        {
-            return Ok(stand);
-        }
         Self::start_in(programs, &std::env::temp_dir().join("example-cli-stands"))
     }
 
@@ -385,11 +382,18 @@ impl Drop for Stand {
     }
 }
 
-/// Puts a binary at a path. A link where the disk allows it: it is quick, and
-/// a file that was never open for writing can always be started at once.
+/// Puts a binary at a path. On Linux and macOS a link where the disk allows
+/// it: it is quick, and a file that was never open for writing can always be
+/// started at once. On Windows a copy: a link there shares one access list
+/// with the file the build wrote, which may be open to other users, and a
+/// copy takes the access list of the stand's own folder.
 fn place(binary: &Path, at: &Path) -> Result<(), StandError> {
-    fs::hard_link(binary, at)
-        .or_else(|_| fs::copy(binary, at).map(|_| ()))
+    #[cfg(not(windows))]
+    if fs::hard_link(binary, at).is_ok() {
+        return Ok(());
+    }
+    fs::copy(binary, at)
+        .map(|_| ())
         .map_err(io_error("placing the program"))
 }
 

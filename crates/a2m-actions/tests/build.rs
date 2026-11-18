@@ -3307,7 +3307,11 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     assert_eq!(printed["written"], false);
     let args = printed["block"]["anything2mcp"]["args"].as_array().unwrap();
     assert_eq!(args[0], "--project");
-    assert_eq!(args[1], world.project.path().display().to_string());
+    // The project folder in its resolved, plain form, as the dispatcher
+    // holds it (decision 0204): a temporary folder may be named by a link
+    // on macOS or in its short form on Windows.
+    let project = a2m_provider::resolved_path(world.project.path()).unwrap();
+    assert_eq!(args[1], project.display().to_string());
     assert_eq!(args[2], "bridge");
     assert!(printed["block"]["anything2mcp"]["command"].is_string());
     // The engine's home is given by `A2M_HOME`, and the client is told it;

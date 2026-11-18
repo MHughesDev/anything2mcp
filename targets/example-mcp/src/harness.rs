@@ -124,46 +124,87 @@ static FOLDERS: AtomicU32 = AtomicU32::new(0);
 /// The harness does not start the program. Whatever is under test starts it,
 /// from [`StdioStand::program`] with the environment of [`StdioStand::env`],
 /// as many times as it likes; every program started over one stand shares the
-/// stand's orders, settings, and ground truth. The folder is removed when the
-/// stand is dropped.
+/// stand's orders, settings, and ground truth. The folders are removed when
+/// the stand is dropped.
 #[derive(Debug)]
 pub struct StdioStand {
     folder: PathBuf,
+    program_folder: PathBuf,
     program: PathBuf,
     control: Control,
 }
 
+/// Makes `folder` empty and new: a folder left by an earlier process with
+/// the same number is stale.
+fn fresh_folder(folder: &Path) -> Result<(), HarnessError> {
+    match std::fs::remove_dir_all(folder) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(HarnessError::State(e)),
+        _ => {}
+    }
+    std::fs::create_dir_all(folder).map_err(HarnessError::State)
+}
+
+/// Puts the built program at `at`. On Linux and macOS a link where the disk
+/// allows it: a file that was never open for writing can always be started
+/// at once. On Windows a copy: a link there shares one access list with the
+/// file the build wrote, which may be open to other users, and a copy takes
+/// the access list of the stand's own folder.
+fn place_program(built: &Path, at: &Path) -> Result<(), HarnessError> {
+    #[cfg(not(windows))]
+    if std::fs::hard_link(built, at).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(built, at)
+        .map(|_| ())
+        .map_err(HarnessError::State)
+}
+
 impl StdioStand {
-    /// Makes a new state folder with the seed data, and builds the program if
-    /// it is not built.
+    /// Makes a new state folder with the seed data, builds the program if it
+    /// is not built, and puts it in a folder of the stand's own under the
+    /// system's temporary folder.
+    ///
+    /// The engine refuses a program that another user could replace, and
+    /// the folder a build writes to need not be closed to other users: on a
+    /// Windows machine whose checkout is on a drive other than the system's,
+    /// every signed-in user may change it, as on a hosted CI runner. The
+    /// user's temporary folder is closed to them on Windows and macOS, and on
+    /// Linux it is a folder with the sticky mark, where only an entry's owner
+    /// may replace it.
     ///
     /// # Errors
     ///
-    /// Returns an error if the folder could not be made or the program could
-    /// not be built.
+    /// Returns an error if a folder could not be made or the program could
+    /// not be built or placed.
     pub fn new() -> Result<Self, HarnessError> {
-        let program = stdio_program()?;
-        let folder = std::env::temp_dir().join(format!(
+        let built = stdio_program()?;
+        let name = format!(
             "example-mcp-{}-{}",
             std::process::id(),
             FOLDERS.fetch_add(1, Ordering::SeqCst)
-        ));
-        // A folder left by an earlier process with the same number is stale.
-        match std::fs::remove_dir_all(&folder) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(HarnessError::State(e)),
-            _ => {}
-        }
-        std::fs::create_dir_all(&folder).map_err(HarnessError::State)?;
+        );
+        let folder = std::env::temp_dir().join(&name);
+        let program_folder = std::env::temp_dir().join(format!("{name}-program"));
+        fresh_folder(&folder)?;
+        fresh_folder(&program_folder)?;
+        let program = program_folder.join(
+            built
+                .file_name()
+                .ok_or_else(|| HarnessError::Program("the program has no file name".to_owned()))?,
+        );
+        place_program(&built, &program)?;
         let control = Control::new(Arc::new(Backing::Folder(folder.clone())));
         control.reset()?;
         Ok(Self {
             folder,
+            program_folder,
             program,
             control,
         })
     }
 
-    /// The program to start. It takes no arguments.
+    /// The program to start: the built one, placed in the stand's own
+    /// folder. It takes no arguments.
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
@@ -211,6 +252,7 @@ impl Drop for StdioStand {
         // Left behind if a program still holds it open; the next stand with
         // the same name clears it.
         let _ = std::fs::remove_dir_all(&self.folder);
+        let _ = std::fs::remove_dir_all(&self.program_folder);
     }
 }
 

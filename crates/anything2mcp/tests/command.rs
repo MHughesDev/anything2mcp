@@ -346,19 +346,17 @@ fn the_exit_code_follows_the_failure() {
         );
     }
 
-    // A machine whose key store does not answer is degraded: it reads,
-    // and refuses everything that writes, with the way out. Where the build
-    // has no key store, as on Linux, the vault takes a passphrase by
-    // default, and with none given the refusal is that failure by name
-    // (decision 0220).
+    // A machine whose vault cannot open reads, and refuses everything that
+    // writes, with the way out. This machine's installation file chooses
+    // the passphrase route on every system (`Bare::installation`), and no
+    // passphrase was given, so the refusal is that failure by name, the
+    // same on Linux, macOS, and Windows (decision 0220).
     let degraded = bare.run(&["target", "add", "example"]);
     assert_eq!(degraded.status.code(), Some(1));
-    let expected = if a2m_vault::DEFAULT_BACKEND == "passphrase" {
+    assert_eq!(
+        object(&degraded)["error"]["code"],
         "vault_passphrase_missing"
-    } else {
-        "engine_degraded"
-    };
-    assert_eq!(object(&degraded)["error"]["code"], expected);
+    );
     let doctor = text(&bare.run(&["doctor", "run"]).stdout);
     assert!(
         doctor.contains(anything2mcp::PASSPHRASE_VARIABLE),

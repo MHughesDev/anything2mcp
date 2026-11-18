@@ -985,7 +985,9 @@ fn stdio_the_credential_comes_from_the_environment_and_two_programs_share_one_st
 
 /// Another crate's tests get the program from `stdio_program`, which asks
 /// Cargo to build it. Every stdio test above ran the program found that way;
-/// this one checks what was found, and that a second call finds the same.
+/// this one checks what was found, and that a stand starts the same bytes
+/// from a folder of its own under the system's temporary folder, never from
+/// the folder the build wrote to.
 #[test]
 fn the_harness_finds_the_program_by_asking_cargo() -> Outcome {
     let found = stdio_program()?;
@@ -995,6 +997,12 @@ fn the_harness_finds_the_program_by_asking_cargo() -> Outcome {
         found.file_name().and_then(|n| n.to_str()),
         Some(name.as_str())
     );
-    assert_eq!(StdioStand::new()?.program(), found);
+    assert_eq!(stdio_program()?, found);
+    let stand = StdioStand::new()?;
+    let placed = stand.program();
+    assert_ne!(placed, found);
+    assert!(placed.starts_with(std::env::temp_dir()), "{placed:?}");
+    assert_eq!(placed.file_name(), found.file_name());
+    assert_eq!(std::fs::read(placed)?, std::fs::read(&found)?);
     Ok(())
 }

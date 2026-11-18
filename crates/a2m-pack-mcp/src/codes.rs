@@ -232,7 +232,7 @@ pub(crate) fn variable_refused(name: &str, why: &str) -> Failure {
 /// refusal is `policy`/`program_path_unsafe`.
 pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) -> Failure {
     use a2m_provider::ProgramRefused;
-    let at = shown(path);
+    let at = shown_path(path);
     let unsafe_path = |what: String, next: &str| {
         Failure::new(
             FailureClass::Policy,
@@ -241,7 +241,7 @@ pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) ->
             next.to_owned(),
         )
     };
-    let place = |path: &std::path::Path| shown(&path.display().to_string());
+    let place = |path: &std::path::Path| shown_path(&path.display().to_string());
     match why {
         ProgramRefused::Missing => Failure::new(
             FailureClass::Input,
@@ -298,16 +298,43 @@ pub(crate) fn unsent(failure: Failure) -> StepFailure {
 /// tool's name is made of are kept, and it is cut short. Text that is not
 /// such a name is never shown.
 pub(crate) fn shown(name: &str) -> String {
-    let plain: String = name
+    kept(name, &['_', '-', '.', '/'])
+}
+
+/// A path the published plan declares, made safe to show as [`shown`] makes
+/// a name, keeping too the backslash and the colon of a Windows path, so
+/// that `C:\Programs\example-mcp.exe` is shown as itself.
+pub(crate) fn shown_path(path: &str) -> String {
+    kept(path, &['_', '-', '.', '/', '\\', ':'])
+}
+
+/// `text` with only ASCII letters, digits, and `also` kept, cut short.
+fn kept(text: &str, also: &[char]) -> String {
+    let plain: String = text
         .chars()
-        .filter(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.' | '/')
-        })
+        .filter(|character| character.is_ascii_alphanumeric() || also.contains(character))
         .take(96)
         .collect();
-    if plain.len() == name.len() {
+    if plain.len() == text.len() {
         plain
     } else {
         format!("{plain}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{shown, shown_path};
+
+    #[test]
+    fn a_windows_path_is_shown_as_itself_and_a_name_keeps_only_a_names_characters() {
+        let path = r"D:\a\example\target\debug\example-mcp.exe";
+        assert_eq!(shown_path(path), path);
+        assert_eq!(
+            shown_path("/opt/example/bin/example-mcp"),
+            "/opt/example/bin/example-mcp"
+        );
+        assert_eq!(shown_path("C:\\x`y"), "C:\\xy…");
+        assert_eq!(shown(path), "Daexampletargetdebugexample-mcp.exe…");
     }
 }

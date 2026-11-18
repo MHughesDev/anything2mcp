@@ -547,7 +547,7 @@ pub(crate) fn create(
         .metadata()
         .ok()
         .and_then(|metadata| Identity::of(&metadata));
-    let made = Made {
+    let mut made = Made {
         path: temporary,
         identity: made_identity,
     };
@@ -570,10 +570,25 @@ pub(crate) fn create(
         .take(bytes.len() as u64 + 1)
         .read_to_end(&mut back)
         .is_ok();
+    // The identity of the file as written. Where the system gives no file
+    // number, the identity holds the file's length, which the write just
+    // changed; the name it is given next must show this one.
+    let written_identity = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| Identity::of(&metadata));
     drop(file);
+    if written_identity.is_some() {
+        made.identity = written_identity;
+    }
     if !read_back || back != bytes {
         return Err(StepFailure::not_sent(unavailable(
             "was not written as it was built; nothing was put in place",
+        )));
+    }
+    if written_identity.is_none() {
+        return Err(StepFailure::not_sent(unavailable(
+            "has a temporary file whose identity is not known",
         )));
     }
     // The commit point: a second name for the file, which the system gives
