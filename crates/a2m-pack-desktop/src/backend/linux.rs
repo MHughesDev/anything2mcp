@@ -895,20 +895,82 @@ mod tests {
     ];
 
     #[test]
-    fn the_back_end_sends_no_member_that_acts() {
-        for (_, member) in READ_MEMBERS {
+    fn the_reading_path_sends_no_member_that_acts() {
+        for (interface, member) in READ_MEMBERS {
             assert!(!ACTING.contains(member), "{member}");
+            assert!(!ACT_MEMBERS.contains(&(interface, member)), "{member}");
+            assert!(may_read(interface, member), "{member}");
         }
-        assert!(
-            !READ_MEMBERS
-                .iter()
-                .any(|(interface, _)| interface.contains("EditableText")
-                    || interface.contains("Action")
-                    || interface.contains("Selection")
-                    || interface.contains("Component")
-                    || interface.contains("DeviceEventController")
-                    || interface.contains("Value"))
+        assert!(!READ_MEMBERS.iter().any(|(interface, member)| {
+            interface.contains("EditableText")
+                || (interface.contains("Action") && *member != "GetActions")
+                || interface.contains("Selection")
+                || interface.contains("Component")
+                || interface.contains("DeviceEventController")
+                || interface.contains("Value")
+        }));
+        // The reading path refuses every member of the acting half, by
+        // the same check it makes before anything is sent.
+        for (interface, member) in ACT_MEMBERS {
+            assert!(!may_read(interface, member), "{member}");
+        }
+    }
+
+    #[test]
+    fn the_acting_half_sets_a_text_and_does_an_action_and_nothing_else() {
+        assert_eq!(
+            ACT_MEMBERS,
+            &[
+                ("org.a11y.atspi.EditableText", "SetTextContents"),
+                ("org.a11y.atspi.Action", "DoAction"),
+            ]
         );
+        for (_, member) in ACT_MEMBERS {
+            assert!(ACTING.contains(member), "{member}");
+        }
+        // No key and no pointer: neither list has a member that makes an
+        // input event, or a position on the screen.
+        for (interface, member) in READ_MEMBERS.iter().chain(ACT_MEMBERS) {
+            assert!(!interface.contains("DeviceEventController"), "{interface}");
+            assert!(!member.contains("Generate"), "{member}");
+            assert!(!member.contains("Point"), "{member}");
+        }
+    }
+
+    #[test]
+    fn only_the_acting_half_calls_the_one_function_that_acts() {
+        // The module's own source, cut where its tests begin.
+        let source = include_str!("linux.rs");
+        let body = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has a body");
+        let hands = body
+            .find("impl Hands<'_> {")
+            .expect("the acting half is in the module");
+        let end = hands
+            + body[hands..]
+                .find("\n}\n")
+                .expect("the acting half's block ends");
+        let calls: Vec<usize> = body
+            .match_indices("act_call(")
+            .map(|(at, _)| at)
+            .filter(|at| !body[..*at].ends_with("fn "))
+            .collect();
+        assert!(!calls.is_empty());
+        for at in calls {
+            assert!(
+                (hands..end).contains(&at),
+                "a call of `act_call` outside the acting half, at byte {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_start_time_is_read_from_the_process_table() {
+        let me = std::process::id();
+        assert!(started(me).is_some());
+        assert_eq!(started(me), started(me));
     }
 
     #[test]
