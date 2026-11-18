@@ -91,9 +91,7 @@ impl InstallationKeeper {
 ///
 /// What reading the file answers: `NotFound` when nothing is there, and
 /// another kind for a file that cannot be read as text.
-pub(crate) fn read_installation_file(
-    file: &Path,
-) -> std::io::Result<(String, InstallationKeeper)> {
+pub(crate) fn read_installation_file(file: &Path) -> std::io::Result<(String, InstallationKeeper)> {
     os::read(file)
 }
 
@@ -590,10 +588,7 @@ mod tests {
         let place = Place::new("missing");
         // Not there: the read says so, and nothing is the administrator's.
         let missing = read_with(&place.0.join("no-such.toml"), &admins(), &mut || {});
-        assert_eq!(
-            missing.unwrap_err().kind(),
-            std::io::ErrorKind::NotFound
-        );
+        assert_eq!(missing.unwrap_err().kind(), std::io::ErrorKind::NotFound);
         // A folder where the file should be.
         std::fs::create_dir(place.0.join("folder.toml")).unwrap();
         let folder = read_with(&place.0.join("folder.toml"), &admins(), &mut || {});

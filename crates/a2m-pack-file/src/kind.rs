@@ -485,6 +485,37 @@ impl FileKind for DocumentKind {
         Vec::new()
     }
 
+    /// Each record kind that declares no `key` and is one place: a `path`,
+    /// to one record of a JSON document or one section or dictionary of a
+    /// settings file, or a named `cell`. Named `document.record`. Rows, a
+    /// table, or a sheet with no key are many records, listed and never
+    /// written, and are not one place (decision 0252).
+    fn fixed_places(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
+        let document = document_name(doc);
+        doc.get("records")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .filter(|record| {
+                let keyed = record
+                    .value
+                    .get("key")
+                    .is_some_and(|key| !key.items().is_empty());
+                let one_place =
+                    record.value.get("path").is_some() || record.value.get("cell").is_some();
+                !keyed && one_place
+            })
+            .map(|record| {
+                Located::new(
+                    DefinedName {
+                        name: format!("{document}.{}", record.key.value),
+                    },
+                    record.value.at.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// A document describes a write when it marks a field `writable`, or
     /// states how the file is held open (`may_be_open`, `lock_signal`),
     /// which only a write needs. A value that is not plainly `false` counts:

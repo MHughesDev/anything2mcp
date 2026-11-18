@@ -1606,20 +1606,29 @@ impl HeldFolder {
     }
 
     /// Removes the file at `name` only where it is the file `expected`
-    /// names, so a file put at the name after the caller's look is never
-    /// the one removed. On Windows the file is opened, its identity read
-    /// from the handle, and removed through that handle. On Linux and macOS
-    /// what stands at the name is moved to a name of 128 random bits, looked
-    /// at there, and removed; anything else is moved back.
+    /// names and `holds` says yes of it, read through a handle of that very
+    /// file from its start (the caller compares its bytes, say), so a file
+    /// put at the name after the caller's look is never the one removed. A
+    /// file with the same identity and other bytes, which a file system that
+    /// gives a new file the number of one just removed can make, is told by
+    /// `holds`. On Windows the file is opened, its identity read from the
+    /// handle, and removed through that handle. On Linux and macOS what
+    /// stands at the name is moved to a name of 128 random bits, looked at
+    /// there, and removed; anything else is moved back.
     ///
     /// # Errors
     ///
     /// The system's answer; `NotFound` where nothing stands at the name.
-    pub fn remove_file_if(&self, name: &str, expected: FileIdentity) -> std::io::Result<Removal> {
+    pub fn remove_file_if(
+        &self,
+        name: &str,
+        expected: FileIdentity,
+        holds: impl FnOnce(&mut fs::File) -> bool,
+    ) -> std::io::Result<Removal> {
         let name = one_name(name)?;
         let aside = random_name(".a2m-old-")?;
         self.folder
-            .remove_if(name, (expected.device, expected.file), &aside)
+            .remove_if(name, (expected.device, expected.file), holds, &aside)
     }
 
     /// Removes the empty folder of that name. The system removes only an

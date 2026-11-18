@@ -871,7 +871,9 @@ fn a_private_folder_is_made_closed_to_other_users() {
 #[test]
 fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
     let (folder, roots) = scene();
-    let orders = roots.check(&root("project"), "orders", Access::Write).unwrap();
+    let orders = roots
+        .check(&root("project"), "orders", Access::Write)
+        .unwrap();
     let held = orders.hold_folder().unwrap();
     let looked_at = held.identity("one.txt").unwrap();
     // Another program replaces the file after the look.
@@ -880,7 +882,7 @@ fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
     std::fs::write(on_disk.join("one.txt"), b"another").unwrap();
     assert_ne!(held.identity("one.txt").unwrap(), looked_at);
     assert_eq!(
-        held.remove_file_if("one.txt", looked_at).unwrap(),
+        held.remove_file_if("one.txt", looked_at, |_| true).unwrap(),
         a2m_provider::Removal::NotThatFile { put_back: true }
     );
     assert_eq!(std::fs::read(on_disk.join("one.txt")).unwrap(), b"another");
@@ -889,15 +891,35 @@ fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     names.sort();
-    assert_eq!(names, ["kept.txt", "one.txt"], "nothing moved aside is left");
-    let now = held.identity("one.txt").unwrap();
     assert_eq!(
-        held.remove_file_if("one.txt", now).unwrap(),
+        names,
+        ["kept.txt", "one.txt"],
+        "nothing moved aside is left"
+    );
+    let now = held.identity("one.txt").unwrap();
+    let holds = |wanted: &'static [u8]| {
+        move |file: &mut std::fs::File| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(file, &mut bytes).unwrap();
+            bytes == wanted
+        }
+    };
+    // The same file, and bytes other than the caller's: it stays.
+    assert_eq!(
+        held.remove_file_if("one.txt", now, holds(b"one")).unwrap(),
+        a2m_provider::Removal::NotThatFile { put_back: true }
+    );
+    assert_eq!(
+        held.remove_file_if("one.txt", now, holds(b"another"))
+            .unwrap(),
         a2m_provider::Removal::Removed
     );
     assert!(!on_disk.join("one.txt").exists());
     assert_eq!(std::fs::read(on_disk.join("kept.txt")).unwrap(), b"one");
-    assert!(held.remove_file_if("..", now).is_err(), "one name only");
+    assert!(
+        held.remove_file_if("..", now, |_| true).is_err(),
+        "one name only"
+    );
 }
 
 /// A folder held and then swapped for a link to a folder outside the root
@@ -914,7 +936,9 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     let outside = folder.path().join("outside");
     std::fs::create_dir(project.join("orders").join("empty")).unwrap();
     std::fs::create_dir(outside.join("empty")).unwrap();
-    let orders = roots.check(&root("project"), "orders", Access::Write).unwrap();
+    let orders = roots
+        .check(&root("project"), "orders", Access::Write)
+        .unwrap();
     let held = orders.hold_folder().unwrap();
     assert!(held.still_at_its_path());
     // A moment long past, which anything made or removed in the folder
@@ -935,7 +959,10 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     assert_eq!(std::fs::read(moved.join("two.txt")).unwrap(), b"one");
     assert!(!moved.join("empty").exists());
     assert!(outside.join("empty").is_dir());
-    assert_eq!(std::fs::metadata(&outside).unwrap().modified().unwrap(), past);
+    assert_eq!(
+        std::fs::metadata(&outside).unwrap().modified().unwrap(),
+        past
+    );
     // A folder reached through the link now is refused.
     assert_eq!(
         orders.hold_folder().unwrap_err().code(),

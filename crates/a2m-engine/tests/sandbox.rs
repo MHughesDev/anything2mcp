@@ -259,7 +259,11 @@ async fn a_link_out_of_the_sources_folder_is_refused_and_nothing_is_read() {
         ("description", "sources/.hidden.json", "path_not_allowed"),
         ("description", "target.yaml", "path_not_allowed"),
         ("description", "sources/missing.json", "path_not_allowed"),
-        ("register_map", "sources/example-openapi.json", "job_invalid"),
+        (
+            "register_map",
+            "sources/example-openapi.json",
+            "job_invalid",
+        ),
     ];
     let link = "sources/out.json";
     cases.push(("description", link, "path_not_allowed"));

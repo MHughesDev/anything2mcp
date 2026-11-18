@@ -36,7 +36,10 @@ enum Pending {
     Rename {
         to: String,
     },
-    Delete,
+    Delete {
+        /// The digest of the file that was read; nothing for a folder.
+        digest: Option<Digest>,
+    },
 }
 
 /// The entry a binding is working on.
@@ -423,7 +426,35 @@ impl Entries {
                     }
                     FolderChange::Delete => {
                         match current.entry.as_ref().map(|entry| entry.kind) {
-                            Some(Kind::File | Kind::Folder) => {}
+                            Some(Kind::File) => {
+                                // The bytes of the file that was found, so the
+                                // delete removes only a file that holds them.
+                                let named = folder::named(folder, &current.name, 0)?;
+                                let read_max = limits.max_bytes;
+                                let (bytes, identity) = joined(
+                                    tokio::task::spawn_blocking(move || {
+                                        let bytes = folder::read(&named, read_max)?;
+                                        Ok((bytes, named.checked().identity().ok()))
+                                    })
+                                    .await,
+                                    false,
+                                )?;
+                                let Some(bytes) = bytes else {
+                                    return Err(stop(
+                                        codes::FILE_TOO_LARGE,
+                                        "The file is larger than the most bytes the file pack reads, and a file is removed only when its bytes are the ones that were read.",
+                                        "Raise `packs.file.max_bytes`.",
+                                    ));
+                                };
+                                if identity.is_none() || identity != current.identity {
+                                    return Err(folder::changed());
+                                }
+                                current.pending = Some(Pending::Delete {
+                                    digest: Some(Digest::of(&bytes)),
+                                });
+                                return Ok(StepOutcome::Done(Observed::default()));
+                            }
+                            Some(Kind::Folder) => {}
                             Some(_) => {
                                 return Err(StepFailure::not_sent(not_allowed(
                                     "it is a link or a special file, and the file pack removes only a file or an empty folder",
@@ -435,7 +466,7 @@ impl Entries {
                                 ));
                             }
                         }
-                        Pending::Delete
+                        Pending::Delete { digest: None }
                     }
                 };
                 current.pending = Some(pending);
@@ -475,7 +506,7 @@ impl Entries {
                     Pending::Create { .. } => FolderChange::Create,
                     Pending::Replace { .. } => FolderChange::Replace,
                     Pending::Rename { .. } => FolderChange::Rename,
-                    Pending::Delete => FolderChange::Delete,
+                    Pending::Delete { .. } => FolderChange::Delete,
                 };
                 let to = match &pending {
                     Pending::Rename { to } => Some(to.clone()),
@@ -508,7 +539,16 @@ impl Entries {
                             };
                             folder::rename(&at, &entry_name, &to, identity, ceiling)
                         }
-                        Pending::Delete => folder::delete(&at, &entry_name, kind, identity),
+                        Pending::Delete { digest } => folder::delete(
+                            &at,
+                            &entry_name,
+                            kind,
+                            folder::WasRead {
+                                identity,
+                                digest,
+                                max_bytes: max,
+                            },
+                        ),
                     })
                     .await,
                     true,

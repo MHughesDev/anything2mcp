@@ -434,7 +434,7 @@ pub(crate) fn digest(file: &Named, max_bytes: u64) -> Result<Option<Digest>, Ste
     Ok(read(file, max_bytes)?.map(|bytes| Digest::of(&bytes)))
 }
 
-fn changed() -> StepFailure {
+pub(crate) fn changed() -> StepFailure {
     stop(
         codes::CHANGED_SINCE_PREVIEW,
         "The folder changed after it was read: an entry has the name, or the entry is no longer the one that was read. Nothing was written.",
@@ -545,7 +545,7 @@ struct Made<'a> {
 impl Drop for Made<'_> {
     fn drop(&mut self) {
         if let Some(identity) = self.identity {
-            let _ = self.held.remove_file_if(&self.name, identity);
+            let _ = self.held.remove_file_if(&self.name, identity, |_| true);
         }
     }
 }
@@ -645,7 +645,7 @@ fn create_with(
         )));
     }
     let removed = matches!(
-        held.remove_file_if(&temporary, identity),
+        held.remove_file_if(&temporary, identity, |_| true),
         Ok(a2m_provider::Removal::Removed)
     );
     made.identity = None;
@@ -696,16 +696,13 @@ fn rename_with(
     before_act: impl FnOnce(),
 ) -> Result<(), StepFailure> {
     let held = folder.held()?;
-    folder
-        .file(from)?
-        .regular()
-        .map_err(|failure| {
-            if failure.failure.code() == &codes::FILE_MISSING {
-                changed()
-            } else {
-                failure
-            }
-        })?;
+    folder.file(from)?.regular().map_err(|failure| {
+        if failure.failure.code() == &codes::FILE_MISSING {
+            changed()
+        } else {
+            failure
+        }
+    })?;
     if held.identity(from).ok() != Some(read) {
         return Err(changed());
     }
@@ -727,7 +724,7 @@ fn rename_with(
     }
     // The old name goes only while it holds the file that was read.
     if !matches!(
-        held.remove_file_if(from, read),
+        held.remove_file_if(from, read, |_| true),
         Ok(a2m_provider::Removal::Removed)
     ) {
         return Err(StepFailure::unknown(unavailable(
@@ -737,13 +734,33 @@ fn rename_with(
     finish(&held, "renamed")
 }
 
+/// What a delete is held to: for a file, the identity and the digest of
+/// the file that was read, and the most bytes read to digest it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WasRead {
+    pub identity: Option<Identity>,
+    pub digest: Option<Digest>,
+    pub max_bytes: u64,
+}
+
+/// Whether the file, read from its start, holds the bytes of that digest.
+fn holds_bytes(file: &mut fs::File, digest: Digest, max_bytes: u64) -> bool {
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .is_ok()
+        && bytes.len() as u64 <= max_bytes
+        && Digest::of(&bytes) == digest
+}
+
 /// Removes the entry `name`, directly in the folder: a file that is still
-/// the one that was read, or a folder that is empty.
+/// the one that was read, by its identity and its bytes, or a folder that
+/// is empty.
 pub(crate) fn delete(
     folder: &Folder,
     name: &str,
     kind: Kind,
-    read: Option<Identity>,
+    read: WasRead,
 ) -> Result<(), StepFailure> {
     delete_with(folder, name, kind, read, || {})
 }
@@ -754,7 +771,7 @@ fn delete_with(
     folder: &Folder,
     name: &str,
     kind: Kind,
-    read: Option<Identity>,
+    read: WasRead,
     before_act: impl FnOnce(),
 ) -> Result<(), StepFailure> {
     let held = folder.held()?;
@@ -768,19 +785,24 @@ fn delete_with(
                     failure
                 }
             })?;
-            let Some(read) = read else {
+            let (Some(identity), Some(digest)) = (read.identity, read.digest) else {
                 return Err(changed());
             };
-            if held.identity(name).ok() != Some(read) {
+            if held.identity(name).ok() != Some(identity)
+                || self::digest(&entry, read.max_bytes)? != Some(digest)
+            {
                 return Err(changed());
             }
             if !held.still_at_its_path() {
                 return Err(moved_before());
             }
             before_act();
-            // Removed only while the name holds the file that was read: a
-            // file put there after the look is never the one removed.
-            match held.remove_file_if(name, read) {
+            // Removed only while the name holds the file that was read, by
+            // its identity and its bytes: a file put there after the look is
+            // never the one removed, even one given the old one's number.
+            match held.remove_file_if(name, identity, |file| {
+                holds_bytes(file, digest, read.max_bytes)
+            }) {
                 Ok(a2m_provider::Removal::Removed) => {}
                 Ok(a2m_provider::Removal::NotThatFile { put_back: true }) => {
                     return Err(changed());
@@ -818,11 +840,12 @@ fn delete_with(
                 return Err(moved_before());
             }
             before_act();
-            held.remove_empty_folder(name).map_err(|error| match error.kind() {
-                ErrorKind::DirectoryNotEmpty | ErrorKind::AlreadyExists => not_empty(),
-                ErrorKind::NotFound | ErrorKind::NotADirectory => changed(),
-                _ => StepFailure::not_sent(not_allowed("its folder cannot be written to")),
-            })?;
+            held.remove_empty_folder(name)
+                .map_err(|error| match error.kind() {
+                    ErrorKind::DirectoryNotEmpty | ErrorKind::AlreadyExists => not_empty(),
+                    ErrorKind::NotFound | ErrorKind::NotADirectory => changed(),
+                    _ => StepFailure::not_sent(not_allowed("its folder cannot be written to")),
+                })?;
         }
         Kind::Link | Kind::Other => {
             return Err(StepFailure::not_sent(not_allowed(
@@ -857,10 +880,8 @@ mod tests {
     #[cfg(unix)]
     impl Swap {
         fn new(tag: &str) -> Self {
-            let base = std::env::temp_dir().join(format!(
-                "a2m-pack-file-swap-{tag}-{}",
-                std::process::id()
-            ));
+            let base = std::env::temp_dir()
+                .join(format!("a2m-pack-file-swap-{tag}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&base);
             let root = base.join("root");
             let outside = base.join("outside");
@@ -944,13 +965,23 @@ mod tests {
     fn a_folder_swapped_for_a_link_after_the_look_gets_no_created_file_outside_the_root() {
         let swap = Swap::new("create");
         let marked = swap.mark_outside();
-        let done = create_with(&swap.folder(), "new.txt", b"new bytes\n", 100, || swap.swap());
+        let done = create_with(&swap.folder(), "new.txt", b"new bytes\n", 100, || {
+            swap.swap()
+        });
         assert_eq!(swap.outside(marked), (Vec::new(), false));
         let failure = done.unwrap_err();
-        assert_eq!(failure.sent, a2m_provider::Sent::Unknown, "the act was made, in the held folder");
+        assert_eq!(
+            failure.sent,
+            a2m_provider::Sent::Unknown,
+            "the act was made, in the held folder"
+        );
         let moved = swap.root.join("inbox-moved");
         assert_eq!(fs::read(moved.join("new.txt")).unwrap(), b"new bytes\n");
-        assert_eq!(fs::read_dir(&moved).unwrap().count(), 1, "no temporary file is left");
+        assert_eq!(
+            fs::read_dir(&moved).unwrap().count(),
+            1,
+            "no temporary file is left"
+        );
     }
 
     #[cfg(unix)]
@@ -975,7 +1006,12 @@ mod tests {
         fs::create_dir_all(swap.root.join("inbox").join("old")).unwrap();
         fs::create_dir_all(swap.outside.join("old")).unwrap();
         let marked = swap.mark_outside();
-        let done = delete_with(&swap.folder(), "old", Kind::Folder, None, || swap.swap());
+        let read = WasRead {
+            identity: None,
+            digest: None,
+            max_bytes: 100,
+        };
+        let done = delete_with(&swap.folder(), "old", Kind::Folder, read, || swap.swap());
         assert_eq!(swap.outside(marked), (vec!["old".to_owned()], false));
         assert!(done.is_err());
     }
@@ -989,8 +1025,14 @@ mod tests {
         let inbox = swap.root.join("inbox");
         fs::write(inbox.join("a.txt"), b"read\n").unwrap();
         let folder = swap.folder();
-        let read = identity(&folder, "a.txt", 0).unwrap().unwrap();
-        let done = delete_with(&folder, "a.txt", Kind::File, Some(read), || {
+        let read = WasRead {
+            identity: identity(&folder, "a.txt", 0).unwrap(),
+            digest: Some(Digest::of(b"read\n")),
+            max_bytes: 100,
+        };
+        // The file is removed and another made at its name, which the file
+        // system may give the removed one's number.
+        let done = delete_with(&folder, "a.txt", Kind::File, read, || {
             fs::remove_file(inbox.join("a.txt")).unwrap();
             fs::write(inbox.join("a.txt"), b"another\n").unwrap();
         });

@@ -213,6 +213,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - A program with no working folder of its own runs in a private folder made for that start, not in the shared temporary folder, and the folder is removed when it ends.
 - On macOS an access-list entry that allows anything refuses a program; on Windows a program on a mapped share or a substituted drive letter is refused (both written, first run in CI).
 - The HTTP pack sends a search behind POST outside a live run only from a published version, judges a method-override header or `_method` entry as the method it names, refuses a read once too many earlier reads are still running past their deadline, bounds text patterns and the text they match, and checks bytes answers for secrets written in UTF-16. The HTTP and MCP packs never send a header whose name begins `a2m-` (decision 0270).
+- On macOS an installation settings file that the administrators' group may write, or whose access list allows another account, no longer loosens a protected setting; the file is checked and read as one opened file. `version.publish` refuses the version 0.0.0, which belongs to the drafts. A draft that calls its environment a test environment no longer gets a test record's treatment (decision 0273).
 
 ## [0.0.1]
 

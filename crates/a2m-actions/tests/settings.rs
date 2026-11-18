@@ -570,7 +570,9 @@ fn final_test_module(text: &str) -> Option<usize> {
         lines.push((at, line.trim_end_matches(['\n', '\r'])));
         at += line.len();
     }
-    let last = lines.iter().rposition(|(_, line)| !line.trim().is_empty())?;
+    let last = lines
+        .iter()
+        .rposition(|(_, line)| !line.trim().is_empty())?;
     if lines[last].1 != "}" {
         return None;
     }
@@ -947,13 +949,19 @@ fn the_scan_of_product_sources_cuts_only_a_files_final_test_module() {
     let item = "fn a() {}\n#[cfg(test)]\nconst B: u8 = 1;\nfn c() { read(\"key\") }\n";
     assert_eq!(final_test_module(item), None);
     let module = "fn a() {}\n\n#[cfg(test)]\n#[cfg(unix)]\nmod tests {\n    fn t() {}\n}\n";
-    assert_eq!(final_test_module(module), Some(module.find("#[cfg(test)]").unwrap()));
+    assert_eq!(
+        final_test_module(module),
+        Some(module.find("#[cfg(test)]").unwrap())
+    );
     // A module that is not the file's end: read whole.
     let middle = "#[cfg(test)]\nmod tests {\n}\nfn after() {}\n";
     assert_eq!(final_test_module(middle), None);
     // A file module declared for tests is a line, not the end of the file's
     // product code.
-    assert_eq!(final_test_module("fn a() {}\n#[cfg(test)]\nmod tests;\n"), None);
+    assert_eq!(
+        final_test_module("fn a() {}\n#[cfg(test)]\nmod tests;\n"),
+        None
+    );
     // This crate's own `lib.rs` holds a `#[cfg(test)]` item before its end
     // that the scan once cut at: it is read past now.
     let lib = product_sources()

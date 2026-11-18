@@ -209,14 +209,13 @@ impl Sources {
         // the file is opened there without following a link, and the text
         // is read from the handle whose owner and mode were checked
         // (decision 0273).
-        let (installation, installation_keeper) =
-            match read_installation_file(&installation_path) {
-                Ok((text, keeper)) => (Some(SourceFile::new(&installation_path, text)), keeper),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    (None, InstallationKeeper::default())
-                }
-                Err(_) => return Err(unreadable(&installation_path)),
-            };
+        let (installation, installation_keeper) = match read_installation_file(&installation_path) {
+            Ok((text, keeper)) => (Some(SourceFile::new(&installation_path, text)), keeper),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (None, InstallationKeeper::default())
+            }
+            Err(_) => return Err(unreadable(&installation_path)),
+        };
         let user = read_file(&paths.config.join(SETTINGS_FILE_NAME))?;
         let project = match project {
             Some(folder) => read_file(&folder.join(PROJECT_FILE_NAME))?,

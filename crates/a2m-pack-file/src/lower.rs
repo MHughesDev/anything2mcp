@@ -338,6 +338,52 @@ impl Lowering for FileLowering {
         }
     }
 
+    /// A binding of a document that gives no `key:` names its record kind,
+    /// `document.record`; whether that is one fixed place is the document
+    /// kind's to say, from the document (decision 0252). A folder's entry
+    /// is chosen by its name, and a growing file is read from a position:
+    /// neither names one.
+    fn fixed_place(&self, binding: &ResolvedBinding<'_>) -> Option<FixedPlace> {
+        if binding.field("key").is_some() {
+            return None;
+        }
+        let document = binding.field("document")?.as_text()?;
+        let record = binding.field("record")?.as_text()?;
+        Some(FixedPlace {
+            kind: DOCUMENT_KIND,
+            name: format!("{document}.{record}"),
+        })
+    }
+
+    /// A binding of this pack starts no program, sets no variable, and the
+    /// pack itself sends no request: it reads and writes files in a folder
+    /// of a root. That is stated where the surface's folder is a local path
+    /// in form. A folder that names another machine (`\\host\…` or
+    /// `//host/…`) is reached over the network by the operating system,
+    /// and is not stated. A root that is itself a mounted share is the
+    /// engine's setting and cannot be seen from the target's files.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> Statement {
+        let local = cx
+            .target()
+            .surface(lowered.surface.as_str())
+            .is_some_and(|surface| !names_another_machine(surface.address));
+        if !local {
+            return Statement::NotStated;
+        }
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: false,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
+    }
+
     #[allow(clippy::too_many_lines)] // one verb after another; splitting hides the order of the steps
     fn lower(
         &self,

@@ -1106,8 +1106,12 @@ pub struct WritingDiscoverer {
     pub projects: Mutex<Vec<Option<PathBuf>>>,
     /// The files each discovery's scope was handed, by name, with what
     /// reading each gave.
-    pub handed: Mutex<Vec<Vec<(String, Vec<u8>)>>>,
+    pub handed: Mutex<Vec<Handed>>,
 }
+
+/// The files one discovery's scope was handed: each name, and the bytes
+/// reading it gave.
+pub type Handed = Vec<(String, Vec<u8>)>;
 
 impl Discoverer for WritingDiscoverer {
     fn name(&self) -> DiscovererName {

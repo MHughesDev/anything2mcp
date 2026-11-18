@@ -598,7 +598,10 @@ fn a_manifest_without_files_declares_none_and_one_with_files_is_read() {
     let (registry, problems) = build(&[&pack], ProviderSettings::default());
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
-        registry.files_taken(&surface).into_iter().collect::<Vec<_>>(),
+        registry
+            .files_taken(&surface)
+            .into_iter()
+            .collect::<Vec<_>>(),
         vec!["description".to_owned()]
     );
     let other = SurfaceDescription {

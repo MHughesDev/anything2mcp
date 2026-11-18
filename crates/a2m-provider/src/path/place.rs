@@ -304,19 +304,22 @@ mod os {
         }
 
         /// Removes the file at `name` only where it is the file `expected`
-        /// names. What stands at the name is first moved to `aside`, a name
-        /// of the caller's that nobody else knows, and looked at there, so
-        /// a file put at the name after the look is never the one removed.
-        /// Anything else is moved back, where nothing has taken the name
-        /// meanwhile.
+        /// names and `holds` says yes of it, opened for reading. What stands
+        /// at the name is first moved to `aside`, a name of the caller's that
+        /// nobody else knows, and looked at there, so a file put at the name
+        /// after the look is never the one removed. Anything else is moved
+        /// back, where nothing has taken the name meanwhile.
         pub(in super::super) fn remove_if(
             &self,
             name: &OsStr,
             expected: (u64, u128),
+            holds: impl FnOnce(&mut File) -> bool,
             aside: &OsStr,
         ) -> io::Result<super::Removal> {
             renameat(&self.0, name, &self.0, aside)?;
-            if self.identity(aside).is_ok_and(|found| found == expected) {
+            if self.identity(aside).is_ok_and(|found| found == expected)
+                && self.open(aside).is_ok_and(|mut file| holds(&mut file))
+            {
                 return match self.remove(aside) {
                     Ok(()) => Ok(super::Removal::Removed),
                     Err(error) => {
@@ -749,27 +752,32 @@ mod os {
         }
 
         /// Removes the file at `name` only where it is the file `expected`
-        /// names: it is opened itself, never through a link, with the right
-        /// to remove it; its identity is read from that handle; and it is
-        /// marked to be removed through the same handle, so the file looked
-        /// at is the file removed, whatever stands at the name meanwhile.
+        /// names and `holds` says yes of it: it is opened itself, never
+        /// through a link, with the right to read and to remove it; its
+        /// identity is read from that handle, and `holds` reads it through
+        /// that handle; and it is marked to be removed through the same
+        /// handle, so the file looked at is the file removed, whatever stands
+        /// at the name meanwhile.
         #[cfg(windows)]
         pub(in super::super) fn remove_if(
             &self,
             name: &OsStr,
             expected: (u64, u128),
+            holds: impl FnOnce(&mut File) -> bool,
             _aside: &OsStr,
         ) -> io::Result<super::Removal> {
             use std::os::windows::fs::OpenOptionsExt as _;
             const DELETE: u32 = 0x0001_0000;
+            const FILE_READ_DATA: u32 = 0x0001;
             const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+            const SYNCHRONIZE: u32 = 0x0010_0000;
             const FILE_SHARE_ALL: u32 = 0x0007;
-            let file = fs::OpenOptions::new()
-                .access_mode(DELETE | FILE_READ_ATTRIBUTES)
+            let mut file = fs::OpenOptions::new()
+                .access_mode(DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
                 .share_mode(FILE_SHARE_ALL)
                 .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
                 .open(self.0.join(name))?;
-            if super::windows::identity(&file)? != expected {
+            if super::windows::identity(&file)? != expected || !holds(&mut file) {
                 return Ok(super::Removal::NotThatFile { put_back: true });
             }
             super::windows::remove_on_close(&file)?;
@@ -782,6 +790,7 @@ mod os {
             &self,
             _name: &OsStr,
             _expected: (u64, u128),
+            _holds: impl FnOnce(&mut File) -> bool,
             _aside: &OsStr,
         ) -> io::Result<super::Removal> {
             Err(io::Error::from(io::ErrorKind::Unsupported))

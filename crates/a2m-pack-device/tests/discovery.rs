@@ -183,6 +183,69 @@ Reset,holding,9,u16,,,,,write
 ";
 
 #[tokio::test]
+async fn the_map_reader_reads_the_file_it_is_handed_under_its_declared_name() {
+    use a2m_provider::{Access, RootName, Roots};
+
+    let scene = Scene::start().await;
+    let surface = SurfaceDescription {
+        kind: SurfaceKind::new("device_link").unwrap(),
+        archetype: Archetype::Device,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene
+        .registry
+        .discoverers_for(&surface)
+        .into_iter()
+        .find(|found| found.declared().name.as_str() == "device_register_map")
+        .unwrap();
+    // The manifest declares the one name, and the registry gives it as
+    // what a discovery of the surface may be handed (decision 0263).
+    assert_eq!(
+        discoverer.declared().files,
+        [a2m_pack_device::REGISTER_MAP_FILE]
+    );
+    let taken: Vec<String> = scene.registry.files_taken(&surface).into_iter().collect();
+    assert_eq!(taken, [a2m_pack_device::REGISTER_MAP_FILE]);
+
+    let project = Folder::new("handed-map");
+    std::fs::write(project.path().join("example-map.csv"), PUBLISHED).unwrap();
+    std::fs::write(project.path().join("example-map.txt"), PUBLISHED).unwrap();
+    let root = RootName::new("sources").unwrap();
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), project.path(), Access::Read)
+        .unwrap();
+    let path = |file: &str| roots.check(&root, file, Access::Read).unwrap();
+    let focus = Values::new();
+    // Under its declared name, a `.csv` file is read; under another name,
+    // or without the ending, nothing is made of it.
+    for (name, file, made) in [
+        (taken[0].as_str(), "example-map.csv", 1),
+        ("example_map", "example-map.csv", 0),
+        (taken[0].as_str(), "example-map.txt", 0),
+    ] {
+        let mut paths = CheckedPaths::none();
+        paths.insert(name, path(file));
+        let (handle, prepared) = scene.prepare(None, Posture::Discovery).await;
+        let port = ReadOnlyPort::new(handle, prepared);
+        let scope = DiscoveryScope {
+            surface: &scene.surface,
+            bounds: discoverer.declared().bounds,
+            deadline: Deadline::after(Duration::from_secs(30)),
+            paths: &paths,
+            redact: &a2m_core::NoSecrets,
+            focus: &focus,
+        };
+        let mut kept = Kept(Vec::new());
+        discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+        let (handle, prepared) = port.into_parts();
+        handle.release(prepared, false).await;
+        assert_eq!(kept.0.len(), made, "{name} {file}");
+    }
+}
+
+#[tokio::test]
 async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_draft() {
     use a2m_provider::{Access, RootName, Roots};
 
@@ -197,7 +260,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
         .unwrap();
     let mut paths = CheckedPaths::none();
     paths.insert(
-        "example-map.csv",
+        a2m_pack_device::REGISTER_MAP_FILE,
         roots.check(&root, "example-map.csv", Access::Read).unwrap(),
     );
 
@@ -413,7 +476,7 @@ Top,input,4294967295,u32,,
         .unwrap();
     let mut paths = CheckedPaths::none();
     paths.insert(
-        "example-map.csv",
+        a2m_pack_device::REGISTER_MAP_FILE,
         roots.check(&root, "example-map.csv", Access::Read).unwrap(),
     );
     let (handle, prepared) = scene.prepare(None, Posture::Discovery).await;

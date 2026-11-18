@@ -124,7 +124,9 @@ impl InProcessControl {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .any(|((target, hash), _)| *target == self.run.target && *hash == self.run.target_version)
+            .any(|((target, hash), _)| {
+                *target == self.run.target && *hash == self.run.target_version
+            })
     }
 
     /// The identity the run acts as: the person who started it. A dedicated
