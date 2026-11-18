@@ -34,14 +34,16 @@ pub fn digest_of(path: &Path) -> std::io::Result<Digest> {
     Ok(Digest::from_bytes(hasher.finalize().into()))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 #[path = "safety/before_0250.rs"]
 mod before;
 
 /// The old check and the shared one, given every case the pack's own tests
 /// of the check held before it moved, give the same verdict (decision
 /// 0250). The cases are built on disk here as those tests built them.
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod same_verdict {
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
