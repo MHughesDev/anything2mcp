@@ -332,7 +332,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | --- | --- | --- |
 | `busy` | `engine_running` | `--in-process` or a second `serve` while the engine lock is held |
 | `transient` | `connection_lost` | The connection ended before a request was sent, so the engine never had it; also a hello whose answer was lost |
-| `possible_commit` | `answer_lost` | A request may have reached the engine and no whole answer came back: never said to be safe to send again |
+| `possible_commit` | `answer_lost` | A request may have reached the engine and no whole answer came back: never said to be safe to send again. Its message, and `connection_lost`'s, ends with what the client saw, in one of six fixed phrases (the connection was reset; the connection closed before any answer; the answer was cut short; the write of the request failed; the answer was not well formed; no detail), never the HTTP library's own text |
 | `policy` | `peer_not_allowed` | An engine owned by another user. A connection from another user is closed unread, so that client sees `connection_lost` |
 | `policy` | `presence_failed` | The person dismissed or failed the prompt, or none can be raised on this machine; the message gives the reason |
 | `busy` | `prompt_busy` | A presence prompt is already up, and one is raised at a time |

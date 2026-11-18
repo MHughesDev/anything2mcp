@@ -156,6 +156,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - The sessions guide (`docs get sessions`) shows `form_login` as the provider takes it: settings that name parts of a screen model, and `user` and `password` credentials under the target's own `vault://` references.
 - The technical reference's table of failure codes now says, for each code moved to the new table form, what to do about it and whether calling again unchanged may help (decision 0258).
 - A source file given with two rows of one key is now refused as `source_key_not_unique` (it was `key_not_unique`, which the data and file packs use for a different failure).
+- When a command's request may have reached the engine and its answer was lost, or the connection ended before the request was sent, the failure now also says what the client saw, in one of six fixed phrases.
 
 ### Safety fixes
 

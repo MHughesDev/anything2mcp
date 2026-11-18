@@ -3,6 +3,7 @@
 //! A message is built from names the engine knows, never from what a peer
 //! sent.
 
+use crate::connector::Seen;
 use a2m_core::{Failure, FailureClass, FailureCode};
 
 /// An engine already holds the engine lock. Class `busy`.
@@ -74,10 +75,18 @@ pub(crate) fn input(
 /// The connection ended before the request was sent: nothing reached the
 /// engine, so the request may be made again.
 pub(crate) fn lost() -> Failure {
+    lost_seeing(Seen::NoDetail)
+}
+
+/// As [`lost`], saying what the client saw, in a word of the closed list.
+pub(crate) fn lost_seeing(seen: Seen) -> Failure {
     Failure::new(
         FailureClass::Transient,
         CONNECTION_LOST,
-        "The connection to the engine ended before the request was sent, so the engine did not have it.",
+        format!(
+            "The connection to the engine ended before the request was sent, so the engine did not have it. What the client saw: {}.",
+            seen.words()
+        ),
         "Run the command again once an engine answers (`anything2mcp serve` starts one).",
     )
 }
@@ -85,11 +94,14 @@ pub(crate) fn lost() -> Failure {
 /// The request was handed to the engine, and no whole answer came back.
 /// The channel cannot know what the request was, so it never says that
 /// sending it again is safe: a write sent twice may be written twice.
-pub(crate) fn answer_lost() -> Failure {
+pub(crate) fn answer_lost(seen: Seen) -> Failure {
     Failure::new(
         FailureClass::PossibleCommit,
         ANSWER_LOST,
-        "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run.",
+        format!(
+            "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run. What the client saw: {}.",
+            seen.words()
+        ),
         "If the request carried an idempotency key, send the same request again with the same key and nothing changed: it gives back the run the first one started, finished or not, and starts no other. If it carried none, do not send it again, because a second request may start a second run and write twice: find its run first with the run list (`anything2mcp run list --since <ms>`, with `--tool <tool>` for a tool call), from one minute before the request was sent, and do what that run's `next` says.",
     )
 }
@@ -208,7 +220,7 @@ mod tests {
 
     #[test]
     fn a_lost_answer_says_both_ways_to_go_on_and_never_that_sending_again_is_safe() {
-        let failure = answer_lost();
+        let failure = answer_lost(crate::connector::Seen::NoDetail);
         assert_eq!(failure.class(), FailureClass::PossibleCommit);
         assert_eq!(failure.code(), &ANSWER_LOST);
         let next = failure.next_step();
