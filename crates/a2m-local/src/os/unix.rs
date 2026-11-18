@@ -31,7 +31,15 @@ pub(crate) fn current_user() -> io::Result<String> {
 
 /// Makes the runtime directory with mode 0700, or checks that the one
 /// there is a directory of this user's, and closes it to everyone else.
+///
+/// The folder is checked and closed as one object: it is opened without
+/// following a link at its end, and the opened handle's own type and owner
+/// are checked and its mode set through that handle. A link put in the
+/// folder's place is refused, never followed, and a folder swapped in after
+/// the open is not the one that is closed (decision 0273).
 pub(crate) fn prepare_dir(dir: &Path) -> io::Result<()> {
+    use rustix::fs::{Mode, OFlags};
+
     if let Some(parent) = dir.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -40,15 +48,35 @@ pub(crate) fn prepare_dir(dir: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
-    let found = fs::symlink_metadata(dir)?;
-    if !found.is_dir() || found.uid().to_string() != current_user()? {
-        return Err(io::Error::new(
+    let not_ours = || {
+        io::Error::new(
             io::ErrorKind::PermissionDenied,
             "the runtime directory is not a directory of this user's",
-        ));
+        )
+    };
+    // `NOFOLLOW` refuses a link at the path's end; `DIRECTORY` refuses
+    // anything but a folder, so a pipe or a device is never opened.
+    let handle = match rustix::fs::open(
+        dir,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(handle) => handle,
+        Err(error) if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR => {
+            return Err(not_ours());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let found = rustix::fs::fstat(&handle)?;
+    let is_dir =
+        rustix::fs::FileType::from_raw_mode(found.st_mode) == rustix::fs::FileType::Directory;
+    if !is_dir || found.st_uid != rustix::process::getuid().as_raw() {
+        return Err(not_ours());
     }
-    if found.mode() & OTHERS != 0 {
-        fs::set_permissions(dir, fs::Permissions::from_mode(DIR_MODE))?;
+    // The mode bits of everyone but the owner ([`OTHERS`]); the folder's
+    // mode becomes the user's alone ([`DIR_MODE`]).
+    if Mode::from_raw_mode(found.st_mode).intersects(Mode::RWXG | Mode::RWXO) {
+        rustix::fs::fchmod(&handle, Mode::RWXU)?;
     }
     Ok(())
 }
@@ -248,8 +276,54 @@ mod tests {
     use std::os::unix::net::SocketAddr;
     use std::path::PathBuf;
 
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
     use super::super::Place;
-    use super::longest_socket_path;
+    use super::{longest_socket_path, prepare_dir};
+
+    /// A fresh folder of this test's own under the temporary folder.
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("a2m-local-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
+    /// The folder is checked and closed through one handle, opened without
+    /// following a link at its end: a folder others may enter is closed, and
+    /// a link or a file in the folder's place is refused, and what a link
+    /// points at is left as it was (decision 0273).
+    #[test]
+    fn a_folder_is_closed_through_its_handle_and_a_link_in_its_place_is_refused() {
+        let root = scratch("prepare");
+
+        let made = root.join("made");
+        prepare_dir(&made).unwrap();
+        assert_eq!(std::fs::metadata(&made).unwrap().mode() & 0o777, 0o700);
+
+        let open = root.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        prepare_dir(&open).unwrap();
+        assert_eq!(std::fs::metadata(&open).unwrap().mode() & 0o777, 0o700);
+
+        let target = root.join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let refused = prepare_dir(&link).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
+
+        let file = root.join("file");
+        std::fs::write(&file, b"").unwrap();
+        let refused = prepare_dir(&file).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::PermissionDenied);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn a_socket_path_is_as_long_as_the_systems_address_holds_and_no_longer() {

@@ -25,7 +25,7 @@ use a2m_auth::{
     AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork, Keeper,
     KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose,
     Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
-    Wait,
+    Wait, WeakKeeper,
 };
 use a2m_core::{
     DecisionId, Environment, Failure, FailureClass, Identity, Plan, PrincipalId, Redact, RunId,
@@ -92,13 +92,15 @@ impl AskPerson for Person {
 /// The target's probe: its declared read, through the `ui` driver, under a
 /// lease of purpose `Probe`.
 ///
-/// The keeper holds the probe, so the probe holds the scene weakly: a
-/// strong reference would be a cycle, the scene would never be dropped, and
-/// its stand's folder, with the browser's profiles in it, would be left
-/// under the temporary folder after every test.
+/// The keeper holds the probe, so the probe holds the scene and the keeper
+/// weakly: a strong reference would be a cycle, the scene would never be
+/// dropped, and its stand's folder, with the browser's profiles in it,
+/// would be left under the temporary folder after every test; a strong
+/// keeper would keep the keeper's store and worker after the world ended
+/// (decision 0269, point 5).
 #[derive(Default)]
 struct Probe {
-    world: OnceLock<(Weak<Scene>, Keeper, Arc<AuthEntry>)>,
+    world: OnceLock<(Weak<Scene>, WeakKeeper, Arc<AuthEntry>)>,
 }
 
 impl RunProbe for Probe {
@@ -108,6 +110,9 @@ impl RunProbe for Probe {
                 return ProbeOutcome::Unknown;
             };
             let Some(scene) = scene.upgrade() else {
+                return ProbeOutcome::Unknown;
+            };
+            let Some(keeper) = keeper.upgrade() else {
                 return ProbeOutcome::Unknown;
             };
             let mut asked = request(entry, Wait::NoWait);
@@ -324,7 +329,11 @@ impl World {
         assert!(
             probe
                 .world
-                .set((Arc::downgrade(&scene), keeper.clone(), Arc::clone(&entry)))
+                .set((
+                    Arc::downgrade(&scene),
+                    keeper.downgrade(),
+                    Arc::clone(&entry)
+                ))
                 .is_ok()
         );
         Self {
