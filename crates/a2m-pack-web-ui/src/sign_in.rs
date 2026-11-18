@@ -629,8 +629,7 @@ async fn press(tab: &ActTab, action: &Action, deadline: Deadline) -> Result<(), 
 
 impl AuthProvider for FormLogin {
     fn name(&self) -> ProviderName {
-        // A fixed name that is well formed.
-        ProviderName::new(FORM_LOGIN).unwrap_or_else(|_| unreachable_name())
+        ProviderName::fixed(FORM_LOGIN)
     }
 
     fn needs(&self) -> ProviderNeeds {
@@ -756,11 +755,6 @@ impl AuthProvider for FormLogin {
         sink.header(BROWSER_STATE, &Secret::new(state));
         Ok(())
     }
-}
-
-/// Never reached: the name above is well formed, which a test holds.
-fn unreachable_name() -> ProviderName {
-    ProviderName::new("form_login").unwrap_or_else(|_| unreachable_name())
 }
 
 /// The screens a target's auth entries declare as a sign that the session

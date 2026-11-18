@@ -37,6 +37,13 @@ pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since
 /// A value for delimited text begins with a character that makes a
 /// spreadsheet program run the text as a formula.
 pub const VALUE_BEGINS_FORMULA: FailureCode = FailureCode::fixed("value_begins_formula");
+/// A folder holds a name that differs from the one given only in case.
+pub const NAME_CASE_CONFLICT: FailureCode = FailureCode::fixed("name_case_conflict");
+/// A folder to remove is not empty.
+pub const FOLDER_NOT_EMPTY: FailureCode = FailureCode::fixed("folder_not_empty");
+/// A value given to a step its rule refuses, such as a position a growing
+/// file's read did not give.
+pub const VALUE_UNPARSABLE: FailureCode = FailureCode::fixed("value_unparsable");
 /// The plan's section for this pack does not decode.
 pub const PAYLOAD_UNREADABLE: FailureCode = FailureCode::PAYLOAD_UNREADABLE;
 
@@ -59,6 +66,9 @@ pub const ALL: &[(FailureClass, FailureCode)] = &[
     (FailureClass::Stale, CHANGED_SINCE_PREVIEW),
     (FailureClass::Input, PAYLOAD_UNREADABLE),
     (FailureClass::Input, VALUE_BEGINS_FORMULA),
+    (FailureClass::Input, NAME_CASE_CONFLICT),
+    (FailureClass::Policy, FOLDER_NOT_EMPTY),
+    (FailureClass::Input, VALUE_UNPARSABLE),
 ];
 
 fn class_of(code: &FailureCode) -> FailureClass {

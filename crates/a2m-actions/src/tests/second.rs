@@ -941,16 +941,19 @@ async fn a_sign_in_is_asked_for_by_name_and_a_session_is_ended_only_by_whose_it_
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_project_file_the_engine_does_not_apply_is_named_in_the_warnings() {
     let strict = "[authoring.scout]\ntry_reads = false\n";
-    let lint = |world: &World, folder: &std::path::Path| {
-        world.kernel.dispatch(
-            Request::new(
-                "draft.lint",
-                json!({"target": "example"}),
-                world.caller.clone(),
+    async fn lint(world: &World, folder: &std::path::Path) -> Response {
+        world
+            .kernel
+            .dispatch(
+                Request::new(
+                    "draft.lint",
+                    json!({"target": "example"}),
+                    world.caller.clone(),
+                )
+                .in_project_folder(Some(&ProjectFolder::new(folder))),
             )
-            .in_project_folder(Some(&ProjectFolder::new(folder))),
-        )
-    };
+            .await
+    }
     let differ = |response: &Response| {
         response
             .warnings

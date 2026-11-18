@@ -825,7 +825,7 @@ impl Watches<'_, '_> {
                 new.operation.as_str().into(),
                 new.target_version.to_string().into(),
                 new.input_hash.to_string().into(),
-                new.input.clone().into(),
+                new.input.into(),
                 names_json(&new.ignore)?.into(),
                 interval.into(),
                 new.ends_at.into(),

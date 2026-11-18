@@ -529,9 +529,10 @@ mod tests {
             }
             let at = (seq.next() as usize) % records.len();
             let again = (records[at].0, record("other", 2));
+            let repeated = again.0;
             records.push(again);
             let fault = CheckDigests::new(true, records).unwrap_err();
-            assert_eq!(fault, CheckFault::KeyRepeated(again.0));
+            assert_eq!(fault, CheckFault::KeyRepeated(repeated));
             assert_eq!(fault.failure().code(), &WATCH_KEY_REPEATED);
             assert_eq!(fault.failure().class(), FailureClass::UnknownVariant);
         }

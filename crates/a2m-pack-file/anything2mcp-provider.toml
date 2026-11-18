@@ -12,7 +12,7 @@ kind = "pack"
 [[modes]]
 name = "file"
 archetype = "artifact"
-verbs = ["read", "list", "update", "create", "delete"]
+verbs = ["read", "list", "update", "create", "delete", "rename"]
 steps = ["open", "locate", "set", "read", "save"]
 commit_steps = ["save"]
 rank = 60
@@ -41,6 +41,18 @@ bounds = { seconds = 60, bytes = 67108864, depth = 1 }
 [[file_kinds]]
 name = "document"
 directory = "documents/"
+surface_kinds = ["file"]
+
+# A folder read and written as a collection of entries (decision 0246).
+[[file_kinds]]
+name = "folder"
+directory = "folders/"
+surface_kinds = ["file"]
+
+# A growing file read from where the last read stopped (decision 0246).
+[[file_kinds]]
+name = "log"
+directory = "logs/"
 surface_kinds = ["file"]
 
 [[finding_kinds]]
@@ -163,6 +175,17 @@ code = "value_unparsable"
 [[failure_codes]]
 class = "input"
 code = "value_out_of_range"
+
+# A folder holds a name that differs from the one given only in case
+# (decision 0246).
+[[failure_codes]]
+class = "input"
+code = "name_case_conflict"
+
+# A folder to remove is not empty (decision 0246).
+[[failure_codes]]
+class = "policy"
+code = "folder_not_empty"
 
 [effects]
 read_roots = ["project", "files"]
