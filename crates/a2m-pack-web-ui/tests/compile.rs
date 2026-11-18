@@ -50,9 +50,26 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         .iter()
         .map(|code| (code.class, code.code.as_str().to_owned()))
         .collect();
+    // The pack's own codes, which keep the class the crates below give the
+    // same code, then the browser engine's it passes on.
+    let book = a2m_core::CodeBook::new(&[
+        a2m_pack_web_ui::codes::TABLE,
+        a2m_pack_web_browser::codes::TABLE,
+        a2m_core::codes::TABLE,
+        a2m_provider::codes::TABLE,
+        a2m_auth::codes::TABLE,
+    ])
+    .unwrap();
+    let passed_on = a2m_pack_web_ui::codes::PASSED_ON.iter().map(|code| {
+        let entry = book.explain(code.as_str()).unwrap();
+        assert_eq!(entry.declared_in, "a2m-pack-web-browser", "{code}");
+        (entry.class, entry.code)
+    });
     let produced: Vec<(FailureClass, String)> = a2m_pack_web_ui::codes::ALL
         .iter()
-        .map(|(class, code)| (*class, (*code).to_owned()))
+        .copied()
+        .chain(passed_on)
+        .map(|(class, code)| (class, code.to_owned()))
         .collect();
     let sorted = |mut list: Vec<(FailureClass, String)>| {
         list.sort_by(|a, b| a.1.cmp(&b.1));

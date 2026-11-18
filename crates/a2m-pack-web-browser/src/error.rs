@@ -6,40 +6,43 @@ use std::fmt;
 use a2m_core::{Failure, FailureClass, FailureCode};
 
 /// The failure codes this crate produces. Each belongs to exactly one class.
+/// `timeout` and `connection_lost` are the provider contract's own, named
+/// here for the conversions that give them.
+///
+/// Whether a `busy` code passes by itself, and why: `browser_unavailable`
+/// does not, because a person must install a browser or name one in the
+/// settings first.
 pub mod codes {
-    use a2m_core::{FailureClass, FailureCode};
+    use a2m_core::FailureCode;
 
-    /// No browser program was found.
-    pub const BROWSER_UNAVAILABLE: FailureCode = FailureCode::fixed("browser_unavailable");
-    /// The program that started is not a browser this crate can own.
-    pub const BROWSER_NOT_OWNED: FailureCode = FailureCode::fixed("browser_not_owned");
-    /// The link to the browser broke before the request was written.
-    pub const CONNECTION_LOST: FailureCode = FailureCode::fixed("connection_lost");
-    /// A deadline passed before the request was written, or on a read.
-    pub const TIMEOUT: FailureCode = FailureCode::fixed("timeout");
-    /// A password input was asked for its value.
-    pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
-    /// An address is not one a tab may be sent to.
-    pub const ADDRESS_INVALID: FailureCode = FailureCode::fixed("address_invalid");
-    /// A value cannot stand in one segment of a path: it is refused, never
-    /// encoded.
-    pub const ADDRESS_VALUE_REFUSED: FailureCode = FailureCode::fixed("address_value_refused");
-    /// A page, or an address, is on an origin the tab was not opened for.
-    /// The same name, with the same class, as the code the packs built on
-    /// this crate give a surface nobody declared.
-    pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
+    a2m_core::failure_codes! {
+        BROWSER_UNAVAILABLE = Busy, "browser_unavailable",
+            meaning "No browser program was found.",
+            next "Install Chrome, Edge, or Chromium, or name the browser program in the settings.",
+            passes not_by_itself;
+        BROWSER_NOT_OWNED = UnknownVariant, "browser_not_owned",
+            meaning "The program that started is not a browser this crate can own.",
+            next "Check the browser program named in the settings, and its version.";
+        PASSWORD_READ_REFUSED = Policy, "password_read_refused",
+            meaning "A password input was asked for its value.",
+            next "Remove the read of this field from the target's files.";
+        ADDRESS_INVALID = Input, "address_invalid",
+            meaning "An address is not one a tab may be sent to.",
+            next "Correct the address, or the entry's path and names, in the target's files.";
+        ADDRESS_VALUE_REFUSED = Input, "address_value_refused",
+            meaning "A value cannot stand in one segment of a path: it is refused, never encoded.",
+            next "Give a value that is one segment of an address: letters, digits, `-`, `.`, `_`, and `~`.";
+        SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
+            meaning "A page, or an address, is on an origin the tab was not opened for. The same name, with the same class, as the code the packs built on this crate give a surface nobody declared.",
+            next "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.";
+    }
 
-    /// Every code of this crate with its one class.
-    pub const ALL: &[(FailureClass, &str)] = &[
-        (FailureClass::Busy, "browser_unavailable"),
-        (FailureClass::UnknownVariant, "browser_not_owned"),
-        (FailureClass::Transient, "connection_lost"),
-        (FailureClass::Transient, "timeout"),
-        (FailureClass::Policy, "password_read_refused"),
-        (FailureClass::Input, "address_invalid"),
-        (FailureClass::Input, "address_value_refused"),
-        (FailureClass::Policy, "surface_not_declared"),
-    ];
+    /// From the provider contract: the link to the browser broke before the
+    /// request was written.
+    pub const CONNECTION_LOST: FailureCode = a2m_provider::codes::CONNECTION_LOST;
+    /// From the provider contract: a deadline passed before the request was
+    /// written, or on a read.
+    pub const TIMEOUT: FailureCode = a2m_provider::codes::TIMEOUT;
 }
 
 /// Whether a request reached the page. The crate above decides what that

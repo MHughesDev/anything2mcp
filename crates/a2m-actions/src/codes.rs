@@ -1,111 +1,124 @@
-//! The failure codes this crate produces. Each belongs to exactly one class.
+//! The failure codes this crate produces, each with its one class, in one
+//! table (decision 0258). Four of them, `schema_invalid`, `not_found`,
+//! `engine_degraded`, and `idempotency_key_invalid`, are the core's, the
+//! store's, and the scheduler's, and stay their constants here.
 //!
 //! A message is built from names the engine knows, never from a value a
 //! system returned.
+//!
+//! Whether a `busy` code passes by itself, and why:
+//!
+//! - `lease_too_short` does not: a person raises `runners.lease_seconds`
+//!   first.
+//! - `run_call_unreadable` does not: what the run was called with stays
+//!   missing or unreadable, and calling the tool again is a new run.
+//! - `system_job_not_carried` does not: it is a fault in the engine.
+//! - `tool_changed` does: the call made again is decided anew, against the
+//!   tool as it is published now.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
 /// The input breaks the action's schema, or no action has that name. Class
-/// `input`.
+/// `input`. The core's code.
 pub const SCHEMA_INVALID: FailureCode = FailureCode::SCHEMA_INVALID;
-/// The action is in the catalog and its handler is not built yet. Class
-/// `input`.
-pub const ACTION_NOT_BUILT: FailureCode = FailureCode::fixed("action_not_built");
 /// A valid input names something that does not exist. Class `input`. The
 /// same code the store answers with.
 pub const NOT_FOUND: FailureCode = a2m_ledger::codes::NOT_FOUND;
-/// A project or file path is outside the allowed roots. Class `input`.
-pub const PATH_NOT_ALLOWED: FailureCode = FailureCode::fixed("path_not_allowed");
-/// A settings file, variable, or flag cannot be loaded. Class `input`.
-pub const SETTINGS_INVALID: FailureCode = FailureCode::fixed("settings_invalid");
-/// A layer that may only tighten tried to loosen a protected setting, or a
-/// layer set a key it may not set. Class `policy`.
-pub const SETTING_PROTECTED: FailureCode = FailureCode::fixed("setting_protected");
-/// A higher layer tried to change a key the installation file locks. Class
-/// `policy`.
-pub const SETTING_LOCKED: FailureCode = FailureCode::fixed("setting_locked");
-/// The registry of actions cannot be built: a duplicate name, or a
-/// provider's action outside its name space. Class `input`.
-pub const REGISTRY_INVALID: FailureCode = FailureCode::fixed("action_registry_invalid");
-/// A person's act was asked for by a caller that cannot give one. Class
-/// `policy`.
-pub const PERSON_REQUIRED: FailureCode = FailureCode::fixed("person_required");
-/// The caller's credential is not one this engine accepts. Class `policy`.
-pub const CALLER_NOT_VERIFIED: FailureCode = FailureCode::fixed("caller_not_verified");
 /// The health state forbids the action. Class `busy`. The same code the
 /// scheduler answers with.
 pub const ENGINE_DEGRADED: FailureCode = a2m_sched::codes::ENGINE_DEGRADED;
-/// The action is carried out by the client end, which did not do so. Class
-/// `input`.
-pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
-
-/// A step may take longer than a job's lease lasts. Class `busy`.
-pub const LEASE_TOO_SHORT: FailureCode = FailureCode::fixed("lease_too_short");
-/// What a run was called with is missing from the store or cannot be read.
-pub const RUN_CALL_UNREADABLE: FailureCode = FailureCode::fixed("run_call_unreadable");
-/// The in-process runner loop was handed a job that is not a run's.
-pub const SYSTEM_JOB_NOT_CARRIED: FailureCode = FailureCode::fixed("system_job_not_carried");
-/// A protected setting is set to a value this build cannot put in force.
-pub const SETTING_NOT_IN_FORCE: FailureCode = FailureCode::fixed("setting_not_in_force");
-/// A published tool changed between the decision about a call and the call.
-pub const TOOL_CHANGED: FailureCode = FailureCode::fixed("tool_changed");
 /// An idempotency key that is not 1 to 200 printable characters, or two
 /// different keys on one request. Class `input`. The same code the store
 /// and the REST door answer with.
 pub const IDEMPOTENCY_KEY_INVALID: FailureCode = a2m_ledger::IDEMPOTENCY_KEY_INVALID;
-/// An idempotency key the caller already gave with another call: another
-/// tool, environment, input, or source. Class `input`.
-pub const IDEMPOTENCY_KEY_REUSED: FailureCode = FailureCode::fixed("idempotency_key_reused");
 
-/// The drafts of a publish a person was shown changed before they pressed:
-/// they compile to another plan. Class `stale`.
-pub const DRAFTS_CHANGED: FailureCode = FailureCode::fixed("drafts_changed");
-
-/// A publish whose offline tests did not all run and pass: a version is
-/// published only when they do (spec section 403, decision 0180). Class
-/// `input`: the target's files are what a caller corrects.
-pub const PUBLISH_GATES_NOT_PASSED: FailureCode = FailureCode::fixed("publish_gates_not_passed");
-
-/// The setting `authoring.scout.run` is `off`, and `scout.run` was called.
-/// Class `policy`.
-pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
-
-/// A call names a file for a discovery under a name that no discoverer
-/// suiting the target's observed surfaces reads (decision 0263): a file
-/// nobody reads is a mistake, never ignored. Nothing starts. Class
-/// `input`.
-pub const DISCOVERY_FILE_NOT_TAKEN: FailureCode = FailureCode::fixed("discovery_file_not_taken");
-
-/// An offline test asked for something that would store, lease, or clear
-/// a write; its control plane holds nothing and refuses (decision 0177).
-pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");
-
-/// `fixture.record` met an observed value that no scrubbing rule covers,
-/// and wrote nothing (decision 0196). Class `input`.
-pub const FIXTURE_NO_SCRUB_RULE: FailureCode = FailureCode::fixed("fixture_no_scrub_rule");
-/// The read `fixture.record` runs did not complete in the sandbox, or gave
-/// nothing to record; nothing was written. Class `input`.
-pub const FIXTURE_READ_FAILED: FailureCode = FailureCode::fixed("fixture_read_failed");
-/// The test `fixture.record` made does not pass against its scrubbed
-/// fixture, or an observed value would be in a file; nothing was written.
-/// Class `input`.
-pub const FIXTURE_NOT_REPLAYED: FailureCode = FailureCode::fixed("fixture_not_replayed");
-
-/// `client.connect` cannot set a client's configuration: its profile does
-/// not read, names no file for this system, or the client's file does not
-/// read as a JSON object (decision 0219). Nothing is written. Class
-/// `input`.
-pub const CLIENT_CONFIG_REFUSED: FailureCode = FailureCode::fixed("client_config_refused");
-
-/// A binding `binding.promote` may not make verified: not a drafted first
-/// binding of its operation, or one whose file cannot be rewritten by rule
-/// (decision 0189). Class `input`.
-pub const BINDING_NOT_PROMOTABLE: FailureCode = FailureCode::fixed("binding_not_promotable");
-
-/// A promotion whose evidence is missing: an offline test of the operation
-/// that is missing or did not pass, or a read no trial proved at
-/// `executed` (decision 0189). Class `input`.
-pub const PROMOTION_UNPROVEN: FailureCode = FailureCode::fixed("promotion_unproven");
+a2m_core::failure_codes! {
+    ACTION_NOT_BUILT = Input, "action_not_built",
+        meaning "The action is in the catalog and its handler is not built yet.",
+        next "Call `action.search` to see which actions are built.";
+    PATH_NOT_ALLOWED = Input, "path_not_allowed",
+        meaning "A project or file path is outside the allowed roots.",
+        next "Name a path inside the project folder or the target's folder, one that is no link, or run the command inside a project folder of your own, or pass `--project` with its full path.";
+    SETTINGS_INVALID = Input, "settings_invalid",
+        meaning "A settings file, variable, or flag cannot be loaded.",
+        next "Correct the key or value at the place the message names, or remove it, then start again.";
+    SETTING_PROTECTED = Policy, "setting_protected",
+        meaning "A layer that may only tighten tried to loosen a protected setting, or a layer set a key it may not set.",
+        next "Remove the key from this layer, or set it in a layer that may loosen it.";
+    SETTING_LOCKED = Policy, "setting_locked",
+        meaning "A higher layer tried to change a key the installation file locks.",
+        next "Remove the key from this layer, or ask whoever installed the engine to change it.";
+    REGISTRY_INVALID = Input, "action_registry_invalid",
+        meaning "The registry of actions cannot be built: a duplicate name, or a provider's action outside its name space.",
+        next "Give each action one name, starting with its provider's own name, then start again.";
+    PERSON_REQUIRED = Policy, "person_required",
+        meaning "A person's act was asked for by a caller that cannot give one.",
+        next "Ask the person to do it themselves, through a program that acts for them.";
+    CALLER_NOT_VERIFIED = Policy, "caller_not_verified",
+        meaning "The caller's credential is not one this engine accepts.",
+        next "Call from the account that runs the engine.";
+    CLIENT_ACTION = Input, "client_action",
+        meaning "The action is carried out by the client end, which did not do so.",
+        next "Run it as a command on the machine the engine runs on.";
+    LEASE_TOO_SHORT = Busy, "lease_too_short",
+        meaning "A step may take longer than a job's lease lasts.",
+        next "Raise `runners.lease_seconds` above the tool's longest step time limits, then resume the run.",
+        passes not_by_itself;
+    RUN_CALL_UNREADABLE = Busy, "run_call_unreadable",
+        meaning "What a run was called with is missing from the store or cannot be read.",
+        next "Call the tool again; that is a new run. Call `trace.show` with this run's identifier to see what it did before.",
+        passes not_by_itself;
+    SYSTEM_JOB_NOT_CARRIED = Busy, "system_job_not_carried",
+        meaning "The in-process runner loop was handed a job that is not a run's.",
+        next "Report this; it is a fault in the engine.",
+        passes not_by_itself;
+    SETTING_NOT_IN_FORCE = Policy, "setting_not_in_force",
+        meaning "A protected setting is set to a value this build cannot put in force.",
+        next "Take the setting out of the layer the message names, or set it to the value in force, then start the engine again.";
+    TOOL_CHANGED = Busy, "tool_changed",
+        meaning "A published tool changed between the decision about a call and the call.",
+        next "Call the tool again.",
+        passes by_itself;
+    IDEMPOTENCY_KEY_REUSED = Input, "idempotency_key_reused",
+        meaning "An idempotency key the caller already gave with another call: another tool, environment, input, or source.",
+        next "Use a new key for a new call. To get the run of the call the key was first given with, make that call again with the key, or call `run.list` with `idempotency_key`.";
+    DRAFTS_CHANGED = Stale, "drafts_changed",
+        meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another plan.",
+        next "Ask again, and read the new page before pressing.";
+    PUBLISH_GATES_NOT_PASSED = Input, "publish_gates_not_passed",
+        meaning "A publish whose offline tests did not all run and pass: a version is published only when they do (spec section 403, decision 0180).",
+        next "Call `test.run` with the target to see what each test found, correct the test, its fixture, or the binding, and publish again.";
+    SCOUT_OFF = Policy, "scout_off",
+        meaning "The setting `authoring.scout.run` is `off`, and `scout.run` was called.",
+        next "Run the stages one by one (`target.probe`, `discover.run`, `draft.write`), or ask a person to change the setting.";
+    DISCOVERY_FILE_NOT_TAKEN = Input, "discovery_file_not_taken",
+        meaning "A call names a file for a discovery under a name that no discoverer suiting the target's observed surfaces reads (decision 0263): a file nobody reads is a mistake, never ignored. Nothing starts.",
+        next "Name each file under one of the names the message lists, or leave it out.";
+    OFFLINE_WRITES_NOTHING = Policy, "offline_writes_nothing",
+        meaning "An offline test asked for something that would store, lease, or clear a write; its control plane holds nothing and refuses (decision 0177).",
+        next "Keep the offline test to its own tool against its fixture; a write is proven against a test stand.";
+    FIXTURE_NO_SCRUB_RULE = Input, "fixture_no_scrub_rule",
+        meaning "`fixture.record` met an observed value that no scrubbing rule covers, and wrote nothing (decision 0196).",
+        next "Write this fixture by hand with synthetic values, or record a read whose values are text, numbers, dates, choices, true or false, or empty.";
+    FIXTURE_READ_FAILED = Input, "fixture_read_failed",
+        meaning "The read `fixture.record` runs did not complete in the sandbox, or gave nothing to record; nothing was written.",
+        next "Correct the draft or the input and record again, or write this fixture by hand.";
+    FIXTURE_NOT_REPLAYED = Input, "fixture_not_replayed",
+        meaning "The test `fixture.record` made does not pass against its scrubbed fixture, or an observed value would be in a file; nothing was written.",
+        next "Write this fixture by hand with synthetic values its field types take.";
+    CLIENT_CONFIG_REFUSED = Input, "client_config_refused",
+        meaning "`client.connect` cannot set a client's configuration: its profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written.",
+        next "Correct the client's profile or its file, as the message names, then run the command again.";
+    BINDING_NOT_PROMOTABLE = Input, "binding_not_promotable",
+        meaning "A binding `binding.promote` may not make verified: not a drafted first binding of its operation, or one whose file cannot be rewritten by rule (decision 0189).",
+        next "Write the binding with `status: draft`, test it and try it, then call `binding.promote`.";
+    PROMOTION_UNPROVEN = Input, "promotion_unproven",
+        meaning "A promotion whose evidence is missing: an offline test of the operation that is missing or did not pass, or a read no trial proved at `executed` (decision 0189).",
+        next "Write or correct the operation's offline test, run `test.run`, and promote again.";
+    RUN_NOT_COMPLETED = Rejected, "run_not_completed",
+        meaning "A run ended in a state other than completed, and carried no failure of its own.",
+        next "Call `trace.show` with the run's identifier to see what happened.";
+}
 
 pub(crate) fn stale(
     code: FailureCode,
@@ -186,5 +199,24 @@ mod tests {
             vec!["tool.call"]
         );
         assert!(nearest("zzzzzzzzzzzz", known.iter().copied()).is_empty());
+    }
+
+    #[test]
+    fn the_design_lists_every_code_of_the_table_under_its_class() {
+        let design = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("docs")
+            .join("architecture")
+            .join("crates")
+            .join(format!("{}.md", env!("CARGO_PKG_NAME")));
+        let design = std::fs::read_to_string(design).unwrap();
+        for (class, code) in super::ALL {
+            let row = format!("| `{class}` | `{code}` |");
+            assert!(
+                design.lines().any(|line| line.starts_with(&row)),
+                "the design does not list `{code}` under `{class}`"
+            );
+        }
     }
 }

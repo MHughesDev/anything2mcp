@@ -521,6 +521,8 @@ Not built: a probe at an address with no declared surface, which needs a discove
 
 ## Failures
 
+The crate's own codes are declared once, each with its class, meaning, next step, and, for a `busy` code, whether it passes by itself, in its `failure_codes!` table, the module `codes` ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)); `schema_invalid`, `not_found`, `engine_degraded`, and `idempotency_key_invalid` stay the core's, the store's, and the scheduler's constants. Of its `busy` codes only `tool_changed` passes by itself: the call made again is decided anew. A test holds this table to the crate's.
+
 | Class | Code | When |
 | --- | --- | --- |
 | `input` | `schema_invalid` | No such action; input breaks the schema |
@@ -537,6 +539,13 @@ Not built: a probe at an address with no declared surface, which needs a discove
 | `input` | `discovery_file_not_taken` | `scout.run`, `discover.run`, or `spec.import` names a file under a name no discoverer suiting the observed surfaces reads; nothing starts |
 | `input` | `binding_not_promotable` | `binding.promote` was asked for a binding that is not a drafted first binding, or whose status cannot be rewritten by rule |
 | `input` | `promotion_unproven` | `binding.promote` found an offline test of the operation missing or not passing, or no trial that proved the read |
+| `input` | `publish_gates_not_passed` | A publish whose offline tests did not all run and pass, or an operation with no passing offline test |
+| `policy` | `offline_writes_nothing` | An offline test asked for something that would store, lease, or clear a write |
+| `input` | `fixture_no_scrub_rule` | `fixture.record` met an observed value no scrubbing rule covers; nothing is written |
+| `input` | `fixture_read_failed` | The read `fixture.record` runs did not complete in the sandbox, or gave nothing to record |
+| `input` | `fixture_not_replayed` | The test `fixture.record` made does not pass against its scrubbed fixture, or an observed value would be in a file |
+| `input` | `client_config_refused` | `client.connect` cannot set a client's configuration; nothing is written |
+| `rejected` | `run_not_completed` | `run.get` or a tool call reports a run that ended in a state other than completed and carried no failure of its own |
 | `policy` | `approval_refused` | What `run.get` reports for a run a person declined, or whose approval window ended; and what the desk answers to a proof of presence that is not the approver's or not of now |
 | `policy` | `kill_switch_on` | A kill switch covers the work a call would start or resume |
 | `policy` | `approval_stale` | The desk was asked to show a stored diff that is not the one the run waits on |

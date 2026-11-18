@@ -1,94 +1,93 @@
 //! The failure codes this pack produces. Each belongs to exactly one class,
-//! and each is declared in the pack's manifest. `timeout`,
-//! `connection_lost`, and `no_confirmation` are the provider contract's own.
+//! and each is declared in the pack's manifest; a test holds the two lists
+//! together. `timeout`, `connection_lost`, `no_confirmation`, and
+//! `read_only_posture` are the provider contract's own, and the sign-in's
+//! refusals are the session keeper's; the manifest declares none of them.
+//! The browser engine's codes that the pack gives as they are, and the
+//! manifest declares too, are in [`PASSED_ON`].
+//!
+//! The pack has no `busy` code of its own; the browser engine's
+//! `browser_unavailable` does not pass by itself.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
 
-/// `drift`: no locator of a field, an action, or a table matched.
-pub const LOCATOR_NOT_FOUND: FailureCode = FailureCode::fixed("locator_not_found");
-/// `drift`: a locator matched more than one element. The first is never
-/// picked.
-pub const LOCATOR_AMBIGUOUS: FailureCode = FailureCode::fixed("locator_ambiguous");
-/// `drift`: the element found is not where its fingerprint says, or a
-/// table's header is not the one its screen declares.
-pub const FINGERPRINT_MISMATCH: FailureCode = FailureCode::fixed("fingerprint_mismatch");
-/// `unknown_variant`: a dialog of the page that no screen declares.
-pub const UNEXPECTED_DIALOG: FailureCode = FailureCode::fixed("unexpected_dialog");
-/// `unknown_variant`: the page is not in a state its screen declares.
-pub const UNEXPECTED_PAGE: FailureCode = FailureCode::fixed("unexpected_page");
-/// `unknown_variant`: the element found is not a control its field's rule
-/// can set or read.
-pub const UNEXPECTED_CONTROL: FailureCode = FailureCode::fixed("unexpected_control");
-/// `unknown_variant`: the plan names a control this driver has no rule for.
-pub const UNKNOWN_CONTROL: FailureCode = FailureCode::fixed("unknown_control");
-/// `unknown_variant`: the program that started is not a browser the engine
-/// can own. The browser engine's code.
-pub const BROWSER_NOT_OWNED: FailureCode = FailureCode::fixed("browser_not_owned");
-/// `unknown_variant`: what a read gave is larger than the limit.
-pub const READ_TOO_LARGE: FailureCode = FailureCode::fixed("read_too_large");
-/// `unknown_variant`: a read from inside the page was answered with a
-/// status it does not declare.
-pub const UNEXPECTED_STATUS: FailureCode = FailureCode::fixed("unexpected_status");
-/// `drift`: the answer to a read from inside the page is not the shape its
-/// entry declares, or not of its media type.
-pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
-/// `rejected`: the application showed a declared refusal.
-pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
-/// `policy`: a page address outside the surfaces the run may reach.
-pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
-/// `policy`: the page sent a request that could change the system while a
-/// read ran, and the tab, which cannot write, failed it (decision 0195).
-pub const PAGE_WRITE_REFUSED: FailureCode = FailureCode::fixed("page_write_refused");
-/// `policy`: a password input was asked for its value. The browser
-/// engine's code.
-pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
-/// `busy`: no browser is installed. The browser engine's code.
-pub const BROWSER_UNAVAILABLE: FailureCode = FailureCode::fixed("browser_unavailable");
-/// `input`: a step this driver cannot carry out as the plan wrote it.
-pub const STEP_NOT_USABLE: FailureCode = FailureCode::fixed("step_not_usable");
-/// `input`: an address a tab may not be sent to. The browser engine's code.
-pub const ADDRESS_INVALID: FailureCode = FailureCode::fixed("address_invalid");
-/// `input`: a value that cannot stand in one segment of a screen's address.
-pub const ADDRESS_VALUE_REFUSED: FailureCode = FailureCode::fixed("address_value_refused");
+a2m_core::failure_codes! {
+    LOCATOR_NOT_FOUND = Drift, "locator_not_found",
+        meaning "No locator of a field, an action, or a table matched.",
+        next "Look at the page and correct the screen's locators.";
+    LOCATOR_AMBIGUOUS = Drift, "locator_ambiguous",
+        meaning "A locator matched more than one element. The first is never picked.",
+        next "Make the locator more exact; the first of several is never picked.";
+    FINGERPRINT_MISMATCH = Drift, "fingerprint_mismatch",
+        meaning "The element found is not where its fingerprint says, or a table's header is not the one its screen declares.",
+        next "Look at the page and correct the screen, or the `header` of its `rows`; the element may have moved, or another may have taken its name.";
+    RESPONSE_SCHEMA_MISMATCH = Drift, "response_schema_mismatch",
+        meaning "The answer to a read from inside the page is not the shape its entry declares, or not of its media type.",
+        next "Look at what the application answers now, and correct the entry under `page_requests/`.";
+    ANTI_FORGERY_NOT_FOUND = Drift, "anti_forgery_not_found",
+        meaning "The page a write is made from holds no anti-forgery token where its entry says. Nothing was sent (decision 0206).",
+        next "Look at where the page holds its token now, and correct the entry's `anti_forgery`.";
+    ANTI_FORGERY_UNREADABLE = UnknownVariant, "anti_forgery_unreadable",
+        meaning "The page holds two different anti-forgery tokens where its entry says, or one of a form that is not sent. Nothing was sent.",
+        next "Look at the page; a token is read from one place that holds one text.";
+    UNEXPECTED_DIALOG = UnknownVariant, "unexpected_dialog",
+        meaning "A dialog of the page that no screen declares.",
+        next "Look at the page; a dialog is declared before a run may answer it.";
+    UNEXPECTED_PAGE = UnknownVariant, "unexpected_page",
+        meaning "The page is not in a state its screen declares.",
+        next "Look at the page; declare the state it is in as a variant of the screen.";
+    UNEXPECTED_CONTROL = UnknownVariant, "unexpected_control",
+        meaning "The element found is not a control its field's rule can set or read.",
+        next "Look at the page; correct the field's `control`, or declare the state the page is in.";
+    UNKNOWN_CONTROL = UnknownVariant, "unknown_control",
+        meaning "The plan names a control this driver has no rule for.",
+        next "Compile the target again with the version of the web pack that is enabled.";
+    READ_TOO_LARGE = UnknownVariant, "read_too_large",
+        meaning "What a read gave is larger than the limit.",
+        next "Raise `packs.web.max_read_chars`, or read a smaller part of the page.";
+    UNEXPECTED_STATUS = UnknownVariant, "unexpected_status",
+        meaning "A read from inside the page was answered with a status it does not declare.",
+        next "Look at what the application answers; the entry declares the statuses it reads.";
+    APP_VALIDATION_ERROR = Rejected, "app_validation_error",
+        meaning "The application showed a declared refusal.",
+        next "Correct the values and run the tool again; the application refused them.";
+    SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
+        meaning "A page address outside the surfaces the run may reach.",
+        next "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.";
+    PAGE_WRITE_REFUSED = Policy, "page_write_refused",
+        meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195).",
+        next "Look at what the page does when it loads; a page that writes by itself is not read by the web pack, so read the record another way.";
+    STEP_NOT_USABLE = Input, "step_not_usable",
+        meaning "A step this driver cannot carry out as the plan wrote it.",
+        next "Compile the target again with the version of the web pack that is enabled.";
+    SIGN_IN_BLOCKED = EdgeBlocked, "sign_in_blocked",
+        meaning "The sign-in page of a form sign-in shows the block the target declares: a locked account, a check the engine does not get past (decision 0245).",
+        next "Look at the application in a browser of your own; sign in again once the block is lifted.";
+}
 
-/// `drift`: the page a write is made from holds no anti-forgery token
-/// where its entry says. Nothing was sent (decision 0206).
-pub const ANTI_FORGERY_NOT_FOUND: FailureCode = FailureCode::fixed("anti_forgery_not_found");
-/// `unknown_variant`: the page holds two different anti-forgery tokens
-/// where its entry says, or one of a form that is not sent. Nothing was
-/// sent.
-pub const ANTI_FORGERY_UNREADABLE: FailureCode = FailureCode::fixed("anti_forgery_unreadable");
+/// The browser engine's: no browser is installed.
+pub const BROWSER_UNAVAILABLE: FailureCode = a2m_pack_web_browser::codes::BROWSER_UNAVAILABLE;
+/// The browser engine's: the program that started is not a browser the
+/// engine can own.
+pub const BROWSER_NOT_OWNED: FailureCode = a2m_pack_web_browser::codes::BROWSER_NOT_OWNED;
+/// The browser engine's: a password input was asked for its value.
+pub const PASSWORD_READ_REFUSED: FailureCode = a2m_pack_web_browser::codes::PASSWORD_READ_REFUSED;
+/// The browser engine's: an address a tab may not be sent to.
+pub const ADDRESS_INVALID: FailureCode = a2m_pack_web_browser::codes::ADDRESS_INVALID;
+/// The browser engine's: a value that cannot stand in one segment of an
+/// address.
+pub const ADDRESS_VALUE_REFUSED: FailureCode = a2m_pack_web_browser::codes::ADDRESS_VALUE_REFUSED;
 
-/// The sign-in page of a form sign-in shows the block the target declares:
-/// a locked account, a check the engine does not get past (decision 0245).
-pub const SIGN_IN_BLOCKED: FailureCode = FailureCode::fixed("sign_in_blocked");
-
-/// Every code of this pack with its one class, as the manifest declares
-/// them. A test holds the two lists together.
-pub const ALL: &[(FailureClass, &str)] = &[
-    (FailureClass::Drift, "locator_not_found"),
-    (FailureClass::Drift, "locator_ambiguous"),
-    (FailureClass::Drift, "fingerprint_mismatch"),
-    (FailureClass::Drift, "response_schema_mismatch"),
-    (FailureClass::Drift, "anti_forgery_not_found"),
-    (FailureClass::UnknownVariant, "anti_forgery_unreadable"),
-    (FailureClass::UnknownVariant, "unexpected_dialog"),
-    (FailureClass::UnknownVariant, "unexpected_page"),
-    (FailureClass::UnknownVariant, "unexpected_control"),
-    (FailureClass::UnknownVariant, "unknown_control"),
-    (FailureClass::UnknownVariant, "browser_not_owned"),
-    (FailureClass::UnknownVariant, "read_too_large"),
-    (FailureClass::UnknownVariant, "unexpected_status"),
-    (FailureClass::Rejected, "app_validation_error"),
-    (FailureClass::Policy, "surface_not_declared"),
-    (FailureClass::Policy, "page_write_refused"),
-    (FailureClass::Policy, "password_read_refused"),
-    (FailureClass::Busy, "browser_unavailable"),
-    (FailureClass::Input, "step_not_usable"),
-    (FailureClass::Input, "address_invalid"),
-    (FailureClass::Input, "address_value_refused"),
-    (FailureClass::EdgeBlocked, "sign_in_blocked"),
+/// The codes of the browser engine, `a2m_pack_web_browser::codes`, that
+/// the pack gives as they are, or makes in the engine's class, and the
+/// manifest declares too.
+pub const PASSED_ON: &[FailureCode] = &[
+    BROWSER_UNAVAILABLE,
+    BROWSER_NOT_OWNED,
+    PASSWORD_READ_REFUSED,
+    ADDRESS_INVALID,
+    ADDRESS_VALUE_REFUSED,
 ];
 
 pub(crate) fn failure(

@@ -1,52 +1,87 @@
-//! The failure codes this crate produces. Each belongs to exactly one class.
+//! The failure codes this crate produces, each with its one class, in one
+//! table (decision 0258).
 //!
 //! A message is built from names the engine knows, never from what a peer
-//! sent.
+//! sent. `answer_lost` is the same code, with the same class and meaning,
+//! as the stdio proxy's in `a2m-mcp`; `connection_lost` is the same code and
+//! class as the provider contract's.
+//!
+//! Whether a `busy` code passes by itself, and why:
+//!
+//! - `engine_running` does not: the engine that holds the lock goes on
+//!   running until someone stops it, so a second start is refused again.
+//! - `engine_unreachable` does not: most often no engine runs, or the one
+//!   that holds the channel is stuck, and a person starts it or reads its
+//!   log.
+//! - `channel_unavailable` does not: a directory, a lock file, or the
+//!   listener that cannot be opened stays so until a person repairs it.
+//! - `prompt_busy` does: the prompt or page that is up closes when its
+//!   person answers it or when its window ends, with nobody else acting.
+//! - `data_directory_gone` does not: the engine is stopping, and what a
+//!   new engine finds in the directory, without the runs and published
+//!   targets that were in the removed one, is for a person to look at.
+//! - `surface_unavailable` does not: the engine cannot record approvals
+//!   until what `anything2mcp doctor run` names is repaired.
 
 use crate::connector::Seen;
 use a2m_core::{Failure, FailureClass, FailureCode};
 
-/// An engine already holds the engine lock. Class `busy`.
-pub const ENGINE_RUNNING: FailureCode = FailureCode::fixed("engine_running");
-/// Nothing answers on the local channel. Class `busy`.
-pub const ENGINE_UNREACHABLE: FailureCode = FailureCode::fixed("engine_unreachable");
-/// The channel, a lock file, or the loopback listener cannot be opened on
-/// this machine. Class `busy`.
-pub const CHANNEL_UNAVAILABLE: FailureCode = FailureCode::fixed("channel_unavailable");
-/// The connection to the engine ended before a request was sent, so the
-/// engine never had it. Class `transient`.
-pub const CONNECTION_LOST: FailureCode = FailureCode::fixed("connection_lost");
-/// The engine may have had a request, and its answer was lost: what the
-/// request asked may have been done, a write among it. Class
-/// `possible_commit`. The same code, class, and meaning as the stdio
-/// proxy's.
-pub const ANSWER_LOST: FailureCode = FailureCode::fixed("answer_lost");
-/// A connection from another user, or an engine owned by another user.
-/// Class `policy`.
-pub const PEER_NOT_ALLOWED: FailureCode = FailureCode::fixed("peer_not_allowed");
-/// The person dismissed or failed the presence prompt, or this machine has
-/// none. Class `policy`.
-pub const PRESENCE_FAILED: FailureCode = FailureCode::fixed("presence_failed");
-/// A presence prompt is already up on this machine, and one is raised at
-/// a time. Class `busy`.
-pub const PROMPT_BUSY: FailureCode = FailureCode::fixed("prompt_busy");
-/// A connection's first request was not a well-formed hello. Class `input`.
-pub const HELLO_INVALID: FailureCode = FailureCode::fixed("hello_invalid");
-/// The client and the engine speak different versions of the local API.
-/// Class `input`.
-pub const LOCAL_API_MISMATCH: FailureCode = FailureCode::fixed("local_api_mismatch");
-/// The data directory is no longer the one the engine opened: its engine
-/// lock is gone, or another file stands in its place. The engine refuses
-/// the request and stops; the next client starts a new engine. Class
-/// `busy`.
-pub const DATA_DIRECTORY_GONE: FailureCode = FailureCode::fixed("data_directory_gone");
-/// The engine's socket would have a path longer than the system takes for
-/// a socket's address, so the channel can be neither made nor reached
-/// there. Class `input`.
-pub const SOCKET_PATH_TOO_LONG: FailureCode = FailureCode::fixed("socket_path_too_long");
-/// The person surface cannot show a page: it holds no approval desk. Class
-/// `busy`.
-pub const SURFACE_UNAVAILABLE: FailureCode = FailureCode::fixed("surface_unavailable");
+a2m_core::failure_codes! {
+    ENGINE_RUNNING = Busy, "engine_running",
+        meaning "An engine already holds the engine lock.",
+        next "Use the running engine, or stop it with `anything2mcp engine stop` first.",
+        passes not_by_itself;
+    ENGINE_UNREACHABLE = Busy, "engine_unreachable",
+        meaning "Nothing answers on the local channel.",
+        next "Start the engine with `anything2mcp serve`, then run the command again. If an engine runs and does not answer, read its log.",
+        passes not_by_itself;
+    CHANNEL_UNAVAILABLE = Busy, "channel_unavailable",
+        meaning "The channel, a lock file, or the loopback listener cannot be opened on this machine.",
+        next "Check that the engine's runtime and data directories exist and belong to you, then try again.",
+        passes not_by_itself;
+    CONNECTION_LOST = Transient, "connection_lost",
+        meaning "The connection to the engine ended before a request was sent, so the engine never had it.",
+        next "Run the command again once an engine answers (`anything2mcp serve` starts one).";
+    ANSWER_LOST = PossibleCommit, "answer_lost",
+        meaning "The engine may have had a request, and its answer was lost: what the request asked may have been done, a write among it.",
+        next "If the request carried an idempotency key, send the same request again with the same key and nothing changed: it gives back the run the first one started, finished or not, and starts no other. If it carried none, do not send it again, because a second request may start a second run and write twice: find its run first with the run list (`anything2mcp run list --since <ms>`, with `--tool <tool>` for a tool call), from one minute before the request was sent, and do what that run's `next` says.";
+    PEER_NOT_ALLOWED = Policy, "peer_not_allowed",
+        meaning "A connection from another user, or an engine owned by another user.",
+        next "Check who owns the engine's runtime directory, remove what is not yours to trust, and start the engine again.";
+    PRESENCE_FAILED = Policy, "presence_failed",
+        meaning "The person dismissed or failed the presence prompt, or this machine has none.",
+        next "Run the command again and answer the prompt yourself; where this machine has no presence prompt, make the change in the installation's settings file.";
+    PROMPT_BUSY = Busy, "prompt_busy",
+        meaning "A presence prompt is already up on this machine, and one is raised at a time.",
+        next "Answer or close that prompt, or let its page close, then run the command again.",
+        passes by_itself;
+    HELLO_INVALID = Input, "hello_invalid",
+        meaning "A connection's first request was not a well-formed hello.",
+        next "Reach the engine through `anything2mcp` or its SDK bridge, which say hello first; stop whatever else holds the engine's channel.";
+    LOCAL_API_MISMATCH = Input, "local_api_mismatch",
+        meaning "The client and the engine speak different versions of the local API.",
+        next "Install the same version of the client and the engine, then run the command again.";
+    DATA_DIRECTORY_GONE = Busy, "data_directory_gone",
+        meaning "The data directory is no longer the one the engine opened: its engine lock is gone, or another file stands in its place. The engine refuses the request and stops; the next client starts a new engine.",
+        next "Run the command again: a new engine starts on the data directory as it is now. Runs and published targets that were in the removed directory are not in a new one.",
+        passes not_by_itself;
+    SOCKET_PATH_TOO_LONG = Input, "socket_path_too_long",
+        meaning "The engine's socket would have a path longer than the system takes for a socket's address, so the channel can be neither made nor reached there.",
+        next "Set `A2M_HOME` to a folder with a shorter full path, then run the command again.";
+    SURFACE_UNAVAILABLE = Busy, "surface_unavailable",
+        meaning "The person surface cannot show a page: it holds no approval desk.",
+        next "Run `anything2mcp doctor run` for the reason.",
+        passes not_by_itself;
+}
+
+/// The next step this crate's table gives for `code`, for a failure whose
+/// case adds nothing to it.
+fn next_for(code: &FailureCode) -> &'static str {
+    TABLE
+        .iter()
+        .find(|entry| entry.code == code.as_str())
+        .map_or("Run the command again.", |entry| entry.next)
+}
 
 pub(crate) fn busy(
     code: FailureCode,
@@ -87,7 +122,7 @@ pub(crate) fn lost_seeing(seen: Seen) -> Failure {
             "The connection to the engine ended before the request was sent, so the engine did not have it. What the client saw: {}.",
             seen.words()
         ),
-        "Run the command again once an engine answers (`anything2mcp serve` starts one).",
+        next_for(&CONNECTION_LOST),
     )
 }
 
@@ -102,7 +137,7 @@ pub(crate) fn answer_lost(seen: Seen) -> Failure {
             "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run. What the client saw: {}.",
             seen.words()
         ),
-        "If the request carried an idempotency key, send the same request again with the same key and nothing changed: it gives back the run the first one started, finished or not, and starts no other. If it carried none, do not send it again, because a second request may start a second run and write twice: find its run first with the run list (`anything2mcp run list --since <ms>`, with `--tool <tool>` for a tool call), from one minute before the request was sent, and do what that run's `next` says.",
+        next_for(&ANSWER_LOST),
     )
 }
 
@@ -243,5 +278,24 @@ mod tests {
             "{next}"
         );
         assert!(next.contains("what that run's `next` says"), "{next}");
+    }
+
+    #[test]
+    fn the_design_lists_every_code_of_the_table_under_its_class() {
+        let design = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("docs")
+            .join("architecture")
+            .join("crates")
+            .join(format!("{}.md", env!("CARGO_PKG_NAME")));
+        let design = std::fs::read_to_string(design).unwrap();
+        for (class, code) in super::ALL {
+            let row = format!("| `{class}` | `{code}` |");
+            assert!(
+                design.lines().any(|line| line.starts_with(&row)),
+                "the design does not list `{code}` under `{class}`"
+            );
+        }
     }
 }

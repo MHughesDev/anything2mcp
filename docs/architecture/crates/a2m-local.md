@@ -330,6 +330,8 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 
 ## Failures
 
+The codes are declared once, each with its class, meaning, next step, and, for a `busy` code, whether it passes by itself, in the crate's `failure_codes!` table, the module `codes` ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). Of the `busy` codes only `prompt_busy` passes by itself: the prompt or page that is up closes when its person answers or its window ends. A test holds this table to the crate's.
+
 | Class | Code | When |
 | --- | --- | --- |
 | `busy` | `engine_running` | `--in-process` or a second `serve` while the engine lock is held |

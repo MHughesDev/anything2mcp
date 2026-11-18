@@ -201,7 +201,7 @@ impl BrowserError {
     pub fn dispatch(&self) -> Dispatch;           // every error answers
     pub fn failure(&self) -> Option<Failure>;     // the conversions of "Failures" below; None where the crate above must class it
 }
-pub mod codes { /* this crate's failure codes, and ALL with the class of each */ }
+pub mod codes { /* this crate's failure codes in one failure_codes! table (decision 0258); TIMEOUT and CONNECTION_LOST are the provider contract's */ }
 
 /// Test equipment, behind the feature `test-support` and in this crate's own tests. Never in the product.
 pub mod test_support {

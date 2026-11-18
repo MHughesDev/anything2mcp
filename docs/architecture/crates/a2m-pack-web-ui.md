@@ -103,7 +103,7 @@ pub const SCREEN_KIND: FileKindName;                  // `screen`
 pub const WEB_SURFACE: SurfaceKind;                   // `web`
 pub const CONTROLS: &[&str];
 pub const GOTO, WAIT, READ, SET, INVOKE: StepKind;
-pub mod codes;                                        // every failure code, and `ALL`
+pub mod codes;                                        // the pack's failure codes in one failure_codes! table (decision 0258), and PASSED_ON, the browser engine's it passes on
 ```
 
 The host's roots must hold a folder named `profiles` that may be written. The driver, the file kind, the lowering, the compiled screens, and the widget rules are private.

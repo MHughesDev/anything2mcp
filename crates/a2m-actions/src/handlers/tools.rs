@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Environment, Failure, FailureCode, FieldHasher, Identity, OperationName, RunId,
-    RunState, ToolRuns, Values,
+    EffectClass, Environment, Failure, FieldHasher, Identity, OperationName, RunId, RunState,
+    ToolRuns, Values,
 };
 use a2m_engine::encode_values;
 use a2m_ledger::{
@@ -1641,7 +1641,7 @@ pub(crate) async fn run_output(
         let failure = failure.unwrap_or_else(|| {
             Failure::new(
                 a2m_core::FailureClass::Rejected,
-                FailureCode::fixed("run_not_completed"),
+                codes::RUN_NOT_COMPLETED,
                 format!("The run ended as `{}`.", row.state),
                 "Call `trace.show` with the run's identifier to see what happened.",
             )
