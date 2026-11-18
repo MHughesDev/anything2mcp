@@ -3279,7 +3279,14 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     // no passphrase is in the block.
     assert_eq!(
         printed["block"]["anything2mcp"]["env"]["A2M_HOME"],
-        world.kernel.paths().data.parent().unwrap().display().to_string()
+        world
+            .kernel
+            .paths()
+            .data
+            .parent()
+            .unwrap()
+            .display()
+            .to_string()
     );
     assert!(!printed.to_string().contains("PASSPHRASE"));
 

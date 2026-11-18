@@ -53,7 +53,7 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 | [223](../2-kernel/223-the-runner-protocol.md). The runner protocol | Designed | Not built (Phase 7; `a2m-runner` is an empty crate) | Build it in Phase 7 | Let a runner that lost its lease write without reconciling |
 | [224](../2-kernel/224-when-the-engine-itself-fails.md). When the engine itself fails | Designed | Partly built: the engine's fault tests (package 3.10); every failure as a test is package 9.3 | Build each failure as a fault test | Write while the engine is degraded |
 | [225](../2-kernel/225-performance.md). Performance | Budgets set; none measured | Partly built: the harness runs in CI (package 0.7); no budget is measured, and the 10% gate is not wired | Measure against them (package 1.7) | Treat a budget as a fact before it is measured |
-| [226](../2-kernel/226-configuration.md). Configuration | Designed | Partly built: the settings loader (package 1.4a); a key's effect is built with the package that reads it | Add a key to the one schema with the code that reads it | Add a setting that weakens a guardrail |
+| [226](../2-kernel/226-configuration.md). Configuration | Designed | Partly built: the settings loader (package 1.4a). Some declared keys are read by no code yet; [decision 0236](../../decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) has such a key refused by name, and is not built | Add a key to the one schema with the code that reads it | Add a setting that weakens a guardrail |
 | [301](../3-packs/301-the-web-pack.md). The web pack | Designed; the interface flavors and hard cases are a catalog | Partly built: `ui` reads and verified writes, `page_http` reads and an update; `site_tools`, platform profiles, and the hard cases are packages 8.2a, 8.4, and 8.5 | Build a widget or a platform rule with its test application case | Build a widget or platform rule without a test application case |
 | [302](../3-packs/302-the-web-pack-browser-engine.md). The web pack: the browser engine | Designed; its base is a client of our own ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)) | Built for what its crate design marks done | Extend the client as its crate design orders | Drive the user's own browser profile |
 | [303](../3-packs/303-the-http-pack.md). The HTTP pack | Designed in its crate design | Partly built: `http` reads and verified writes, and the import of descriptions; the `api` mode is not built | Build what packages 4.1 to 4.5 name | Write over a mined binding before it has passed shadow |
@@ -62,7 +62,7 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 | [306](../3-packs/306-the-command-pack.md). The command pack | Designed | Partly built: reads and writes against its stand (packages D3 and D5, held on their proofs) | Build what packages D3 to D5 name | Start a shell |
 | [307](../3-packs/307-the-data-pack.md). The data pack | Designed | Partly built: reads and writes on an embedded database file, and on PostgreSQL behind a feature (packages G2 and G3) | Build what packages G2 and G3 name | Run a statement an agent wrote |
 | [308](../3-packs/308-the-file-pack.md). The file pack | Designed | Partly built: reads of delimited text, JSON, and workbooks; writes of delimited text and JSON (packages H2 and H3) | Build what packages H2 and H3 name | Write a format that has not passed both of its round-trip tests |
-| [309](../3-packs/309-the-stream-pack.md). The stream pack | Designed | Partly built: bounded reads and keyed publishes, on the stand's own protocol and on NATS with JetStream against the stand (packages J2 and J3) | Build what packages J2 and J3 name | Consume a message during discovery |
+| [309](../3-packs/309-the-stream-pack.md). The stream pack | Designed | Partly built: bounded reads and keyed publishes, on the stand's own protocol and on NATS with JetStream, against the stand and, in CI, a real NATS server (packages J2 and J3) | Build what packages J2 and J3 name | Consume a message during discovery |
 | [310](../3-packs/310-the-device-pack.md). The device pack | Designed, with rules and a catalog | Partly built: reads and writes against the simulated device (packages K2 and K3); firmware is package K4 | Build package K4 | Run anything against real hardware, or publish a firmware update without a declared recovery route |
 | [401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md). Overlaying tools on an existing system | Designed as a method | Partly built, through the scout and the packs' discoverers and drafting rules | Follow it for any pack | Write beneath a system's own rules without its owner's word |
 | [402](../4-building-tools/402-the-scout-and-who-does-what.md). The scout, and who does what | Designed, without each pack's drafting rules | Partly built: the scout's pipeline and report (package E5), and drafted reads for the built packs (package E4) | Build each remaining stage as the actions it is made from come to exist | Let the scout try a write, or draft a unit, key, or read-back rule the system did not state |
@@ -83,11 +83,11 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 
 ## What rests on judgment alone
 
-Every section beyond the parts already built. None has met engine code. The parts taken from REA have met code in REA, in a different language, for a different purpose, which is evidence that they can work and not that they work here. The research notes behind sections 205 to 226 are mostly search-result summaries. The components gathered in [section 604](../6-running-it/604-management-and-operations.md) rest on design judgment with no research behind them. [Research notes](../../research/README.md) list which sections have research behind them.
+Every part not yet built, and every built part beyond its test stands: nothing has met a real system. The parts taken from REA have met code in REA, in a different language, for a different purpose, which is evidence that they can work and not that they work here. The research notes behind sections 205 to 226 are mostly search-result summaries. The components gathered in [section 604](../6-running-it/604-management-and-operations.md) rest on design judgment with no research behind them. [Research notes](../../research/README.md) list which sections have research behind them.
 
 ## What must be proven, and where
 
-Every bet is in the [hypothesis register](../../hypotheses/README.md). These are the ones that could change the shape of the design, with the package that settles each.
+Every bet is in the [hypothesis register](../../hypotheses/README.md). These are the ones that could change the shape of the design, with the package that settles each. Several of those packages are done or partly built, and the register's notes say what each showed; a bet counts as proven or refuted only when its result file is written, and none is yet.
 
 | Bet | Hypothesis | Proven or refuted by |
 | --- | --- | --- |
@@ -120,14 +120,11 @@ These are named in the specification and left for the package that builds them. 
 | --- | --- |
 | How a plug-in registers schemas across a process boundary (the manifest itself is built) | Package F3 |
 | The scenario file format | With the first discoverer, package E2 |
-| Each pack's drafting rules | With each pack, package E4 for the first |
 | Confinement of plug-in processes on each operating system | Before any plug-in may claim more than `declared` |
-| Operating-system user-presence prompts, per platform | Package 3.6, after research brief 27; a dialog-only fallback exists |
 | The scheduler beyond its settings: a weighted share for a caller (round robin between callers is built) | Phase 6; one machine needs no more |
 | The admin console's screens | Package 6.5; every admin function already exists as an action |
 | The hosted sign-in page that shows a server's browser to a remote person | Package 7.3, after research brief 17; only one identity mode depends on it |
 | Each widget driver and platform profile in detail | Package 8.4; a catalog exists, and each is built against the test application |
-| The desktop pack's internals | After the spike, package 8.1 |
 | The plug-in software kit | With package F3; the protocol is outlined and first-party packs come first |
 | Triggers, and runs started by an event | Phase 6 or later; until then any outside scheduler can start a run through the REST interface |
 | Usage metering | Phase 9; the ledger already holds the data |
