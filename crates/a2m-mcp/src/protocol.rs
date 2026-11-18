@@ -50,7 +50,10 @@ fn capabilities() -> Json {
 }
 
 fn instructions(core: &Core) -> String {
-    instructions_for(core.toolset.as_str(), &action_run_fields(core.kernel.actions()))
+    instructions_for(
+        core.toolset.as_str(),
+        &action_run_fields(core.kernel.actions()),
+    )
 }
 
 /// The input fields of `action.run`, as the registry defines them: the
@@ -59,7 +62,13 @@ fn instructions(core: &Core) -> String {
 fn action_run_fields(registry: &a2m_actions::ActionRegistry) -> Vec<String> {
     registry
         .find("action.run")
-        .map(|def| def.input.fields.iter().map(|field| field.name.clone()).collect())
+        .map(|def| {
+            def.input
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

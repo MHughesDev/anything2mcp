@@ -113,7 +113,12 @@ async fn a_shadow_binding_reads_beside_the_verified_one_and_a_person_promotes_it
         "2",
     ];
     let refused = world.agent(&promote).await;
-    assert_eq!(refused.error()["code"], "person_required", "{:?}", refused.finished);
+    assert_eq!(
+        refused.error()["code"],
+        "person_required",
+        "{:?}",
+        refused.finished
+    );
     assert_eq!(std::fs::read_to_string(&operations).unwrap(), with_shadow);
     let promoted = world.person(&promote).await;
     assert_eq!(promoted.finished.code, 0, "{:?}", promoted.finished);

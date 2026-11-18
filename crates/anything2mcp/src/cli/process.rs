@@ -199,9 +199,7 @@ async fn serve(
     options.project =
         project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
-    let local = LocalEngine::start(options, prompt)
-        .await
-        .map_err(failed)?;
+    let local = LocalEngine::start(options, prompt).await.map_err(failed)?;
     // An engine a command started on demand that cannot open its vault
     // ends at once and says why, on a line the command that started it
     // reads; it does not stay up degraded for every later command to meet

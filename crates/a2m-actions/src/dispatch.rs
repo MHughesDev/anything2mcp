@@ -735,8 +735,11 @@ impl Kernel {
                     },
                 ),
             };
-            return Err(Refused::new(refusal, effect_class)
-                .then(Next::new("doctor.run", json!({}), "now")));
+            return Err(Refused::new(refusal, effect_class).then(Next::new(
+                "doctor.run",
+                json!({}),
+                "now",
+            )));
         }
 
         // The `Nothing` actions report on the engine and must answer when
@@ -893,7 +896,10 @@ impl Kernel {
         .map_err(|refused| match refused.fix {
             Some(fix) => codes::input(
                 codes::PATH_NOT_ALLOWED,
-                format!("The project folder of this call is not used: {}.", refused.why),
+                format!(
+                    "The project folder of this call is not used: {}.",
+                    refused.why
+                ),
                 fix,
             ),
             None => refuse(&refused.why),

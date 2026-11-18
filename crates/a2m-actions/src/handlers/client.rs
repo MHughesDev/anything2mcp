@@ -75,7 +75,9 @@ fn checked_name(name: &str) -> Result<&str, Failure> {
         Err(codes::input(
             codes::SCHEMA_INVALID,
             "A client profile's name is a plain word of lowercase letters, digits, `_`, and `-`.",
-            format!("Name a profile kept in the `clients` folder of the settings folder, or `{GENERIC}`."),
+            format!(
+                "Name a profile kept in the `clients` folder of the settings folder, or `{GENERIC}`."
+            ),
         ))
     }
 }
@@ -100,7 +102,10 @@ fn profile(folder: &Path, name: &str) -> Result<Profile, Failure> {
     })?;
     if read.format != "json" {
         return Err(refused(
-            format!("The client profile `{name}` names the format `{}`, and only `json` is built.", read.format),
+            format!(
+                "The client profile `{name}` names the format `{}`, and only `json` is built.",
+                read.format
+            ),
             "Use a client whose configuration is a JSON file, or `generic`, which prints the block.",
         ));
     }
@@ -158,7 +163,10 @@ fn object_at<'a>(root: &'a mut Map<String, Json>, key: &str) -> Option<&'a mut M
 fn write_whole(file: &Path, text: &str) -> Result<(), Failure> {
     let cannot = |what: &str| {
         refused(
-            format!("The client's file `{}` could not be {what}.", file.display()),
+            format!(
+                "The client's file `{}` could not be {what}.",
+                file.display()
+            ),
             "Check that the folder exists and is yours, then run the command again.",
         )
     };
@@ -227,7 +235,9 @@ handler!(
             return Err(codes::policy(
                 codes::PERSON_REQUIRED,
                 "Setting a client's configuration changes what that client starts, so it is a person's act, never an agent's.",
-                format!("Ask the person to run `anything2mcp connect {client}` at a terminal; `--print` shows the block without writing it."),
+                format!(
+                    "Ask the person to run `anything2mcp connect {client}` at a terminal; `--print` shows the block without writing it."
+                ),
             ));
         }
         let folder = kernel.paths().config.join("clients");

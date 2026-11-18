@@ -313,7 +313,10 @@ mod tests {
         });
         let tree = Tree::empty();
         let text = show(&response, 0, &tree, false).stdout;
-        assert!(text.starts_with("Scout of `example`, report abc."), "{text}");
+        assert!(
+            text.starts_with("Scout of `example`, report abc."),
+            "{text}"
+        );
         assert!(text.contains("scout report example --json"), "{text}");
         assert!(!text.contains("observed"), "{text}");
         let json = show(&response, 0, &tree, true).stdout;
@@ -335,7 +338,10 @@ mod tests {
         });
         let tree = Tree::empty();
         let text = show(&response, 0, &tree, false).stdout;
-        assert!(text.contains("expires_at: 2027-01-15T08:00:00.123Z"), "{text}");
+        assert!(
+            text.contains("expires_at: 2027-01-15T08:00:00.123Z"),
+            "{text}"
+        );
         assert!(text.contains("at: 1970-01-01T00:00:00.000Z"), "{text}");
         // A number that is not named a moment stays a number.
         assert!(text.contains("count: 1800000000123"), "{text}");

@@ -140,7 +140,10 @@ pub(crate) fn check(
 ) -> Result<PathBuf, ProjectRefused> {
     // The engine's own folders and the project are kept apart, and the
     // refusal says why, with the paths (decision 0219).
-    if let Some(folder) = std::fs::canonicalize(stated).ok().filter(|folder| folder.is_dir()) {
+    if let Some(folder) = std::fs::canonicalize(stated)
+        .ok()
+        .filter(|folder| folder.is_dir())
+    {
         for own in [
             &paths.installation_config,
             &paths.config,

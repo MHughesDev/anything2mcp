@@ -153,7 +153,12 @@ pub(crate) async fn compile_in(
 /// that pass both are pointed at `ready`, the publish; otherwise the hint
 /// names the step that can succeed. Nothing is stored: an offline test runs
 /// in a store of its own.
-pub(crate) async fn publish_next(kernel: &Kernel, call: &Call, target: &TargetName, ready: Next) -> Next {
+pub(crate) async fn publish_next(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+    ready: Next,
+) -> Next {
     let tests = |when: String| Next::new("test.run", json!({"target": target.as_str()}), &when);
     let Ok(project_folder) = call.project_folder().map(std::path::Path::to_path_buf) else {
         return ready;
@@ -195,7 +200,9 @@ pub(crate) async fn publish_next(kernel: &Kernel, call: &Call, target: &TargetNa
     };
     match crate::offline::run_gates(kernel, project_folder, target, &compiled, world, None).await {
         Ok(gates) if gates.passed => ready,
-        Ok(_) => tests("to see which offline tests did not pass, and correct them before a publish".to_owned()),
+        Ok(_) => tests(
+            "to see which offline tests did not pass, and correct them before a publish".to_owned(),
+        ),
         Err(_) => tests("to see whether the publish gates pass".to_owned()),
     }
 }

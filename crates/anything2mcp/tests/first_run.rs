@@ -77,8 +77,7 @@ async fn no_engine(machine: &Machine) {
 /// A machine as a first run finds it, with the `orders` target published by
 /// a person in its project.
 async fn first_machine(app: &TestApp) -> Machine {
-    let machine =
-        Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_default_vault();
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_default_vault();
     // No settings file of any layer: the default chooses the route.
     let paths = Paths::under(machine.home.path());
     assert!(!paths.installation_config.join("settings.toml").exists());
@@ -105,7 +104,15 @@ async fn a_first_run_with_a_passphrase_and_no_settings_file_inits_adds_and_reads
     let address = app.url("");
     let mut add = starting(
         &machine,
-        &["target", "add", "example", "--address", &address, "--kind", "http"],
+        &[
+            "target",
+            "add",
+            "example",
+            "--address",
+            &address,
+            "--kind",
+            "http",
+        ],
     );
     add.current_dir(empty.path());
     let added = output(add).await;

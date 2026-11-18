@@ -44,7 +44,11 @@ async fn an_xml_and_a_text_answer_are_read_through_the_product() {
     let read = &ran.result()["result"];
     let held = app.stored_order("A-100").await.unwrap().unwrap();
     assert_eq!(read["customer"], held.customer.as_str(), "{read}");
-    assert_eq!(read["status"], serde_json::to_value(held.status).unwrap(), "{read}");
+    assert_eq!(
+        read["status"],
+        serde_json::to_value(held.status).unwrap(),
+        "{read}"
+    );
     let codes: Vec<&str> = held.items.keys().map(String::as_str).collect();
     assert_eq!(read["item_codes"], json!(codes), "{read}");
     let quantities: Vec<_> = held.items.values().map(|item| item.quantity).collect();
@@ -85,7 +89,12 @@ async fn an_xml_and_a_text_answer_are_read_through_the_product() {
     let refused = world
         .agent(&["tool", "call", "example_declared_get", "--input", "{}"])
         .await;
-    assert_eq!(refused.error()["code"], "document_type_refused", "{:?}", refused.finished);
+    assert_eq!(
+        refused.error()["code"],
+        "document_type_refused",
+        "{:?}",
+        refused.finished
+    );
     assert!(app.writes().await.unwrap().is_empty());
     world.close().await;
 }

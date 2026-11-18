@@ -1,0 +1,36 @@
+# 0219. Shadow bindings reach the product, and what a first run by hand found is mended
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-18
+
+**Changes:** the designs of [`a2m-actions`](../architecture/crates/a2m-actions.md), [`a2m-mcp`](../architecture/crates/a2m-mcp.md), and [`anything2mcp`](../architecture/crates/anything2mcp.md); the rows of `binding.promote`, `shadow.report`, `draft.delete`, and `client.connect` in the [action catalog](../reference/action-catalog.md); a setting of [section 226](../spec/2-kernel/226-configuration.md); a failure code of the [technical reference](../reference/technical-reference.md). Joins the halves of [decision 0207](0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md) and adopts the registry's and the product's lines of [decision 0220](0220-a-first-run-on-linux-needs-no-administrators-file.md).
+
+## Plan, stated before the build
+
+Wire the engine's and the ledger's shadow halves into the registry, prove the in-page write of decision 0206 through the product's engine loop, and mend each item of a first run of the README by hand that falls in the registry, the MCP bridge, or the product. Alternatives weighed are in the table.
+
+## Decision
+
+| Point | Taken | Weighed and not taken |
+| --- | --- | --- |
+| Shadow in the product | `InProcessControl` keeps comparisons (`keeps_shadow` true; `shadow` records them in the ledger under the job's fence). `shadow.report` gives each binding's standing by digest, names and kinds of what differed and never a value, the threshold, and whether it is promotable now. `binding.promote` of a binding in `shadow` is a person's act: an agent is refused `policy`/`person_required`; the threshold is `engine.shadow.matches_to_promote.read`/`.write` (5, 20); the ledger records the promotion first, in a transaction that asks again, and the file is rewritten after; a promotion the ledger holds whose rewrite did not happen is finished by the next call. The shadow's time bound is the new setting `engine.shadow.time_limit_ms` (2000) | The file first, then the ledger: a ledger refusal after the rewrite would leave a verified binding with no promotion recorded. An agent handed to the person's page, as a drafted write is: a shadow promotion asks for no presence, so a person at a terminal is the plain way, and a page can come later |
+| The digest a promotion rests on | Proven equal in the drafts and the published plan when the binding's files did not change (registry test) | Pinning promotions to the published plan: the drafts are what is rewritten |
+| A shadow read takes rate budget | Yes: it is a request to the surface, and the scheduler counts it | Exempting it: the surface's limit is the system's, whoever asks |
+| Hints of `target.status` and `draft.lint` | Read the publish gates: the same publish compile (an operation with no offline test) and the same offline tests; only drafts that pass both are pointed at the publish, else at `test.run`, naming the operations with no test | A cheaper check of test files alone: it would disagree with the gate whenever a test fails |
+| Exit of `test.run` that did not pass | `failed`, exit code 1, with the refusal a publish would give (`input`/`publish_gates_not_passed`) and the whole result. Section 220's table: 1 is "the action failed; the error says why" | 3, "a person is needed": a failed gate needs a fix, not a person. 0 with `passed: false`: a script cannot tell |
+| `a2m_action_run` | The bridge's instructions are made from `action.run`'s own field names (`action`, `input`); a test holds the sentence to the schema. `next.args` is called as given | Renaming the schema's field to `args`: `input` is the registry's word for an action's input everywhere |
+| Removing drafts | `draft.delete` takes `file`, or `files` for several: each checked as one is, all checked before any is removed, all or none; the scout's report says a draft is a proposal and how to remove those nobody wants | A switch that removes every draft of a scout: a person would remove what they did not look at |
+| `production` on the publish page | The compiler implies it for a target that does not declare it, at each surface's own address; the page says so in a line of its own and keeps showing it | Hiding it: a published tool may be called there, so the person must see it |
+| Moments at a terminal | A field named `at` or `<something>_at` holding whole milliseconds is printed in RFC 3339 form at a terminal; JSON keeps the number; a tool's own `result` values are printed as they are | A moment type in the output schemas: larger, and the names already say it |
+| `scout.run` at a terminal | The report's readable summary and the command that prints the whole as JSON; a pipe or `--json` gets the whole report | Paging the report |
+| `client.connect` | Built. `generic`, the default, prints the server entry block and writes no file. A profile is data the local user keeps, `<settings>/clients/<name>.toml`: `format` (`json`), `key` (where the entry goes), a path per system. Writing is a local person's act, shown first and written only with `yes`; only the entry of its name is set, every other entry kept; written whole beside the file and renamed; a file that does not read as a JSON object is refused, `input`/`client_config_refused`. No profile of a real client ships | Built-in profiles of named clients, as section 404 shows: "no client is special", and a client's file moves between its releases; a profile is a file anyone can write |
+| A project inside the engine's home, or the home inside the project | The refusal names both folders and why they are kept apart, and its fix says to set `A2M_HOME` outside the project (decision 0220, point 5: the refusal is made in the registry's check of a stated project folder) | |
+| A vault that never attached | Every action that needs the store is refused, a read too, with the vault's own failure when it is something the person did not give (`vault_passphrase_missing`), else `engine_degraded` with the cause's own fix | Letting reads run degraded: the store refuses them later as `store_unavailable`, which does not say why |
+
+## Consequences
+
+- A live read whose operation has a binding in `shadow` is compared once per job and counted; a person promotes it with `anything2mcp binding promote <target> --tool <tool> --mode <mode> [--position <n>]`, and a publish makes it act.
+- Section 404 still shows `connect` with names of particular clients. It should read: `anything2mcp connect [<profile>]` prints the block for any client; a profile kept as data writes it into that client's file.
+- Not built: the shadow of a write (decision 0207); a page for a shadow promotion an agent asks for; client profiles in any format but JSON.
+- The test `a_bridge_starts_an_engine_and_the_engine_stops_by_itself_when_idle` once saw `asked`. The engine reports `asked` only after SIGINT, SIGTERM, or `engine.stop` on its own socket; no path of the product or of the test sends one to that engine, and the test passed when run here. The cause is not found; it is not called a flake.

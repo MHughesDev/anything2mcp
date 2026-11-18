@@ -342,8 +342,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
     // is the default (decision 0220).
     if PassphraseRoute::of_backend(settings.text("vault.backend")) == PassphraseRoute::Enabled {
         let name = "a passphrase given at start";
-        let no_store =
-            |why: Failure| no_store_of(name, StoreStrength::Passphrase, why);
+        let no_store = |why: Failure| no_store_of(name, StoreStrength::Passphrase, why);
         let Some(passphrase) = options
             .environment
             .get(PASSPHRASE_VARIABLE)

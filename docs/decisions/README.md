@@ -8,6 +8,8 @@ Who may change what ([record 0055](0055-agents-plan-build-and-merge-without-wait
 
 Records 0001 to 0054 were written when the product was named Web2MCP, and keep the names of their time. [Record 0056](0056-one-name-everywhere-anything2mcp.md) has the key from the earlier names to the present ones.
 
+Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0235 were set aside for work that did not need them, and were never written. A missing number is not a missing decision.
+
 | # | Decision | Status |
 | --- | --- | --- |
 | 0001 | [Name: Web2MCP](0001-name-web2mcp.md) | Superseded by 0048 |
@@ -235,3 +237,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |
 | 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Proposed (owner decision) |
 | 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Proposed (owner decision) |
+| 0219 | [Shadow bindings reach the product, and what a first run by hand found is mended](0219-shadow-bindings-reach-the-product-and-the-first-hour-is-mended.md) | Accepted (design decision) |
+| 0221 | [The repository is cleaned, and its names say what each thing holds](0221-the-repository-is-cleaned-and-its-names-say-what-each-thing-holds.md) | Accepted (design decision) |

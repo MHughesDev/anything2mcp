@@ -456,7 +456,11 @@ async fn trial_evidence(
 /// The same checked write as `draft.write`: through the checked path of the
 /// project, a new file renamed over the name, never through a link, and
 /// refused where the file changed since the binding was found.
-async fn rewrite(project_folder: PathBuf, target: &TargetName, found: &Found) -> Result<(), Failure> {
+async fn rewrite(
+    project_folder: PathBuf,
+    target: &TargetName,
+    found: &Found,
+) -> Result<(), Failure> {
     let (target, path, edited, original) = (
         target.clone(),
         found.file.clone(),
@@ -761,9 +765,9 @@ handler!(
         let standings = kernel
             .store()?
             .read(move |tx| {
-                let report =
-                    tx.shadow()
-                        .report(&workspace, &asked_target, asked.as_ref())?;
+                let report = tx
+                    .shadow()
+                    .report(&workspace, &asked_target, asked.as_ref())?;
                 let mut shown = Vec::with_capacity(report.len());
                 for standing in report {
                     // Only reads are compared: the ledger refuses the

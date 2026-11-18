@@ -455,7 +455,12 @@ async fn a_page_http_update_through_the_engine_loop_is_approved_written_once_and
     // Called by an agent, the write rests, and nothing was written.
     let input = r#"{"order_id": "A-100", "note": "Deliver to the side door"}"#;
     let rested = world.agent(&["tool", "call", NOTE, "--input", input]).await;
-    assert_eq!(rested.result()["status"], "needs_approval", "{:?}", rested.finished);
+    assert_eq!(
+        rested.result()["status"],
+        "needs_approval",
+        "{:?}",
+        rested.finished
+    );
     let run = rested.result()["run_id"].as_str().unwrap().to_owned();
     assert!(app.stored_notes().await.unwrap().writes.is_empty());
     given.push(rested.json.to_string());
@@ -486,9 +491,17 @@ async fn a_page_http_update_through_the_engine_loop_is_approved_written_once_and
     assert_eq!(lost.error()["class"], "possible_commit", "{}", lost.json);
     assert_eq!(app.stored_notes().await.unwrap().writes["A-100"], 2);
     let reconciled = world.agent(&["run", "resume", &second]).await;
-    assert_eq!(reconciled.result()["status"], "completed", "{}", reconciled.json);
+    assert_eq!(
+        reconciled.result()["status"],
+        "completed",
+        "{}",
+        reconciled.json
+    );
     let stored = app.stored_notes().await.unwrap();
-    assert_eq!(stored.writes["A-100"], 2, "the reconcile sent the write again");
+    assert_eq!(
+        stored.writes["A-100"], 2,
+        "the reconcile sent the write again"
+    );
     assert_eq!(stored.notes["A-100"], "Leave with the neighbour");
     let trace = world.ok(&["trace", "show", &second]).await;
     let kinds = kinds(&trace);

@@ -1978,7 +1978,10 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     assert!(!report["text"].as_str().unwrap().contains(needle));
     // The report says how drafts nobody asked for are removed.
     assert!(
-        report["text"].as_str().unwrap().contains("`draft.delete`, all in one call by `files`"),
+        report["text"]
+            .as_str()
+            .unwrap()
+            .contains("`draft.delete`, all in one call by `files`"),
         "{report}"
     );
     let listed = world
@@ -2491,7 +2494,11 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
             .await;
         let next = answered.next.unwrap();
         assert_eq!(next.action, "test.run", "{action}: {}", next.when);
-        assert!(next.when.contains("operations/order_get.yaml"), "{}", next.when);
+        assert!(
+            next.when.contains("operations/order_get.yaml"),
+            "{}",
+            next.when
+        );
     }
     let missing = &gates["missing"][0];
     assert_eq!(missing["file"], "operations/order_get.yaml", "{gates}");
@@ -3053,7 +3060,7 @@ async fn a_binding_is_never_written_verified_by_hand() {
 /// threshold's run of exact matches.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_promoted_by_a_person()
-{
+ {
     use std::sync::atomic::Ordering;
     let world = World::open().await;
     world.kernel.start_runner_loop(2).await.unwrap();
@@ -3096,19 +3103,29 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
             .find(|operation| operation.name.as_str() == "example_order_get")
             .unwrap()
             .clone();
-        a2m_engine::BindingPin::of(&plan, &operation, 1).unwrap().digest
+        a2m_engine::BindingPin::of(&plan, &operation, 1)
+            .unwrap()
+            .digest
     };
     let drafted = digest_in(a2m_files::CompileMode::Draft, a2m_files::DRAFT_VERSION);
 
     let published = world
-        .call(&world.person, "version.publish", json!({"target": "example"}))
+        .call(
+            &world.person,
+            "version.publish",
+            json!({"target": "example"}),
+        )
         .await;
     assert!(published.ok, "{:?}", published.error);
     let published = published.result.unwrap();
     assert_eq!(
         digest_in(
             a2m_files::CompileMode::Publish,
-            published["version"].as_str().unwrap().parse::<a2m_core::Version>().unwrap()
+            published["version"]
+                .as_str()
+                .unwrap()
+                .parse::<a2m_core::Version>()
+                .unwrap()
         ),
         drafted,
         "a binding whose files did not change has one digest in the drafts and the plan"
@@ -3169,10 +3186,18 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert_eq!(world.more.spare.load(Ordering::SeqCst), 5);
     let reported = report().await;
     let standing = &reported["bindings"][0];
-    assert_eq!(reported["bindings"].as_array().unwrap().len(), 1, "{reported}");
+    assert_eq!(
+        reported["bindings"].as_array().unwrap().len(),
+        1,
+        "{reported}"
+    );
     assert_eq!(standing["binding"], drafted.to_string(), "{reported}");
     assert_eq!(
-        (&standing["matches"], &standing["in_a_row"], &standing["threshold"]),
+        (
+            &standing["matches"],
+            &standing["in_a_row"],
+            &standing["threshold"]
+        ),
         (&json!(5), &json!(5), &json!(5)),
         "{reported}"
     );
@@ -3185,7 +3210,10 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     world.more.spare_differs.store(false, Ordering::SeqCst);
     let reported = report().await;
     let standing = &reported["bindings"][0];
-    assert_eq!((&standing["in_a_row"], &standing["mismatches"]), (&json!(0), &json!(1)));
+    assert_eq!(
+        (&standing["in_a_row"], &standing["mismatches"]),
+        (&json!(0), &json!(1))
+    );
     assert_eq!(standing["promotable"], false);
     assert_eq!(standing["not_promotable"], "mismatch_since");
     assert_eq!(
@@ -3199,7 +3227,11 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     }
     let early = promote(world.person.clone()).await.error.unwrap();
     assert_eq!(early.code, "shadow_not_promotable", "{}", early.message);
-    assert!(std::fs::read_to_string(&operation).unwrap().contains("status: shadow"));
+    assert!(
+        std::fs::read_to_string(&operation)
+            .unwrap()
+            .contains("status: shadow")
+    );
 
     // Five matches in a row again: an agent is refused, a person promotes.
     for _ in 0..5 {
@@ -3254,14 +3286,19 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
         format!("format = \"json\"\nkey = \"servers\"\n[path]\nlinux = \"{shown}\"\nmacos = \"{shown}\"\nwindows = \"{shown}\"\n"),
     )
     .unwrap();
-    let before = "{\"theme\": \"dark\", \"servers\": {\"other\": {\"command\": \"other-program\"}}}";
+    let before =
+        "{\"theme\": \"dark\", \"servers\": {\"other\": {\"command\": \"other-program\"}}}";
     std::fs::write(&file, before).unwrap();
     let connect = |caller: &Caller, yes: bool| {
         let world = &world;
         let caller = caller.clone();
         async move {
             world
-                .call(&caller, "client.connect", json!({"client": "example", "yes": yes}))
+                .call(
+                    &caller,
+                    "client.connect",
+                    json!({"client": "example", "yes": yes}),
+                )
                 .await
         }
     };
@@ -3282,7 +3319,10 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     assert_eq!(now["theme"], "dark");
     assert_eq!(now["servers"]["other"]["command"], "other-program");
     assert_eq!(now["servers"]["anything2mcp"], written["entry"]);
-    assert_eq!(connect(&world.person, true).await.result.unwrap()["change"], "same");
+    assert_eq!(
+        connect(&world.person, true).await.result.unwrap()["change"],
+        "same"
+    );
     // A file that does not read is refused, and left as it is.
     std::fs::write(&file, "not json").unwrap();
     let unread = connect(&world.person, true).await;
@@ -3290,7 +3330,11 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
     // A profile is named by a plain word only.
     let odd = world
-        .call(&world.person, "client.connect", json!({"client": "../example"}))
+        .call(
+            &world.person,
+            "client.connect",
+            json!({"client": "../example"}),
+        )
         .await;
     assert_eq!(odd.error.unwrap().code, "schema_invalid");
     world.kernel.close(CloseReason::Asked).await;

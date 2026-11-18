@@ -548,10 +548,7 @@ fn the_vault_back_end_defaults_to_what_the_build_has_and_only_the_installation_c
                 ..Sources::none()
             },
             Sources {
-                environment: BTreeMap::from([(
-                    "A2M_VAULT__BACKEND".to_owned(),
-                    value.to_owned(),
-                )]),
+                environment: BTreeMap::from([("A2M_VAULT__BACKEND".to_owned(), value.to_owned())]),
                 ..Sources::none()
             },
         ] {
