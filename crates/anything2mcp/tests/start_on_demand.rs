@@ -135,10 +135,15 @@ async fn gone(machine: &Machine) -> Json {
     }
 }
 
+/// Stops the machine's engine with `engine stop`. The engine's last object
+/// names what asked it, so that a signal from anywhere else on the machine
+/// is caught and named, in every test of this file (decision 0266).
 async fn stop(machine: &Machine) {
     let stopped = output(machine.program(&["engine", "stop"])).await;
     assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
-    assert_eq!(gone(machine).await["result"]["stopped"], "asked");
+    let last = gone(machine).await;
+    assert_eq!(last["result"]["stopped"], "asked", "{last}");
+    assert_eq!(last["result"]["by"], "engine.stop", "{last}");
 }
 
 /// What the operating system says of a process, on Linux: its session,
@@ -305,8 +310,11 @@ async fn a_bridge_starts_an_engine_and_the_engine_stops_by_itself_when_idle() {
     assert_eq!(started(&machine).len(), 1, "{}", log(&machine));
 
     // The bridge has gone and nothing is in hand: after a minute the
-    // engine stops by itself, and its lock is free.
-    assert_eq!(gone(&machine).await["result"]["stopped"], "idle");
+    // engine stops by itself, and its lock is free. Nothing asked it, so
+    // its last object names nothing.
+    let last = gone(&machine).await;
+    assert_eq!(last["result"]["stopped"], "idle", "{}", log(&machine));
+    assert!(last["result"].get("by").is_none(), "{last}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

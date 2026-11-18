@@ -554,7 +554,19 @@ handler!(
 
         let entry = Arc::new(declared.entry);
         let ticket = keeper
-            .sign_in(&key, Arc::clone(&entry), call.caller.principal.person())
+            .sign_in_by(
+                &key,
+                Arc::clone(&entry),
+                call.caller.principal.person(),
+                // A person's own press, or a person at the command line,
+                // may try a credential again; an agent's ask may not once
+                // the stored one is at its limit (decision 0269).
+                if pressed || !call.caller.is_agent {
+                    a2m_auth::SignInBy::Person
+                } else {
+                    a2m_auth::SignInBy::Asked
+                },
+            )
             .await?;
         let status = keeper
             .signed_in(ticket.session, sign_in_wait(kernel))

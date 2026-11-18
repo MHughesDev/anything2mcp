@@ -220,7 +220,7 @@ fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
         sources = sources.with_flag(key, value);
     }
     if let Some(keeper) = &options.installation_keeper {
-        sources.installation_keeper = keeper.clone();
+        sources = sources.with_installation_keeper_for_tests(keeper.clone());
     }
     Ok(sources)
 }

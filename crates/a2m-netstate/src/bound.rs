@@ -25,6 +25,9 @@ pub const LONGEST_TEXT: usize = 1024;
 pub const MOST_TABLE_BYTES: usize = 16 * 1024 * 1024;
 /// The most processes walked to find the owners of listening sockets.
 pub const MOST_PROCESSES: usize = 65_536;
+/// The most open descriptors read, across all processes, to find the owners
+/// of listening sockets. With [`MOST_PROCESSES`] it bounds the walk's time.
+pub const MOST_DESCRIPTORS: usize = 1 << 20;
 
 /// One list a bound cut: how many entries were kept, of how many seen.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]

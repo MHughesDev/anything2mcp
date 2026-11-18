@@ -63,7 +63,8 @@ pub use tx::{Durability, Owner, PolicyKey, Row, SqlValue, Tables, Tx};
 pub use version::{PublishedVersion, VersionRow, Versions};
 pub use watch::{
     ChangeCounts, ChangeKind, ChangeRow, CheckEnded, CheckOutcome, CheckRow, Due, Missed, NewWatch,
-    Observed, ObservedRecord, WatchId, WatchReason, WatchRow, WatchState, Watches,
+    WATCH_INTERVAL_FLOOR, WATCH_LONGEST, WatchId, WatchReason, WatchRow, WatchShape, WatchState,
+    Watches,
 };
 pub use watch_compare::{
     Baseline, ChangedRecord, CheckDigests, CheckFault, Comparison, Held, MissingRecord,
@@ -84,5 +85,7 @@ pub mod codes {
         WATCH_DUE_MISSED, WATCH_ENDED, WATCH_NEEDS_CONFIRMATION, WATCH_NOT_A_READ,
         WATCH_NOT_CONFIRMED, WATCH_NOT_YOURS, WATCH_PAUSED, WATCH_RUN_NOT_ITS_OWN,
     };
-    pub use crate::watch_compare::{WATCH_KEY_REPEATED, WATCH_SHAPES_MIXED};
+    pub use crate::watch_compare::{
+        WATCH_KEY_REPEATED, WATCH_RESULT_NOT_ITS_SHAPE, WATCH_SHAPES_MIXED,
+    };
 }

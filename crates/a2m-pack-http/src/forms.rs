@@ -47,8 +47,15 @@ pub(crate) const MAX_NAMESPACES: usize = 64;
 pub(crate) const WORK_PER_BYTE: u64 = 4;
 /// What reading any answer may cost besides.
 pub(crate) const WORK_BASE: u64 = 65_536;
-/// The most memory a compiled pattern may take, as the command pack's.
-const PATTERN_SIZE_LIMIT: usize = 1 << 20;
+/// The most memory a compiled pattern may take (decision 0270; it was the
+/// command pack's 1 MiB).
+const PATTERN_SIZE_LIMIT: usize = 1 << 18;
+/// The longest pattern a text answer may declare, in bytes as written
+/// (decision 0270).
+pub(crate) const MOST_PATTERN_BYTES: usize = 4_096;
+/// The longest text a pattern is matched against, in bytes once decoded
+/// (decision 0270). A longer text is refused before the match begins.
+pub(crate) const MOST_MATCHED_BYTES: usize = 1 << 20;
 
 /// The words of `answer.form`.
 pub(crate) const FORMS: &[&str] = &["json", "xml", "text", "bytes"];
@@ -296,12 +303,24 @@ pub(crate) struct TextForm {
 
 /// Compiles a text answer's pattern so that it covers the whole text: an
 /// alternative inside it cannot slip past the anchors. The matcher takes
-/// time linear in the text.
+/// time linear in the text, times the size of the compiled pattern; both
+/// are bounded. A pattern longer than [`MOST_PATTERN_BYTES`] is refused
+/// before it is compiled, and one whose compiled form would take more than
+/// 256 KiB is refused by the compiler.
 pub(crate) fn whole_pattern(text: &str) -> Result<regex::Regex, String> {
+    if text.len() > MOST_PATTERN_BYTES {
+        return Err(format!(
+            "The pattern is {} bytes long, and a pattern is at most 4,096 bytes.",
+            text.len()
+        ));
+    }
     regex::RegexBuilder::new(&format!(r"\A(?:{text})\z"))
         .size_limit(PATTERN_SIZE_LIMIT)
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|_| {
+            "The pattern does not compile, or its compiled form would take more than 256 KiB."
+                .to_owned()
+        })
 }
 
 /// Why an answer could not be read in its declared form. A message names a
@@ -460,10 +479,8 @@ impl AnswerSpec {
             Form::Text(form) => read_text(body, form, redact, stop),
             Form::Bytes => {
                 // A body that holds a registered secret gives nothing: its
-                // length and digest would let a caller confirm a guess. A
-                // secret is text, and every part of a body that is UTF-8
-                // survives this reading whole.
-                if redact.contains_secret(&String::from_utf8_lossy(body)) {
+                // length and digest would let a caller confirm a guess.
+                if holds_secret(body, redact, stop)? {
                     return Err(Unread::HoldsSecret);
                 }
                 Ok(Json::Object(vec![
@@ -473,6 +490,42 @@ impl AnswerSpec {
             }
         }
     }
+}
+
+/// Whether a `bytes` body holds a registered secret, in any form the
+/// redactor knows, written in UTF-8 or in UTF-16 of either byte order at
+/// either alignment (decision 0270). Every reading replaces what does not
+/// decode, which keeps every part that does decode whole, so a secret
+/// between bytes that are not text is found. What the redactor finds in
+/// text, such as base64, hexadecimal, and percent-encoding, is ASCII and
+/// is found in the UTF-8 reading. Not found: a secret compressed,
+/// encrypted, or written in any other encoding of text.
+fn holds_secret(body: &[u8], redact: &dyn Redact, stop: &AtomicBool) -> Result<bool, Unread> {
+    if redact.contains_secret(&String::from_utf8_lossy(body)) {
+        return Ok(true);
+    }
+    for little in [true, false] {
+        for skip in [0, 1] {
+            if stop.load(Ordering::Relaxed) {
+                return Err(Unread::Stopped);
+            }
+            let (pairs, _) = body.get(skip..).unwrap_or_default().as_chunks::<2>();
+            let units = pairs.iter().map(|pair| {
+                if little {
+                    u16::from_le_bytes(*pair)
+                } else {
+                    u16::from_be_bytes(*pair)
+                }
+            });
+            let text: String = char::decode_utf16(units)
+                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect();
+            if redact.contains_secret(&text) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// A body whose header names US-ASCII is ASCII, or the two disagree.
@@ -505,6 +558,13 @@ fn read_text(
     }
     let mut record = vec![(WHOLE_TEXT.to_owned(), Json::Text(text.clone()))];
     if let Some(pattern) = &form.pattern {
+        // Bounded before the match begins, which cannot be stopped midway.
+        if text.len() > MOST_MATCHED_BYTES {
+            return Err(Unread::TooLarge(format!(
+                "its text is {} bytes, and a pattern is matched against at most {MOST_MATCHED_BYTES} bytes",
+                text.len()
+            )));
+        }
         let compiled = whole_pattern(pattern)
             .map_err(|_| Unread::Shape("the endpoint's pattern does not compile".to_owned()))?;
         let found = compiled.captures(&text).ok_or_else(|| {
@@ -934,12 +994,12 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
                     );
                 }
                 (Some(text), _) => match whole_pattern(text) {
-                    Err(_) => {
+                    Err(why) => {
                         let at = written
                             .get("pattern")
                             .map_or(&written.at, |p| &p.at)
                             .clone();
-                        reading.refuse(&at, "The pattern does not compile.");
+                        reading.refuse(&at, why);
                     }
                     Ok(compiled) => {
                         let groups: Vec<&str> = compiled.capture_names().flatten().collect();
@@ -1202,6 +1262,96 @@ mod tests {
             read.get("digest").and_then(Json::as_text),
             Some(super::body_digest(&[0xFF, 0x00, 0x01]).to_string().as_str())
         );
+    }
+
+    /// A secret written in a `bytes` body in UTF-16, of either byte order,
+    /// at an even or an odd position, is found as well as one in UTF-8
+    /// (decision 0270).
+    #[test]
+    fn a_body_that_holds_a_registered_secret_in_utf_16_gives_nothing() {
+        let bytes = AnswerSpec {
+            form: Form::Bytes,
+            content_types: Vec::new(),
+        };
+        let secret = One("secret-for-tests-wide-0270");
+        let units: Vec<u16> = "secret-for-tests-wide-0270".encode_utf16().collect();
+        for little in [true, false] {
+            for lead in [0_usize, 1, 2, 3] {
+                let mut body = vec![0xFF; lead];
+                for unit in &units {
+                    let pair = if little {
+                        unit.to_le_bytes()
+                    } else {
+                        unit.to_be_bytes()
+                    };
+                    body.extend_from_slice(&pair);
+                }
+                body.extend_from_slice(&[0x00, 0xD8, 0x01]);
+                assert_eq!(
+                    bytes.read(&body, None, &secret, &GOING),
+                    Err(Unread::HoldsSecret),
+                    "little endian {little}, {lead} bytes before it"
+                );
+            }
+        }
+    }
+
+    /// The forms the engine's redactor already knows a secret in, such as
+    /// base64, hexadecimal, and percent-encoding, are text; the UTF-8
+    /// reading of a `bytes` body finds them, between bytes that are not
+    /// text as well.
+    #[test]
+    fn a_body_that_holds_a_registered_secret_in_a_form_the_redactor_knows_gives_nothing() {
+        let bytes = AnswerSpec {
+            form: Form::Bytes,
+            content_types: Vec::new(),
+        };
+        let redactor = a2m_vault::Redactor::new();
+        redactor.register(&a2m_core::Secret::new("secret-for-tests-coded-0270"));
+        for written in [
+            "c2VjcmV0LWZvci10ZXN0cy1jb2RlZC0wMjcw",
+            "7365637265742d666f722d74657374732d636f6465642d30323730",
+            "secret%2Dfor%2Dtests%2Dcoded%2D0270",
+        ] {
+            let mut body = vec![0xFF, 0x00];
+            body.extend_from_slice(written.as_bytes());
+            body.push(0xFE);
+            assert_eq!(
+                bytes.read(&body, None, &redactor, &GOING),
+                Err(Unread::HoldsSecret),
+                "{written}"
+            );
+        }
+    }
+
+    /// The text a pattern is matched against is bounded before the match
+    /// begins: past the bound the answer is refused as too large to read,
+    /// and the pattern is never run (decision 0270).
+    #[test]
+    fn a_text_longer_than_a_pattern_is_matched_over_is_refused_before_the_match() {
+        let form = AnswerSpec {
+            form: Form::Text(TextForm {
+                charset: Charset::Utf8,
+                pattern: Some("(?P<size>[0-9]+)x*".to_owned()),
+                fields: vec![TextField {
+                    name: "size".to_owned(),
+                    kind: crate::shape::Kind::Integer,
+                    required: true,
+                }],
+            }),
+            content_types: Vec::new(),
+        };
+        let mut long = b"12".to_vec();
+        long.resize(super::MOST_MATCHED_BYTES + 1, b'x');
+        assert!(matches!(
+            form.read(&long, None, &NoSecrets, &GOING),
+            Err(Unread::TooLarge(_))
+        ));
+        long.truncate(super::MOST_MATCHED_BYTES);
+        let read = form.read(&long, None, &NoSecrets, &GOING).unwrap();
+        assert_eq!(read.get("size"), Some(&Json::Number("12".to_owned())));
+        // The compiled bound leaves room for the classes patterns use.
+        assert!(super::whole_pattern(r"(?P<w>\w+) (?P<d>\d+) (?P<s>\s*)").is_ok());
     }
 
     #[test]

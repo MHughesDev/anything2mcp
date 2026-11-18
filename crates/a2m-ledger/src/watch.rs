@@ -14,8 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, OperationName,
-    PrincipalId, RecordKey, RunId, RunState, TargetName, Timestamp, Values, WorkspaceId,
+    Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass, FailureCode,
+    OperationName, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName, Timestamp,
+    Value, Values, WorkspaceId,
 };
 use serde_json::{Map, Value as Json};
 
@@ -58,6 +59,18 @@ pub const WATCH_DUE_MISSED: FailureCode = FailureCode::fixed("watch_due_missed")
 /// cancelled, or it expired. Class `busy`.
 pub const WATCH_CHECK_NOT_COMPLETED: FailureCode = FailureCode::fixed("watch_check_not_completed");
 
+/// The shortest interval the ledger takes for a watch, whatever asks: the
+/// floor no setting lowers. The scheduler's setting may only raise it.
+pub const WATCH_INTERVAL_FLOOR: Duration = Duration::from_secs(60);
+/// The longest a watch may last from when it is asked for, whatever asks:
+/// 366 days. The scheduler's setting may only shorten it.
+pub const WATCH_LONGEST: Duration = Duration::from_secs(366 * 86_400);
+
+/// Whether the engine records that a read returned every record. It does
+/// not yet: until it does, no check is complete, and no removal is ever
+/// reported, only `unseen` (decision 0262).
+const COMPLETENESS_RECORDED: bool = false;
+
 /// Every failure code of a watch the ledger produces, with its one class.
 pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Policy, "watch_not_a_read"),
@@ -73,6 +86,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Busy, "watch_check_not_completed"),
     (FailureClass::UnknownVariant, "watch_key_repeated"),
     (FailureClass::UnknownVariant, "watch_shapes_mixed"),
+    (FailureClass::UnknownVariant, "watch_result_not_its_shape"),
 ];
 
 words! {
@@ -192,8 +206,9 @@ words! {
         Running => "running",
         /// Its run completed and the read returned every record.
         Complete => "complete",
-        /// Its run completed and the read said more records exist than it
-        /// returned.
+        /// Its run completed and its result does not prove the read
+        /// returned every record: the read said more exist, or, while the
+        /// engine records no completeness, said nothing either way.
         CutShort => "cut_short",
         /// Its run did not complete.
         Failed => "failed",
@@ -229,6 +244,110 @@ words! {
     }
 }
 
+/// What a watch's records are, in its checks' results: taken from the
+/// published plan, never from the caller's input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchShape {
+    /// The whole result is one record.
+    Whole,
+    /// The output `list` is a list of records, each named by the values of
+    /// the fields `key`, in that order.
+    List {
+        /// The list output's name.
+        list: String,
+        /// The fields of a record that make its key, in order. At least one.
+        key: Vec<String>,
+    },
+}
+
+impl WatchShape {
+    /// The canonical JSON the store keeps: `{"whole":true}` or
+    /// `{"key":[...],"list":"..."}`.
+    #[must_use]
+    pub fn stored(&self) -> String {
+        match self {
+            Self::Whole => serde_json::json!({ "whole": true }).to_string(),
+            Self::List { list, key } => serde_json::json!({ "key": key, "list": list }).to_string(),
+        }
+    }
+
+    fn from_stored(text: &str) -> Result<Self, Failure> {
+        let corrupt = || failure::corrupt("a watch's stored shape that no longer reads");
+        let json: Json = serde_json::from_str(text).map_err(|_| corrupt())?;
+        if json == serde_json::json!({ "whole": true }) {
+            return Ok(Self::Whole);
+        }
+        let list = json
+            .get("list")
+            .and_then(Json::as_str)
+            .ok_or_else(corrupt)?;
+        let key = json
+            .get("key")
+            .and_then(Json::as_array)
+            .ok_or_else(corrupt)?
+            .iter()
+            .map(|field| field.as_str().map(str::to_owned).ok_or_else(corrupt))
+            .collect::<Result<Vec<_>, _>>()?;
+        let shape = Self::List {
+            list: list.to_owned(),
+            key,
+        };
+        shape.check().map_err(|_| corrupt())?;
+        Ok(shape)
+    }
+
+    fn check(&self) -> Result<(), Failure> {
+        match self {
+            Self::Whole => Ok(()),
+            Self::List { list, key } => {
+                let distinct: BTreeSet<&String> = key.iter().collect();
+                if list.is_empty()
+                    || key.is_empty()
+                    || key.iter().any(String::is_empty)
+                    || distinct.len() != key.len()
+                {
+                    return Err(failure::invalid(
+                        "a watch's shape with no list, or a key that is empty or names a field twice",
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The records of a check's result: the whole result as one, or each
+    /// record of the list output with its key.
+    fn records(&self, result: &Values) -> Result<Vec<ObservedRecord>, CheckFault> {
+        match self {
+            Self::Whole => Ok(vec![ObservedRecord {
+                key: None,
+                values: result.clone(),
+            }]),
+            Self::List { list, key } => {
+                let Some(Value::List(items)) = result.get(list) else {
+                    return Err(CheckFault::NotItsShape);
+                };
+                items
+                    .iter()
+                    .map(|item| {
+                        let Value::Record(values) = item else {
+                            return Err(CheckFault::NotItsShape);
+                        };
+                        let parts = key
+                            .iter()
+                            .map(|field| values.get(field).cloned().ok_or(CheckFault::NotItsShape))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(ObservedRecord {
+                            key: Some(RecordKey::new(parts).map_err(|_| CheckFault::NotItsShape)?),
+                            values: values.clone(),
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
 /// A watch an agent asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewWatch {
@@ -250,9 +369,18 @@ pub struct NewWatch {
     /// The fixed input, stored as a run's input is.
     pub input: Option<BlobRef>,
     /// Outputs left out of the digests, each checked against the output
-    /// schema by the caller.
+    /// schema by the caller. For a list, fields of its records.
     pub ignore: BTreeSet<String>,
-    /// The time between due times: whole seconds, at least one.
+    /// The surface the read uses: the share of whose budget its checks
+    /// spend. From the operation's verified binding.
+    pub surface: SurfaceName,
+    /// How many requests one check sends, at least one: the count of the
+    /// read's steps that send, from its rate plan.
+    pub requests_per_check: u32,
+    /// What its records are, from the plan's declared list output and key.
+    pub shape: WatchShape,
+    /// The time between due times: whole seconds, at least
+    /// [`WATCH_INTERVAL_FLOOR`].
     pub interval: Duration,
     /// When it ends at the latest.
     pub ends_at: Timestamp,
@@ -288,6 +416,12 @@ pub struct WatchRow {
     pub input: Option<BlobRef>,
     /// Outputs left out of the digests.
     pub ignore: BTreeSet<String>,
+    /// The surface the read uses.
+    pub surface: SurfaceName,
+    /// How many requests one check sends.
+    pub requests_per_check: u32,
+    /// What its records are.
+    pub shape: WatchShape,
     /// The time between due times.
     pub interval: Duration,
     /// When it ends at the latest.
@@ -433,25 +567,15 @@ pub struct ChangeRow {
 }
 
 /// One record a check's read returned, as its run's result holds it after
-/// normalization. Reduced to digests in the transaction that ends the check
-/// and never stored.
+/// normalization, worked out by the ledger from the run's own result and
+/// the watch's shape. Reduced to digests in the transaction that ends the
+/// check and never stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ObservedRecord {
+struct ObservedRecord {
     /// Its key; `None` for a read compared whole.
-    pub key: Option<RecordKey>,
+    key: Option<RecordKey>,
     /// Its normalized values, by output name.
-    pub values: Values,
-}
-
-/// What a completed check's read returned.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Observed {
-    /// The records, in any order.
-    pub records: Vec<ObservedRecord>,
-    /// Whether the read returned every record that matches its input: no
-    /// `more`, the pager's last page. The caller says so only where the
-    /// read reports it; otherwise it is false, and no removal is reported.
-    pub complete: bool,
+    values: Values,
 }
 
 /// What ending a check gave.
@@ -583,7 +707,7 @@ macro_rules! watch_columns {
          input_ref, ignore_outputs, interval_seconds, ends_at, asked_by, acts_for, client_label,
          asked_at, retention_class, confirmed_by, confirmed_at, phase_ms, state, reason,
          reason_failure_class, reason_failure_code, state_since, next_due_index, not_before, running_check, checks,
-         baseline_through, baseline_complete"
+         baseline_through, baseline_complete, surface, requests_per_check, record_shape"
     };
 }
 
@@ -632,6 +756,9 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
         checks: count(row.int(27)?)?,
         baseline_through: row.opt_int(28)?.map(count).transpose()?,
         baseline_complete: row.int(29)? != 0,
+        surface: parse(row.text(30)?)?,
+        requests_per_check: crate::codec::small(row.int(31)?)?,
+        shape: WatchShape::from_stored(row.text(32)?)?,
     })
 }
 
@@ -844,7 +971,11 @@ impl Watches<'_, '_> {
     ///
     /// `policy`/`watch_not_a_read` for an operation whose effect class is not
     /// `read`. `input`/`schema_invalid` for an interval that is not whole
-    /// seconds, or an end not after now.
+    /// seconds or is below [`WATCH_INTERVAL_FLOOR`], an end not after now or
+    /// further than [`WATCH_LONGEST`], no request per check, or a shape
+    /// that names no list or key. The scheduler checks the installation's
+    /// narrower limits first, with codes of its own; these are the bounds no
+    /// caller passes, held here and by a trigger.
     pub fn ask(&mut self, new: &NewWatch) -> Result<WatchRow, Failure> {
         if new.effect != EffectClass::Read {
             return Err(refused(
@@ -855,19 +986,38 @@ impl Watches<'_, '_> {
             ));
         }
         let interval = whole_seconds(new.interval)?;
+        if new.interval < WATCH_INTERVAL_FLOOR {
+            return Err(failure::invalid(
+                "an interval of a watch below the floor of 60 seconds",
+            ));
+        }
         let now = self.tx.now();
         if new.ends_at <= now {
             return Err(failure::invalid("a watch that ends before it starts"));
         }
+        let longest = millis(WATCH_LONGEST)?;
+        if new
+            .ends_at
+            .as_unix_millis()
+            .saturating_sub(now.as_unix_millis())
+            > longest
+        {
+            return Err(failure::invalid("a watch that lasts longer than 366 days"));
+        }
+        if new.requests_per_check == 0 {
+            return Err(failure::invalid("a watch whose check sends no request"));
+        }
+        new.shape.check()?;
         let id = WatchId(*RunId::from_parts(now, self.tx.random()?)?.as_bytes());
         let label = self.tx.shared.attached()?.redact.redact(&new.client_label);
         self.tx.exec(
             "INSERT INTO watches
                 (id, workspace_id, target, environment, operation, target_version_hash, effect,
                  input_hash, input_ref, ignore_outputs, interval_seconds, ends_at, asked_by,
-                 acts_for, client_label, asked_at, retention_class, state, state_since)
+                 acts_for, client_label, asked_at, retention_class, state, state_since, surface,
+                 requests_per_check, record_shape)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'read', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, 'asked', ?15)",
+                     ?16, 'asked', ?15, ?17, ?18, ?19)",
             &[
                 id.to_string().into(),
                 new.workspace.to_string().into(),
@@ -885,24 +1035,32 @@ impl Watches<'_, '_> {
                 label.into(),
                 now.into(),
                 new.retention.as_str().into(),
+                new.surface.as_str().into(),
+                new.requests_per_check.into(),
+                new.shape.stored().into(),
             ],
         )?;
         self.load(id)
     }
 
     /// Records the confirmation of the watch's own person, with the fixed
-    /// phase the scheduler chose. Its first due time is now plus the phase.
+    /// phase the scheduler chose, while `current` is the target's published
+    /// version. Its first due time is now plus the phase.
     ///
     /// # Errors
     ///
     /// `policy`/`watch_not_yours` when `by` is not the person it acts for;
-    /// the refusal of its state when it is not `asked`; `input`/
-    /// `schema_invalid` for a phase not shorter than the interval.
+    /// `policy`/`watch_needs_confirmation` when the watch was asked for a
+    /// version other than `current`: only a new watch of the published
+    /// version goes on; `policy`/`watch_ended` at or after its end; the
+    /// refusal of its state when it is not `asked`; `input`/`schema_invalid`
+    /// for a phase not shorter than the interval.
     pub fn confirm(
         &mut self,
         id: WatchId,
         by: PrincipalId,
         phase: Duration,
+        current: &Digest,
     ) -> Result<WatchRow, Failure> {
         let watch = self.load(id)?;
         match watch.state {
@@ -918,10 +1076,21 @@ impl Watches<'_, '_> {
                 "Ask that person to confirm it on their own page.",
             ));
         }
+        if *current != watch.target_version {
+            return Err(refused(
+                FailureClass::Policy,
+                WATCH_NEEDS_CONFIRMATION,
+                "The watch was asked for a version of its target that is no longer the published one.",
+                "Ask for a new watch of the published version.",
+            ));
+        }
         if phase >= watch.interval {
             return Err(failure::invalid("a phase not shorter than the interval"));
         }
         let now = self.tx.now();
+        if now >= watch.ends_at {
+            return Err(state_refusal(WatchState::Ended));
+        }
         self.tx.exec(
             "UPDATE watches SET confirmed_by = ?2, confirmed_at = ?3, phase_ms = ?4,
                     state = 'confirmed', state_since = ?3
@@ -944,12 +1113,16 @@ impl Watches<'_, '_> {
     /// # Errors
     ///
     /// The refusal of the watch's state unless it is `confirmed`;
-    /// `policy`/`watch_run_not_its_own`; `input`/`schema_invalid` for a due
-    /// time handled already.
+    /// `policy`/`watch_ended` at or after its end, or for a due time at or
+    /// after it; `policy`/`watch_run_not_its_own`; `input`/`schema_invalid`
+    /// for a due time handled already.
     pub fn begin_check(&mut self, id: WatchId, due: Due, run: RunId) -> Result<CheckRow, Failure> {
         let watch = self.load(id)?;
         if watch.state != WatchState::Confirmed {
             return Err(state_refusal(watch.state));
+        }
+        if self.tx.now() >= watch.ends_at || due.at >= watch.ends_at {
+            return Err(state_refusal(WatchState::Ended));
         }
         if due.index < watch.next_due_index {
             return Err(failure::invalid("a due time that was handled already"));
@@ -1007,22 +1180,31 @@ impl Watches<'_, '_> {
     }
 
     /// Ends the check under way. How it ends is read from its run's row:
-    /// completed, it is compared, and `observed` must be given; waiting for
-    /// a sign-in or input, or drifted, the watch pauses; any other end is a
-    /// gap with the run's class and code. The values in `observed` are
-    /// reduced to keyed digests here and never stored.
+    /// completed, it is compared, and `result` must be the bytes of the
+    /// run's own stored result; waiting for a sign-in or input, or drifted,
+    /// the watch pauses; any other end is a gap with the run's class and
+    /// code, and `result` is not read.
+    ///
+    /// What was observed is never the caller's word (decision 0262): the
+    /// bytes must name the run's stored result, the records are worked out
+    /// here from them and the watch's shape, and the check is never
+    /// complete while the engine records no completeness, so no removal is
+    /// reported. The values are reduced to keyed digests here and never
+    /// stored. A result that is not of the watch's shape is a gap with
+    /// `watch_result_not_its_shape`.
     ///
     /// # Errors
     ///
     /// `busy`/`watch_check_unfinished` while the run has not ended;
     /// `unknown_variant`/`ledger_state_unexpected` when `seq` is not the
-    /// check under way; `input`/`schema_invalid` for a completed run with
-    /// nothing observed.
+    /// check under way; `input`/`schema_invalid` for a completed run with no
+    /// result given; `policy`/`watch_run_not_its_own` for bytes that are
+    /// not the run's stored result, or a run that stored none.
     pub fn end_check(
         &mut self,
         id: WatchId,
         seq: u64,
-        observed: Option<&Observed>,
+        result: Option<&[u8]>,
     ) -> Result<CheckEnded, Failure> {
         let watch = self.load(id)?;
         if watch.state != WatchState::Running || watch.running_check != Some(seq) {
@@ -1033,9 +1215,10 @@ impl Watches<'_, '_> {
         let check = self.check(id, seq)?;
         let run = self.tx.ledger().run(check.run)?;
         let end = run_end(run.state, run.failure.clone())?;
-        let observed = match end {
-            RunEnd::Completed => observed
-                .ok_or_else(|| failure::invalid("a completed check with nothing observed"))?,
+        let bytes = match end {
+            RunEnd::Completed => {
+                result.ok_or_else(|| failure::invalid("a completed check with no result given"))?
+            }
             RunEnd::Pause(reason, why) => {
                 self.close_check(id, seq, CheckOutcome::Failed, Some(why.clone()), None, None)?;
                 self.change(
@@ -1081,24 +1264,40 @@ impl Watches<'_, '_> {
                 return self.ended(id, seq, None);
             }
         };
+        let digest = std::sync::Arc::clone(&self.tx.shared.attached()?.digest);
+        let named = digest.keyed_digest(&watch.workspace, DigestPurpose::BlobName, bytes);
+        if run.result.map(|stored| stored.digest()) != Some(named) {
+            return Err(refused(
+                FailureClass::Policy,
+                WATCH_RUN_NOT_ITS_OWN,
+                "The result given is not the stored result of the check's own run.",
+                "End the check with the bytes of its run's own result.",
+            ));
+        }
+        let observed = serde_json::from_slice::<Values>(bytes)
+            .map_err(|_| CheckFault::NotItsShape)
+            .and_then(|values| watch.shape.records(&values));
+        let observed = match observed {
+            Ok(observed) => observed,
+            Err(fault) => return self.faulted(id, seq, &fault),
+        };
         let digests = {
-            let digest = std::sync::Arc::clone(&self.tx.shared.attached()?.digest);
-            let records = observed.records.iter().map(|record| {
+            let records = observed.iter().map(|record| {
                 let key = match &record.key {
                     Some(key) => WatchKey::of(digest.as_ref(), &watch.workspace, key),
                     None => WatchKey::Whole,
                 };
-                (
-                    key,
-                    RecordDigests::of(
-                        digest.as_ref(),
-                        &watch.workspace,
-                        &record.values,
-                        &watch.ignore,
-                    ),
-                )
+                let digests = RecordDigests::of(
+                    digest.as_ref(),
+                    &watch.workspace,
+                    id,
+                    &key,
+                    &record.values,
+                    &watch.ignore,
+                );
+                (key, digests)
             });
-            CheckDigests::new(observed.complete, records)
+            CheckDigests::new(COMPLETENESS_RECORDED, records)
         };
         let digests = match digests {
             Ok(digests) => digests,
@@ -1492,8 +1691,8 @@ impl Watches<'_, '_> {
     }
 
     /// Ends the watch, from any state but `ended`: always possible. A check
-    /// under way is closed as failed with `watch_ended`; its run is left to
-    /// end on its own. The baseline's digests go; the watch, its checks, and
+    /// under way is closed as failed with `watch_ended`, and recorded as a
+    /// gap; its run is left to the caller to cancel. The baseline's digests go; the watch, its checks, and
     /// its changes stay.
     ///
     /// # Errors
@@ -1512,6 +1711,16 @@ impl Watches<'_, '_> {
                 Some((FailureClass::Policy, WATCH_ENDED)),
                 None,
                 None,
+            )?;
+            // The check that ending closed compared nothing: a gap.
+            self.change(
+                id,
+                ChangeKind::Gap,
+                NewChange {
+                    check: Some(seq),
+                    why: Some((FailureClass::Policy, WATCH_ENDED)),
+                    ..NewChange::default()
+                },
             )?;
         }
         self.tx.exec(
@@ -1532,7 +1741,9 @@ impl Watches<'_, '_> {
 
     /// A target's published version is now `current`: every confirmed
     /// watch of it tied to another version pauses with `version_changed`,
-    /// and goes on only as a new watch its person confirms. Answers the
+    /// and goes on only as a new watch its person confirms; every asked
+    /// watch tied to another version ends with `version_changed`, so that
+    /// it is never confirmed for a version no longer published. Answers the
     /// watches of another version whose check is under way, which pause
     /// when the caller asks again after their checks end.
     ///
@@ -1548,7 +1759,7 @@ impl Watches<'_, '_> {
         let rows = self.tx.rows(
             "SELECT id, state FROM watches
              WHERE workspace_id = ?1 AND target = ?2 AND target_version_hash <> ?3
-               AND state IN ('confirmed', 'running')
+               AND state IN ('asked', 'confirmed', 'running')
              ORDER BY id",
             &[
                 workspace.to_string().into(),
@@ -1559,10 +1770,14 @@ impl Watches<'_, '_> {
         let mut running = Vec::new();
         for row in rows {
             let id: WatchId = parse(row.text(0)?)?;
-            if row.text(1)? == WatchState::Running.as_str() {
-                running.push(id);
-            } else {
-                self.pause(id, WatchReason::VersionChanged)?;
+            match parse::<WatchState>(row.text(1)?)? {
+                WatchState::Running => running.push(id),
+                WatchState::Asked => {
+                    self.end(id, WatchReason::VersionChanged)?;
+                }
+                _ => {
+                    self.pause(id, WatchReason::VersionChanged)?;
+                }
             }
         }
         Ok(running)
@@ -1633,6 +1848,48 @@ impl Watches<'_, '_> {
         let rows = self.tx.rows(
             "SELECT id FROM watches WHERE state IN ('confirmed', 'running', 'paused') ORDER BY id",
             &[],
+        )?;
+        self.by_ids(&rows)
+    }
+
+    /// Every watch not ended whose end is at or before `now`, whatever its
+    /// state, `asked` included: what the scheduler ends first.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn past_end(&mut self, now: Timestamp) -> Result<Vec<WatchRow>, Failure> {
+        let rows = self.tx.rows(
+            "SELECT id FROM watches WHERE state <> 'ended' AND ends_at <= ?1 ORDER BY id",
+            &[now.into()],
+        )?;
+        self.by_ids(&rows)
+    }
+
+    /// The open watches (confirmed, running, or paused) of one surface of a
+    /// target in one environment: those whose checks share its budget.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn on_surface(
+        &mut self,
+        workspace: &WorkspaceId,
+        target: &TargetName,
+        environment: &Environment,
+        surface: &SurfaceName,
+    ) -> Result<Vec<WatchRow>, Failure> {
+        let rows = self.tx.rows(
+            "SELECT id FROM watches
+             WHERE workspace_id = ?1 AND target = ?2 AND environment = ?3 AND surface = ?4
+               AND state IN ('confirmed', 'running', 'paused')
+             ORDER BY id",
+            &[
+                workspace.to_string().into(),
+                target.as_str().into(),
+                environment.as_str().into(),
+                surface.as_str().into(),
+            ],
         )?;
         self.by_ids(&rows)
     }
@@ -1785,6 +2042,59 @@ mod tests {
     }
 
     #[test]
+    fn a_shape_reads_back_what_it_stores_and_takes_records_only_of_its_own_form() {
+        let list = WatchShape::List {
+            list: "orders".to_owned(),
+            key: vec!["id".to_owned(), "line".to_owned()],
+        };
+        for shape in [WatchShape::Whole, list.clone()] {
+            assert_eq!(WatchShape::from_stored(&shape.stored()).unwrap(), shape);
+        }
+        assert_eq!(list.stored(), r#"{"key":["id","line"],"list":"orders"}"#);
+        let order = |id: &str| {
+            Value::Record(
+                Values::new()
+                    .with("id", id)
+                    .with("line", 1_i64)
+                    .with("status", "open"),
+            )
+        };
+        let result = Values::new()
+            .with("orders", Value::List(vec![order("A-1"), order("A-2")]))
+            .with("total", 2_i64);
+        let records = list.records(&result).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records[0].key,
+            Some(RecordKey::new(vec![Value::from("A-1"), Value::from(1_i64)]).unwrap())
+        );
+        assert_eq!(
+            WatchShape::Whole.records(&result).unwrap()[0].values,
+            result
+        );
+        // Not of its form: no list, an item that is not a record, a record
+        // without a field of its key.
+        for wrong in [
+            Values::new().with("total", 2_i64),
+            Values::new().with("orders", Value::List(vec![Value::from("A-1")])),
+            Values::new().with(
+                "orders",
+                Value::List(vec![Value::Record(Values::new().with("id", "A-1"))]),
+            ),
+        ] {
+            assert_eq!(list.records(&wrong).unwrap_err(), CheckFault::NotItsShape);
+        }
+        for bad in [
+            "",
+            "{}",
+            r#"{"list":"orders","key":[]}"#,
+            r#"{"whole":false}"#,
+        ] {
+            assert!(WatchShape::from_stored(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn every_code_of_a_watch_is_declared_once_with_its_class() {
         let constants = [
             (WATCH_NOT_A_READ, FailureClass::Policy),
@@ -1804,6 +2114,10 @@ mod tests {
             ),
             (
                 crate::watch_compare::WATCH_SHAPES_MIXED,
+                FailureClass::UnknownVariant,
+            ),
+            (
+                crate::watch_compare::WATCH_RESULT_NOT_ITS_SHAPE,
                 FailureClass::UnknownVariant,
             ),
         ];

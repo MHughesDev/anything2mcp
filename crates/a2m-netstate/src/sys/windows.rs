@@ -698,14 +698,13 @@ pub(crate) fn proxy() -> Result<Proxy, NetError> {
     let list = take(config.lpszProxy);
     let bypass = take(config.lpszProxyBypass);
     let from = "WinHttpGetIEProxyConfigForCurrentUser";
-    let mut settings = text::proxy_list(from, &list);
+    let (mut settings, list_absent) = text::proxy_list(from, &list);
+    let mut absent: Vec<Absent> = list_absent.into_iter().collect();
     if !bypass.trim().is_empty() {
-        settings.push(ProxySetting {
-            from: from.to_owned(),
-            applies_to: "bypass".to_owned(),
-            value: bound::text(bypass.trim()),
-            credentials_removed: false,
-        });
+        match text::proxy_bypass(from, "bypass", &bypass) {
+            Ok(setting) => settings.push(setting),
+            Err(left_out) => absent.push(left_out),
+        }
     }
     if !script.trim().is_empty() {
         let (value, credentials_removed) = text::clean_proxy(&script);
@@ -720,7 +719,7 @@ pub(crate) fn proxy() -> Result<Proxy, NetError> {
         settings,
         detects_automatically: Some(config.fAutoDetect != 0),
         read_from: vec![from],
-        absent: Vec::new(),
+        absent,
         cut: Vec::new(),
     })
 }

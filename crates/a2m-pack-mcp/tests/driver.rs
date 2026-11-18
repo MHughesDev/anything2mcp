@@ -748,6 +748,46 @@ async fn the_revision_with_no_handshake_is_spoken_when_the_surface_states_it() {
     assert_eq!(control.calls().unwrap()[0].connection, "stateless");
 }
 
+/// A header whose name begins `a2m-` is one of the product's own carriers
+/// between its parts, such as the browser's state a web sign-in places;
+/// it never goes on the wire. A provider that places one stops the pass
+/// before a connection is made, and the stand hears nothing (decision
+/// 0270).
+#[tokio::test]
+async fn a_header_of_the_products_own_is_never_sent() {
+    let sessions = Sessions::new(Vec::new()).await;
+    let redact = sessions.redact();
+    let scene = scene_with(|folder| registry_with(folder, redact)).await;
+    let control = scene.stand.control();
+    for (account, name) in [("ada", "a2m-browser-state"), ("bob", "A2M-Anything")] {
+        let secret = "secret-for-tests-state-0270";
+        let entry = a2m_auth::AuthEntry::new(a2m_auth::ProviderName::new("api_key").unwrap())
+            .setting("header", name);
+        let lease = sessions.lease_through(entry, "key", account, secret).await;
+        let refused = prepare(
+            &scene.registry,
+            &scene.plan,
+            &scene.surface,
+            fence_of(7),
+            Posture::Live,
+            Some(&lease),
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert_eq!(
+            (refused.failure.class(), refused.failure.code().as_str()),
+            (FailureClass::Policy, "product_header_refused"),
+            "{name}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent, "{name}");
+        assert!(!refused.failure.message().contains(secret), "{name}");
+    }
+    assert_eq!(control.request_count("initialize").unwrap(), 0);
+    assert!(control.connections().unwrap().is_empty());
+    assert_eq!(control.unauthorized_count().unwrap(), 0);
+}
+
 #[tokio::test]
 async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     let sessions = Sessions::new(vec![Arc::new(UpstreamMcp)]).await;

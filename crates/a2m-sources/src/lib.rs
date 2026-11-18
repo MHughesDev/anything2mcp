@@ -21,6 +21,7 @@
 //! `docs/reference/technical-reference.md`: `a2m-core`, `a2m-expr`, and
 //! `a2m-files`, for the source definition's types.
 
+pub mod codes;
 mod csv;
 mod definition;
 mod error;

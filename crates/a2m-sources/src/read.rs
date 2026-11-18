@@ -97,7 +97,7 @@ fn unknown_reader(name: &str) -> Failure {
     failure(
         SOURCE_READER_UNKNOWN,
         format!("No reader is registered under the name `{name}`."),
-        "Use a reader the engine has, or enable the plug-in that brings it.",
+        crate::codes::next_for(&SOURCE_READER_UNKNOWN),
     )
 }
 

@@ -132,6 +132,7 @@ export interface DelegationRevokeInput {
  */
 export interface DiscoverRunInput {
   target: string;
+  files?: Record<string, unknown>;
   surface?: string;
 }
 
@@ -280,6 +281,41 @@ export interface KillswitchSetInput {
   scope: "everything" | "workspace" | "target";
   target?: string;
 }
+
+/**
+ * The input of `net.interfaces`.
+ */
+export type NetInterfacesInput = Record<string, never>;
+
+/**
+ * The input of `net.listeners`.
+ */
+export type NetListenersInput = Record<string, never>;
+
+/**
+ * The input of `net.neighbours`.
+ */
+export type NetNeighboursInput = Record<string, never>;
+
+/**
+ * The input of `net.proxy`.
+ */
+export type NetProxyInput = Record<string, never>;
+
+/**
+ * The input of `net.resolvers`.
+ */
+export type NetResolversInput = Record<string, never>;
+
+/**
+ * The input of `net.routes`.
+ */
+export type NetRoutesInput = Record<string, never>;
+
+/**
+ * The input of `net.standing`.
+ */
+export type NetStandingInput = Record<string, never>;
 
 /**
  * The input of `plan.show`.
@@ -442,6 +478,7 @@ export interface ScoutReportInput {
  */
 export interface ScoutRunInput {
   target: string;
+  files?: Record<string, unknown>;
   fresh?: boolean;
   wait_seconds?: number;
 }
@@ -521,6 +558,7 @@ export interface ShadowReportInput {
 export interface SpecImportInput {
   file: string;
   target: string;
+  wait_seconds?: number;
 }
 
 /**
@@ -928,6 +966,53 @@ export declare abstract class Actions {
   killswitchSet(input: KillswitchSetInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * This machine's network interfaces and their addresses, read from the operating
+   * system. Hardware addresses are shown as their length only. Sends nothing. The
+   * engine action is `net.interfaces`.
+   */
+  netInterfaces(input?: NetInterfacesInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The sockets listening on this machine, each with the kind of place its address is,
+   * and the program that holds it where this user may see it. Sends nothing. The engine
+   * action is `net.listeners`.
+   */
+  netListeners(input?: NetListenersInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The neighbour table this machine already holds, never refreshed by asking. Hardware
+   * addresses are shown as their length only. Sends nothing. The engine action is
+   * `net.neighbours`.
+   */
+  netNeighbours(input?: NetNeighboursInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The proxy setting this engine reads, with any credentials removed: on Linux this
+   * engine's own environment, not the caller's; on Windows the user's system setting.
+   * Read to be shown, never applied. Sends nothing. The engine action is `net.proxy`.
+   */
+  netProxy(input?: NetProxyInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The name servers and search domains this machine uses, as the system states them.
+   * Sends nothing. The engine action is `net.resolvers`.
+   */
+  netResolvers(input?: NetResolversInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * This machine's routes, and each family's default routes, lowest metric first. Sends
+   * nothing. The engine action is `net.routes`.
+   */
+  netRoutes(input?: NetRoutesInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Where this machine stands on its networks: for each interface, the kind of place
+   * each of its addresses is, and which interface carries each family's preferred
+   * default route. Sends nothing. The engine action is `net.standing`.
+   */
+  netStanding(input?: NetStandingInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * Print a compiled plan as text: its tools, steps, surfaces, and permissions. The
    * engine action is `plan.show`.
    */
@@ -1121,8 +1206,10 @@ export declare abstract class Actions {
   shadowReport(input: ShadowReportInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Operations drafted from a description the system publishes about itself, given as a
-   * file in the project. The engine action is `spec.import`.
+   * A new scout of a target, handed a description the system publishes about itself as
+   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
+   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * `spec.import`.
    */
   specImport(input: SpecImportInput, options?: CallOptions): Promise<Response>;
 

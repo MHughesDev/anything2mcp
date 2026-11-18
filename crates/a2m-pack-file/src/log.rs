@@ -7,7 +7,9 @@
 //! and nothing between runs (decision 0162). A position is the offset, a
 //! digest of the file's identity, and a digest of its first bytes, so a
 //! file that was replaced or cut short is told as such, as a typed outcome,
-//! and the read never starts over on its own.
+//! and the read never starts over on its own. A line that is not text ends
+//! the lines a read gives; the read that meets it first tells it by its
+//! outcome and gives the position after it.
 //!
 //! The file is opened for the one read, through a handle proven to be the
 //! file at the name, and closed: it is never held between reads, never
@@ -35,10 +37,15 @@ const VERSION: &str = "v1";
 pub(crate) enum Outcome {
     /// The file is the one the position was taken from: the lines after it.
     Read,
-    /// Another file stands at the name, or its first bytes changed.
+    /// Another file stands at the name.
     Replaced,
-    /// The file is shorter than the position.
+    /// The file is the one the position was taken from, and it is shorter
+    /// than the position, or its first bytes changed: it was cut short, and
+    /// may have grown again since.
     Truncated,
+    /// The first line after the position is not text: no line is given,
+    /// and the position after it is, so the next read goes on past it.
+    Unreadable,
 }
 
 impl Outcome {
@@ -47,6 +54,7 @@ impl Outcome {
             Self::Read => "read",
             Self::Replaced => "replaced",
             Self::Truncated => "truncated",
+            Self::Unreadable => "unreadable",
         }
     }
 }
@@ -124,7 +132,7 @@ pub(crate) fn read(
     let given = from.map(Position::parse).transpose()?;
     let named = folder.file(&spec.file)?;
     let (mut file, metadata) = named.open()?;
-    let identity = lasting_identity(&metadata)
+    let identity = lasting_identity(&file, &metadata)
         .map(|text| short(Digest::of(text.as_bytes())))
         .ok_or_else(|| StepFailure::not_sent(unavailable("has no identity the system gives")))?;
     let length = metadata.len();
@@ -133,8 +141,10 @@ pub(crate) fn read(
         None => Outcome::Read,
         Some(position) if position.identity != identity => Outcome::Replaced,
         Some(position) if length < position.offset => Outcome::Truncated,
+        // The same file, whose first bytes are not the ones it had: it was
+        // cut short and written again.
         Some(position) if head_of(&mut file, position.offset)? != position.head => {
-            Outcome::Replaced
+            Outcome::Truncated
         }
         Some(_) => Outcome::Read,
     };
@@ -183,6 +193,7 @@ pub(crate) fn read(
     let mut lines = Vec::new();
     let mut consumed = 0_usize;
     let mut cut = false;
+    let mut outcome = Outcome::Read;
     for raw in bytes
         .get(..=last_end)
         .unwrap_or_default()
@@ -194,18 +205,26 @@ pub(crate) fn read(
         }
         let content = raw.strip_suffix(b"\n").unwrap_or(raw);
         let content = content.strip_suffix(b"\r").unwrap_or(content);
-        let text = std::str::from_utf8(content).map_err(|_| {
-            stop(
-                codes::VALUE_UNREADABLE,
-                "A line after the position is not UTF-8 text, so nothing was read and the position stays where it was.",
-                "Correct the line in the file, or read from a later position.",
-            )
-        })?;
+        let Ok(text) = std::str::from_utf8(content) else {
+            // A line that is not text ends the lines given. Where it is the
+            // first, it is told by the outcome, and the position goes past
+            // it; otherwise the next read begins at it.
+            if lines.is_empty() {
+                outcome = Outcome::Unreadable;
+                consumed += raw.len();
+            }
+            cut = true;
+            break;
+        };
         lines.push(Value::Text(text.to_owned()));
         consumed += raw.len();
     }
     let next = offset + consumed as u64;
-    let more = cut || (bytes.len() as u64 == bound && offset + bound < length);
+    let more = if outcome == Outcome::Unreadable {
+        next < length
+    } else {
+        cut || (bytes.len() as u64 == bound && offset + bound < length)
+    };
     let head = head_of(&mut file, next)?;
     drop(file);
     Ok(Values::new()
@@ -219,7 +238,7 @@ pub(crate) fn read(
             }
             .text(),
         )
-        .with(LOG_OUTCOME, Outcome::Read.as_str())
+        .with(LOG_OUTCOME, outcome.as_str())
         .with(LOG_MORE, more))
 }
 

@@ -42,6 +42,8 @@ pub(super) enum Step {
     Refused,
     WantsSecondFactor,
     Unreachable,
+    /// The credential was sent, and the answer is one no rule covers.
+    Unreadable,
     /// Fails with a sentence that holds a value the provider registered,
     /// which the provider contract forbids.
     Leaks,
@@ -103,6 +105,7 @@ impl Fake {
             Step::Refused => Err(failure::credential_refused("the test")),
             Step::WantsSecondFactor => Err(failure::needs_mfa()),
             Step::Unreachable => Err(failure::upstream_unavailable("the test is down")),
+            Step::Unreadable => Err(failure::unexpected_response("the test answered oddly")),
             Step::Leaks => {
                 cx.register(&Secret::new(LEAKED));
                 Err(Failure::new(
@@ -474,6 +477,16 @@ pub(super) const STORED_HELD: ProviderNeeds = ProviderNeeds {
     light_prompt: false,
     movable: true,
     confirms: false,
+};
+
+/// A provider that signs in with a stored credential, which the other side
+/// confirms, and renews only by signing in again.
+pub(super) const STORED_SIGNING_IN: ProviderNeeds = ProviderNeeds {
+    person: false,
+    silent_renewal: false,
+    light_prompt: false,
+    movable: true,
+    confirms: true,
 };
 
 /// A provider a person signs in to, which renews silently.

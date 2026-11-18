@@ -12,7 +12,10 @@
 //! folder's handle. The folder is resolved again and must lie inside the
 //! root, and is then used by name: a link swapped in between those two
 //! moments is followed. Making such a link there needs the right to write
-//! in a folder of the root.
+//! in a folder of the root. Where the folder is held (`Folder::hold`, for a
+//! folder's writes and for an open), every folder from the root down is
+//! opened, with no link followed, and kept open so that none can be moved,
+//! removed, or replaced while it is used (decision 0272).
 
 use std::ffi::OsStr;
 use std::fs::File;
@@ -20,6 +23,21 @@ use std::io;
 use std::path::Path;
 
 use super::EntryKind;
+
+/// What a removal held to one file did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// The file was removed.
+    Removed,
+    /// What stood at the name was not that file, and was not removed.
+    NotThatFile {
+        /// Whether it stands at its name again. On Linux and macOS it was
+        /// moved aside to be looked at, and is moved back only where
+        /// nothing took the name meanwhile; otherwise it keeps the name it
+        /// was moved to. On Windows it was never moved.
+        put_back: bool,
+    },
+}
 
 /// Why a folder was not reached.
 pub(super) enum Unreached {
@@ -244,6 +262,106 @@ mod os {
         pub(in super::super) fn remove(&self, name: &OsStr) -> io::Result<()> {
             Ok(unlinkat(&self.0, name, AtFlags::empty())?)
         }
+
+        /// The same as [`Folder::reach`]: on Linux and macOS a folder
+        /// reached is already held, by its handle.
+        pub(in super::super) fn hold(base: &Path, folder: &Path) -> Result<Self, Unreached> {
+            Self::reach(base, folder)
+        }
+
+        /// Gives what stands at `from` the second name `to`, both in this
+        /// folder. It fails where anything stands at `to`, and a link at
+        /// either name is not followed.
+        pub(in super::super) fn link(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            Ok(rustix::fs::linkat(
+                &self.0,
+                from,
+                &self.0,
+                to,
+                AtFlags::empty(),
+            )?)
+        }
+
+        /// Gives `from` the name `to` only where nothing stands at `to`.
+        /// Where the file system has no such rename, the same is done by a
+        /// second name, which fails where anything stands at `to`, and the
+        /// removal of the first.
+        fn rename_new(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            match rustix::fs::renameat_with(
+                &self.0,
+                from,
+                &self.0,
+                to,
+                rustix::fs::RenameFlags::NOREPLACE,
+            ) {
+                Ok(()) => Ok(()),
+                Err(Errno::INVAL | Errno::NOSYS | Errno::NOTSUP) => {
+                    self.link(from, to)?;
+                    self.remove(from)
+                }
+                Err(error) => Err(error.into()),
+            }
+        }
+
+        /// Removes the file at `name` only where it is the file `expected`
+        /// names and `holds` says yes of it, opened for reading. What stands
+        /// at the name is first moved to `aside`, a name of the caller's that
+        /// nobody else knows, and looked at there, so a file put at the name
+        /// after the look is never the one removed. Anything else is moved
+        /// back, where nothing has taken the name meanwhile.
+        pub(in super::super) fn remove_if(
+            &self,
+            name: &OsStr,
+            expected: (u64, u128),
+            holds: impl FnOnce(&mut File) -> bool,
+            aside: &OsStr,
+        ) -> io::Result<super::Removal> {
+            renameat(&self.0, name, &self.0, aside)?;
+            if self.identity(aside).is_ok_and(|found| found == expected)
+                && self.open(aside).is_ok_and(|mut file| holds(&mut file))
+            {
+                return match self.remove(aside) {
+                    Ok(()) => Ok(super::Removal::Removed),
+                    Err(error) => {
+                        let _ = self.rename_new(aside, name);
+                        Err(error)
+                    }
+                };
+            }
+            let put_back = self.rename_new(aside, name).is_ok();
+            Ok(super::Removal::NotThatFile { put_back })
+        }
+
+        /// Removes the empty folder of that name. A link there is not
+        /// followed, and is not removed: the system refuses it.
+        pub(in super::super) fn remove_dir(&self, name: &OsStr) -> io::Result<()> {
+            Ok(unlinkat(&self.0, name, AtFlags::REMOVEDIR)?)
+        }
+
+        /// The names the folder holds, `.` and `..` left out, in no order.
+        pub(in super::super) fn names(&self) -> io::Result<Vec<std::ffi::OsString>> {
+            use std::os::unix::ffi::OsStrExt as _;
+            let mut dir = rustix::fs::Dir::read_from(&self.0)?;
+            let mut names = Vec::new();
+            while let Some(entry) = dir.read() {
+                let entry = entry?;
+                let name = entry.file_name().to_bytes();
+                if name != b"." && name != b".." {
+                    names.push(OsStr::from_bytes(name).to_os_string());
+                }
+            }
+            Ok(names)
+        }
+
+        /// The device and the file number of the folder itself.
+        pub(in super::super) fn own_identity(&self) -> io::Result<(u64, u128)> {
+            let found = rustix::fs::fstat(&self.0)?;
+            #[allow(
+                clippy::useless_conversion,
+                reason = "the width of these fields differs between operating systems"
+            )]
+            Ok((device(found.st_dev), u128::from(found.st_ino)))
+        }
     }
 }
 
@@ -439,6 +557,71 @@ mod windows {
         }
     }
 
+    /// Marks the open file to be removed: the file the handle holds,
+    /// whatever name it has by then. Its name goes when this handle is
+    /// closed, as on Linux and macOS, where the file system can do that;
+    /// elsewhere, when the last handle to it is closed. A file marked
+    /// read-only is refused. The handle must carry the right to remove it.
+    pub(super) fn remove_on_close(file: &File) -> io::Result<()> {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+            FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FileDispositionInfo,
+            FileDispositionInfoEx,
+        };
+        // Not every file system takes the second form; those answer
+        // "invalid parameter" or "not supported".
+        const INVALID_PARAMETER: i32 = 87;
+        const NOT_SUPPORTED: i32 = 50;
+        let posix = FILE_DISPOSITION_INFO_EX {
+            Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        };
+        match set_information(file, FileDispositionInfoEx, &posix) {
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(INVALID_PARAMETER | NOT_SUPPORTED)
+                ) =>
+            {
+                set_information(
+                    file,
+                    FileDispositionInfo,
+                    &FILE_DISPOSITION_INFO { DeleteFile: true },
+                )
+            }
+            other => other,
+        }
+    }
+
+    /// Sets one class of an open file's information from `info`, a plain
+    /// structure of the class's own form.
+    #[allow(unsafe_code)] // one call into the operating system, explained below
+    fn set_information<T>(
+        file: &File,
+        class: windows_sys::Win32::Storage::FileSystem::FILE_INFO_BY_HANDLE_CLASS,
+        info: &T,
+    ) -> io::Result<()> {
+        let size = u32::try_from(std::mem::size_of::<T>())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: the handle is the open file's own and stays open for the
+        // call; the buffer is a structure owned by the caller's frame, of the
+        // size the call is told; each caller passes the structure its class
+        // reads (`FILE_DISPOSITION_INFO_EX` for `FileDispositionInfoEx`,
+        // `FILE_DISPOSITION_INFO` for `FileDispositionInfo`), and the call
+        // only reads it.
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle(
+                file.as_raw_handle(),
+                class,
+                std::ptr::from_ref(info).cast(),
+                size,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     /// Whether two open files have the same owner and the same access
     /// list, byte for byte, protected alike from what their folder passes
     /// down. Both handles must carry the right to read their security.
@@ -464,8 +647,46 @@ mod os {
     #[cfg(windows)]
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
-    /// A folder inside a root, resolved at this moment.
-    pub(in super::super) struct Folder(PathBuf);
+    /// A folder inside a root, resolved at this moment; and, once held, the
+    /// handles of every folder from the root down to it, which keep each
+    /// one where it is (see [`Folder::hold`]).
+    pub(in super::super) struct Folder(PathBuf, Vec<File>);
+
+    /// Opens a folder for listing, shared for reading and writing and not
+    /// for removing or renaming, and never through a link at its name: a
+    /// link, or anything that is not a folder, is refused.
+    #[cfg(windows)]
+    fn open_held(path: &Path) -> Result<File, Unreached> {
+        use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+        const FILE_LIST_DIRECTORY: u32 = 0x0001;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+        const FILE_SHARE_READ: u32 = 0x0001;
+        const FILE_SHARE_WRITE: u32 = 0x0002;
+        // Needed to open a folder at all.
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0010;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        let opened = fs::OpenOptions::new()
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path);
+        let file = match opened {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(Unreached::Absent),
+            Err(_) => return Err(Unreached::Other),
+        };
+        let attributes = file
+            .metadata()
+            .map_err(|_| Unreached::Other)?
+            .file_attributes();
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+        {
+            return Err(Unreached::Outside);
+        }
+        Ok(file)
+    }
 
     /// The volume and the file identifier of an open file.
     #[cfg(windows)]
@@ -490,10 +711,133 @@ mod os {
                 Err(_) => return Err(Unreached::Other),
             };
             if real.starts_with(base) && real.is_dir() {
-                Ok(Self(real))
+                Ok(Self(real, Vec::new()))
             } else {
                 Err(Unreached::Outside)
             }
+        }
+
+        /// Reaches `folder`, which lies under `base`, from `base` down, and
+        /// holds it: each folder on the way, the root included, is opened by
+        /// its name in the folder above, which is already held, following no
+        /// link at that name, and kept open, shared for reading and writing
+        /// and not for removing or renaming. While it is held no folder on
+        /// the way can be renamed, removed, or put in the place of another,
+        /// so a path joined to it reaches only these folders.
+        #[cfg(windows)]
+        pub(in super::super) fn hold(base: &Path, folder: &Path) -> Result<Self, Unreached> {
+            let below = folder.strip_prefix(base).map_err(|_| Unreached::Outside)?;
+            let mut at = base.to_path_buf();
+            let mut held = vec![open_held(&at)?];
+            for part in below.components() {
+                let std::path::Component::Normal(part) = part else {
+                    return Err(Unreached::Outside);
+                };
+                at.push(part);
+                held.push(open_held(&at)?);
+            }
+            Ok(Self(at, held))
+        }
+
+        /// No folder can be held on this system.
+        #[cfg(not(windows))]
+        pub(in super::super) fn hold(_base: &Path, _folder: &Path) -> Result<Self, Unreached> {
+            Err(Unreached::Other)
+        }
+
+        /// Gives what stands at `from` the second name `to`, both in this
+        /// folder. It fails where anything stands at `to`.
+        pub(in super::super) fn link(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            fs::hard_link(self.0.join(from), self.0.join(to))
+        }
+
+        /// Removes the file at `name` only where it is the file `expected`
+        /// names and `holds` says yes of it: it is opened itself, never
+        /// through a link, with the right to read and to remove it; its
+        /// identity is read from that handle, and `holds` reads it through
+        /// that handle; and it is marked to be removed through the same
+        /// handle, so the file looked at is the file removed, whatever stands
+        /// at the name meanwhile.
+        #[cfg(windows)]
+        pub(in super::super) fn remove_if(
+            &self,
+            name: &OsStr,
+            expected: (u64, u128),
+            holds: impl FnOnce(&mut File) -> bool,
+            _aside: &OsStr,
+        ) -> io::Result<super::Removal> {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            const DELETE: u32 = 0x0001_0000;
+            const FILE_READ_DATA: u32 = 0x0001;
+            const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+            const SYNCHRONIZE: u32 = 0x0010_0000;
+            const FILE_SHARE_ALL: u32 = 0x0007;
+            let mut file = fs::OpenOptions::new()
+                .access_mode(DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+                .share_mode(FILE_SHARE_ALL)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(self.0.join(name))?;
+            if super::windows::identity(&file)? != expected || !holds(&mut file) {
+                return Ok(super::Removal::NotThatFile { put_back: true });
+            }
+            super::windows::remove_on_close(&file)?;
+            Ok(super::Removal::Removed)
+        }
+
+        /// Nothing is removed on this system.
+        #[cfg(not(windows))]
+        pub(in super::super) fn remove_if(
+            &self,
+            _name: &OsStr,
+            _expected: (u64, u128),
+            _holds: impl FnOnce(&mut File) -> bool,
+            _aside: &OsStr,
+        ) -> io::Result<super::Removal> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        /// Removes the empty folder of that name.
+        pub(in super::super) fn remove_dir(&self, name: &OsStr) -> io::Result<()> {
+            fs::remove_dir(self.0.join(name))
+        }
+
+        /// Opens the file of that name for reading. A link there is opened
+        /// itself, never followed, and refused.
+        #[cfg(windows)]
+        pub(in super::super) fn open(&self, name: &OsStr) -> io::Result<File> {
+            use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(self.0.join(name))?;
+            if file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err(io::Error::other("a link stands at the name"));
+            }
+            Ok(file)
+        }
+
+        /// The names the folder holds, in no order.
+        pub(in super::super) fn names(&self) -> io::Result<Vec<std::ffi::OsString>> {
+            fs::read_dir(&self.0)?
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect()
+        }
+
+        /// The volume and the file identifier of the folder itself, from the
+        /// handle that holds it.
+        #[cfg(windows)]
+        pub(in super::super) fn own_identity(&self) -> io::Result<(u64, u128)> {
+            match self.1.last() {
+                Some(file) => super::windows::identity(file),
+                None => Err(io::Error::from(io::ErrorKind::Unsupported)),
+            }
+        }
+
+        /// No identity can be had of a folder on this system.
+        #[cfg(not(windows))]
+        pub(in super::super) fn own_identity(&self) -> io::Result<(u64, u128)> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
         }
 
         /// What stands at `name` in the folder. A link is not followed.

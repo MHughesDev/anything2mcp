@@ -50,6 +50,12 @@ use crate::names::{Names, PACK};
 /// The discoverer's name, and the kind of finding it makes.
 pub(crate) const PUBLISHED_MAP: &str = "device_register_map";
 
+/// The name, among a discovery's checked paths, of a published map given
+/// as a file: the one name the manifest's `device_register_map` declares
+/// under `files`, so the engine hands it a file of the project's `sources`
+/// folder under it (decision 0263). No other path is read.
+pub const REGISTER_MAP_FILE: &str = "register_map";
+
 /// The columns the layout knows; the first four are required.
 const COLUMNS: &[&str] = &[
     "name",
@@ -441,8 +447,9 @@ fn read_handed(path: &CheckedPath, most: u64) -> Option<Vec<u8>> {
         .flatten()
 }
 
-/// Reads published maps from the files a discovery job is handed. It never
-/// touches the link.
+/// Reads a published map from the file a discovery job is handed under
+/// [`REGISTER_MAP_FILE`], when its name ends `.csv`. It never touches the
+/// link.
 pub(crate) struct PublishedMapDiscoverer {
     names: Arc<Names>,
     name: DiscovererName,
@@ -484,7 +491,8 @@ impl Discoverer for PublishedMapDiscoverer {
                 ..DiscoveryReport::default()
             };
             let mut left = scope.bounds.bytes;
-            for (_, path) in scope.paths.iter() {
+            // At most one file: the one handed under the declared name.
+            for path in scope.paths.get(REGISTER_MAP_FILE).into_iter() {
                 let file = path.relative().rsplit('/').next().unwrap_or_default();
                 if !file.to_ascii_lowercase().ends_with(".csv") {
                     report.dropped += 1;

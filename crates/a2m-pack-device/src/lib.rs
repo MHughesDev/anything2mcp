@@ -43,6 +43,7 @@ use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
 pub use names::PACK;
+pub use published::REGISTER_MAP_FILE;
 
 /// The pack's manifest, as the registry reads it.
 pub const MANIFEST: &str = include_str!("../anything2mcp-provider.toml");

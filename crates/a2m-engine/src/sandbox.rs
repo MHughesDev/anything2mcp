@@ -8,6 +8,7 @@
 //! before the handle sees it. A discovery job asks `Control` for no lock
 //! and no intent, so no token exists to misuse.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,8 +17,9 @@ use a2m_core::{
     SurfaceIndex,
 };
 use a2m_provider::{
-    BoxFuture, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort, SandboxPort,
-    StepFailure, StepInput, StepOutcome, SurfaceDescription,
+    Access, BoxFuture, CheckedPaths, Deadline, DiscoveryScope, EntryKind, FindingSink, Posture,
+    ReadOnlyPort, RootName, Roots, SandboxPort, StepFailure, StepInput, StepOutcome,
+    SurfaceDescription,
 };
 use a2m_telemetry::ChoiceReason;
 
@@ -164,6 +166,7 @@ impl Engine {
             ))
         })?;
         let archetype = entry.archetype;
+        let handed = control.discovery_files();
         let mut run = Run::new(
             self,
             job,
@@ -174,6 +177,21 @@ impl Engine {
             None,
         );
         run.moved(RunState::Validating).await?;
+        let surface_ref = run.surface_at(SurfaceIndex::new(
+            u32::try_from(surface_position).unwrap_or(u32::MAX),
+        ))?;
+        let description = SurfaceDescription {
+            kind: surface.kind.clone(),
+            archetype,
+            address: surface_ref.surface.address.clone(),
+            facts: job.input.clone(),
+        };
+        // The project folder of the request that started the discovery, as
+        // every step of the run is handed it (decision 0196), and the files
+        // of its `sources` folder the call named, each checked again here,
+        // before policy is asked or a driver is held: one that fails its
+        // check ends the job, and no discoverer runs (decision 0263).
+        let paths = handed_files(run.paths(), &handed, &registry.files_taken(&description))?;
         let tool = OperationName::new(DISCOVER_TOOL)?;
         control
             .decide(&GuardQuestion {
@@ -191,9 +209,6 @@ impl Engine {
         // about a surface, not a binding, so a target that declares only
         // its surface is observed all the same. It is prepared in the
         // `Discovery` posture.
-        let surface_ref = run.surface_at(SurfaceIndex::new(
-            u32::try_from(surface_position).unwrap_or(u32::MAX),
-        ))?;
         let mut port = Sandbox {
             inner: Err(codes::fail(
                 FailureClass::Busy,
@@ -217,15 +232,6 @@ impl Engine {
             }
             Err(why) => port.inner = Err(why),
         }
-        let description = SurfaceDescription {
-            kind: surface.kind.clone(),
-            archetype,
-            address: surface_ref.surface.address.clone(),
-            facts: job.input.clone(),
-        };
-        // The project folder of the request that started the discovery, as
-        // every step of the run is handed it (decision 0196).
-        let paths = run.paths().clone();
         let mut outcome = Ok(());
         for discoverer in registry.discoverers_for(&description) {
             let declared = discoverer.declared();
@@ -299,6 +305,93 @@ impl Engine {
         }
         outcome
     }
+}
+
+/// The folder of a project whose files a person may hand a discovery.
+const SOURCES: &str = "sources";
+
+/// Caller's text as an error message may hold it: no control character,
+/// and at most 80 characters.
+fn shown(text: &str) -> String {
+    const SHOWN: usize = 80;
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(SHOWN)
+        .collect();
+    if text.chars().count() > SHOWN {
+        format!("{clean}…")
+    } else {
+        clean
+    }
+}
+
+/// The run's checked paths with each file a call handed a discovery added
+/// under its name (decision 0263). Each path is the call's text, `sources/`
+/// and a file below it. It is joined under a root made here of the
+/// project's `sources` folder, for reading only, by
+/// [`a2m_provider::CheckedPath::join`], which refuses an absolute path,
+/// `..`, and a link that leads out of the folder; a part that starts with
+/// a dot is refused too, and what stands at the path must be a regular
+/// file, not a link. A name that no
+/// discoverer of the surface reads is refused: a file nobody reads is a
+/// mistake, never ignored (rule 7). Nothing is read here.
+fn handed_files(
+    paths: &CheckedPaths,
+    handed: &BTreeMap<String, String>,
+    taken: &BTreeSet<String>,
+) -> Result<CheckedPaths, Failure> {
+    let mut checked = paths.clone();
+    if handed.is_empty() {
+        return Ok(checked);
+    }
+    let refused = |path: &str, why: &str| {
+        codes::fail(
+            FailureClass::Input,
+            a2m_provider::codes::PATH_NOT_ALLOWED,
+            format!(
+                "The file `{}` handed to the discovery is refused: {why}.",
+                shown(path)
+            ),
+            "Name a regular file inside the project's `sources` folder, as `sources/` and its path below it.",
+        )
+    };
+    let project = paths.project_folder()?;
+    let folder = project
+        .join(SOURCES)
+        .map_err(|_| refused(SOURCES, "the project's `sources` folder cannot be used"))?;
+    let root = RootName::new(SOURCES)?;
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), folder.as_path(), Access::Read)
+        .map_err(|_| refused(SOURCES, "the project has no `sources` folder"))?;
+    let sources = roots.folder(&root, Access::Read)?;
+    for (name, path) in handed {
+        if !taken.contains(name) {
+            let names: Vec<&str> = taken.iter().map(String::as_str).collect();
+            return Err(codes::job_invalid(format!(
+                "No discoverer of the surface reads a file named `{}`; those read are: {}.",
+                shown(name),
+                if names.is_empty() {
+                    "none".to_owned()
+                } else {
+                    names.join(", ")
+                }
+            )));
+        }
+        let below = path
+            .strip_prefix("sources/")
+            .ok_or_else(|| refused(path, "it is not in the project's `sources` folder"))?;
+        if below.split('/').any(|part| part.starts_with('.')) {
+            return Err(refused(path, "a part of it is hidden"));
+        }
+        let file = sources.join(below)?;
+        if file.entry_kind()? != EntryKind::File {
+            return Err(refused(path, "it is not a regular file"));
+        }
+        checked.insert(name.clone(), file);
+    }
+    Ok(checked)
 }
 
 /// The mode a discovery of a surface is made through, and its driver: of

@@ -21,12 +21,15 @@ use a2m_core::{
 };
 use a2m_files::{CompileMode, DRAFT_VERSION, DraftReport, Drafter, TargetRoot};
 use a2m_ledger::{Durability, NewUnknown, Owner, SqlValue, Tx, UnknownStatus};
-use a2m_provider::{DiscoveryReport, SurfaceDescription};
+use a2m_provider::DiscoveryReport;
 use serde_json::{Value as Json, json};
 
 use super::build::{off_thread, problems_json, target_folder};
 use super::handler;
-use super::tools::{Tell, plan_to_observe, run_output, submit_discovery, wait_of};
+use super::tools::{
+    Tell, discovery_files, files_by_surface, plan_to_observe, run_output, submit_discovery,
+    surface_described, wait_of,
+};
 use crate::codes;
 use crate::dispatch::{Call, ExitClass, Next, Output};
 use crate::kernel::Kernel;
@@ -87,30 +90,17 @@ struct Look {
 impl Look {
     fn of(kernel: &Kernel, plan: &Plan) -> Vec<Self> {
         let registry = kernel.providers();
-        let environment = plan.default_environment();
         plan.surfaces
             .iter()
             .enumerate()
             .map(|(position, surface)| {
                 let entry = registry.surface_kind(&surface.kind);
-                // The address in the environment a discovery runs in.
-                let address = environment
-                    .and_then(|environment| {
-                        environment
-                            .addresses
-                            .iter()
-                            .find(|over| over.surface.get() == position)
-                    })
-                    .map_or_else(|| surface.address.clone(), |over| over.address.clone());
-                let discoverers = entry
-                    .map(|entry| {
+                // Described with its address in the environment a discovery
+                // runs in.
+                let discoverers = surface_described(kernel, plan, position)
+                    .map(|described| {
                         registry
-                            .discoverers_for(&SurfaceDescription {
-                                kind: surface.kind.clone(),
-                                archetype: entry.archetype,
-                                address,
-                                facts: Values::new(),
-                            })
+                            .discoverers_for(&described)
                             .iter()
                             .map(|handle| {
                                 let declared = handle.declared();
@@ -207,6 +197,15 @@ struct Identified {
     not_compiled: Option<String>,
 }
 
+/// The files of the project's `sources` folder a scout hands its
+/// discoveries (decision 0263), and whether they are an unfinished scout's,
+/// stored when it began, rather than the call's.
+#[derive(Debug, Default)]
+struct Handed {
+    files: BTreeMap<String, String>,
+    resumed: bool,
+}
+
 /// The identify stage: what the registry says of each declared surface, and
 /// one discovery job per surface that has a discoverer, in the sandbox. A
 /// surface with no provider or no discoverer is reported, and nothing runs
@@ -217,6 +216,7 @@ async fn identify(
     target: &TargetName,
     only: Option<&str>,
     to_its_end: bool,
+    files: &Handed,
 ) -> Result<Identified, Failure> {
     let (plan_hash, plan) = plan_to_observe(kernel, call, target).await?;
     let looks: Vec<Look> = Look::of(kernel, &plan)
@@ -233,14 +233,35 @@ async fn identify(
     let environment: Option<Environment> = plan
         .default_environment()
         .map(|environment| environment.name.clone());
+    // The files the call hands are split by surface: each discovery is
+    // handed those a discoverer suiting its surface reads, and a name none
+    // reads starts nothing (decision 0263).
+    let observed: Vec<SurfaceName> = looks
+        .iter()
+        .filter(|look| look.provider.is_some() && !look.discoverers.is_empty())
+        .map(|look| look.name.clone())
+        .collect();
+    let handed = files_by_surface(kernel, &plan, &observed, &files.files, files.resumed)?;
+    let handed: BTreeMap<&SurfaceName, &BTreeMap<String, String>> =
+        observed.iter().zip(&handed).collect();
+    let none = BTreeMap::new();
     let mut runs = BTreeMap::new();
     for look in &looks {
         if look.provider.is_some()
             && !look.discoverers.is_empty()
             && let Some(environment) = &environment
         {
-            let run =
-                submit_discovery(kernel, call, target, plan_hash, environment, &look.name).await?;
+            let files = handed.get(&look.name).copied().unwrap_or(&none);
+            let run = submit_discovery(
+                kernel,
+                call,
+                target,
+                plan_hash,
+                environment,
+                &look.name,
+                files,
+            )
+            .await?;
             runs.insert(look.name.to_string(), run);
         }
     }
@@ -378,7 +399,15 @@ handler!(
     target_probe,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let identified = identify(kernel, &call, &target, call.text("surface"), false).await?;
+        let identified = identify(
+            kernel,
+            &call,
+            &target,
+            call.text("surface"),
+            false,
+            &Handed::default(),
+        )
+        .await?;
         let output = Output::ok(json!({
             "target": target.as_str(),
             "plan_hash": identified.plan_hash.to_string(),
@@ -490,7 +519,15 @@ handler!(
     auth_detect,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let identified = identify(kernel, &call, &target, call.text("surface"), false).await?;
+        let identified = identify(
+            kernel,
+            &call,
+            &target,
+            call.text("surface"),
+            false,
+            &Handed::default(),
+        )
+        .await?;
         let declared = declared_sign_ins(kernel, &call, &target).await?;
         let shown = sign_ins(&identified, declared.as_ref());
         let needs: Vec<&Json> = shown
@@ -636,6 +673,21 @@ fn stored_stages(tx: &mut Tx<'_>, scout: RunId) -> Result<BTreeMap<u8, Json>, Fa
         );
     }
     Ok(out)
+}
+
+/// The files a scout began with, as its first stage stores them: `None`
+/// when that stage is not stored yet; `Some(None)` when what is stored
+/// cannot be read as files; none when the stage names none, as a scout
+/// stored before files could be handed (decision 0263).
+fn stored_files(
+    tx: &mut Tx<'_>,
+    scout: RunId,
+) -> Result<Option<Option<BTreeMap<String, String>>>, Failure> {
+    let stages = stored_stages(tx, scout)?;
+    Ok(stages.get(&0).map(|first| match first.get("files") {
+        None | Some(Json::Null) => Some(BTreeMap::new()),
+        Some(files) => serde_json::from_value(files.clone()).ok(),
+    }))
 }
 
 /// The hash of a stage's input: the result of the stage before it.
@@ -1580,15 +1632,38 @@ handler!(
         let (workspace, person) = (principal.workspace, principal.principal.id);
         let named = target.clone();
         let fresh = call.flag("fresh").unwrap_or(false);
+        // The files the call hands the scout's discoveries are checked
+        // before anything is stored or started: each path, and that a
+        // discoverer suiting an observed surface reads each name (decision
+        // 0263).
+        let asked = discovery_files(kernel, &call, call.input.get("files")).await?;
+        if !asked.is_empty() {
+            let (_, plan) = plan_to_observe(kernel, &call, &target).await?;
+            let observed: Vec<SurfaceName> = Look::of(kernel, &plan)
+                .into_iter()
+                .filter(|look| look.provider.is_some() && !look.discoverers.is_empty())
+                .map(|look| look.name)
+                .collect();
+            files_by_surface(kernel, &plan, &observed, &asked, false)?;
+        }
         let project = project_key(&call);
         let in_project = project.clone();
-        let scout = kernel
+        let asking = asked.clone();
+        let (scout, stored) = kernel
             .store()?
             .write(Durability::Synced, move |tx| {
+                // An unfinished scout goes on with the files it began with.
+                // A call that names other files is another scout.
                 if !fresh
                     && let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, false)?
                 {
-                    return Ok(scout);
+                    match stored_files(tx, scout.id)? {
+                        None => return Ok((scout, None)),
+                        Some(Some(files)) if asking.is_empty() || files == asking => {
+                            return Ok((scout, Some(files)));
+                        }
+                        Some(_) => {}
+                    }
                 }
                 let id = RunId::from_parts(tx.now(), tx.random()?)?;
                 let now = tx.now().as_unix_millis();
@@ -1604,9 +1679,28 @@ handler!(
                         SqlValue::from(project.as_str()),
                     ],
                 )?;
-                Ok(Scout { id })
+                Ok((Scout { id }, None))
             })
             .await?;
+        // The files of a scout that goes on were checked when it began; a
+        // file may have changed since, so each is checked again.
+        let handed = match stored {
+            Some(files) if asked.is_empty() && !files.is_empty() => {
+                let again = discovery_files(kernel, &call, Some(&json!(files))).await?;
+                Handed {
+                    files: again,
+                    resumed: true,
+                }
+            }
+            Some(files) => Handed {
+                files,
+                resumed: false,
+            },
+            None => Handed {
+                files: asked,
+                resumed: false,
+            },
+        };
         let id = scout.id;
         let mut done = kernel
             .store()?
@@ -1622,6 +1716,7 @@ handler!(
             // says what is true: who asked, and that no consent is held.
             let result = json!({
                 "project": in_project,
+                "files": handed.files,
                 "consent": {
                     "recorded": false,
                     "asked_by": if call.caller.is_agent { "agent" } else { "person" },
@@ -1640,7 +1735,7 @@ handler!(
         // 1. Identify; 2. discover. One discovery job per surface: the
         // engine runs every discoverer that suits a surface in one job.
         if !done.contains_key(&1) {
-            let identified = match identify(kernel, &call, &target, None, true).await {
+            let identified = match identify(kernel, &call, &target, None, true, &handed).await {
                 Ok(identified) => identified,
                 // Drafts that do not compile declare no surface the engine
                 // can observe: the scout reports that and goes on, so that
@@ -1860,6 +1955,30 @@ handler!(
         }
         let report = done.remove(&7).unwrap_or(Json::Null);
         Ok(super::scout_report::shown(report))
+    }
+);
+
+/// The name `spec.import` hands its file under: the name a discoverer
+/// declares for a description a system publishes about itself (decision
+/// 0263). A target none of whose discoverers reads it is refused by
+/// `scout.run`, with the names they do read.
+const IMPORTED_AS: &str = "description";
+
+handler!(
+    /// `spec.import`: exactly `scout.run` on the target, fresh, handed the
+    /// one file the call names under [`IMPORTED_AS`], with no logic of its
+    /// own (decision 0263). The scout drafts from the description by the
+    /// packs' rules and tries the drafted reads; an unfinished one goes on
+    /// with `scout.run`, which hands it the same file.
+    spec_import,
+    |kernel, call| {
+        let mut call = call;
+        let file = call.required("file")?.to_owned();
+        call.input.remove("file");
+        call.input
+            .insert("files".to_owned(), json!({ IMPORTED_AS: file }));
+        call.input.insert("fresh".to_owned(), json!(true));
+        scout_run(kernel, call).await
     }
 );
 

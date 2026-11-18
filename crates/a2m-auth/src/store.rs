@@ -10,8 +10,10 @@
 //! the session's epoch is the one they were made for, so none of them is
 //! recorded for credentials that were replaced or ended meanwhile.
 
+use std::collections::BTreeMap;
+
 use a2m_core::{
-    DecisionId, Failure, RunId, RunnerId, SessionId, SessionState, Timestamp, WorkspaceId,
+    DecisionId, Digest, Failure, RunId, RunnerId, SessionId, SessionState, Timestamp, WorkspaceId,
 };
 use a2m_ledger::{Durability, Store};
 use a2m_vault::Sealed;
@@ -51,11 +53,18 @@ pub struct SessionRow {
     pub checked_at: Option<Timestamp>,
     /// When a run last used it: the start of the keep-alive window.
     pub last_used_at: Option<Timestamp>,
-    /// Automatic attempts with a stored credential since the other side last
-    /// confirmed it.
+    /// Attempts with a stored credential since the other side last
+    /// confirmed it: automatic ones whose credential was not confirmed,
+    /// refusals, and sign-ins whose answer nobody could read.
     pub stored_attempts: u32,
     /// Why a person is wanted, while the state is `needs_person`.
     pub wants: Option<PersonReason>,
+    /// The stored credential `stored_attempts` counts attempts with, as it
+    /// was stored then: the mark of its sealed envelopes, never of a value
+    /// (decision 0269). A count with another mark than the credential
+    /// stored now is about one the person has stored again since, and is
+    /// not counted. `None` when no attempt is counted.
+    pub attempted_with: Option<Digest>,
 }
 
 /// What happened, in the words of the session timeline (spec section 215).
@@ -257,6 +266,42 @@ impl SessionStore {
 
     pub(crate) async fn events(&self, id: SessionId) -> Result<Vec<SessionEvent>, Failure> {
         self.store.read(move |tx| tables::events(tx, id)).await
+    }
+
+    /// The newest sign-ins of a session that made it hold, newest first:
+    /// each cause and time, at most `limit`.
+    pub(crate) async fn sign_ins(
+        &self,
+        id: SessionId,
+        limit: u32,
+    ) -> Result<Vec<(String, Timestamp)>, Failure> {
+        self.store
+            .read(move |tx| tables::sign_ins(tx, id, limit))
+            .await
+    }
+
+    /// The mark of the stored credentials an auth entry names for the
+    /// session's identity, as they are stored now. Nothing is opened.
+    pub(crate) async fn credential_mark(
+        &self,
+        key: &SessionKey,
+        references: &BTreeMap<String, CredentialRef>,
+    ) -> Result<Digest, Failure> {
+        let workspace = key.workspace;
+        let owner = key.identity.to_string();
+        let references = references.clone();
+        self.store
+            .read(move |tx| {
+                tables::credential_mark(
+                    tx,
+                    &workspace,
+                    &owner,
+                    references
+                        .iter()
+                        .map(|(role, reference)| (role.as_str(), reference)),
+                )
+            })
+            .await
     }
 
     pub(crate) async fn put_credential(

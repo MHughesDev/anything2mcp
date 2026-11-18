@@ -1,7 +1,13 @@
 //! On Linux: every reader, run in a child process inside a new network
 //! namespace that holds only a loopback interface, gives that namespace's
-//! own facts. A reader that reached outside this machine, or read another
-//! namespace's tables, would show something else.
+//! own facts. A reader that read another namespace's tables would show
+//! something else.
+//!
+//! What this run proves is that the readers read their own namespace. It
+//! does not prove by itself that nothing is sent: the namespace's one
+//! interface is down and has no address, so there is nowhere to send to.
+//! That nothing is sent is held by the source scan in `sends_nothing.rs`
+//! and by the closed list of dependencies.
 //!
 //! The child is this test binary itself, started under `unshare` with a
 //! variable that tells the one child test to run. Where the system refuses

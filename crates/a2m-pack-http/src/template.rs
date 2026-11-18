@@ -73,6 +73,34 @@ impl Method {
     }
 }
 
+/// The headers frameworks read as a request's method in place of its own.
+pub(crate) const OVERRIDE_HEADERS: &[&str] = &[
+    "x-http-method-override",
+    "x-http-method",
+    "x-method-override",
+];
+/// The query or form entry frameworks read the same way.
+pub(crate) const OVERRIDE_FIELD: &str = "_method";
+
+/// Whether a header or a query entry is a method override, by its name.
+pub(crate) fn is_override_header(name: &str) -> bool {
+    OVERRIDE_HEADERS
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(name))
+}
+
+/// Whether a query or form entry is a method override, by its name.
+pub(crate) fn is_override_field(name: &str) -> bool {
+    name.eq_ignore_ascii_case(OVERRIDE_FIELD)
+}
+
+/// Whether a method an override names may change the system: anything
+/// but a method HTTP marks safe, in any letter case, including a word
+/// that is no method at all.
+pub(crate) fn override_may_change(named: &str) -> bool {
+    !Method::from_word(&named.trim().to_ascii_uppercase()).is_some_and(Method::is_safe)
+}
+
 /// One segment of a path template.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

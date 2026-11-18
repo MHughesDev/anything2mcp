@@ -30,7 +30,9 @@
 //! length and whether it is locally administered, never its octets; no host
 //! name is read; the wireless network's name is not read; a program is named
 //! by its file name, never its command line; credentials in a proxy setting
-//! are removed before the value is kept.
+//! are removed before any other part of the value is cut, and a proxy or
+//! bypass list that holds an `@` is left out whole, because where a
+//! password in it ends cannot be told.
 //!
 //! Every reader blocks on system calls and file reads; an async caller runs
 //! it on a blocking thread.
@@ -103,8 +105,12 @@ fn names() -> BTreeMap<u32, String> {
 ///
 /// As [`interfaces`].
 pub fn routes() -> Result<Routes, NetError> {
-    let mut read = sys::os::routes()?;
-    let names = names();
+    Ok(ordered_routes(sys::os::routes()?, &names()))
+}
+
+/// A routes reading named, ordered, deduplicated, and bounded: the routes
+/// and the default routes each to [`bound::MOST_ROUTES`], each cut named.
+fn ordered_routes(mut read: Routes, names: &BTreeMap<u32, String>) -> Routes {
     for route in &mut read.routes {
         if route.interface.is_none() {
             route.interface = route.interface_index.and_then(|i| names.get(&i).cloned());
@@ -126,7 +132,13 @@ pub fn routes() -> Result<Routes, NetError> {
         "routes",
         &mut read.cut,
     );
-    Ok(read)
+    bound::keep(
+        &mut read.default_routes,
+        bound::MOST_ROUTES,
+        "default_routes",
+        &mut read.cut,
+    );
+    read
 }
 
 /// The name servers and search domains, each setting in the order read.
@@ -353,6 +365,33 @@ mod tests {
                 vec![AddressScope::ThisMachine],
                 vec![AddressScope::Documentation, AddressScope::PrivateUse],
                 vec![AddressScope::CarrierGradeNat],
+            ]
+        );
+    }
+
+    #[test]
+    fn the_default_routes_are_bounded_and_their_cut_is_named() {
+        let many = bound::MOST_ROUTES + 3;
+        let read = Routes {
+            routes: (0..many)
+                .map(|i| default_route(2, "10.0.0.1", u32::try_from(i).ok()))
+                .collect(),
+            default_routes: vec![],
+            read_from: vec![],
+            cut: vec![],
+        };
+        let read = ordered_routes(read, &BTreeMap::new());
+        assert_eq!(read.routes.len(), bound::MOST_ROUTES);
+        assert_eq!(read.default_routes.len(), bound::MOST_ROUTES);
+        // Lowest metric first: the cut keeps the preferred ones.
+        assert_eq!(read.default_routes[0].metric, Some(0));
+        let cuts: Vec<(&str, usize, usize)> =
+            read.cut.iter().map(|c| (c.list, c.kept, c.seen)).collect();
+        assert_eq!(
+            cuts,
+            vec![
+                ("routes", bound::MOST_ROUTES, many),
+                ("default_routes", bound::MOST_ROUTES, many)
             ]
         );
     }

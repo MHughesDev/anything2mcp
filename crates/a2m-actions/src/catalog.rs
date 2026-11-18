@@ -77,6 +77,90 @@ fn published() -> JsonSchema {
         .required("current", JsonSchema::bool())
 }
 
+/// The lists a bound cut in a reading of the machine's network, as
+/// `a2m_netstate::Cut` is shown.
+fn net_cuts() -> JsonSchema {
+    list_of(
+        JsonSchema::object()
+            .required("list", text())
+            .required("kept", JsonSchema::int())
+            .required("seen", JsonSchema::int())
+            .required("table_cut", JsonSchema::bool()),
+    )
+}
+
+/// Why a field of a network reading is left out: the words of
+/// `a2m_netstate::AbsentReason`.
+fn net_absent_reason() -> JsonSchema {
+    JsonSchema::words(&[
+        "not_stated",
+        "needs_location_permission",
+        "not_visible_to_this_user",
+        "not_read",
+        "may_hold_credentials",
+    ])
+}
+
+/// The fields a network reading leaves out, and why.
+fn net_absent() -> JsonSchema {
+    list_of(
+        JsonSchema::object()
+            .required("field", text())
+            .required("reason", net_absent_reason()),
+    )
+}
+
+/// A hardware address as a network reading shows it: its length and
+/// whether it is locally administered, never its octets (decision 0243).
+fn net_hardware() -> JsonSchema {
+    JsonSchema::object()
+        .required("length", JsonSchema::int())
+        .required("locally_administered", JsonSchema::bool())
+}
+
+fn net_family() -> JsonSchema {
+    JsonSchema::words(&["ipv4", "ipv6"])
+}
+
+fn net_kind() -> JsonSchema {
+    JsonSchema::words(&[
+        "loopback", "wired", "wireless", "virtual", "tunnel", "other",
+    ])
+}
+
+fn net_link() -> JsonSchema {
+    JsonSchema::words(&["up", "down"])
+}
+
+fn net_prefix() -> JsonSchema {
+    JsonSchema::int_between(0, 128)
+}
+
+/// One address of an interface, and its prefix length where the system
+/// states one.
+fn net_address() -> JsonSchema {
+    JsonSchema::object()
+        .required("address", text())
+        .optional("prefix_length", net_prefix())
+}
+
+fn net_route() -> JsonSchema {
+    JsonSchema::object()
+        .required("family", net_family())
+        .required("destination", text())
+        .required("prefix_length", net_prefix())
+        .optional("gateway", text())
+        .optional("interface_index", JsonSchema::int())
+        .optional("interface", text())
+        .optional("metric", JsonSchema::int())
+}
+
+/// What kind of place an address is: the words of `a2m_core::AddressScope`
+/// (decision 0240).
+fn net_scope() -> JsonSchema {
+    JsonSchema::words(a2m_core::AddressScope::NAMES)
+}
+
 /// One run of a listing: what a caller needs to decide what to do next.
 fn listed_run() -> JsonSchema {
     JsonSchema::object()
@@ -286,10 +370,11 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("endpoints.infer", "Endpoint templates, schemas, and dependencies worked out from stored recordings.", BUILDER, Build, "4", Inspect)
             .pos("target", TEXT, TARGET)
             .done(),
-        act("spec.import", "Operations drafted from a description the system publishes about itself, given as a file in the project.", BUILDER, Build, "4", Change)
+        act("spec.import", "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
-            .req("file", TEXT, "The description's path inside the project.")
-            .writes()
+            .req("file", TEXT, "The description's path from the project folder, inside its `sources` folder, such as `sources/example-openapi.json`.")
+            .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each run to end before returning.")
+            .long_running()
             .done(),
         act("draft.read", "Read one draft file of a target; stands in for a file system.", BUILDER, Build, "5", Inspect)
             .pos("target", TEXT, TARGET)
@@ -455,6 +540,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("discover.run", "Run the discoverers that suit a target's surfaces, in the sandbox. Returns findings; never writes.", BUILDER, Build, "Stage E", Observe)
             .pos("target", TEXT, TARGET)
             .opt("surface", TEXT, "One surface. Every surface when left out.")
+            .opt("files", MAP, "Files of the project's `sources` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `sources/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
             .long_running()
             .done(),
         act("finding.list", "Findings for a target, by level, kind, or source.", BUILDER, Build, "Stage E", List)
@@ -477,8 +563,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("scout.run", "Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads. Resumable; never writes to the system.", BUILDER, Build, "Stage E", Observe)
             .pos("target", TEXT, TARGET)
-            .opt("fresh", BOOL, "Start a new scout instead of continuing the last one that did not finish.")
+            .opt("fresh", BOOL, "Start a new scout instead of continuing the last one that did not finish. An unfinished scout goes on with the files it began with; a call that names other files starts a new one.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each run to end before returning.")
+            .opt("files", MAP, "Files of the project's `sources` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `sources/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
             .long_running()
             .done(),
         act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first.", BUILDER, Build, "Stage E", Inspect)
@@ -703,6 +790,101 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("state", text())
                     .required("detail", text())
                     .required("fix", text()))))
+            .example("{}")
+            .done(),
+        // What this machine already knows of its own networks (decisions
+        // 0222, 0243, 0260). Each is a read for the local user: on one
+        // machine an agent acting for that person may call it. The default
+        // health need `Reads` keeps a recorded decision on every call.
+        act("net.interfaces", "This machine's network interfaces and their addresses, read from the operating system. Hardware addresses are shown as their length only. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("interfaces", list_of(JsonSchema::object()
+                    .required("index", JsonSchema::int())
+                    .required("name", text())
+                    .optional("kind", net_kind())
+                    .optional("system_kind", text())
+                    .optional("state", net_link())
+                    .optional("mtu", JsonSchema::int())
+                    .optional("hardware_address", net_hardware())
+                    .required("addresses", list_of(net_address()))
+                    .optional("absent", net_absent())))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.routes", "This machine's routes, and each family's default routes, lowest metric first. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("routes", list_of(net_route()))
+                .required("default_routes", list_of(net_route()))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.resolvers", "The name servers and search domains this machine uses, as the system states them. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("settings", list_of(JsonSchema::object()
+                    .required("from", text())
+                    .required("name_servers", list_of(text()))
+                    .required("search_domains", list_of(text()))))
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.neighbours", "The neighbour table this machine already holds, never refreshed by asking. Hardware addresses are shown as their length only. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("neighbours", list_of(JsonSchema::object()
+                    .required("address", text())
+                    .optional("interface_index", JsonSchema::int())
+                    .optional("interface", text())
+                    .optional("hardware_address", net_hardware())
+                    .optional("state", JsonSchema::words(&[
+                        "incomplete", "reachable", "stale", "delay", "probe", "failed", "no_arp", "permanent", "unreachable",
+                    ]))))
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.listeners", "The sockets listening on this machine, each with the kind of place its address is, and the program that holds it where this user may see it. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("listeners", list_of(JsonSchema::object()
+                    .required("transport", JsonSchema::words(&["tcp", "udp"]))
+                    .required("address", text())
+                    .required("port", JsonSchema::int_between(0, 65_535))
+                    .required("scope", net_scope())
+                    .optional("owner", JsonSchema::object()
+                        .required("process_id", JsonSchema::int())
+                        .optional("program", text()))
+                    .optional("owner_absent", net_absent_reason())))
+                .required("read_from", list_of(text()))
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.proxy", "The proxy setting this engine reads, with any credentials removed: on Linux this engine's own environment, not the caller's; on Windows the user's system setting. Read to be shown, never applied. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("settings", list_of(JsonSchema::object()
+                    .required("from", text())
+                    .required("applies_to", text())
+                    .required("value", text())
+                    .required("credentials_removed", JsonSchema::bool())))
+                .optional("detects_automatically", JsonSchema::bool())
+                .required("read_from", list_of(text()))
+                .optional("absent", net_absent())
+                .optional("cut", net_cuts()))
+            .example("{}")
+            .done(),
+        act("net.standing", "Where this machine stands on its networks: for each interface, the kind of place each of its addresses is, and which interface carries each family's preferred default route. Sends nothing.", Who::LocalUser, Use, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("interfaces", list_of(JsonSchema::object()
+                    .required("name", text())
+                    .optional("kind", net_kind())
+                    .optional("state", net_link())
+                    .required("default_route_for", list_of(net_family()))
+                    .required("addresses", list_of(net_address()
+                        .required("scope", net_scope())))))
+                .required("default_routes", list_of(net_route()))
+                .optional("cut", net_cuts()))
             .example("{}")
             .done(),
         act("browser.install", "Fetch a pinned browser for the pack that drives one.", Who::LocalUser, No, "1", Change)

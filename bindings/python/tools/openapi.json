@@ -4007,6 +4007,12 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "files": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "surface": {
           "type": "string"
          },
@@ -8528,6 +8534,2933 @@
     },
     "summary": "Stop, or release, a target, a workspace, or the whole system. Releasing needs a person present.",
     "x-action": "killswitch.set"
+   }
+  },
+  "/api/v1/actions/net.interfaces": {
+   "post": {
+    "operationId": "net_interfaces",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "interfaces": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "absent": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "field": {
+                   "type": "string"
+                  },
+                  "reason": {
+                   "enum": [
+                    "not_stated",
+                    "needs_location_permission",
+                    "not_visible_to_this_user",
+                    "not_read",
+                    "may_hold_credentials"
+                   ]
+                  }
+                 },
+                 "required": [
+                  "field",
+                  "reason"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "addresses": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "address": {
+                   "type": "string"
+                  },
+                  "prefix_length": {
+                   "maximum": 128,
+                   "minimum": 0,
+                   "type": "integer"
+                  }
+                 },
+                 "required": [
+                  "address"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "hardware_address": {
+                "additionalProperties": false,
+                "properties": {
+                 "length": {
+                  "type": "integer"
+                 },
+                 "locally_administered": {
+                  "type": "boolean"
+                 }
+                },
+                "required": [
+                 "length",
+                 "locally_administered"
+                ],
+                "type": "object"
+               },
+               "index": {
+                "type": "integer"
+               },
+               "kind": {
+                "enum": [
+                 "loopback",
+                 "wired",
+                 "wireless",
+                 "virtual",
+                 "tunnel",
+                 "other"
+                ]
+               },
+               "mtu": {
+                "type": "integer"
+               },
+               "name": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "up",
+                 "down"
+                ]
+               },
+               "system_kind": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "index",
+               "name",
+               "addresses"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "interfaces",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "interfaces": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "absent": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "field": {
+                   "type": "string"
+                  },
+                  "reason": {
+                   "enum": [
+                    "not_stated",
+                    "needs_location_permission",
+                    "not_visible_to_this_user",
+                    "not_read",
+                    "may_hold_credentials"
+                   ]
+                  }
+                 },
+                 "required": [
+                  "field",
+                  "reason"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "addresses": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "address": {
+                   "type": "string"
+                  },
+                  "prefix_length": {
+                   "maximum": 128,
+                   "minimum": 0,
+                   "type": "integer"
+                  }
+                 },
+                 "required": [
+                  "address"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "hardware_address": {
+                "additionalProperties": false,
+                "properties": {
+                 "length": {
+                  "type": "integer"
+                 },
+                 "locally_administered": {
+                  "type": "boolean"
+                 }
+                },
+                "required": [
+                 "length",
+                 "locally_administered"
+                ],
+                "type": "object"
+               },
+               "index": {
+                "type": "integer"
+               },
+               "kind": {
+                "enum": [
+                 "loopback",
+                 "wired",
+                 "wireless",
+                 "virtual",
+                 "tunnel",
+                 "other"
+                ]
+               },
+               "mtu": {
+                "type": "integer"
+               },
+               "name": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "up",
+                 "down"
+                ]
+               },
+               "system_kind": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "index",
+               "name",
+               "addresses"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "interfaces",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "This machine's network interfaces and their addresses, read from the operating system. Hardware addresses are shown as their length only. Sends nothing.",
+    "x-action": "net.interfaces"
+   }
+  },
+  "/api/v1/actions/net.listeners": {
+   "post": {
+    "operationId": "net_listeners",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "listeners": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "address": {
+                "type": "string"
+               },
+               "owner": {
+                "additionalProperties": false,
+                "properties": {
+                 "process_id": {
+                  "type": "integer"
+                 },
+                 "program": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "process_id"
+                ],
+                "type": "object"
+               },
+               "owner_absent": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               },
+               "port": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+               },
+               "scope": {
+                "enum": [
+                 "this_machine",
+                 "unspecified",
+                 "link_local",
+                 "private_use",
+                 "carrier_grade_nat",
+                 "unique_local",
+                 "multicast",
+                 "documentation",
+                 "reserved",
+                 "public",
+                 "name",
+                 "unreadable"
+                ]
+               },
+               "transport": {
+                "enum": [
+                 "tcp",
+                 "udp"
+                ]
+               }
+              },
+              "required": [
+               "transport",
+               "address",
+               "port",
+               "scope"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "listeners",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "listeners": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "address": {
+                "type": "string"
+               },
+               "owner": {
+                "additionalProperties": false,
+                "properties": {
+                 "process_id": {
+                  "type": "integer"
+                 },
+                 "program": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "process_id"
+                ],
+                "type": "object"
+               },
+               "owner_absent": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               },
+               "port": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+               },
+               "scope": {
+                "enum": [
+                 "this_machine",
+                 "unspecified",
+                 "link_local",
+                 "private_use",
+                 "carrier_grade_nat",
+                 "unique_local",
+                 "multicast",
+                 "documentation",
+                 "reserved",
+                 "public",
+                 "name",
+                 "unreadable"
+                ]
+               },
+               "transport": {
+                "enum": [
+                 "tcp",
+                 "udp"
+                ]
+               }
+              },
+              "required": [
+               "transport",
+               "address",
+               "port",
+               "scope"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "listeners",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The sockets listening on this machine, each with the kind of place its address is, and the program that holds it where this user may see it. Sends nothing.",
+    "x-action": "net.listeners"
+   }
+  },
+  "/api/v1/actions/net.neighbours": {
+   "post": {
+    "operationId": "net_neighbours",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "neighbours": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "address": {
+                "type": "string"
+               },
+               "hardware_address": {
+                "additionalProperties": false,
+                "properties": {
+                 "length": {
+                  "type": "integer"
+                 },
+                 "locally_administered": {
+                  "type": "boolean"
+                 }
+                },
+                "required": [
+                 "length",
+                 "locally_administered"
+                ],
+                "type": "object"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "incomplete",
+                 "reachable",
+                 "stale",
+                 "delay",
+                 "probe",
+                 "failed",
+                 "no_arp",
+                 "permanent",
+                 "unreachable"
+                ]
+               }
+              },
+              "required": [
+               "address"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "neighbours",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "neighbours": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "address": {
+                "type": "string"
+               },
+               "hardware_address": {
+                "additionalProperties": false,
+                "properties": {
+                 "length": {
+                  "type": "integer"
+                 },
+                 "locally_administered": {
+                  "type": "boolean"
+                 }
+                },
+                "required": [
+                 "length",
+                 "locally_administered"
+                ],
+                "type": "object"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "incomplete",
+                 "reachable",
+                 "stale",
+                 "delay",
+                 "probe",
+                 "failed",
+                 "no_arp",
+                 "permanent",
+                 "unreachable"
+                ]
+               }
+              },
+              "required": [
+               "address"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "neighbours",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The neighbour table this machine already holds, never refreshed by asking. Hardware addresses are shown as their length only. Sends nothing.",
+    "x-action": "net.neighbours"
+   }
+  },
+  "/api/v1/actions/net.proxy": {
+   "post": {
+    "operationId": "net_proxy",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "detects_automatically": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "settings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "applies_to": {
+                "type": "string"
+               },
+               "credentials_removed": {
+                "type": "boolean"
+               },
+               "from": {
+                "type": "string"
+               },
+               "value": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "from",
+               "applies_to",
+               "value",
+               "credentials_removed"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "settings",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "detects_automatically": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "settings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "applies_to": {
+                "type": "string"
+               },
+               "credentials_removed": {
+                "type": "boolean"
+               },
+               "from": {
+                "type": "string"
+               },
+               "value": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "from",
+               "applies_to",
+               "value",
+               "credentials_removed"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "settings",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The proxy setting this engine reads, with any credentials removed: on Linux this engine's own environment, not the caller's; on Windows the user's system setting. Read to be shown, never applied. Sends nothing.",
+    "x-action": "net.proxy"
+   }
+  },
+  "/api/v1/actions/net.resolvers": {
+   "post": {
+    "operationId": "net_resolvers",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "settings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "from": {
+                "type": "string"
+               },
+               "name_servers": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "search_domains": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               }
+              },
+              "required": [
+               "from",
+               "name_servers",
+               "search_domains"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "settings",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "absent": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "field": {
+                "type": "string"
+               },
+               "reason": {
+                "enum": [
+                 "not_stated",
+                 "needs_location_permission",
+                 "not_visible_to_this_user",
+                 "not_read",
+                 "may_hold_credentials"
+                ]
+               }
+              },
+              "required": [
+               "field",
+               "reason"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "settings": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "from": {
+                "type": "string"
+               },
+               "name_servers": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "search_domains": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               }
+              },
+              "required": [
+               "from",
+               "name_servers",
+               "search_domains"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "settings",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The name servers and search domains this machine uses, as the system states them. Sends nothing.",
+    "x-action": "net.resolvers"
+   }
+  },
+  "/api/v1/actions/net.routes": {
+   "post": {
+    "operationId": "net_routes",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "default_routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "routes",
+            "default_routes",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "default_routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "read_from": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "routes",
+            "default_routes",
+            "read_from"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "This machine's routes, and each family's default routes, lowest metric first. Sends nothing.",
+    "x-action": "net.routes"
+   }
+  },
+  "/api/v1/actions/net.standing": {
+   "post": {
+    "operationId": "net_standing",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "default_routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "interfaces": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "addresses": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "address": {
+                   "type": "string"
+                  },
+                  "prefix_length": {
+                   "maximum": 128,
+                   "minimum": 0,
+                   "type": "integer"
+                  },
+                  "scope": {
+                   "enum": [
+                    "this_machine",
+                    "unspecified",
+                    "link_local",
+                    "private_use",
+                    "carrier_grade_nat",
+                    "unique_local",
+                    "multicast",
+                    "documentation",
+                    "reserved",
+                    "public",
+                    "name",
+                    "unreadable"
+                   ]
+                  }
+                 },
+                 "required": [
+                  "address",
+                  "scope"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "default_route_for": {
+                "items": {
+                 "enum": [
+                  "ipv4",
+                  "ipv6"
+                 ]
+                },
+                "type": "array"
+               },
+               "kind": {
+                "enum": [
+                 "loopback",
+                 "wired",
+                 "wireless",
+                 "virtual",
+                 "tunnel",
+                 "other"
+                ]
+               },
+               "name": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "up",
+                 "down"
+                ]
+               }
+              },
+              "required": [
+               "name",
+               "default_route_for",
+               "addresses"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [
+            "interfaces",
+            "default_routes"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "cut": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "kept": {
+                "type": "integer"
+               },
+               "list": {
+                "type": "string"
+               },
+               "seen": {
+                "type": "integer"
+               },
+               "table_cut": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "list",
+               "kept",
+               "seen",
+               "table_cut"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "default_routes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "destination": {
+                "type": "string"
+               },
+               "family": {
+                "enum": [
+                 "ipv4",
+                 "ipv6"
+                ]
+               },
+               "gateway": {
+                "type": "string"
+               },
+               "interface": {
+                "type": "string"
+               },
+               "interface_index": {
+                "type": "integer"
+               },
+               "metric": {
+                "type": "integer"
+               },
+               "prefix_length": {
+                "maximum": 128,
+                "minimum": 0,
+                "type": "integer"
+               }
+              },
+              "required": [
+               "family",
+               "destination",
+               "prefix_length"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "interfaces": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "addresses": {
+                "items": {
+                 "additionalProperties": false,
+                 "properties": {
+                  "address": {
+                   "type": "string"
+                  },
+                  "prefix_length": {
+                   "maximum": 128,
+                   "minimum": 0,
+                   "type": "integer"
+                  },
+                  "scope": {
+                   "enum": [
+                    "this_machine",
+                    "unspecified",
+                    "link_local",
+                    "private_use",
+                    "carrier_grade_nat",
+                    "unique_local",
+                    "multicast",
+                    "documentation",
+                    "reserved",
+                    "public",
+                    "name",
+                    "unreadable"
+                   ]
+                  }
+                 },
+                 "required": [
+                  "address",
+                  "scope"
+                 ],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "default_route_for": {
+                "items": {
+                 "enum": [
+                  "ipv4",
+                  "ipv6"
+                 ]
+                },
+                "type": "array"
+               },
+               "kind": {
+                "enum": [
+                 "loopback",
+                 "wired",
+                 "wireless",
+                 "virtual",
+                 "tunnel",
+                 "other"
+                ]
+               },
+               "name": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "up",
+                 "down"
+                ]
+               }
+              },
+              "required": [
+               "name",
+               "default_route_for",
+               "addresses"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [
+            "interfaces",
+            "default_routes"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Where this machine stands on its networks: for each interface, the kind of place each of its addresses is, and which interface carries each family's preferred default route. Sends nothing.",
+    "x-action": "net.standing"
    }
   },
   "/api/v1/actions/plan.show": {
@@ -13832,6 +16765,12 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "files": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "fresh": {
           "type": "boolean"
          },
@@ -16355,6 +19294,11 @@
          },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -16523,7 +19467,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Operations drafted from a description the system publishes about itself, given as a file in the project.",
+    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
     "x-action": "spec.import"
    }
   },

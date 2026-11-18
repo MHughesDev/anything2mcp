@@ -376,6 +376,8 @@ struct RawDiscoverer {
     sources: Vec<String>,
     max_level: EvidenceLevel,
     bounds: Bounds,
+    #[serde(default)]
+    files: Vec<String>,
 }
 
 /// How far a discoverer may go.
@@ -408,6 +410,25 @@ pub struct DiscovererDecl {
     pub max_level: EvidenceLevel,
     /// Its bounds.
     pub bounds: Bounds,
+    /// The names under which it reads files a person hands a discovery, in
+    /// the order the manifest lists them: a file of the project's `sources`
+    /// folder reaches it as the path of that name in
+    /// [`crate::DiscoveryScope::paths`] (decision 0263). Each is a name of
+    /// lowercase letters, digits, and underscores. Empty, the default: it
+    /// reads no file it is handed.
+    pub files: Vec<String>,
+}
+
+/// The longest name a discoverer may read a file under.
+const LONGEST_FILE_NAME: usize = 32;
+
+/// Whether `name` may name a file a discoverer reads: lowercase letters,
+/// digits, and underscores, starting with a letter.
+fn is_file_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    name.len() <= LONGEST_FILE_NAME
+        && chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// A file kind a provider owns.
@@ -1101,6 +1122,18 @@ impl Manifest {
                     )));
                 }
             }
+            if !found.files.iter().all(|file| is_file_name(file)) {
+                return Err(invalid(
+                    "discoverers.files",
+                    "a file a discoverer reads is named in lowercase letters, digits, and underscores, starting with a letter, in at most 32 bytes",
+                ));
+            }
+            if !unique(found.files.iter()) {
+                return Err(invalid(
+                    "discoverers.files",
+                    "a discoverer lists one file name twice",
+                ));
+            }
             discoverers.push(DiscovererDecl {
                 name: DiscovererName::new(&found.name)?,
                 archetype: found.archetype,
@@ -1109,6 +1142,7 @@ impl Manifest {
                 sources: found.sources,
                 max_level: found.max_level,
                 bounds: found.bounds,
+                files: found.files,
             });
         }
         if !unique(discoverers.iter().map(|d| &d.name)) {

@@ -135,8 +135,12 @@ pub enum AbsentReason {
     NeedsLocationPermission,
     /// The system does not let this user see it.
     NotVisibleToThisUser,
-    /// This reader does not read it yet.
+    /// This reader did not read it: it is not built to yet, or a bound
+    /// stopped the search for it.
     NotRead,
+    /// A list that may hold a user name and password, in a form that cannot
+    /// be split safely, so none of it is kept (rule 4, rule 7).
+    MayHoldCredentials,
 }
 
 /// A field left out, and why.

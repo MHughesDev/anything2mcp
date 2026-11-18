@@ -164,6 +164,7 @@ kinds = ["call"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 1000000, depth = 4 }
+files = ["description"]
 
 [[finding_kinds]]
 name = "call"
@@ -1103,7 +1104,14 @@ pub struct WritingDiscoverer {
     pub panics: AtomicBool,
     /// The project folder each discovery's scope was handed.
     pub projects: Mutex<Vec<Option<PathBuf>>>,
+    /// The files each discovery's scope was handed, by name, with what
+    /// reading each gave.
+    pub handed: Mutex<Vec<Handed>>,
 }
+
+/// The files one discovery's scope was handed: each name, and the bytes
+/// reading it gave.
+pub type Handed = Vec<(String, Vec<u8>)>;
 
 impl Discoverer for WritingDiscoverer {
     fn name(&self) -> DiscovererName {
@@ -1127,6 +1135,12 @@ impl Discoverer for WritingDiscoverer {
                     .project()
                     .map(|project| project.as_path().to_path_buf()),
             );
+            let handed = scope
+                .paths
+                .iter()
+                .map(|(name, path)| (name.to_owned(), path.read(scope.bounds.bytes).unwrap()))
+                .collect();
+            self.handed.lock().unwrap().push(handed);
             // One finding, as a discoverer of a live system makes it.
             let finding = Finding::about(
                 Subject::Address(Address::new("http://example.invalid", "/api/orders").unwrap()),
@@ -2137,6 +2151,9 @@ pub struct StoreControl {
     pub acknowledged: Mutex<Vec<RecordRef>>,
     /// The project folder of the request that started the run.
     pub project: Mutex<Option<PathBuf>>,
+    /// The files of the project's `sources` folder the call that started a
+    /// discovery hands it, by name.
+    pub discovery_files: Mutex<std::collections::BTreeMap<String, String>>,
     /// The answerer `other_records` hands out, and every operation and
     /// record it was asked for.
     pub others: Mutex<Option<Arc<dyn a2m_provider::OtherRecords>>>,
@@ -2642,6 +2659,10 @@ impl Control for StoreControl {
         self.project.lock().unwrap().clone()
     }
 
+    fn discovery_files(&self) -> std::collections::BTreeMap<String, String> {
+        self.discovery_files.lock().unwrap().clone()
+    }
+
     fn other_records(
         &self,
         operation: &a2m_core::OperationName,
@@ -2873,6 +2894,7 @@ impl Scene {
             keeps_acknowledgements: AtomicBool::new(false),
             acknowledged: Mutex::new(Vec::new()),
             project: Mutex::new(None),
+            discovery_files: Mutex::new(std::collections::BTreeMap::new()),
             others: Mutex::new(None),
             others_asked: Mutex::new(Vec::new()),
             keeps_shadow: AtomicBool::new(false),

@@ -225,7 +225,7 @@ impl Scheduler {
             .inner
             .store
             .write(durability, move |tx| {
-                tables::admit(tx, &settings, submission, 0)
+                tables::admit(tx, &settings, submission, 0, None)
             })
             .await;
         match &admitted {
@@ -751,7 +751,7 @@ impl Scheduler {
             return Err(failure::invalid("a grant against no budget"));
         }
         let default = self.inner.settings.default_rate;
-        let reserve = self.inner.settings.watch.reserve_percent;
+        let limits = self.inner.settings.watch;
         let lease = *lease;
         loop {
             let keys = budgets.to_vec();
@@ -760,14 +760,31 @@ impl Scheduler {
                 .store
                 .write(Durability::Relaxed, move |tx| {
                     let lease_until = tables::lease_until(tx, &lease)?;
-                    // A watch's check leaves its share of every budget to
-                    // the caller's own reads (decision 0247).
+                    // A watch's check leaves its reserve of every budget to
+                    // the caller's own reads (decision 0247), and spends the
+                    // share its surface keeps for watches, however many
+                    // requests it sends (decision 0262).
                     let run = tables::job_row(tx, lease.job)?.run;
-                    let reserve = match run {
-                        Some(run) if tx.watches().check_of_run(run)?.is_some() => reserve,
-                        _ => 0,
+                    let check = match run {
+                        Some(run) => tx.watches().check_of_run(run)?,
+                        None => None,
                     };
-                    let take = budget::take(tx, &default, &keys, want, false, reserve)?;
+                    let mut each: Vec<(BudgetKey, u32)> = keys
+                        .into_iter()
+                        .map(|key| {
+                            let reserve = if check.is_some() {
+                                limits.reserve_percent
+                            } else {
+                                0
+                            };
+                            (key, reserve)
+                        })
+                        .collect();
+                    if let Some((watch, _)) = check {
+                        let row = tx.watches().get(watch)?;
+                        each.push((crate::watch::share_key(tx, &default, &limits, &row)?, 0));
+                    }
+                    let take = budget::take_each(tx, &default, &each, want, false)?;
                     Ok((take, lease_until))
                 })
                 .await?;

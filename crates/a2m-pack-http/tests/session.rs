@@ -388,6 +388,40 @@ async fn a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_els
     assert_eq!(service.seen().len(), before);
 }
 
+/// A header whose name begins `a2m-` is one of the product's own carriers
+/// between its parts, such as the browser's state a web sign-in places;
+/// it never goes on the wire. A provider that places one stops the pass
+/// before anything is sent, and the service hears nothing (decision 0270).
+#[tokio::test]
+async fn a_header_of_the_products_own_is_never_sent() {
+    let none = Values::new();
+    for name in ["a2m-browser-state", "A2M-Browser-State", "A2m-anything"] {
+        let secret = "secret-for-tests-state-0270";
+        let service = Service::start(name, secret).await;
+        let signed = Signed::new("api_key", &[("header", name)], "key", secret).await;
+        let scene = Scene::with_redactor("secured", &service.address, signed.vault.redactor());
+        let lease = signed.lease().await;
+        let refused = match scene.try_prepare(Some(&lease), None, Posture::Live).await {
+            Err(refused) => refused,
+            Ok((handle, mut prepared)) => {
+                let read = scene
+                    .read(&handle, &mut prepared, "example_account_get", &none)
+                    .await;
+                handle.release(prepared, false).await;
+                panic!("{name}: prepared, and the read answered: {}", read.is_ok());
+            }
+        };
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Policy, "product_header_refused"),
+            "{name}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent, "{name}");
+        assert!(!refused.failure.message().contains(secret), "{name}");
+        assert!(service.seen().is_empty(), "{name}");
+    }
+}
+
 #[tokio::test]
 async fn each_scheme_the_driver_can_carry_is_placed_and_the_others_are_refused_by_name() {
     let none = Values::new();
@@ -854,6 +888,62 @@ impl Redact for Knows {
     fn redact(&self, text: &str) -> String {
         text.replace(self.0, a2m_core::REDACTED)
     }
+}
+
+#[tokio::test]
+async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_name() {
+    let service = Service::start("authorization", "none").await;
+    let scene = Scene::new("secured", &service.address);
+    let description = SurfaceDescription {
+        kind: scene.surface.surface.kind.clone(),
+        archetype: Archetype::Request,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    // The manifest declares the one name, and the registry gives it as
+    // what a discovery of the surface may be handed (decision 0263).
+    let reader = scene
+        .registry
+        .discoverers_for(&description)
+        .into_iter()
+        .find(|found| found.declared().name.as_str() == "http_description")
+        .unwrap();
+    assert_eq!(reader.declared().files, [a2m_pack_http::DESCRIPTION_FILE]);
+    let taken: Vec<String> = scene
+        .registry
+        .files_taken(&description)
+        .into_iter()
+        .collect();
+    assert_eq!(taken, [a2m_pack_http::DESCRIPTION_FILE]);
+
+    // A file handed under that name is what the reader reads.
+    let folder = Folder::new("handed");
+    std::fs::write(folder.path().join("example-openapi.json"), DESCRIPTION).unwrap();
+    let root = RootName::new("sources").unwrap();
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), folder.path(), Access::Read)
+        .unwrap();
+    let mut paths = CheckedPaths::none();
+    paths.insert(
+        taken[0].clone(),
+        roots
+            .check(&root, "example-openapi.json", Access::Read)
+            .unwrap(),
+    );
+    let results = discover_with(&scene, &Values::new(), &paths, &a2m_core::NoSecrets).await;
+    let findings: Vec<Finding> = results
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(findings.len(), 3);
+    assert!(
+        service
+            .seen()
+            .iter()
+            .all(|(line, _)| !line.contains("openapi")),
+    );
 }
 
 #[tokio::test]

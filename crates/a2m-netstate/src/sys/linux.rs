@@ -12,7 +12,7 @@
 //!   keeps, where it exists;
 //! - listening sockets: `/proc/net/tcp`, `tcp6`, `udp`, `udp6`, and each
 //!   process's descriptor folder under `/proc` for the socket's owner, with
-//!   the program's name from that process's `comm` file. Never a command
+//!   the file name of the program its `exe` link names. Never a command
 //!   line or an environment: those can hold secrets;
 //! - the proxy: this process's environment, by the common convention.
 
@@ -24,7 +24,7 @@ use std::path::Path;
 use a2m_core::ScopedHost;
 
 use super::netlink::{self, RTM_GETADDR, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, attributes};
-use crate::bound::{self, MOST_PROCESSES, MOST_TABLE_BYTES};
+use crate::bound::{self, MOST_DESCRIPTORS, MOST_PROCESSES, MOST_TABLE_BYTES};
 use crate::error::{Fact, NetError};
 use crate::model::{
     Absent, AbsentReason, Family, HardwareAddress, Interface, InterfaceAddress, InterfaceKind,
@@ -423,14 +423,32 @@ pub(crate) fn resolvers() -> Result<Resolvers, NetError> {
     })
 }
 
+/// The owners found by a walk of the processes, and whether the walk
+/// finished: a walk a bound stopped may have missed an owner.
+struct Owners {
+    found: BTreeMap<u64, Owner>,
+    finished: bool,
+}
+
 /// The owner of each socket inode asked for, by walking the descriptor
-/// folders of the processes this user may see.
-fn owners(inodes: &BTreeSet<u64>) -> BTreeMap<u64, Owner> {
-    let mut owners = BTreeMap::new();
+/// folders of the processes this user may see: at most `most_processes`
+/// processes and `most_descriptors` descriptors in all, so that the walk's
+/// time is bounded. A process is named by its program's file name, read
+/// from its `exe` link, which the process cannot set, unlike its `comm`.
+fn owners(inodes: &BTreeSet<u64>, most_processes: usize, most_descriptors: usize) -> Owners {
+    let mut found = BTreeMap::new();
     let Ok(processes) = std::fs::read_dir("/proc") else {
-        return owners;
+        return Owners {
+            found,
+            finished: false,
+        };
     };
-    for entry in processes.flatten().take(MOST_PROCESSES) {
+    let mut walked = 0usize;
+    let mut descriptors_read = 0usize;
+    for entry in processes.flatten() {
+        if found.len() == inodes.len() {
+            break;
+        }
         let Some(process_id) = entry
             .file_name()
             .to_str()
@@ -438,10 +456,24 @@ fn owners(inodes: &BTreeSet<u64>) -> BTreeMap<u64, Owner> {
         else {
             continue;
         };
+        if walked == most_processes {
+            return Owners {
+                found,
+                finished: false,
+            };
+        }
+        walked += 1;
         let Ok(descriptors) = std::fs::read_dir(entry.path().join("fd")) else {
             continue;
         };
         for descriptor in descriptors.flatten() {
+            if descriptors_read == most_descriptors {
+                return Owners {
+                    found,
+                    finished: false,
+                };
+            }
+            descriptors_read += 1;
             let Ok(target) = std::fs::read_link(descriptor.path()) else {
                 continue;
             };
@@ -453,11 +485,12 @@ fn owners(inodes: &BTreeSet<u64>) -> BTreeMap<u64, Owner> {
             else {
                 continue;
             };
-            if inodes.contains(&inode) && !owners.contains_key(&inode) {
-                let program = std::fs::read_to_string(entry.path().join("comm"))
+            if inodes.contains(&inode) && !found.contains_key(&inode) {
+                let program = std::fs::read_link(entry.path().join("exe"))
                     .ok()
-                    .map(|p| bound::text(p.trim()));
-                owners.insert(
+                    .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .map(|name| bound::text(&name));
+                found.insert(
                     inode,
                     Owner {
                         process_id,
@@ -466,17 +499,28 @@ fn owners(inodes: &BTreeSet<u64>) -> BTreeMap<u64, Owner> {
                 );
             }
         }
-        if owners.len() == inodes.len() {
-            break;
-        }
     }
-    owners
+    Owners {
+        found,
+        finished: true,
+    }
+}
+
+/// Why a socket's owner is absent: not visible to this user when the walk
+/// finished, not read when a bound stopped it first.
+fn owner_absent(owner: Option<&Owner>, walk_finished: bool) -> Option<AbsentReason> {
+    match (owner, walk_finished) {
+        (Some(_), _) => None,
+        (None, true) => Some(AbsentReason::NotVisibleToThisUser),
+        (None, false) => Some(AbsentReason::NotRead),
+    }
 }
 
 pub(crate) fn listeners() -> Result<Listeners, NetError> {
     let fact = Fact::Listeners;
     let mut sockets = Vec::new();
     let mut cut = Vec::new();
+    let mut any_table_cut = false;
     for (file, transport, v6) in [
         ("/proc/net/tcp", Transport::Tcp, false),
         ("/proc/net/tcp6", Transport::Tcp, true),
@@ -501,24 +545,24 @@ pub(crate) fn listeners() -> Result<Listeners, NetError> {
                 what: "a socket table line without the documented columns",
             })?,
         );
-        if table_cut {
-            cut = vec![bound::table_cut("listeners", sockets.len())];
-        }
+        any_table_cut |= table_cut;
+    }
+    // One entry for the list, counting the sockets of every table read.
+    if any_table_cut {
+        cut.push(bound::table_cut("listeners", sockets.len()));
     }
     let inodes: BTreeSet<u64> = sockets.iter().map(|s| s.inode).collect();
-    let owners = owners(&inodes);
+    let owners = owners(&inodes, MOST_PROCESSES, MOST_DESCRIPTORS);
     let listeners = sockets
         .into_iter()
         .map(|socket| {
-            let owner = owners.get(&socket.inode).cloned();
+            let owner = owners.found.get(&socket.inode).cloned();
             Listener {
                 transport: socket.transport,
                 address: socket.address,
                 port: socket.port,
                 scope: ScopedHost::of_ip(socket.address).scope(),
-                owner_absent: owner
-                    .is_none()
-                    .then_some(AbsentReason::NotVisibleToThisUser),
+                owner_absent: owner_absent(owner.as_ref(), owners.finished),
                 owner,
             }
         })
@@ -531,22 +575,49 @@ pub(crate) fn listeners() -> Result<Listeners, NetError> {
             "/proc/net/udp",
             "/proc/net/udp6",
             "/proc/<pid>/fd",
-            "/proc/<pid>/comm",
+            "/proc/<pid>/exe",
         ],
         cut,
     })
 }
 
 pub(crate) fn proxy() -> Result<Proxy, NetError> {
-    let settings = text::proxy_from_environment(|name| std::env::var(name).ok());
+    let (settings, mut absent) = text::proxy_from_environment(|name| std::env::var(name).ok());
+    absent.push(Absent {
+        field: "desktop_settings",
+        reason: AbsentReason::NotRead,
+    });
     Ok(Proxy {
         settings,
         detects_automatically: None,
         read_from: vec!["this process's environment"],
-        absent: vec![Absent {
-            field: "desktop_settings",
-            reason: AbsentReason::NotRead,
-        }],
+        absent,
         cut: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_walk_a_bound_stopped_says_the_owner_was_not_read() {
+        // An inode no socket has, so the walk never ends early by finding it.
+        let none = BTreeSet::from([u64::MAX]);
+        assert!(owners(&none, MOST_PROCESSES, MOST_DESCRIPTORS).finished);
+        // This process and at least one other are under /proc.
+        assert!(!owners(&none, 1, MOST_DESCRIPTORS).finished);
+        // This process holds open descriptors.
+        assert!(!owners(&none, MOST_PROCESSES, 0).finished);
+        let owner = Owner {
+            process_id: 1,
+            program: None,
+        };
+        assert_eq!(owner_absent(Some(&owner), false), None);
+        assert_eq!(
+            owner_absent(None, true),
+            Some(AbsentReason::NotVisibleToThisUser)
+        );
+        assert_eq!(owner_absent(None, false), Some(AbsentReason::NotRead));
+    }
 }

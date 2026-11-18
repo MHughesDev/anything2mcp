@@ -1,4 +1,5 @@
-//! The machine itself: the engine's status, its settings, and the doctor.
+//! The machine itself: the engine's status, its settings, the doctor, and
+//! what the machine already knows of its own networks.
 
 use a2m_core::DoctorState;
 use a2m_ledger::ChainCheck;
@@ -148,36 +149,61 @@ handler!(
         let paths = kernel.paths().clone();
         let home = tokio::task::spawn_blocking(move || crate::paths::open_to_others(&paths))
             .await
-            .unwrap_or(crate::paths::OpenFolders::NotChecked);
-        checks.push(match home {
-            crate::paths::OpenFolders::Closed => check(
+            .unwrap_or_else(|_| crate::paths::OpenFolders {
+                not_checked: true,
+                ..crate::paths::OpenFolders::default()
+            });
+        let listed = |folders: &[std::path::PathBuf]| {
+            folders
+                .iter()
+                .map(|folder| format!("`{}`", folder.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        checks.push(if home.not_checked {
+            check(
+                "home",
+                DoctorState::Unknown,
+                "Who may enter the engine's own folders is not read on this operating system yet; the engine gives each an access list that names only this user when it starts.",
+                "",
+            )
+        } else if home.closed() {
+            check(
                 "home",
                 DoctorState::Healthy,
                 "The engine's own folders are this user's alone.",
                 "",
-            ),
-            crate::paths::OpenFolders::Open(folders) => check(
+            )
+        } else if !home.not_ours.is_empty() {
+            // The engine closes only a folder of its own user's: these it
+            // could not close when it started (decision 0273).
+            check(
+                "home",
+                DoctorState::ConfigDrift,
+                format!(
+                    "These of the engine's own folders are not a folder of this user's, so the engine could not close them to other accounts: {}. Another account owns each, or a link or a file stands in its place.{}",
+                    listed(&home.not_ours),
+                    if home.open.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Other accounts may also enter {}.", listed(&home.open))
+                    }
+                ),
+                "Put a folder of this user's own in the place of each, not a link, closed to every other account, then start the engine again.",
+            )
+        } else {
+            check(
                 "home",
                 DoctorState::ConfigDrift,
                 format!(
                     "Other accounts may enter the engine's own folders: {}. What they hold is sealed, and is still not to be left where others can list and copy it.",
-                    folders
-                        .iter()
-                        .map(|folder| format!("`{}`", folder.display()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    listed(&home.open)
                 ),
                 format!(
                     "Close each to every account but this user's ({}), or start the engine, which closes the folders it uses.",
                     if cfg!(unix) { "`chmod 700` on each" } else { "remove every other account from its access list" }
                 ),
-            ),
-            crate::paths::OpenFolders::NotChecked => check(
-                "home",
-                DoctorState::Unknown,
-                "Who may enter the engine's own folders is not read on this operating system yet; the engine gives each an access list that names only this user when it starts.",
-                "",
-            ),
+            )
         });
 
         // The key store.
@@ -325,5 +351,84 @@ handler!(
         Ok(Output::ok(
             json!({"state": health.state.as_str(), "checks": checks}),
         ))
+    }
+);
+
+/// Reads one of the machine's network facts on a thread that may wait (each
+/// reader blocks on system calls and file reads), and shows it as the
+/// reader serializes it: a hardware address as its length, a proxy value
+/// with its credentials removed (decision 0243). Nothing is sent to any
+/// other machine.
+async fn net_read<T: serde::Serialize + Send + 'static>(
+    read: fn() -> Result<T, a2m_netstate::NetError>,
+) -> Result<Json, a2m_core::Failure> {
+    let reading = tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|_| {
+            crate::codes::busy(
+                crate::codes::ENGINE_DEGRADED,
+                "The reading of the machine's network was interrupted.",
+                "Try again.",
+            )
+        })?
+        .map_err(a2m_core::Failure::from)?;
+    serde_json::to_value(&reading).map_err(|_| {
+        crate::codes::input(
+            crate::codes::SCHEMA_INVALID,
+            "The reading of the machine's network could not be written as JSON.",
+            "Report this; it is a fault in the engine.",
+        )
+    })
+}
+
+handler!(
+    /// `net.interfaces`: the interfaces and their addresses.
+    net_interfaces,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::interfaces).await?)) }
+);
+
+handler!(
+    /// `net.routes`: the routes and each family's default routes.
+    net_routes,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::routes).await?)) }
+);
+
+handler!(
+    /// `net.resolvers`: the name servers and search domains.
+    net_resolvers,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::resolvers).await?)) }
+);
+
+handler!(
+    /// `net.neighbours`: the neighbour table the system already holds.
+    net_neighbours,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::neighbours).await?)) }
+);
+
+handler!(
+    /// `net.listeners`: the listening sockets and their owners.
+    net_listeners,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::listeners).await?)) }
+);
+
+handler!(
+    /// `net.proxy`: the proxy setting this engine reads, without
+    /// credentials. Read to be shown, never applied.
+    net_proxy,
+    |_kernel, _call| { Ok(Output::ok(net_read(a2m_netstate::proxy).await?)) }
+);
+
+handler!(
+    /// `net.standing`: where the machine stands. The one network action an
+    /// agent sees listed; it names the fuller reading of the interfaces.
+    net_standing,
+    |_kernel, _call| {
+        Ok(
+            Output::ok(net_read(a2m_netstate::standing).await?).then(Next::new(
+                "action.run",
+                json!({"action": "net.interfaces"}),
+                "for every interface in full",
+            )),
+        )
     }
 );

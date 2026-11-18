@@ -17,7 +17,7 @@ use a2m_provider::{Manifest, ProviderName, ProviderSettings, SettingScope, Setti
 use serde_json::{Value as Json, json};
 use toml::de::{DeTable, DeValue};
 
-use super::keeper::{InstallationKeeper, system_installation_folder};
+use super::keeper::{InstallationKeeper, read_installation_file, system_installation_folder};
 use super::schema::{self, Built, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
 use crate::codes;
 use crate::paths::Paths;
@@ -159,7 +159,11 @@ pub struct Sources {
     /// account but an administrator can change may loosen a protected
     /// setting or lock a key; any other is held to the rule of the
     /// person's own layers. [`Sources::read`] checks the file on disk; the
-    /// default is not checked, which is held to the person's rule.
+    /// default is not checked, which is held to the person's rule. Outside
+    /// this crate only a test sets it, through
+    /// [`Sources::with_installation_keeper_for_tests`]: the field is to
+    /// become private once the product crate sets it that way too
+    /// (decision 0273).
     pub installation_keeper: InstallationKeeper,
     /// A site's own presets; each file's stem is the preset's name.
     pub presets: Vec<SourceFile>,
@@ -201,14 +205,16 @@ impl Sources {
         environment: BTreeMap<String, String>,
     ) -> Result<Self, Failure> {
         let installation_path = paths.installation_config.join(SETTINGS_FILE_NAME);
-        let installation = read_file(&installation_path)?;
-        // Checked after the read: the check walks the folders, and a file
-        // whose folders are the administrator's alone cannot be changed
-        // between the two by anyone else.
-        let installation_keeper = if installation.is_some() {
-            InstallationKeeper::of_file(&installation_path)
-        } else {
-            InstallationKeeper::default()
+        // Checked and read as one file: the check ends at the file's entry,
+        // the file is opened there without following a link, and the text
+        // is read from the handle whose owner and mode were checked
+        // (decision 0273).
+        let (installation, installation_keeper) = match read_installation_file(&installation_path) {
+            Ok((text, keeper)) => (Some(SourceFile::new(&installation_path, text)), keeper),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (None, InstallationKeeper::default())
+            }
+            Err(_) => return Err(unreadable(&installation_path)),
         };
         let user = read_file(&paths.config.join(SETTINGS_FILE_NAME))?;
         let project = match project {
@@ -259,6 +265,18 @@ impl Sources {
         Ok(self.with_pack(Arc::new(Manifest::parse(text)?)))
     }
 
+    /// The same sources, with the installation's settings file taken as
+    /// kept by `keeper`, in place of the check of the file on disk. For a
+    /// test alone: no product source but the product's own test switch
+    /// names it, and a test of this crate holds that (decisions 0241 and
+    /// 0273).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_installation_keeper_for_tests(mut self, keeper: InstallationKeeper) -> Self {
+        self.installation_keeper = keeper;
+        self
+    }
+
     /// The same sources, with one more flag.
     #[must_use]
     pub fn with_flag(mut self, key: &str, value: &str) -> Self {
@@ -271,12 +289,16 @@ fn read_file(path: &Path) -> Result<Option<SourceFile>, Failure> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(SourceFile::new(path, text))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err(codes::input(
-            codes::SETTINGS_INVALID,
-            format!("The settings file `{}` cannot be read.", path.display()),
-            "Make the file readable text, or remove it.",
-        )),
+        Err(_) => Err(unreadable(path)),
     }
+}
+
+fn unreadable(path: &Path) -> Failure {
+    codes::input(
+        codes::SETTINGS_INVALID,
+        format!("The settings file `{}` cannot be read.", path.display()),
+        "Make the file readable text, or remove it.",
+    )
 }
 
 /// One value as a layer wrote it.

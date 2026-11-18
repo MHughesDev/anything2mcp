@@ -176,15 +176,10 @@ async fn a_settings_value_is_read_by_its_path_and_a_form_with_two_meanings_stops
 async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     let scene = Scene::new();
     let store = store().await;
-    let settings = ("settings", text("orders"));
 
     // An INI file: a byte-order mark, CRLF, comments, a blank line, and a
     // last line not ended, all kept; only the two values differ.
-    let values = inputs(&[
-        settings.clone(),
-        ("prefix", text("B-")),
-        ("next_number", Value::Int(104)),
-    ]);
+    let values = inputs(&[("prefix", text("B-")), ("next_number", Value::Int(104))]);
     let back = write(&scene, &store, 1, "example_ini_orders_set", &values, || {})
         .await
         .unwrap();
@@ -203,7 +198,7 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     );
 
     // Quotes the document says are around the value stay where they were.
-    let values = inputs(&[settings.clone(), ("note", text("kept again"))]);
+    let values = inputs(&[("note", text("kept again"))]);
     write(
         &scene,
         &store,
@@ -231,7 +226,6 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
     // `true` that becomes `false`; tabs, the comment, and the document type
     // stay as they were.
     let values = inputs(&[
-        settings.clone(),
         ("title", text("Rails < bolts")),
         ("next_number", Value::Int(104)),
         ("open", Value::Bool(false)),
@@ -241,10 +235,7 @@ async fn a_settings_write_changes_its_value_and_keeps_every_other_byte() {
         .unwrap();
     assert_eq!(back.get("title"), Some(&text("Rails < bolts")));
     assert_eq!(back.get("open"), Some(&Value::Bool(false)));
-    let rate = inputs(&[
-        settings.clone(),
-        ("rate", Value::Decimal(Decimal::parse("3.75").unwrap())),
-    ]);
+    let rate = inputs(&[("rate", Value::Decimal(Decimal::parse("3.75").unwrap()))]);
     write(&scene, &store, 4, "example_plist_rate_set", &rate, || {})
         .await
         .unwrap();
@@ -269,11 +260,7 @@ async fn a_settings_value_the_file_cannot_hold_as_written_is_refused_and_nothing
     let scene = Scene::new();
     let store = store().await;
     for (caller, prefix) in [(1, "B- ; a comment"), (2, "\"B-"), (3, "#B")] {
-        let values = inputs(&[
-            ("settings", text("orders")),
-            ("prefix", text(prefix)),
-            ("next_number", Value::Int(103)),
-        ]);
+        let values = inputs(&[("prefix", text(prefix)), ("next_number", Value::Int(103))]);
         let failure = write(
             &scene,
             &store,
@@ -747,26 +734,58 @@ async fn a_growing_file_replaced_cut_short_or_holding_bad_text_is_told_and_never
         .unwrap();
     let position = first.get("position").cloned().unwrap();
 
-    // A line that is not UTF-8: a named stop, and the position the caller
-    // holds stays good.
+    // A line that is not UTF-8, after ones that are (the first ends the
+    // seed's partial line): the lines before it are given, then the bad line is told by the outcome and passed, and the
+    // line after it is read.
     scene
         .stand
         .set_fault(Fault::ChangedByAnother {
             file: seed::ORDERS_LOG.to_owned(),
-            change: Change::Appended(b"ft \xff\xfe\n".to_vec()),
+            change: Change::Appended(b"fted\ngood\nft \xff\xfe\nafter\n".to_vec()),
             how: SaveStyle::InPlace,
         })
         .unwrap();
-    let failure = read(
+    let before = read(
         &scene,
         "example_orders_log_read",
         &log_read(Some(&position)),
     )
     .await
-    .unwrap_err();
+    .unwrap();
     assert_eq!(
-        code(&failure),
-        (FailureClass::UnknownVariant, "value_unreadable")
+        before.get("lines").and_then(Value::as_list).unwrap(),
+        [
+            text("2026-11-18T08:02:00 order A-101 drafted"),
+            text("good")
+        ]
+    );
+    assert_eq!(before.get("outcome"), Some(&text("read")));
+    assert_eq!(before.get("more"), Some(&Value::Bool(true)));
+    let bad = read(
+        &scene,
+        "example_orders_log_read",
+        &log_read(before.get("position")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bad.get("outcome"), Some(&text("unreadable")));
+    assert!(
+        bad.get("lines")
+            .and_then(Value::as_list)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(bad.get("more"), Some(&Value::Bool(true)));
+    let after = read(
+        &scene,
+        "example_orders_log_read",
+        &log_read(bad.get("position")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        after.get("lines").and_then(Value::as_list).unwrap(),
+        [text("after")]
     );
 
     // Cut short, in place: told as `truncated`, and nothing is read.

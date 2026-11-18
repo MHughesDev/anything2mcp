@@ -69,6 +69,13 @@ mod same_verdict {
 
     struct Place(PathBuf);
 
+    /// How a program of this system begins: the shared check refuses a
+    /// file that does not (decision 0271).
+    #[cfg(target_os = "macos")]
+    const HEAD: &[u8] = &[0xcf, 0xfa, 0xed, 0xfe];
+    #[cfg(not(target_os = "macos"))]
+    const HEAD: &[u8] = &[0x7f, b'E', b'L', b'F'];
+
     impl Drop for Place {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
@@ -97,16 +104,16 @@ mod same_verdict {
             mode(&at(folder), bits);
         }
         let program = at("real").join("example-tool");
-        std::fs::write(&program, [0x7f, b'E', b'L', b'F']).unwrap();
+        std::fs::write(&program, HEAD).unwrap();
         mode(&program, 0o755);
         let script = at("real").join("example-script");
         std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
         mode(&script, 0o755);
         let writable = at("real").join("example-open");
-        std::fs::write(&writable, [0x7f, b'E', b'L', b'F']).unwrap();
+        std::fs::write(&writable, HEAD).unwrap();
         mode(&writable, 0o777);
         let not_run = at("real").join("example-not-run");
-        std::fs::write(&not_run, [0x7f, b'E', b'L', b'F']).unwrap();
+        std::fs::write(&not_run, HEAD).unwrap();
         mode(&not_run, 0o644);
         let grouped = at("grouped").join("example-tool");
         std::fs::copy(&program, &grouped).unwrap();

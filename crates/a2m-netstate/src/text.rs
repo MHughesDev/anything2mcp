@@ -5,7 +5,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::bound;
-use crate::model::{ProxySetting, Transport};
+use crate::model::{Absent, AbsentReason, ProxySetting, Transport};
 
 /// The name servers and search domains a `resolv.conf` states.
 ///
@@ -169,29 +169,51 @@ pub fn prefix_of_mask(mask: &[u8]) -> Option<u8> {
     u8::try_from(length).ok()
 }
 
+/// The schemes a proxy value is read as starting with. Any other text
+/// before `://` is read as part of the value, because in a value with no
+/// scheme it may be a user name.
+const PROXY_SCHEMES: &[&str] = &[
+    "http", "https", "socks", "socks4", "socks4a", "socks5", "socks5h",
+];
+
 /// A proxy value with any user name and password, query, and fragment
-/// removed, and whether credentials were in it. A value with no scheme is
-/// read as `host:port`. Nothing in the value is resolved or reached.
+/// removed, and whether credentials were in it. Nothing in the value is
+/// resolved or reached.
+///
+/// Credentials are removed before any other cut: everything up to the last
+/// `@` after the scheme goes, whatever the password holds (`/`, `?`, `#`,
+/// `;`, a space, or another `@`). Only then are the query and the fragment
+/// cut off. A value whose path holds an `@` therefore loses everything
+/// before that `@`, the host included; that is the safe direction, and
+/// `credentials_removed` says so.
+///
+/// The scheme is kept only when it is one of the proxy schemes (`http`,
+/// `https`, `socks` and its versions, in any case). A value with no scheme,
+/// or with another one, is read whole as `host:port`, so that a user name
+/// is never mistaken for a scheme and kept.
 #[must_use]
 pub fn clean_proxy(value: &str) -> (String, bool) {
     let value = value.trim();
     let (scheme, rest) = match value.split_once("://") {
-        Some((scheme, rest)) => (Some(scheme), rest),
-        None => (None, value),
+        Some((scheme, rest))
+            if PROXY_SCHEMES
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(scheme)) =>
+        {
+            (Some(scheme), rest)
+        }
+        _ => (None, value),
+    };
+    // First, and before anything else: the credentials.
+    let (rest, had_credentials) = match rest.rfind('@') {
+        Some(at) => (&rest[at + 1..], true),
+        None => (rest, false),
     };
     let end = rest.find(['?', '#']).unwrap_or(rest.len());
     let rest = &rest[..end];
-    let (authority, path) = match rest.find('/') {
-        Some(at) => (&rest[..at], &rest[at..]),
-        None => (rest, ""),
-    };
-    let (authority, had_credentials) = match authority.rsplit_once('@') {
-        Some((_, host)) => (host, true),
-        None => (authority, false),
-    };
     let cleaned = match scheme {
-        Some(scheme) => format!("{scheme}://{authority}{path}"),
-        None => format!("{authority}{path}"),
+        Some(scheme) => format!("{scheme}://{rest}"),
+        None => rest.to_owned(),
     };
     (bound::text(&cleaned), had_credentials)
 }
@@ -211,16 +233,35 @@ pub const PROXY_VARIABLES: &[(&str, &str)] = &[
     ("NO_PROXY", "bypass"),
 ];
 
+/// The entry left out in place of a list that holds an `@`: a list is split
+/// on characters a password may hold, so where a password ends cannot be
+/// told, and no part of the list is kept (rule 7).
+fn left_out(field: &'static str) -> Absent {
+    Absent {
+        field,
+        reason: AbsentReason::MayHoldCredentials,
+    }
+}
+
 /// The proxy settings an environment states, given a way to read a
-/// variable. A bypass list is kept as written, cut to the longest text.
-pub fn proxy_from_environment(read: impl Fn(&str) -> Option<String>) -> Vec<ProxySetting> {
+/// variable, and what was left out. A bypass list is kept as written, cut
+/// to the longest text, unless it holds an `@`: then it is left out whole,
+/// named by its variable.
+pub fn proxy_from_environment(
+    read: impl Fn(&str) -> Option<String>,
+) -> (Vec<ProxySetting>, Vec<Absent>) {
     let mut settings = Vec::new();
+    let mut absent = Vec::new();
     for (name, applies_to) in PROXY_VARIABLES {
         let Some(value) = read(name) else { continue };
         if value.trim().is_empty() {
             continue;
         }
         let (value, credentials_removed) = if *applies_to == "bypass" {
+            if value.contains('@') {
+                absent.push(left_out(name));
+                continue;
+            }
             (bound::text(value.trim()), false)
         } else {
             clean_proxy(&value)
@@ -232,14 +273,41 @@ pub fn proxy_from_environment(read: impl Fn(&str) -> Option<String>) -> Vec<Prox
             credentials_removed,
         });
     }
-    settings
+    (settings, absent)
+}
+
+/// A bypass list as the system states it, kept as written and cut to the
+/// longest text; or, when it holds an `@`, the entry that says it was left
+/// out whole, under `field`.
+///
+/// # Errors
+///
+/// The [`Absent`] entry, when the list holds an `@`.
+pub fn proxy_bypass(from: &str, field: &'static str, list: &str) -> Result<ProxySetting, Absent> {
+    if list.contains('@') {
+        return Err(left_out(field));
+    }
+    Ok(ProxySetting {
+        from: from.to_owned(),
+        applies_to: "bypass".to_owned(),
+        value: bound::text(list.trim()),
+        credentials_removed: false,
+    })
 }
 
 /// The entries of a proxy list in the form `scheme=host:port;host:port`,
 /// each with what it applies to, credentials removed.
+///
+/// A list that holds an `@` anywhere gives no entries and the absent entry
+/// for `list`: the list is split on `;` and space, which a password may
+/// hold, so no entry could be cut from it safely.
 #[must_use]
-pub fn proxy_list(from: &str, list: &str) -> Vec<ProxySetting> {
-    list.split([';', ' '])
+pub fn proxy_list(from: &str, list: &str) -> (Vec<ProxySetting>, Option<Absent>) {
+    if list.contains('@') {
+        return (Vec::new(), Some(left_out("list")));
+    }
+    let settings = list
+        .split([';', ' '])
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
         .map(|entry| {
@@ -255,7 +323,8 @@ pub fn proxy_list(from: &str, list: &str) -> Vec<ProxySetting> {
                 credentials_removed,
             }
         })
-        .collect()
+        .collect();
+    (settings, None)
 }
 
 #[cfg(test)]
@@ -337,23 +406,120 @@ mod tests {
             clean_proxy("proxy.example:3128"),
             ("proxy.example:3128".to_owned(), false)
         );
-        let settings = proxy_from_environment(|name| match name {
+        let (settings, absent) = proxy_from_environment(|name| match name {
             "https_proxy" => Some("http://u:secret-for-tests@proxy.example:8080".to_owned()),
             "no_proxy" => Some("localhost,.example".to_owned()),
             _ => None,
         });
         assert_eq!(settings.len(), 2);
+        assert!(absent.is_empty());
         assert_eq!(settings[0].value, "http://proxy.example:8080");
         assert!(settings[0].credentials_removed);
         assert_eq!(settings[1].applies_to, "bypass");
         let json = format!("{settings:?}");
         assert!(!json.contains("secret-for-tests"));
-        let list = proxy_list(
-            "system",
-            "http=a.example:80;https=u:secret-for-tests@b.example:443",
-        );
+        let (list, absent) = proxy_list("system", "http=a.example:80;https=b.example:443");
+        assert!(absent.is_none());
         assert_eq!(list[1].applies_to, "https");
         assert_eq!(list[1].value, "b.example:443");
-        assert!(list[1].credentials_removed);
+        assert!(!list[1].credentials_removed);
+    }
+
+    /// The characters a password may hold that a cleaner could mistake for
+    /// the end of one.
+    const AWKWARD: &[char] = &['/', '?', '#', '@', ':', ';', ' ', '%'];
+
+    #[test]
+    fn no_byte_of_a_proxy_password_survives_cleaning_whatever_it_holds() {
+        for c in AWKWARD {
+            let password = format!("pa{c}ss-word-1");
+            for value in [
+                format!("http://user:{password}@proxy.example:3128/x?q#f"),
+                format!("user:{password}@proxy.example:3128"),
+            ] {
+                let (settings, absent) =
+                    proxy_from_environment(|name| (name == "http_proxy").then(|| value.clone()));
+                assert!(absent.is_empty());
+                let setting = &settings[0];
+                let shown = format!("{} {setting:?}", setting.value);
+                assert!(
+                    !shown.contains("user") && !shown.contains("ss-word"),
+                    "{c:?}: {shown}"
+                );
+                assert!(setting.credentials_removed, "{c:?}: {shown}");
+                assert!(setting.value.contains("proxy.example:3128"), "{shown}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_that_holds_credentials_is_left_out_whole() {
+        for list in ["http=user:pa;ss@h:1;https=h:2", "user:pa ss@h:1"] {
+            let (settings, absent) = proxy_list("system", list);
+            let shown = format!("{settings:?} {absent:?}");
+            assert!(settings.is_empty(), "{shown}");
+            assert!(!shown.contains("user") && !shown.contains("ss"), "{shown}");
+            assert_eq!(
+                absent,
+                Some(Absent {
+                    field: "list",
+                    reason: AbsentReason::MayHoldCredentials
+                })
+            );
+        }
+        // A bypass list, from the environment or the system, likewise.
+        let (settings, absent) = proxy_from_environment(|name| {
+            (name == "no_proxy").then(|| "localhost,user:pa,ss@h".to_owned())
+        });
+        assert!(settings.is_empty());
+        assert_eq!(absent[0].field, "no_proxy");
+        assert_eq!(absent[0].reason, AbsentReason::MayHoldCredentials);
+        let left_out = proxy_bypass("system", "bypass", "<local>;user:pa;ss@h").unwrap_err();
+        assert!(!format!("{left_out:?}").contains("user"));
+    }
+
+    #[test]
+    fn a_value_with_no_credentials_is_kept_as_it_was() {
+        for (value, kept) in [
+            ("http://proxy.example:3128", "http://proxy.example:3128"),
+            ("http://proxy.example:3128/", "http://proxy.example:3128/"),
+            ("HTTPS://proxy.example/path", "HTTPS://proxy.example/path"),
+            (
+                "socks5h://[2001:db8::1]:1080",
+                "socks5h://[2001:db8::1]:1080",
+            ),
+            ("proxy.example:3128", "proxy.example:3128"),
+            ("  proxy.example:3128  ", "proxy.example:3128"),
+            (
+                "http://proxy.example:3128/x?q#f",
+                "http://proxy.example:3128/x",
+            ),
+            ("file://C:/proxy.pac", "file://C:/proxy.pac"),
+        ] {
+            assert_eq!(clean_proxy(value), (kept.to_owned(), false), "{value}");
+        }
+        let (list, absent) = proxy_list(
+            "system",
+            "http=a.example:80;https=b.example:443 c.example:1",
+        );
+        assert!(absent.is_none());
+        let values: Vec<(&str, &str)> = list
+            .iter()
+            .map(|s| (s.applies_to.as_str(), s.value.as_str()))
+            .collect();
+        assert_eq!(
+            values,
+            vec![
+                ("http", "a.example:80"),
+                ("https", "b.example:443"),
+                ("all", "c.example:1")
+            ]
+        );
+        assert_eq!(
+            proxy_bypass("system", "bypass", " <local>;*.example ")
+                .unwrap()
+                .value,
+            "<local>;*.example"
+        );
     }
 }

@@ -35,7 +35,8 @@ pub fn routes() -> Result<Routes, NetError>;           // ordered; default route
 pub fn resolvers() -> Result<Resolvers, NetError>;     // each place a setting is stated, in order read
 pub fn neighbours() -> Result<Neighbours, NetError>;   // the table as held; never refreshed
 pub fn listeners() -> Result<Listeners, NetError>;     // TCP listening, UDP bound with no peer; owner where visible
-pub fn proxy() -> Result<Proxy, NetError>;             // as the system states it; credentials removed
+pub fn proxy() -> Result<Proxy, NetError>;             // as the system states it; credentials removed first;
+                                                       // a list holding `@` left out whole (may_hold_credentials)
 pub fn standing() -> Result<Standing, NetError>;       // interfaces() and routes(), joined
 pub fn standing_of(&Interfaces, &Routes) -> Standing;  // the join, pure
 
@@ -54,6 +55,8 @@ pub struct ProxySetting { from, applies_to, value, credentials_removed: bool }
 pub struct Standing { interfaces: Vec<InterfaceStanding>, default_routes: Vec<Route>, cut }
 pub struct HardwareAddress(..); // octets() for the kernel; serialized as length and locally_administered only
 pub struct Cut { list, kept, seen, table_cut: bool }
+pub struct Absent { field, reason: AbsentReason }
+pub enum AbsentReason { NotStated, NeedsLocationPermission, NotVisibleToThisUser, NotRead, MayHoldCredentials }
 pub enum NetError { Refused { fact }, NotBuilt { fact, system }, Unreadable { fact, what }, Failed { fact, code } }
 impl From<NetError> for Failure; // the shared failure of the core crate
 
@@ -73,10 +76,10 @@ Each reading carries `read_from`, the names of the system interfaces it read, so
 | Routes | Route-netlink `RTM_GETROUTE`: the main table's unicast routes | `sysctl` `NET_RT_DUMP`: routes not scoped to one interface | `GetIpForwardTable2`, `FreeMibTable`; interface metrics from `GetAdaptersAddresses` |
 | Name servers | `/etc/resolv.conf`; `/run/systemd/resolve/resolv.conf` where it exists | `/etc/resolv.conf` | `GetAdaptersAddresses` |
 | Neighbours | Route-netlink `RTM_GETNEIGH` | `sysctl` `NET_RT_FLAGS` with `RTF_LLINFO` | `GetIpNetTable2`, `FreeMibTable` |
-| Listening sockets | `/proc/net/{tcp,tcp6,udp,udp6}`; `/proc/<pid>/fd` links; `/proc/<pid>/comm` | Not built | `GetExtendedTcpTable`, `GetExtendedUdpTable`; `OpenProcess` (limited query right), `QueryFullProcessImageNameW`, `CloseHandle` |
+| Listening sockets | `/proc/net/{tcp,tcp6,udp,udp6}`; `/proc/<pid>/fd` links; the file name of the `/proc/<pid>/exe` link. The walk is bounded by `MOST_PROCESSES` and `MOST_DESCRIPTORS`; an owner it did not reach is absent as `not_read`, one it could not see as `not_visible_to_this_user` | Not built | `GetExtendedTcpTable`, `GetExtendedUdpTable`; `OpenProcess` (limited query right), `QueryFullProcessImageNameW`, `CloseHandle` |
 | Proxy | This process's environment, by the common variable names | Not built | `WinHttpGetIEProxyConfigForCurrentUser`, `GlobalFree` |
 
-The one message sent anywhere is on Linux: a route-netlink request, addressed to the kernel (port 0, no multicast groups), of one of four `GET` types. A neighbour dump lists the cache; it makes the kernel ask nothing.
+The one message sent anywhere is on Linux: a route-netlink request, addressed to the kernel (port 0, no multicast groups), of one of four `GET` types. A neighbour dump lists the cache; it makes the kernel ask nothing. The answer is read with `recvfrom`: a datagram from any sender but the kernel (port 0) is dropped unread, since another process in the namespace may address the socket's port, and each receive waits at most five seconds, after which the read is `net_read_failed`.
 
 ## Privacy
 
@@ -88,8 +91,8 @@ A hardware address, a host name, and a wireless network's name are personal data
 | Host names | None is read: no reverse lookup, no hosts file, not the machine's own name | Nothing to serve |
 | Wireless network's name | Not read. On a wireless interface it is listed as absent: on Windows the reason is `needs_location_permission`, elsewhere `not_read` | Nothing to serve; asking for the permission is a later slice and the person's act |
 | Interface names, addresses, routes, name servers, search domains | Whole | Whole. They are what the machine's own settings show the person, and an agent on this machine can read them already |
-| A listening socket's owner | Its process id, and its program's file name, without a folder or arguments. Never a command line or an environment, which can hold secrets (rule 4) | Whole |
-| Proxy setting | Whole, with any user name and password, query, and fragment removed first; `credentials_removed` says when | Whole, as returned |
+| A listening socket's owner | Its process id, and its program's file name, without a folder or arguments: on Linux the file name of the `exe` link, which the process cannot set (its `comm` it can). Never a command line or an environment, which can hold secrets (rule 4) | Whole |
+| Proxy setting | Whole, with any user name and password removed before any other cut (everything up to the last `@` after a proxy scheme), then the query and fragment; `credentials_removed` says when. A list of entries (the Windows proxy list) or a bypass list (the Windows bypass, `no_proxy`) that holds an `@` anywhere is left out whole, with an absent entry whose reason is `may_hold_credentials`: it is split on characters a password may hold, so no entry can be cut from it safely | Whole, as returned |
 
 ## Used by, and uses
 
@@ -115,14 +118,15 @@ A list a bound cut is not a failure: the reading names it in `cut`.
 
 | Invariant | Test |
 | --- | --- |
-| No source file connects, sends, listens, binds, or resolves; none calls a Windows function that sends or changes a table; none reads a command line or an environment | `tests/sends_nothing.rs`, `no_source_file_connects_sends_listens_or_resolves` |
+| No source file connects, sends, listens, binds, or resolves; none opens a socket but the one netlink socket, writes to one, or calls `ioctl` or `WSAIoctl`; none starts a process; none calls a Windows function that sends or changes a table; none reads a command line or an environment. Every line but the final unit-test module is scanned | `tests/sends_nothing.rs`, `no_source_file_connects_sends_listens_or_resolves`, `the_scan_leaves_out_only_the_unit_test_module` |
 | The one send is to the kernel, in the netlink module, of the four listing requests only | `tests/sends_nothing.rs`, `the_one_send_goes_to_this_machines_kernel`; `netlink.rs`, `only_the_four_listing_requests_are_sent` |
+| Only the kernel's answer is read, and a receive waits a bounded time (Linux) | `netlink.rs`, `a_message_from_another_process_is_dropped_unread`, `a_kernel_that_never_answers_is_a_read_failure_not_a_wait_for_good` |
 | The dependencies are a closed list | `tests/sends_nothing.rs`, `the_dependencies_are_a_closed_list` |
-| Every reader, in a network namespace with only loopback, gives that namespace's facts (Linux) | `tests/namespace.rs` |
+| Every reader, in a network namespace with only loopback, gives that namespace's facts (Linux). This proves the readers read their own namespace; it does not alone prove that nothing is sent, since the namespace has nowhere to send to | `tests/namespace.rs` |
 | Each Linux reader agrees with the system by another route: `/sys/class/net`, `/proc/net/fib_trie`, `/proc/net/if_inet6`, `/proc/net/route`, `/proc/net/arp`, `/etc/resolv.conf`, and a socket the test opened | `tests/linux.rs` |
 | On Windows and macOS: loopback is listed and is this machine; each default route's interface is listed; a socket the test opened is listed with this process as owner (Windows); the IPv4 neighbours include what `arp` lists; on macOS the interfaces include what `ifconfig -l` lists and the IPv4 default gateway is one `netstat -rn` lists | `tests/windows_and_macos.rs`, first run in CI |
-| A hardware address is never serialized whole; a proxy's credentials never survive | `lib.rs`, `a_hardware_address_is_never_serialized_whole`; `text.rs`, `credentials_never_survive_in_a_proxy_value` |
-| A long list is cut and the cut is named | `bound.rs` |
+| A hardware address is never serialized whole; a proxy's credentials never survive, whatever the password holds; a list that may hold them is left out whole; a value without them is kept as written | `lib.rs`, `a_hardware_address_is_never_serialized_whole`; `text.rs`, `credentials_never_survive_in_a_proxy_value`, `no_byte_of_a_proxy_password_survives_cleaning_whatever_it_holds`, `a_list_that_holds_credentials_is_left_out_whole`, `a_value_with_no_credentials_is_kept_as_it_was` |
+| A long list is cut and the cut is named; the default routes are bounded too; an owner walk a bound stopped says `not_read` | `bound.rs`; `lib.rs`, `the_default_routes_are_bounded_and_their_cut_is_named`; `linux.rs`, `a_walk_a_bound_stopped_says_the_owner_was_not_read` |
 | Each error maps to one class and code | `error.rs` |
 
 ## Build order
@@ -134,6 +138,7 @@ A list a bound cut is not a failure: the reading names it in `cut`.
 5. Not built: the macOS listening sockets with their owners (`proc_pidfdinfo`, whose socket record `libc` does not carry), and the macOS proxy setting (the system configuration's proxy dictionary). Each answers `net_reader_not_built`.
 6. Not built: the wireless network's name, on any system.
 7. Not built: the network's fingerprint (slice N3 of the design), which this crate's facts feed.
+8. Done: the second reader's review of the crate ([decision 0261](../../decisions/0261-a-proxy-values-credentials-are-removed-before-any-other-cut.md)): credentials removed before any other cut, a list holding `@` left out whole, the default routes bounded, the owner walk bounded and its program named by the `exe` link, the netlink answer read from the kernel alone with a time limit, and the source scan widened. Not done from that review: on Windows the UDP table lists connected endpoints too, and on macOS an Ethernet-framed interface has no absent entry for its kind (finding A5); the corpus of address spellings (A7), which belongs to `a2m-core`.
 
 ## Open points
 

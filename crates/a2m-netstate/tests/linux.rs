@@ -259,10 +259,14 @@ fn a_socket_this_test_opened_is_listed_with_this_process_as_its_owner() {
     let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let read = a2m_netstate::listeners().unwrap();
     let me = std::process::id();
-    let program = std::fs::read_to_string("/proc/self/comm")
+    // The program's file name, by another route than the reader's: the
+    // path this test binary was started by. Not its `comm`, which a process
+    // may set to anything.
+    let program = std::path::PathBuf::from(std::env::args_os().next().unwrap())
+        .file_name()
         .unwrap()
-        .trim()
-        .to_owned();
+        .to_string_lossy()
+        .into_owned();
     for (transport, port) in [
         (Transport::Tcp, tcp.local_addr().unwrap().port()),
         (Transport::Udp, udp.local_addr().unwrap().port()),

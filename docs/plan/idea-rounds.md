@@ -191,3 +191,19 @@ A designer who read the code for the command-line package found two statements i
 **Verdict: ruled out.** A flag found in a program's bytes would be a guess about a thing the program itself can be asked. The one case where the bytes held more is answered with certainty by declaring the program's fuller help form, which the target already can. Nothing in the rules forbids reading a program's bytes at build time, so this is a finding about usefulness and not a limit: if a kind of program appears whose help says little and whose bytes say much, the question is open again.
 
 **Next.** One sentence added to the command pack's section, where a target declares its help forms: declare the fullest form the program has.
+
+## Round 25 (2026-11-18, 05:17 UTC)
+
+**Idea.** The command line could complete its own commands and flags in a person's shell, at almost no cost, because every command is already generated from one registry.
+
+**Test.** Searched the command line's source and the action catalog for any completion, and asked the built program what the registry holds for one action: its words, each flag's name, type, whether it is required, and a line of help. Reading and one call; no completion script was written.
+
+**Result.** There is no completion of any kind. Everything a static completion needs is already data: the command tree the help is printed from holds every noun and verb, and each action's fields carry the flag names, their types, and their help. What a static script cannot give is values that live in the engine, such as the names of targets and tools.
+
+**Verdict: taken up, small.** One command prints a completion script for a named shell, generated from the registry and answered by the program itself, with no engine. Commands and flags first; values from the engine are left out and said to be. It needs no change to the action registry.
+
+**Next.** Joins the command-line package, in the builder that owns the product crate, after the help changes it sits beside.
+
+## What came of round 20 (2026-11-18)
+
+Built. A person hands the scout files of the project's `sources` folder under names the discoverers declare, through `scout run --files`, `discover run --files`, and `spec import`; product tests import a description and a device's register map through the real command ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).

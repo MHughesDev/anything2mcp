@@ -1,5 +1,5 @@
 //! Shared types for Anything2MCP: the vocabularies, checked names,
-//! identifiers, values, failures, findings, the secret wrapper, and the
+//! identifiers, values, failures and the tables that declare their codes, findings, the secret wrapper, and the
 //! compiled plan as data.
 //!
 //! Everything here is the same whatever kind of system is being integrated.
@@ -19,6 +19,8 @@ mod name;
 mod vocabulary;
 
 mod canonical;
+mod code_book;
+pub mod codes;
 mod decimal;
 mod digest;
 mod effect;
@@ -43,13 +45,14 @@ pub mod __name {
 }
 
 pub use canonical::{CanonicalJson, PackPayload};
+pub use code_book::{CodeBook, CodeEntry, Passes, ThenAction};
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};
 pub use effect::{EffectClass, Hazard};
 pub use evidence::{Coverage, EvidenceLevel, WriteEvidence};
 pub use failure::{
-    Failure, FailureClass, FailureCode, SAID_CEILING, SAID_LONGEST, SAID_TOO_LONG, said_cut,
-    said_hides, said_neutral, said_quoted, said_shown,
+    Failure, FailureClass, FailureCode, NextAction, SAID_CEILING, SAID_LONGEST, SAID_TOO_LONG,
+    said_cut, said_hides, said_neutral, said_quoted, said_shown,
 };
 pub use finding::{
     Address, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation, LimitationCode,

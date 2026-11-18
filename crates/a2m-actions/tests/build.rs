@@ -889,6 +889,24 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         )
         .await;
     assert_eq!(again.error.unwrap().code, "schema_invalid");
+    // The drafts' own version is never published (decision 0273): a pack
+    // tells a draft's plan from a published one by it.
+    let draft = world
+        .call(
+            &world.person,
+            "version.publish",
+            json!({"target": "example", "version": "0.0.0"}),
+        )
+        .await;
+    let refused = draft.error.unwrap();
+    assert_eq!(refused.code, "schema_invalid");
+    assert!(refused.message.contains("0.0.0"), "{}", refused.message);
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    let listed = listed.result.unwrap().to_string();
+    assert!(
+        listed.contains("\"1.0.0\"") && !listed.contains("\"0.0.0\""),
+        "{listed}"
+    );
 
     // The tools are found, described, and shown, by anyone who may read.
     let found = world

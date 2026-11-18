@@ -263,6 +263,14 @@ pub(crate) fn parse_ini(
             if name.is_empty() || name.contains(['[', ']']) {
                 return Err(not_read("holds a section header with no plain name"));
             }
+            if sections
+                .iter()
+                .any(|seen: &String| seen.eq_ignore_ascii_case(name))
+            {
+                return Err(not_read(
+                    "holds one section header twice, which some programs read as one section and others as its first or its last block alone",
+                ));
+            }
             sections.push(name.to_owned());
             section = Some(name.to_owned());
             continue;
@@ -789,7 +797,10 @@ pub(crate) fn literal(
         return Err(refused("is a date, which the file pack does not write yet"));
     }
     let text = edit::spell(value, field_type)?.unwrap_or_default();
-    if text.contains(['\r', '\n']) {
+    // A line feed and a carriage return end a line everywhere; a next-line
+    // character and the line and paragraph separators end one for some
+    // readers.
+    if text.contains(['\r', '\n', '\u{85}', '\u{2028}', '\u{2029}']) {
         return Err(refused("holds a line break"));
     }
     match which {
@@ -797,6 +808,13 @@ pub(crate) fn literal(
             if text.starts_with(BLANKS) || text.ends_with(BLANKS) {
                 return Err(refused(
                     "begins or ends with a blank, which the file would lose",
+                ));
+            }
+            // A tab, a null, and every other control character: some
+            // readers stop or split at them.
+            if text.chars().any(char::is_control) {
+                return Err(refused(
+                    "holds a control character, at which some programs stop or split a line",
                 ));
             }
             if holds_inline_comment(&text) {
@@ -841,7 +859,10 @@ pub(crate) fn literal(
                     setting.kind.element()
                 )));
             }
-            if text.chars().any(|c| c.is_control() && !matches!(c, '\t')) {
+            if text
+                .chars()
+                .any(|c| (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}'))
+            {
                 return Err(refused("holds a character the XML form cannot hold"));
             }
             let escaped = text
@@ -923,6 +944,7 @@ mod tests {
             (b"[a\nkey = one\n", true),
             (b"just words\n", true),
             (b"key = one\rkey2 = two\n", true),
+            (b"[a]\nkey = one\n[A]\nother = two\n", true),
             (b"key = one ; a comment\n", false),
             (b"key = \"quoted\"\n", false),
             (b"a:b = c\n", false),
@@ -1026,7 +1048,21 @@ mod tests {
         let write =
             |value: &str| literal(a, Which::Ini, Quotes::Unsaid, &Value::from(value), &text);
         assert_eq!(write("y z").unwrap(), b"y z");
-        for refused in [" y", "y ", "y ; z", "#y", "\"y\"", "two\nlines"] {
+        for refused in [
+            " y",
+            "y ",
+            "y ; z",
+            "#y",
+            "\"y\"",
+            "two\nlines",
+            "a\tb",
+            "a\0b",
+            "a\u{b}b",
+            "a\u{c}b",
+            "a\u{85}b",
+            "a\u{2028}b",
+            "a\u{2029}b",
+        ] {
             assert!(write(refused).is_err(), "{refused:?}");
         }
         let plist = parse_plist(PLIST.as_bytes(), &limits()).unwrap();
@@ -1039,6 +1075,16 @@ mod tests {
             &text,
         );
         assert_eq!(out.unwrap(), b"<string>a&lt;b</string>");
+        for refused in ["a\u{FFFE}b", "a\u{FFFF}b", "a\u{2028}b", "a\0b"] {
+            let out = literal(
+                empty,
+                Which::PropertyList,
+                Quotes::Unsaid,
+                &Value::from(refused),
+                &text,
+            );
+            assert!(out.is_err(), "{refused:?}");
+        }
         let count = plist.find(&keys(&["Count"])).unwrap().unwrap();
         let out = literal(
             count,

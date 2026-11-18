@@ -13,7 +13,8 @@ use crate::forms;
 use crate::shape::{Kind, Shape};
 use crate::template::{
     Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
-    VersionSink, VersionSource, is_connection_header, parse_path,
+    VersionSink, VersionSource, is_connection_header, is_override_field, is_override_header,
+    override_may_change, parse_path,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -180,6 +181,36 @@ fn is_header_name(text: &str) -> bool {
         && text
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+/// The first method override an endpoint's file writes, in a header or as
+/// a literal query entry, that names a method that may change the system,
+/// with where it is written and how to name it (decision 0270).
+fn unsafe_override(doc: &Located<Doc>) -> Option<(&Place, String)> {
+    let headers = doc.get("headers").map(Located::entries).unwrap_or_default();
+    for entry in headers {
+        let value = entry.value.as_text().unwrap_or_default();
+        if is_override_header(&entry.key.value) && override_may_change(value) {
+            return Some((
+                &entry.key.at,
+                format!("its header `{}`", crate::codes::shown(&entry.key.value)),
+            ));
+        }
+    }
+    let query = doc.get("query").map(Located::entries).unwrap_or_default();
+    for entry in query {
+        let value = a2m_files::expr_text(&entry.value).unwrap_or_default();
+        if is_override_field(&entry.key.value) && override_may_change(&value) {
+            return Some((
+                &entry.key.at,
+                format!(
+                    "its query entry `{}`",
+                    crate::codes::shown(&entry.key.value)
+                ),
+            ));
+        }
+    }
+    None
 }
 
 /// Whether text can be a header's value without changing the request.
@@ -565,7 +596,7 @@ impl FileKind for EndpointKind {
             .text("method")
             .and_then(Method::from_word)
             .is_some_and(Method::is_safe);
-        doc.text("effect") != Some("read") || !safe
+        doc.text("effect") != Some("read") || !safe || unsafe_override(doc).is_some()
     }
 
     fn compile(
@@ -747,12 +778,25 @@ impl LintRule for EffectMethod {
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
         entries(view)
             .filter_map(|doc| {
+                let reads = doc.text("effect") == Some("read");
+                // An override is judged as the method it names, whatever
+                // the endpoint asserts of its own method (decision 0270).
+                if let (true, Some((at, what))) = (reads, unsafe_override(doc)) {
+                    return Some(problem(
+                        "effect_method",
+                        Stage::Lint,
+                        at,
+                        format!(
+                            "The endpoint is marked `read`, and {what} overrides its method with one HTTP does not mark safe, which a system may honour."
+                        ),
+                        "Mark the endpoint `write`, or remove the override.",
+                    ));
+                }
                 let method = doc.get("method")?;
                 let safe = method
                     .as_text()
                     .and_then(Method::from_word)
                     .is_some_and(Method::is_safe);
-                let reads = doc.text("effect") == Some("read");
                 let asserted = doc.get("read_asserted");
                 let says_so = asserted.and_then(Located::as_bool) == Some(true);
                 match (reads, safe, says_so) {

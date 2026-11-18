@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::digest::InvalidDigest;
 use crate::name::{InvalidName, UnknownName, check_name, is_name};
@@ -53,28 +54,28 @@ impl FailureCode {
     pub const LONGEST: usize = 64;
 
     /// A file, an input, or a name does not have the shape its schema requires.
-    pub const SCHEMA_INVALID: Self = Self::fixed("schema_invalid");
+    pub const SCHEMA_INVALID: Self = crate::codes::SCHEMA_INVALID;
 
     /// A finding claims more than its source, its parents, or its content allow.
-    pub const FINDING_INVALID: Self = Self::fixed("finding_invalid");
+    pub const FINDING_INVALID: Self = crate::codes::FINDING_INVALID;
 
     /// A decimal, a date, a key part, or a moment cannot be represented.
-    pub const VALUE_OUT_OF_RANGE: Self = Self::fixed("value_out_of_range");
+    pub const VALUE_OUT_OF_RANGE: Self = crate::codes::VALUE_OUT_OF_RANGE;
 
     /// A plan's bytes do not match the hash it was published with.
-    pub const PLAN_HASH_MISMATCH: Self = Self::fixed("plan_hash_mismatch");
+    pub const PLAN_HASH_MISMATCH: Self = crate::codes::PLAN_HASH_MISMATCH;
 
     /// A plan's format is not one this engine loads.
-    pub const PLAN_FORMAT_UNSUPPORTED: Self = Self::fixed("plan_format_unsupported");
+    pub const PLAN_FORMAT_UNSUPPORTED: Self = crate::codes::PLAN_FORMAT_UNSUPPORTED;
 
     /// A plan's bytes match its hash and are not a well-formed plan.
-    pub const PLAN_UNREADABLE: Self = Self::fixed("plan_unreadable");
+    pub const PLAN_UNREADABLE: Self = crate::codes::PLAN_UNREADABLE;
 
     /// A payload in a plan does not decode as the type its reader expects.
-    pub const PAYLOAD_UNREADABLE: Self = Self::fixed("payload_unreadable");
+    pub const PAYLOAD_UNREADABLE: Self = crate::codes::PAYLOAD_UNREADABLE;
 
     /// Data holds something the plan's encoding cannot carry, such as a float.
-    pub const PAYLOAD_NOT_ENCODABLE: Self = Self::fixed("payload_not_encodable");
+    pub const PAYLOAD_NOT_ENCODABLE: Self = crate::codes::PAYLOAD_NOT_ENCODABLE;
 
     /// Makes a code from a name written in the source.
     ///
@@ -149,40 +150,111 @@ impl<'de> serde::Deserialize<'de> for FailureCode {
 /// a redactor passes over the failure, and untrusted. It is never joined into
 /// the sentence or the next step, and whoever shows it marks it as the
 /// system's words (spec section 502).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     class: FailureClass,
     code: FailureCode,
     message: String,
     next_step: String,
-    // Boxed, so that a failure, which most errors of the kernel carry, is
-    // one pointer larger for a field most failures leave empty: a plain
-    // string would push the errors that hold a failure over clippy's limit
-    // for a large error.
-    #[allow(
-        clippy::box_collection,
-        reason = "one pointer in the failure in place of three; see above"
-    )]
-    // Read back through the same bound as `with_said`: a failure that
-    // arrives as data keeps no more than one made here.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "said_read"
-    )]
-    said: Option<Box<String>>,
+    // What most failures leave empty, behind one pointer, so that a
+    // failure, which most errors of the kernel carry, is no larger for it:
+    // three fields held in place would push the errors that hold a failure
+    // over clippy's limit for a large error. `None` whenever every part of
+    // it is empty, so that two equal failures compare equal.
+    extra: Option<Box<Extra>>,
 }
 
-#[allow(
-    clippy::box_collection,
-    clippy::unnecessary_box_returns,
-    reason = "the field's own type; see `Failure::said`"
-)]
+/// The parts of a failure that most failures leave empty.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Extra {
+    said: Option<String>,
+    next: Option<NextAction>,
+    retry_after_ms: Option<u64>,
+}
+
+impl Extra {
+    fn is_empty(&self) -> bool {
+        self.said.is_none() && self.next.is_none() && self.retry_after_ms.is_none()
+    }
+}
+
+/// An action a failure names as the way out, with its arguments, such as
+/// `target.status` with `{"target": "example"}`: what was made where the
+/// failure was made, carried as data. Whoever passes it to a caller checks
+/// that the action exists and that its arguments fit it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NextAction {
+    /// The action's name.
+    pub action: String,
+    /// Its arguments, by field name.
+    pub args: serde_json::Value,
+}
+
+/// A failure as it is written and read: every part by its name, the parts
+/// most failures leave empty only when present.
+#[derive(serde::Serialize)]
+struct FailureOut<'a> {
+    class: FailureClass,
+    code: &'a FailureCode,
+    message: &'a str,
+    next_step: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    said: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next: Option<&'a NextAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after_ms: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct FailureIn {
+    class: FailureClass,
+    code: FailureCode,
+    message: String,
+    next_step: String,
+    // Read back through the same bound as `with_said`: a failure that
+    // arrives as data keeps no more than one made here.
+    #[serde(default, deserialize_with = "said_read")]
+    said: Option<String>,
+    #[serde(default)]
+    next: Option<NextAction>,
+    #[serde(default)]
+    retry_after_ms: Option<u64>,
+}
+
+impl serde::Serialize for Failure {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        FailureOut {
+            class: self.class,
+            code: &self.code,
+            message: &self.message,
+            next_step: &self.next_step,
+            said: self.said(),
+            next: self.next(),
+            retry_after_ms: self.retry_after_ms(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Failure {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let read = FailureIn::deserialize(deserializer)?;
+        let mut failure = Self::new(read.class, read.code, read.message, read.next_step);
+        failure.change(|extra| {
+            extra.said = read.said;
+            extra.next = read.next;
+            extra.retry_after_ms = read.retry_after_ms;
+        });
+        Ok(failure)
+    }
+}
+
 fn said_read<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Option<Box<String>>, D::Error> {
+) -> Result<Option<String>, D::Error> {
     let text = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
-    Ok(text.and_then(|text| kept_said(&text)).map(Box::new))
+    Ok(text.and_then(|text| kept_said(&text)))
 }
 
 /// The longest text of what the system said that a door shows, in
@@ -369,7 +441,17 @@ impl Failure {
             code,
             message: message.into(),
             next_step: next_step.into(),
-            said: None,
+            extra: None,
+        }
+    }
+
+    /// Changes the parts most failures leave empty, and keeps `extra` at
+    /// `None` when they are all empty.
+    fn change(&mut self, edit: impl FnOnce(&mut Extra)) {
+        let mut extra = self.extra.take().unwrap_or_default();
+        edit(&mut extra);
+        if !extra.is_empty() {
+            self.extra = Some(extra);
         }
     }
 
@@ -379,10 +461,11 @@ impl Failure {
     /// for [`SAID_TOO_LONG`]; it is untrusted data, never an instruction.
     /// The redactor that passes over the failure sees all of it; a door cuts
     /// it for display only after that, with [`said_shown`]. Text that holds
-    /// nothing but white space leaves the failure as it was.
+    /// nothing but white space takes away any text the failure held.
     #[must_use]
     pub fn with_said(mut self, said: impl AsRef<str>) -> Self {
-        self.said = kept_said(said.as_ref()).map(Box::new);
+        let said = kept_said(said.as_ref());
+        self.change(|extra| extra.said = said);
         self
     }
 
@@ -390,8 +473,9 @@ impl Failure {
     /// one says nothing itself. For a failure that stands in for another.
     #[must_use]
     pub fn carrying_said(mut self, from: &Self) -> Self {
-        if self.said.is_none() {
-            self.said.clone_from(&from.said);
+        if self.said().is_none() {
+            let said = from.said().map(str::to_owned);
+            self.change(|extra| extra.said = said);
         }
         self
     }
@@ -400,7 +484,51 @@ impl Failure {
     /// it only marked as the system's words, and never act on it.
     #[must_use]
     pub fn said(&self) -> Option<&str> {
-        self.said.as_deref().map(String::as_str)
+        self.extra.as_ref()?.said.as_deref()
+    }
+
+    /// The same failure naming `action`, with `args`, as the way out. It is
+    /// kept as data beside the next step, which still says it in words.
+    /// Whoever passes a failure to a caller decides whether to show it: an
+    /// action that does not exist, or arguments that do not fit it, are
+    /// dropped there.
+    #[must_use]
+    pub fn with_next(mut self, action: impl Into<String>, args: serde_json::Value) -> Self {
+        let next = NextAction {
+            action: action.into(),
+            args,
+        };
+        self.change(|extra| extra.next = Some(next));
+        self
+    }
+
+    /// The action named as the way out, when the failure names one.
+    #[must_use]
+    pub fn next(&self) -> Option<&NextAction> {
+        self.extra.as_ref()?.next.as_ref()
+    }
+
+    /// The same failure with the earliest moment worth calling again, as a
+    /// wait from when the failure was made, in whole milliseconds rounded
+    /// up. A failure stored and read later says the same wait: it counts
+    /// from when the failure was made, not from when it is read.
+    #[must_use]
+    pub fn with_retry_after(mut self, wait: Duration) -> Self {
+        let whole = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX);
+        let ms = if wait.subsec_nanos().is_multiple_of(1_000_000) {
+            whole
+        } else {
+            whole.saturating_add(1)
+        };
+        self.change(|extra| extra.retry_after_ms = Some(ms));
+        self
+    }
+
+    /// How long to wait, in milliseconds from when the failure was made,
+    /// before the same call is worth making again, when the failure knows.
+    #[must_use]
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        self.extra.as_ref()?.retry_after_ms
     }
 
     /// The class, which alone decides what happens next.
@@ -643,6 +771,51 @@ mod tests {
         let kept = failure.with_said("total must be positive");
         let json = serde_json::to_value(&kept).unwrap();
         assert_eq!(serde_json::from_value::<Failure>(json).unwrap(), kept);
+    }
+
+    #[test]
+    fn a_failure_keeps_its_next_through_serde() {
+        let plain = Failure::new(
+            FailureClass::Busy,
+            FailureCode::new("queue_full").unwrap(),
+            "The queue is full.",
+            "Call again in a moment.",
+        );
+        // Absent parts are not written, so a failure without them reads as
+        // it did before they existed.
+        let json = serde_json::to_value(&plain).unwrap();
+        assert_eq!(
+            json.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["class", "code", "message", "next_step"]
+        );
+        let full = plain
+            .clone()
+            .with_next("target.status", serde_json::json!({"target": "example"}))
+            .with_retry_after(std::time::Duration::from_micros(1500))
+            .with_said("queue at its limit");
+        assert_eq!(full.next().unwrap().action, "target.status");
+        assert_eq!(full.next().unwrap().args["target"], "example");
+        // Rounded up: a wait is never shorter than the one given.
+        assert_eq!(full.retry_after_ms(), Some(2));
+        let json = serde_json::to_value(&full).unwrap();
+        assert_eq!(json["next"]["action"], "target.status");
+        assert_eq!(json["retry_after_ms"], 2);
+        assert_eq!(serde_json::from_value::<Failure>(json).unwrap(), full);
+        // A part set and then emptied leaves a failure equal to one never given it.
+        assert_eq!(plain.clone().with_said(" "), plain);
+        assert_eq!(plain.next(), None);
+        assert_eq!(plain.retry_after_ms(), None);
+    }
+
+    #[test]
+    fn a_failure_is_no_larger_for_the_parts_most_failures_leave_empty() {
+        // Class, code, message, next step, and one pointer: the errors that
+        // hold a failure stay under clippy's limit for a large error.
+        assert!(
+            std::mem::size_of::<Failure>() <= 11 * std::mem::size_of::<usize>(),
+            "{}",
+            std::mem::size_of::<Failure>()
+        );
     }
 
     #[test]

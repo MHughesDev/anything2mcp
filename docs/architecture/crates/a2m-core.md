@@ -103,6 +103,21 @@ pub struct Failure { /* class, code, message, next_step; and `said`, what the sy
 // and tags. said_cut keeps the text raw; it is escaped once, where a door shows it: said_shown (a line of its own),
 // said_quoted (between quotes: quotes and backslashes too), said_neutral (inside JSON: all but line feed and tab).
 // A Failure read as data is held to the same SAID_CEILING; decision 0193
+// Failure::with_next(action, args) / next() -> Option<&NextAction { action, args }>: a way out as data;
+// with_retry_after(Duration) / retry_after_ms(): a wait from when the failure was made, rounded up to whole ms.
+// Both are written only when present; `said` and both sit behind one pointer, so Failure does not grow. Decision 0258
+//
+// The table form (decision 0258). Each crate calls, once, in `pub mod codes`:
+//   failure_codes! { NAME = Class, "code", meaning "...", next "..."
+//                    [, passes by_itself | not_by_itself] [, then ("noun.verb", "what for")]; ... }
+// It writes the FailureCode constants (meaning and next step as their docs), ALL: &[(FailureClass, &str)],
+// and TABLE: &[CodeEntry]. An empty meaning or next step, a bad code or action, and a `busy` row with no
+// `passes` fail to compile.
+pub struct CodeEntry { pub declared_in, pub class, pub code, pub meaning, pub next, pub then: Option<ThenAction>, pub passes: Passes }
+pub struct ThenAction { pub action: &'static str, pub when: &'static str }
+pub enum Passes { ByItself, NotByItself }                       // default_for(class): only `transient` passes by itself
+pub struct CodeBook;                                             // new(&[TABLE, ...]) refuses one code with two classes
+impl CodeBook { pub fn explain(&self, code: &str) -> Option<&'static CodeEntry>; pub fn passes(&self, code: &str, class: FailureClass) -> Passes; pub fn entries(&self); }
 pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 
@@ -399,7 +414,7 @@ None.
 | `input` | `payload_unreadable` | A payload does not decode as the type its reader expects |
 | `input` | `payload_not_encodable` | Data to be encoded holds a float, a map whose keys are not text, or a number beyond 64 bits |
 
-It produces no other class. Each code is a constant on `FailureCode`. A crate that needs a new code defines it itself, as a `FailureCode` constant. No message here carries a value: a refusal names a kind, a place, or a count.
+It produces no other class. The codes are declared in this crate's own `failure_codes!` table, the module `codes`, and are also associated constants of `FailureCode`, such as `FailureCode::SCHEMA_INVALID`. A crate that needs a new code declares it in its own table ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). `CodeBook::new` refuses a code with two classes as `schema_invalid`. No message here carries a value: a refusal names a kind, a place, or a count.
 
 ## Invariants
 
@@ -408,6 +423,8 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 | Code and documents agree on every vocabulary, in content and order | `tests/documents.rs`, 34 cases |
 | A secret is never shown by any formatter, alone or inside another structure | `secret::tests` |
 | `Secret` is neither serializable nor copyable | A test that fails to compile otherwise |
+| A table row with an empty meaning or next step, or a `busy` row that does not say whether it passes by itself, does not compile; a book refuses one code with two classes | `code_book::tests`; two `compile_fail` doc tests of `failure_codes!` |
+| A failure with no next action, wait, or text from the system is written as before, keeps the others through serde, and is no larger for them | `failure::tests` |
 | A badly formed name is refused with a failure of class `input`, and the refusal never echoes more than 64 characters of input | `name::tests`, `ident::tests` over every checked name |
 | Two findings with the same content have the same `id`; a change to any content field changes it | `finding::tests` |
 | A finding cannot be constructed above `discovered` | `finding::tests` |
@@ -447,6 +464,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
 13. Done: `DeclaredProgram` and `SurfacePlan::programs`, the programs a surface's driver may start, in the plan's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
 14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.
+15. Done: the table form of failure codes, `failure_codes!`, with `CodeEntry`, `ThenAction`, `Passes`, and `CodeBook`; this crate's own codes in it; and `Failure`'s next action and wait as data ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). Nothing reads the two new parts yet.
 
 ## Open points
 

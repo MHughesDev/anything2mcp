@@ -10,6 +10,15 @@ fn check(path: &Path) -> Result<(), Refused> {
     super::check_program(path, &Trust::default(), Role::Program)
 }
 
+/// How a program of this system begins: what a test writes for a program
+/// it makes.
+#[cfg(target_os = "macos")]
+const HEAD: &[u8] = &[0xcf, 0xfa, 0xed, 0xfe];
+#[cfg(windows)]
+const HEAD: &[u8] = b"MZ";
+#[cfg(not(any(target_os = "macos", windows)))]
+const HEAD: &[u8] = &[0x7f, b'E', b'L', b'F'];
+
 #[test]
 fn a_relative_path_a_missing_file_and_a_shell_are_refused() {
     assert_eq!(check(Path::new("example-tool")), Err(Refused::NotAbsolute));
@@ -33,7 +42,7 @@ fn a_script_and_a_file_others_can_write_are_refused() {
     assert_eq!(check(&script), Err(Refused::Script));
 
     let open = folder.join("example-open");
-    std::fs::write(&open, [0x7f, b'E', b'L', b'F']).unwrap();
+    std::fs::write(&open, HEAD).unwrap();
     std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
     assert!(matches!(check(&open), Err(Refused::Writable(path)) if path.ends_with("example-open")));
 
@@ -60,7 +69,7 @@ impl Place {
         place.folder("", 0o755);
         place.folder("real", 0o755);
         let program = place.0.join("real").join("example-tool");
-        std::fs::write(&program, [0x7f, b'E', b'L', b'F']).unwrap();
+        std::fs::write(&program, HEAD).unwrap();
         Self::mode(&program, 0o755);
         place
     }
@@ -425,5 +434,229 @@ fn shells_interpreters_and_programs_that_start_another_are_known_by_name() {
     }
     for allowed in ["/opt/example/bin/example-tool", "/usr/bin/finder"] {
         assert!(!is_shell_or_interpreter(allowed), "{allowed}");
+    }
+}
+
+/// Finding D6 of the sixth safety audit (decision 0271): a file that can be
+/// run and does not begin as this system's programs do is a script, which
+/// the C library hands to the shell when the system will not run it. It is
+/// refused as a program and as an interpreter; a file the engine wrote is
+/// not looked at for its first bytes.
+#[cfg(unix)]
+#[test]
+fn a_file_that_does_not_begin_as_a_program_of_this_system_is_refused_as_a_script() {
+    let place = Place::new("header");
+    let folder = place.0.join("real");
+    for (name, bytes) in [
+        ("example-text", b"echo hi\n".as_slice()),
+        ("example-short", b"\x7f".as_slice()),
+        ("example-empty", b"".as_slice()),
+        ("example-pe", b"MZ\x90\x00".as_slice()),
+    ] {
+        let path = folder.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        Place::mode(&path, 0o755);
+        assert_eq!(check(&path), Err(Refused::Script), "{name}");
+        assert_eq!(
+            super::check_program(&path, &Trust::default(), Role::Interpreter),
+            Err(Refused::Script),
+            "{name}"
+        );
+        assert_eq!(
+            super::check_program(&path, &Trust::default(), Role::Script),
+            Ok(()),
+            "{name}"
+        );
+    }
+    // The header of the other Unix system is not this one's.
+    #[cfg(target_os = "macos")]
+    let other: &[u8] = &[0x7f, b'E', b'L', b'F'];
+    #[cfg(not(target_os = "macos"))]
+    let other: &[u8] = &[0xcf, 0xfa, 0xed, 0xfe];
+    let path = folder.join("example-other");
+    std::fs::write(&path, other).unwrap();
+    Place::mode(&path, 0o755);
+    assert_eq!(check(&path), Err(Refused::Script));
+}
+
+/// The same on Windows: a file without the header every Windows program
+/// has is not a program.
+#[cfg(windows)]
+#[test]
+fn a_file_without_the_header_of_a_windows_program_is_refused_as_a_script() {
+    let root = std::env::temp_dir().join(format!("a2m-provider-header-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let text = root.join("example-tool.exe");
+    std::fs::write(&text, b"echo hi\r\n").unwrap();
+    assert_eq!(check(&text), Err(Refused::Script));
+    std::fs::write(&text, HEAD).unwrap();
+    assert_eq!(check(&text), Ok(()));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// On Linux the group's bits of the mode bound what a named user of an
+/// access list may hold. Where the group's write is accepted because the
+/// group counts as the administrators', a named user's write behind those
+/// bits is refused (finding D3, decision 0271).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_named_users_write_behind_a_trusted_groups_bits_is_refused_on_linux() {
+    let place = Place::new("posix-list");
+    let (folder, program, group) = grouped(&place);
+    Place::mode(&program, 0o755);
+    let trusted =
+        |path: &Path| super::check_program(path, &Trust::with_groups(vec![group]), Role::Program);
+    assert_eq!(trusted(&program), Ok(()));
+    // The list in the kernel's own form: owner rwx, the user 65534 rwx,
+    // the owning group r-x, the mask rwx, others r-x.
+    let mut list = 2_u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01_u16, 7_u16, u32::MAX),
+        (0x02, 7, 65_534),
+        (0x04, 5, u32::MAX),
+        (0x10, 7, u32::MAX),
+        (0x20, 5, u32::MAX),
+    ] {
+        list.extend(tag.to_le_bytes());
+        list.extend(perm.to_le_bytes());
+        list.extend(id.to_le_bytes());
+    }
+    if let Err(error) = rustix::fs::lsetxattr(
+        &folder,
+        "system.posix_acl_access",
+        &list,
+        rustix::fs::XattrFlags::empty(),
+    ) {
+        println!("skipped: this file system keeps no access list here: {error}");
+        return;
+    }
+    assert_eq!(trusted(&program), Err(Refused::Unreadable(folder.clone())));
+    // Without the group counted, the group's write refuses it, as before.
+    assert_eq!(check(&program), Err(Refused::Writable(folder)));
+}
+
+/// Finding D2 of the sixth safety audit (decision 0271): the programs that
+/// start an interpreter, a package, an image, or the code of a project, by
+/// argument, are refused by name, as a version on the end of the name or
+/// after it does not hide one.
+#[test]
+fn launchers_package_runners_containers_and_build_tools_are_known_by_name() {
+    use super::is_shell_or_interpreter;
+    for refused in [
+        r"C:\Windows\py.exe",
+        r"C:\Windows\pyw.exe",
+        "/usr/local/bin/uvx",
+        "/usr/bin/pipx",
+        "/usr/local/bin/npx",
+        "/usr/local/bin/bunx",
+        "/usr/bin/dotnet",
+        "/usr/bin/docker",
+        "/usr/bin/podman",
+        "/usr/local/go/bin/go",
+        "/opt/example/.cargo/bin/cargo",
+        "/usr/bin/make",
+        "/usr/bin/wine",
+        r"C:\Windows\System32\msiexec.exe",
+        r"C:\Windows\System32\regsvr32.exe",
+        r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe",
+        r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe",
+        r"C:\Windows\System32\cmstp.exe",
+        r"C:\Windows\System32\conhost.exe",
+        "/usr/bin/open",
+        "/usr/bin/swift",
+        "/usr/local/bin/julia",
+        "/usr/bin/escript",
+        "/usr/bin/python3-dbg",
+        "/usr/bin/python3.12-config",
+        "/usr/bin/perl5.36-thread",
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/ld-musl-x86_64.so.1",
+    ] {
+        assert!(is_shell_or_interpreter(refused), "{refused}");
+    }
+    for allowed in [
+        "/opt/example/bin/example-tool",
+        "/usr/bin/finder",
+        "/opt/timeouts",
+        "/opt/example/bin/python-example-server",
+        "/opt/example/bin/gofer",
+        "/opt/example/bin/r2d2",
+        "/opt/example/bin/opener",
+    ] {
+        assert!(!is_shell_or_interpreter(allowed), "{allowed}");
+    }
+}
+
+/// Finding D1 of the sixth safety audit (decision 0271): the variables
+/// that the interpreters of the closed table, the runtimes they run on, and
+/// the libraries programs link with, read as the name of code to load or a
+/// program to run.
+#[test]
+fn the_variables_the_interpreters_and_their_runtimes_load_code_from_are_known() {
+    use super::redirects_loading;
+    for name in [
+        // Windows PowerShell's .NET Framework, and .NET.
+        "APPDOMAIN_MANAGER_ASM",
+        "APPDOMAIN_MANAGER_TYPE",
+        "COMPlus_Version",
+        "COMPLUS_ETWEnabled",
+        "COR_ENABLE_PROFILING",
+        "DEVPATH",
+        "DOTNET_ADDITIONAL_DEPS",
+        "DOTNET_ROOT",
+        "DOTNET_SHARED_STORE",
+        "COREHOST_TRACEFILE",
+        "PSModuleAnalysisCachePath",
+        // AppleScript, and the loader on macOS through the service
+        // launcher.
+        "OSA_LIBRARY_PATH",
+        "__XPC_DYLD_INSERT_LIBRARIES",
+        "__PYVENV_LAUNCHER__",
+        // OpenSSL.
+        "OPENSSL_CONF",
+        "OPENSSL_ENGINES",
+        "OPENSSL_MODULES",
+        // What runs "the shell", and helper programs.
+        "COMSPEC",
+        "ComSpec",
+        "SHELL",
+        "IFS",
+        "LESSOPEN",
+        "PAGER",
+        "EDITOR",
+        "GIT_SSH_COMMAND",
+        "GIT_CONFIG_PARAMETERS",
+        // The C library and its loader.
+        "GLIBC_TUNABLES",
+        "LOCPATH",
+        "NLSPATH",
+        // Other runtimes and module paths.
+        "ELECTRON_RUN_AS_NODE",
+        "TCL_LIBRARY",
+        "GTK_MODULES",
+        "GIO_EXTRA_MODULES",
+        "QT_PLUGIN_PATH",
+        "SASL_PATH",
+        "GST_PLUGIN_PATH",
+        "VK_LAYER_PATH",
+        "ERL_FLAGS",
+        "ERL_LIBS",
+        "JULIA_LOAD_PATH",
+        "R_ENVIRON_USER",
+        "R_LIBS_USER",
+        "__COMPAT_LAYER",
+    ] {
+        assert!(redirects_loading(name), "{name}");
+    }
+    for name in [
+        "EXAMPLE_MCP_STATE",
+        "NODE_ENV",
+        "PATH",
+        "SystemRoot",
+        "SHELLCHECK_EXAMPLE",
+        "OSAKA_EXAMPLE",
+        "LANG",
+    ] {
+        assert!(!redirects_loading(name), "{name}");
     }
 }

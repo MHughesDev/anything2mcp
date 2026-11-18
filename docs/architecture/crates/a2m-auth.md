@@ -86,7 +86,9 @@ impl Keeper {
     pub fn builder(store: SessionStore, providers: ProviderSet, work: Arc<dyn KeeperWork>, clock: Arc<dyn Clock>) -> KeeperBuilder;
     pub async fn lease(&self, req: LeaseRequest) -> Result<SessionLease, Failure>;
     pub async fn report(&self, lease: &SessionLease, sign: ExpirySign);
-    pub async fn sign_in(&self, key: &SessionKey, entry: Arc<AuthEntry>, acting_for: Option<PrincipalId>) -> Result<SignInTicket, Failure>; // session.login
+    pub async fn sign_in(&self, key: &SessionKey, entry: Arc<AuthEntry>, acting_for: Option<PrincipalId>) -> Result<SignInTicket, Failure>; // session.login asked by a program: sign_in_by(.., SignInBy::Asked)
+    pub async fn sign_in_by(&self, key: &SessionKey, entry: Arc<AuthEntry>, acting_for: Option<PrincipalId>, by: SignInBy) -> Result<SignInTicket, Failure>; // Asked | Person (decision 0269)
+    pub fn downgrade(&self) -> WeakKeeper; // what a probe the keeper's work holds keeps of it; WeakKeeper::upgrade() -> Option<Keeper>
     pub async fn status(&self, workspace: &WorkspaceId, identity: Option<&Identity>) -> Result<Vec<SessionStatus>, Failure>;              // session.status, session.list
     pub async fn signed_in(&self, session: SessionId, limit: Duration) -> Result<SessionStatus, Failure>; // waits for the outcome of sign_in; starts nothing (decision 0205)
     pub async fn timeline(&self, session: SessionId) -> Result<Vec<SessionEvent>, Failure>;
@@ -159,7 +161,7 @@ impl KeeperWorker {
 }
 /// KeeperWork for one process: the job goes straight to the worker.
 pub struct InProcessWork { /* new(worker, Arc<dyn AskPerson>, Arc<dyn RunProbe>) */ }
-pub trait RunProbe: Send + Sync { fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome>; }
+pub trait RunProbe: Send + Sync { fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome>; } // one that leases through the keeper holds a WeakKeeper
 
 /// "Ask a person to do this." a2m-actions joins it to PersonSurface.
 pub trait AskPerson: Send + Sync {
@@ -236,7 +238,9 @@ Contracts that the signatures do not show:
 
 - **One renewer.** A renewal starts only when the keeper moves the session's row from `valid` or `suspect` to `renewing` by one `UPDATE` that names the state and the epoch it expects, in a transaction of the store. The one caller that wins starts the work, as a task of its own so that it finishes even if that caller goes away; everyone waits on the outcome. This holds across processes, because the row is in the store. The epoch increases whenever the credentials are replaced or ended.
 - **A call starts work once.** A call that started a sign-in or a renewal, or waited through one, never starts a second. When that work failed, the call is given the failure the work ended with.
-- **The ladder is climbed once.** Within one renewal, each rung is tried at most once, in order, and only if the provider says it has it. A stored credential counts against the auth file's `attempt_limit`, default 1: each automatic sign-in or renewal with it that the other side did not confirm is counted, the count is cleared when a provider that exchanges the credential succeeds or the target's probe passes, and at the limit the session goes to `needs_person` with the reason `credential_refused`, the person surface is told once, and calls stop at once instead of waiting. Failing to reach the identity service is not a refusal and is not counted.
+- **The ladder is climbed once.** Within one renewal, each rung is tried at most once, in order, and only if the provider says it has it. A stored credential counts against the auth file's `attempt_limit`, default 1: each automatic sign-in or renewal with it that the other side did not confirm is counted, each refusal, and each sign-in that may have sent it and ended in an answer nobody can read (any class but `input`, `policy`, `busy`, `transient`, and a handshake refusal); the count is cleared when a provider that exchanges the credential succeeds or the target's probe passes. At the limit a refusal sends the session to `needs_person` with the reason `credential_refused`, the person surface is told once, and calls stop at once instead of waiting; an unreadable answer sends it there with the reason `sign_in`. Failing to reach the identity service is not a refusal and is not counted ([decision 0269](../../decisions/0269-a-stored-credentials-attempts-outlive-a-restart-and-sign-ins-without-the-person-are-limited.md)).
+- **The count outlives a restart and names its credential.** It is the session row's `stored_attempts`, with `attempted_with`, the mark of the stored credential it is about: a digest of each reference with the digest of its sealed envelope, never of a value. A count with another mark than the credential stored now counts as none. `sign_in` is `sign_in_by(.., SignInBy::Asked)`: for a provider that needs no person it is refused at the limit and keeps the count; `SignInBy::Person`, the person's own sign-in, is tried and starts the count again.
+- **Sign-ins without the person are limited.** At most `AUTOMATIC_SIGN_INS` (4) sign-ins that made the session hold without its person (a lease's, the renewal's full sign-in, and one a program asked for) within `AUTOMATIC_SIGN_IN_WINDOW` (one hour), counted from the timeline back to the person's own sign-in. When four fall within the window, the next is not made until the person signs in themself: the renewal moves the session to `needs_person`, a lease or an ask stops with `needs_login`. A declared maximum age shorter than the window adds the sign-ins it makes, at most sixty.
 - **A stored credential signs in without anyone.** A session that is `absent` or `expired`, whose provider needs no person, is signed in by the keeper on the first lease that asks, within the attempt limit. A provider that needs a person is never started by a lease: the person starts it with `session.login`.
 - **A call returns on the record; `idle` waits for the rest.** A call is answered as soon as the session's row decides it. The task that wrote the row may still have steps to take after its last write: the notice to the person, the home runner dropping what it held, a metric. `idle` covers all of it: a session is marked as having work in flight before the row says the work has begun, the marks are counted so that two pieces of work on one session overlap safely, and the mark is dropped when the task ends. Anything that reads what the work leaves behind, a test above all, waits on `idle` first. `waiting` counts only calls that are waiting now; a call that is cancelled is no longer counted.
 - **What waits for what.** An interactive call waits up to its wait for anything. A call with `NoWait`, a pipeline, waits for the keeper's own work (a check, a silent renewal, a stored-credential sign-in) up to the keeper's work limit, and never for a person. A wait is counted on the keeper's clock and looked at on each `tick`, so tests move time and nothing sleeps.
@@ -275,7 +279,7 @@ A token endpoint and an authorization endpoint must be addresses the target decl
 | Caller | Uses |
 | --- | --- |
 | `a2m-actions` as the in-process `Control`, and `a2m-runner` on the control-plane side of the runner link | `lease`, `report`, on the engine's behalf. The engine reaches the keeper only through `Control` and names nothing here but `SessionLease`, which its driver receives |
-| `a2m-actions` | `Keeper::builder`, `SessionStore::new`, `sign_in`, `status`, `timeline`, `revoke`, `tick`, `idle`; `StoredCredentials` for `secret.set`; implements `KeeperWork`, `AskPerson`, and `RunProbe`, forwarding to `PersonSurface` |
+| `a2m-actions` | `Keeper::builder`, `SessionStore::new`, `sign_in` and `sign_in_by`, `status`, `timeline`, `revoke`, `tick`, `idle`; `StoredCredentials` for `secret.set`; implements `KeeperWork`, `AskPerson`, and `RunProbe`, forwarding to `PersonSurface` |
 | `a2m-provider` | `AuthProvider`, `ProviderSet`, `SessionLease`, `CredentialSink`, to register providers and to hand the lease to a driver |
 | `a2m-runner`, and the in-process runner in `a2m-actions` | `KeeperWorker::run`, `KeeperWorker::bind` |
 | Packs | Implement `AuthProvider` and `CredentialSink`; receive `SessionLease`; build `Material` |
@@ -284,7 +288,7 @@ It uses `a2m-ledger` for its tables, `a2m-vault` to seal and open saved state an
 
 ## State
 
-Tables, through `a2m-ledger`, made by its migration `0006`: `sessions`; `session_events`, the timeline; `session_state`, the sealed saved state; `session_credentials`, the stored credentials, sealed. The statements are plain functions over the store's transaction in `src/tables.rs`. In memory on the control-plane half: the entry each session was last used under, the sessions with work in flight, and the failure of each session's last work. On the home runner: `Material` for live sessions, in memory only.
+Tables, through `a2m-ledger`, made by its migration `0006`, with `sessions.attempted_with` added by `0024`: `sessions`; `session_events`, the timeline; `session_state`, the sealed saved state; `session_credentials`, the stored credentials, sealed. The statements are plain functions over the store's transaction in `src/tables.rs`. In memory on the control-plane half: the entry each session was last used under, the sessions with work in flight, and the failure of each session's last work. On the home runner: `Material` for live sessions, in memory only.
 
 Metrics, through the telemetry handle: `a2m.session.renewals`, `a2m.session.forced_sign_ins`, `a2m.session.checks_failed`, and the histogram `a2m.session.renewal.duration`.
 
@@ -292,9 +296,9 @@ Metrics, through the telemetry handle: `a2m.session.renewals`, `a2m.session.forc
 
 | Class | Code | When |
 | --- | --- | --- |
-| `session_expired` | `needs_login` | `absent`, `expired`, `revoked`, a wait that ran out, or a person who is wanted and has not come |
+| `session_expired` | `needs_login` | `absent`, `expired`, `revoked`, a wait that ran out, a person who is wanted and has not come, or a session signed in too often without its person |
 | `session_expired` | `needs_mfa` | The identity provider demands a second factor and no person answered in time |
-| `session_expired` | `credential_refused` | A stored credential was refused. It is not tried again until a person asks for a sign-in |
+| `session_expired` | `credential_refused` | A stored credential was refused, or its attempts are spent. It is not sent again as it is stored, by a lease or by a program that asks, until the person stores it again or signs in themself |
 | `session_expired` | `lease_stale` | A lease is applied after the credentials it was granted for were replaced, or after the session was ended |
 | `session_expired` | `device_required` | The lease is applied in a process that does not hold the session's credentials |
 | `session_expired` | `headroom_short` | The declared clocks leave less time than the pipeline's declared headroom |
@@ -322,7 +326,10 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 | A sign-in sends only to a declared address, and a redirect elsewhere is not followed | `a_published_sign_in_sends_only_to_an_address_the_target_declares`, against two services, one the target declares and one it does not, which counts what it hears |
 | A drafts' sign-in sends nothing until its person carries it out, and is never renewed without them | `a_sign_in_the_drafts_declare_sends_nothing_until_its_person_carries_it_out`, which also shows a published sign-in renewed without anyone |
 | A credential opens only for the target it was stored for | `a_credential_opens_only_for_the_target_it_was_stored_for`, and the vault's `a_credential_opens_only_for_the_target_it_was_stored_for` |
-| A refused stored credential is not tried again | `a_refused_sign_in_a_person_asked_for_is_not_tried_again_by_a_lease`; `a_refused_stored_credential_is_not_tried_again`, `a_held_credential_the_system_refuses_is_offered_once_and_no_more`, and the token endpoint's own count of requests. The test application's lockout counter is still owed |
+| A refused stored credential is not tried again, across a restart, until the person stores it again or signs in themself | `a_refused_stored_credential_is_not_sent_again_after_a_restart_until_the_person_acts`, over a store file closed and opened again by a second keeper; `a_refused_sign_in_a_person_asked_for_is_not_tried_again_by_a_lease`; `a_refused_stored_credential_is_not_tried_again`, `a_held_credential_the_system_refuses_is_offered_once_and_no_more`, and the token endpoint's own count of requests. The test application's lockout counter is still owed |
+| A sign-in whose answer nobody can read is an attempt | `a_sign_in_whose_answer_nobody_can_read_is_counted_and_not_sent_again`: by a lease, by a program that asked, and in the renewal's full sign-in |
+| Sign-ins without the person are limited over time | `a_session_signed_in_again_too_often_without_its_person_waits_for_the_person`, on the keeper's manual clock |
+| A closed engine's keeper is freed | `a_closed_engines_keeper_is_freed_when_its_probe_holds_it_weakly`, which also shows a strong probe keeps it |
 | No transition outside the table of moves | `every_pair_of_states_is_legal_only_when_the_table_lists_it`, over all 64 pairs; every write of a state passes `legal_move` |
 | No credential appears in a lease, a status, the timeline, a log, or a failure | The planted-secret tests, run against every neutral provider: `a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else` and the two OAuth tests, which also read the keeper's log lines |
 | Every secret is registered with the redactor | The same tests ask the redactor about each stored, received, and placed value |
@@ -351,6 +358,8 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 10. Done: `link::loopback` asks the one question of a plain link, and is pinned over the shared corpus of address spellings with its old form kept beside it ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 
 11. Done: what audit 5 found ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)): `SignInDestinations`, `AuthProvider::destinations`, the checks before any work and before each request, the drafts' gate on sign-in and renewal, the allowances a person gave a session, credentials bound to their target; and a person's refused sign-in counted as an attempt.
+
+12. Done: what audit 6 found in the keeper ([decision 0269](../../decisions/0269-a-stored-credentials-attempts-outlive-a-restart-and-sign-ins-without-the-person-are-limited.md)): the count of attempts kept in the record with the mark of its credential, `sign_in_by` and `SignInBy`, an unreadable answer counted, sign-ins without the person limited over time, and `WeakKeeper`. Not built: `a2m-actions` passing `SignInBy::Person` for the person's own press.
 
 ## Open points
 

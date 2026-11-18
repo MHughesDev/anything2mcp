@@ -841,7 +841,12 @@ async fn the_program_started_while_a_variable_of_the_engine_is_set() {
     }
     let stand = Stand::start().unwrap();
     let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
-    launch.env.pass = vec!["PATH".to_owned()];
+    // A `PATH` of the system's own folders, which pass the check of every
+    // folder a `PATH` names; the test's own may hold any.
+    launch
+        .env
+        .set
+        .push(("PATH".to_owned(), system_folder().into_os_string()));
     let finished = supervisor().run(launch, one_shot(60)).await.unwrap();
     assert_eq!(finished.exit, Exit::Code(0));
     let started = stand.control().invocations().unwrap().pop().unwrap();
@@ -886,3 +891,154 @@ async fn a_launch_that_names_a_variable_that_loads_other_code_is_refused_and_not
     }
     assert!(stand.control().invocations().unwrap().is_empty());
 }
+
+/// A folder of the system's own, closed to other users on every system.
+fn system_folder() -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32")
+    } else {
+        std::path::PathBuf::from("/usr/bin")
+    }
+}
+
+/// The program that prints its working folder: the shell on Linux and
+/// macOS, the command interpreter on Windows. The supervisor itself
+/// refuses no program by its name; the packs do.
+fn shell_that_prints_its_folder() -> (std::path::PathBuf, Vec<OsString>) {
+    if cfg!(windows) {
+        (
+            system_folder().join("cmd.exe"),
+            vec!["/d".into(), "/c".into(), "cd".into()],
+        )
+    } else {
+        ("/bin/sh".into(), vec!["-c".into(), "pwd; ls -ld .".into()])
+    }
+}
+
+/// Finding D5 of the sixth safety audit (decision 0271): a program whose
+/// launch names no working folder works in a folder made for that start
+/// alone, which only the engine's user may write, and which is gone when
+/// the run has ended. Before, it worked in the system's temporary folder,
+/// which on Linux every user may write.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_program_with_no_working_folder_works_in_a_private_one_that_is_removed_after() {
+    let (program, args) = shell_that_prints_its_folder();
+    let launch = LaunchSpec {
+        program: ProgramRef {
+            path: program,
+            digest: None,
+        },
+        args,
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    let finished = supervisor().run(launch, one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0), "{finished:?}");
+    let text = String::from_utf8(finished.stdout).unwrap();
+    let mut lines = text.lines();
+    let folder = std::path::PathBuf::from(lines.next().unwrap().trim());
+    let temporary = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+    assert_ne!(
+        std::fs::canonicalize(folder.parent().unwrap()).ok(),
+        None,
+        "{}",
+        folder.display()
+    );
+    assert_eq!(
+        std::fs::canonicalize(folder.parent().unwrap()).unwrap(),
+        temporary,
+        "it was made in the temporary folder: {}",
+        folder.display()
+    );
+    assert_ne!(
+        std::fs::canonicalize(&folder).ok(),
+        Some(temporary),
+        "it is not the temporary folder itself"
+    );
+    #[cfg(unix)]
+    {
+        let listed = lines.next().unwrap_or_default();
+        assert!(
+            listed.starts_with("drwx------"),
+            "only the engine's user may use it: {listed}"
+        );
+    }
+    assert!(!folder.exists(), "it is removed: {}", folder.display());
+}
+
+/// Finding D1 of the sixth safety audit (decision 0271): a `PATH` given to a
+/// program, passed or set, names folders it loads code from, and on Windows
+/// the system loads from them the libraries a program asks for by name.
+/// One that names a folder another user may change, or a name that is not
+/// absolute, is refused, and nothing starts. A folder that is not there
+/// passes where nobody else could make it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_that_names_a_folder_others_may_change_is_refused_and_nothing_starts() {
+    let stand = Stand::start().unwrap();
+    let supervisor = supervisor();
+    let root = std::env::temp_dir().join(format!("a2m-provider-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let open = root.join("open");
+    std::fs::create_dir_all(&open).unwrap();
+    open_to_everyone(&open);
+    let closed = root.join("closed");
+    std::fs::create_dir_all(&closed).unwrap();
+    close_to_others(&root);
+    close_to_others(&closed);
+    let joined = |folders: &[std::path::PathBuf]| std::env::join_paths(folders).unwrap();
+    for value in [
+        joined(&[system_folder(), open.clone()]),
+        joined(&[open.join("not-there")]),
+        OsString::from("relative-folder"),
+    ] {
+        let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+        launch.env.set.push(("PATH".to_owned(), value.clone()));
+        let refused = supervisor.run(launch, one_shot(60)).await.unwrap_err();
+        assert_eq!(refused.ran, Ran::NotStarted, "{value:?}");
+        assert_eq!(refused.failure.class(), FailureClass::Policy, "{value:?}");
+        assert_eq!(
+            refused.failure.code(),
+            &codes::VARIABLE_REFUSED,
+            "{value:?}"
+        );
+    }
+    assert!(stand.control().invocations().unwrap().is_empty());
+    let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+    launch.env.set.push((
+        "PATH".to_owned(),
+        joined(&[system_folder(), closed.clone(), closed.join("not-there")]),
+    ));
+    let ran = supervisor.run(launch, one_shot(60)).await;
+    let _ = std::fs::remove_dir_all(&root);
+    let ran = ran.unwrap();
+    assert_eq!(ran.exit, Exit::Code(0));
+}
+
+#[cfg(unix)]
+fn open_to_everyone(folder: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+}
+
+#[cfg(unix)]
+fn close_to_others(folder: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Everyone may add a file to it.
+#[cfg(windows)]
+fn open_to_everyone(folder: &std::path::Path) {
+    let made = std::process::Command::new(system_folder().join("icacls.exe"))
+        .arg(folder)
+        .args(["/grant", "*S-1-1-0:(W)"])
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+}
+
+/// Folders under the temporary folder are the user's own on Windows.
+#[cfg(windows)]
+fn close_to_others(_folder: &std::path::Path) {}

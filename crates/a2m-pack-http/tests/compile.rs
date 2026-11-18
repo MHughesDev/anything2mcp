@@ -308,6 +308,97 @@ fn the_lint_rules_find_what_they_name() {
     );
 }
 
+/// A method override in a header or as the `_method` query entry is
+/// judged as the method it names (decision 0270): an endpoint marked
+/// `read` whose override names a method HTTP does not mark safe, or one
+/// that is not a method at all, is refused, `read_asserted` or not, and so
+/// is a binding that computes `_method` for an endpoint marked `read`. An
+/// override that names a safe method changes nothing.
+#[test]
+fn a_read_whose_method_override_names_a_method_that_may_write_is_refused() {
+    let orders = "endpoints/orders.yaml";
+    let accept = "headers: {accept: \"application/json\"}";
+    for header in [
+        "X-HTTP-Method-Override: DELETE",
+        "x-http-method: put",
+        "X-Method-Override: PROPFIND",
+    ] {
+        let found = refused(
+            orders,
+            |text| {
+                text.replacen(
+                    accept,
+                    &format!("headers: {{accept: \"application/json\", {header}}}"),
+                    1,
+                )
+            },
+            "http.effect_method",
+        );
+        assert_eq!(
+            (found.level, found.at.file.as_str()),
+            (Level::Error, orders),
+            "{header}"
+        );
+    }
+    refused(
+        orders,
+        |text| text.replacen("auth: none", "auth: none\nquery: {_method: \"PUT\"}", 1),
+        "http.effect_method",
+    );
+    // The assertion that a `POST` only reads does not cover an override.
+    refused(
+        orders,
+        |text| {
+            text.replacen("method: GET", "method: POST", 1)
+                .replacen("effect: read\n", "effect: read\nread_asserted: true\n", 1)
+                .replacen(accept, "headers: {X-HTTP-Method-Override: DELETE}", 1)
+        },
+        "http.effect_method",
+    );
+    // A binding that computes the override of a read.
+    let computed = refused(
+        "operations/orders.yaml",
+        |text| {
+            text.replacen(
+                "    endpoint: order_get\n",
+                "    endpoint: order_get\n    query: {_method: input.order_id}\n",
+                1,
+            )
+        },
+        "http.effect_method",
+    );
+    assert_eq!(computed.at.file.as_str(), "operations/orders.yaml");
+    // An override that names a safe method compiles.
+    let folder = Folder::new("safe-override");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    compile_changed(&registry, "example", orders, |text| {
+        text.replacen(
+            accept,
+            "headers: {accept: \"application/json\", X-HTTP-Method-Override: HEAD}",
+            1,
+        )
+    })
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+/// A text answer's pattern is bounded in its length when the endpoint is
+/// compiled, so that what is matched at run time is bounded too (decision
+/// 0270).
+#[test]
+fn a_pattern_longer_than_its_bound_is_refused() {
+    let found = refused(
+        "endpoints/status.yaml",
+        |_| {
+            let pattern = format!("(?P<count>[0-9]+){}", "x?".repeat(3_000));
+            format!(
+                "endpoint: status_text_get\nsurface: api\nmethod: GET\npath: \"/views/text/status\"\nauth: none\neffect: read\nanswer:\n  form: text\n  pattern: '{pattern}'\n  fields:\n    count: {{type: integer}}\n"
+            )
+        },
+        "http.answer_invalid",
+    );
+    assert!(found.message.contains("4,096 bytes"), "{found}");
+}
+
 #[test]
 fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence() {
     let folder = Folder::new("evidence");

@@ -13,6 +13,7 @@
 pub mod browser;
 pub mod prefixed;
 pub mod proxy;
+pub mod served;
 pub mod service;
 
 use std::collections::BTreeMap;

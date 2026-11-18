@@ -1,6 +1,7 @@
-//! The failures this crate names, and the list of problems a rejected input
-//! carries. No message ever holds a value from the input: a message names a
-//! place, a header, or a rule.
+//! The failures this crate makes, and the list of problems a rejected input
+//! carries. The codes are declared in [`crate::codes`], with the next step a
+//! failure carries when its case adds nothing to it. No message ever holds a
+//! value from the input: a message names a place, a header, or a rule.
 
 use std::fmt;
 
@@ -8,32 +9,17 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 
 use crate::model::CellRef;
 
-/// The input's structure matches no template version the definition knows.
-pub const SOURCE_TEMPLATE_UNKNOWN: FailureCode = FailureCode::fixed("source_template_unknown");
-/// The content is not the format its reader reads.
-pub const FILE_TYPE_MISMATCH: FailureCode = FailureCode::fixed("file_type_mismatch");
+pub use crate::codes::{
+    FILE_TYPE_MISMATCH, FORMULA_WITHOUT_VALUE, KEY_NOT_UNIQUE, SOURCE_DEFINITION_INVALID,
+    SOURCE_ENCODING_UNSUPPORTED, SOURCE_MALFORMED, SOURCE_PROTECTED, SOURCE_READER_UNKNOWN,
+    SOURCE_TEMPLATE_UNKNOWN, SOURCE_TOO_LARGE,
+};
+
 /// A column, a header, a row, or a value does not have the shape the
-/// definition requires.
+/// definition requires. Declared by `a2m-core`.
 pub const SCHEMA_INVALID: FailureCode = FailureCode::SCHEMA_INVALID;
-/// A value cannot be represented in its field type.
+/// A value cannot be represented in its field type. Declared by `a2m-core`.
 pub const VALUE_OUT_OF_RANGE: FailureCode = FailureCode::VALUE_OUT_OF_RANGE;
-/// A formula cell in the data has no cached value.
-pub const FORMULA_WITHOUT_VALUE: FailureCode = FailureCode::fixed("formula_without_value");
-/// The bytes, the rows, the cells, or one cell exceed the caller's limits.
-pub const SOURCE_TOO_LARGE: FailureCode = FailureCode::fixed("source_too_large");
-/// The content claims its format and breaks the format's rules.
-pub const SOURCE_MALFORMED: FailureCode = FailureCode::fixed("source_malformed");
-/// The text is in an encoding the readers do not read.
-pub const SOURCE_ENCODING_UNSUPPORTED: FailureCode =
-    FailureCode::fixed("source_encoding_unsupported");
-/// The workbook is encrypted, so it cannot be read without its password.
-pub const SOURCE_PROTECTED: FailureCode = FailureCode::fixed("source_protected");
-/// The definition names a reader that is not registered.
-pub const SOURCE_READER_UNKNOWN: FailureCode = FailureCode::fixed("source_reader_unknown");
-/// The compiled source definition does not hold together.
-pub const SOURCE_DEFINITION_INVALID: FailureCode = FailureCode::fixed("source_definition_invalid");
-/// Two rows have the same key.
-pub const KEY_NOT_UNIQUE: FailureCode = FailureCode::fixed("key_not_unique");
 
 /// Makes a failure of class `input`, the class of every failure here: the
 /// input was refused and nothing ran.
@@ -41,51 +27,52 @@ pub(crate) fn failure(code: FailureCode, message: impl Into<String>, next: &str)
     Failure::new(FailureClass::Input, code, message, next)
 }
 
+/// A failure of class `input` whose case adds nothing to the next step its
+/// code's table row gives.
+fn refused(code: FailureCode, message: impl Into<String>) -> Failure {
+    let next = crate::codes::next_for(&code);
+    failure(code, message, next)
+}
+
 pub(crate) fn malformed(what: impl fmt::Display) -> Failure {
-    failure(
+    refused(
         SOURCE_MALFORMED,
         format!("The input breaks the rules of its format: {what}."),
-        "Save the file again from the program that made it, or correct it, and try again.",
     )
 }
 
 pub(crate) fn mismatch(what: impl fmt::Display) -> Failure {
-    failure(
+    refused(
         FILE_TYPE_MISMATCH,
         format!("The input is not the format its source definition names: {what}."),
-        "Give a file of the format the source definition names.",
     )
 }
 
 pub(crate) fn too_large(what: impl fmt::Display) -> Failure {
-    failure(
+    refused(
         SOURCE_TOO_LARGE,
         format!("The input is larger than the limits allow: {what}."),
-        "Give a smaller input, or have the limits raised by whoever sets them.",
     )
 }
 
 pub(crate) fn encoding(what: impl fmt::Display) -> Failure {
-    failure(
+    refused(
         SOURCE_ENCODING_UNSUPPORTED,
         format!("The input's text cannot be read: {what}."),
-        "Save the file as UTF-8 and try again.",
     )
 }
 
 pub(crate) fn protected() -> Failure {
-    failure(
+    refused(
         SOURCE_PROTECTED,
         "The workbook is encrypted with a password, so its content cannot be read.",
-        "Save a copy without the password and give that copy.",
     )
 }
 
 pub(crate) fn definition(what: impl fmt::Display) -> Failure {
-    failure(
+    refused(
         SOURCE_DEFINITION_INVALID,
         format!("The compiled source definition does not hold together: {what}."),
-        "Compile the target again with this engine.",
     )
 }
 

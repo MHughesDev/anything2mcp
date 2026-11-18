@@ -47,6 +47,10 @@ pub(crate) const DISCOVERY_SURFACE: &str = "surface";
 /// The field of a discovery run's stored call that holds the focus its
 /// discoverers are given.
 pub(crate) const DISCOVERY_FOCUS: &str = "focus";
+/// The field of a discovery run's stored call that holds the files of the
+/// project's `sources` folder the call handed its discoverers, each name to
+/// its path as the call wrote it (decision 0263). Left out when none were.
+pub(crate) const DISCOVERY_FILES: &str = "files";
 
 /// The verified facts about the caller of a run, kept so that the guard's
 /// question to policy is asked about the caller that started the run. Names
@@ -766,9 +770,14 @@ impl Kernel {
             a2m_sched::JobKind::Canary => JobKind::Canary,
             _ => JobKind::Execute,
         };
-        // A discovery run's stored call names its surface and the focus
-        // handed to its discoverers (`discover.run`): the job names the
-        // surface, and the discoverers are given the focus alone.
+        // A discovery run's stored call names its surface, the focus
+        // handed to its discoverers, and the files of the project's
+        // `sources` folder the call handed them (`discover.run`): the job
+        // names the surface, the discoverers are given the focus alone,
+        // and the files reach the engine through the control, which checks
+        // each again (decision 0263). Files stored in a form this build
+        // cannot read are never dropped: the run cannot be carried out.
+        let mut handed = std::collections::BTreeMap::new();
         let (tool, input) = if kind == JobKind::Discover {
             let mut input = input;
             let surface = match input.remove(DISCOVERY_SURFACE) {
@@ -779,6 +788,18 @@ impl Kernel {
                 Some(a2m_core::Value::Record(focus)) => focus,
                 _ => Values::new(),
             };
+            match input.remove(DISCOVERY_FILES) {
+                None => {}
+                Some(a2m_core::Value::Record(files)) => {
+                    for (name, path) in files.iter() {
+                        let a2m_core::Value::Text(path) = path else {
+                            return self.end_unreadable(fence).await;
+                        };
+                        handed.insert(name.to_owned(), path.clone());
+                    }
+                }
+                Some(_) => return self.end_unreadable(fence).await,
+            }
             (ToolRef::Surface(surface), focus)
         } else {
             (ToolRef::Tool(row.tool_name.clone()), input)
@@ -858,7 +879,8 @@ impl Kernel {
         };
 
         let control =
-            InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller);
+            InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
+                .with_discovery_files(handed);
         let outcome = engine.run_job(&job, &control).await;
         beat.abort();
         let _ = beat.await;

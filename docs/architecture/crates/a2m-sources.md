@@ -122,7 +122,7 @@ Contracts that the signatures do not show:
 - **What lies inside the data.** In a sheet, rows that hold nothing after the last row of data are not rows. A row that holds nothing inside the data, a merged range inside the data, and, unless the definition says `include`, a hidden row or column, are each a problem. In delimited text a row with another number of fields than the header is a problem.
 - **Typing uses the field types.** Every row field has a field type in the plan. `typed` hands the field type's normalizer the raw value the cell states: text as text, a number as an exact decimal, a date serial as the date its date system gives, true or false as it is. Places and rounding, units and steps, formats, and codes are the normalizer's, from `a2m-expr`, so a unit lives in one place. What a field type cannot take is a problem: a number with a fraction in a text field, true or false in a number field, a date-formatted cell in a number field, an error value, a list.
 - **Mappings are expressions.** A row field with no column is the expression of the same name in the plan's mapping, over `row` and `source`. `row` holds each listed column: text, an exact decimal for a number or a date serial, true or false, or null. `source` holds `template`, `version`, and `reader`. The result goes through the field's type like any other value. The `rows` filter is an expression too; a row it turns away is counted in `filtered_out`. An expression that fails on a row is a problem for that row.
-- **A key, when the definition has one.** Two rows whose key fields have the same values are a problem, `key_not_unique`, at the second row.
+- **A key, when the definition has one.** Two rows whose key fields have the same values are a problem, `source_key_not_unique`, at the second row. (The packs' `key_not_unique` is `drift`, a system that holds two rows with one key; an input given with two is `input`, so it has a code of its own: [decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md).)
 - **All problems, then nothing.** `read` returns `ValidatedRecords` only if no row has a problem. Otherwise it returns every problem, each with its cell, its field, and a sentence that never holds a value from the input. Problems of locating the data come back alone, before any row is typed.
 - **One parser, one meaning.** The file pack of section 308 depends on this crate for parsing, fingerprints, and `typed`, so a value never means one thing to a source and another to the file pack. A span covers exactly the literal of a value: a field of delimited text with its quotes, a JSON token, the content of a workbook cell's value element. For a cell that holds text through the shared strings, the span covers the entry's number and `shared` says which entry. Re-packing and checking a patched file are the file pack's work.
 
@@ -169,7 +169,7 @@ None. Inputs arrive as bytes already stored; results go back to the caller, whic
 
 ## Failures
 
-Every failure is of class `input`: the input was refused and nothing ran.
+Every failure is of class `input`: the input was refused and nothing ran. The codes are declared once, with a meaning and a next step each, in the crate's `failure_codes!` table, in its module `codes` ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)); `schema_invalid` and `value_out_of_range` are `a2m-core`'s, and `value_unparsable` is `a2m-expr`'s.
 
 | Code | When |
 | --- | --- |
@@ -182,7 +182,7 @@ Every failure is of class `input`: the input was refused and nothing ran.
 | `schema_invalid` | A header is missing, duplicated, or not named by the definition; a row has the wrong number of fields; a required value is missing; a cell holds a kind of value its field type cannot take |
 | `value_unparsable`, `value_out_of_range` | A value does not fit its field type; both come from the field type's normalizer in `a2m-expr` |
 | `formula_without_value` (new) | A formula cell in the data has no kept result |
-| `key_not_unique` (new) | Two rows have the same key |
+| `source_key_not_unique` (new) | Two rows have the same key |
 | `source_reader_unknown` (new) | The definition names a reader that is not registered |
 | `source_definition_invalid` (new) | The compiled definition does not hold together: an index the plan lacks, a row field named twice, a fingerprint whose digest is not that of its parts |
 

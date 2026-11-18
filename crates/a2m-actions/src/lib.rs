@@ -95,6 +95,7 @@ mod tests {
     mod authoring;
     mod kernel;
     mod keys;
+    mod net;
     mod pass_two;
     mod runs;
     mod second;

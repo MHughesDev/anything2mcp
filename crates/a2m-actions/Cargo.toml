@@ -13,6 +13,9 @@ a2m-core = { path = "../a2m-core" }
 a2m-engine = { path = "../a2m-engine" }
 a2m-files = { path = "../a2m-files" }
 a2m-ledger = { path = "../a2m-ledger" }
+# The machine's own network facts, served by the `net.*` actions (decision
+# 0260). It reads the operating system and sends nothing.
+a2m-netstate = { path = "../a2m-netstate" }
 a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-sched = { path = "../a2m-sched" }
@@ -27,7 +30,9 @@ toml.workspace = true
 # may change a project folder (`project::others_may_change`). Already in the
 # tree through the local channel; its safe interface only.
 [target.'cfg(unix)'.dependencies]
-rustix.workspace = true
+# `fs`: the installation's settings file is opened without following a
+# link and checked through its handle (decision 0273).
+rustix = { workspace = true, features = ["fs"] }
 
 [features]
 # A way for the tests of the crates above this one to have a published tool

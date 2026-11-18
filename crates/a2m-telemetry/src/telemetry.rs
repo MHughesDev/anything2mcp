@@ -10,9 +10,9 @@ use a2m_core::{Digest, Failure, FailureClass, OperationName, Redact, StepKind, T
 
 use crate::attr::{Attr, CallOutcome, McpMethod};
 use crate::clock::{Clock, SystemClock};
+use crate::codes::TELEMETRY_SETTINGS_INVALID;
 use crate::collect::{Collector, FinishedSpan, Metrics};
 use crate::context::TraceContext;
-use crate::failure::TELEMETRY_SETTINGS_INVALID;
 use crate::log::{self, LogCore, LogDestination, LogLevel};
 use crate::rotate::Rotation;
 

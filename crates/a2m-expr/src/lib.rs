@@ -14,6 +14,7 @@
 //! `docs/reference/technical-reference.md`: `a2m-core`.
 
 mod check;
+pub mod codes;
 mod dates;
 mod error;
 mod eval;

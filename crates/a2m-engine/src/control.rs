@@ -22,6 +22,7 @@ use a2m_ledger::{
 };
 use a2m_provider::{BoxFuture, DiscoveryReport};
 use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -409,6 +410,17 @@ pub trait Control: Send + Sync {
     /// `None` when the run has none, and by default.
     fn project_folder(&self) -> Option<PathBuf> {
         None
+    }
+
+    /// The files of the project's `sources` folder that the call which
+    /// started a discovery hands its discoverers: each name a discoverer
+    /// declares it reads, to the path the call gave, `sources/` and the
+    /// file below it, with forward slashes (decision 0263). The engine
+    /// checks each path again under a read-only root of that folder before
+    /// any discoverer runs, and hands nothing else. Asked only by a
+    /// discovery job; empty when the call named none, and by default.
+    fn discovery_files(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
     }
 
     /// The answerer of whether another record of `operation` in the

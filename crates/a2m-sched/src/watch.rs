@@ -12,23 +12,30 @@
 //! one check, marked as the catch-up. A watch's check is admitted as `batch`
 //! work, after every interactive job, and spends the same budgets as any
 //! read of its surface, leaving a share of each to the caller's own reads.
+//! It also spends the budget its surface keeps for watches, a share of the
+//! surface's own (decision 0262), so that no check takes more of a surface
+//! than the watches on it were confirmed for, however many pages it reads.
+//! A watch past its end is ended, whatever its state.
 
 use std::time::Duration;
 
-use a2m_core::{Digest, Failure, FailureClass, FailureCode, JobId, RunId, Timestamp};
+use a2m_core::{Digest, Failure, FailureClass, FailureCode, JobId, PrincipalId, RunId, Timestamp};
 use a2m_ledger::{
-    CheckRow, Due, Durability, Missed, NewWatch, Tx, WatchId, WatchReason, WatchRow, WatchState,
+    CheckRow, Due, Durability, Missed, NewWatch, Tx, WATCH_INTERVAL_FLOOR, WATCH_LONGEST, WatchId,
+    WatchReason, WatchRow, WatchState,
 };
 
+use crate::budget;
 use crate::failure;
 use crate::scheduler::Scheduler;
 use crate::tables;
-use crate::types::{Admitted, Priority, RateLimit, Submission};
+use crate::types::{Admitted, BudgetKey, Priority, RateLimit, Submission};
 
 /// The shortest interval any installation may give a watch. A setting may
 /// raise the floor above it and never lower it below it, so that a watch is
-/// never a fast poll of a system.
-pub const SHORTEST_INTERVAL_FLOOR: Duration = Duration::from_secs(60);
+/// never a fast poll of a system. The ledger holds the same floor, whatever
+/// asks.
+pub const SHORTEST_INTERVAL_FLOOR: Duration = WATCH_INTERVAL_FLOOR;
 
 /// A watch's interval is below the floor. Class `input`.
 pub const WATCH_INTERVAL_TOO_SHORT: FailureCode = FailureCode::fixed("watch_interval_too_short");
@@ -71,7 +78,8 @@ pub struct WatchLimits {
     /// default and never below [`SHORTEST_INTERVAL_FLOOR`].
     pub shortest_interval: Duration,
     /// The longest a watch lasts after it is asked for:
-    /// `watch.longest_days`, 7 by default.
+    /// `watch.longest_days`, 7 by default, and never more than the ledger's
+    /// ceiling of 366 days.
     pub longest: Duration,
     /// The most watches one person has that have not ended: `watch.most`,
     /// 20 by default.
@@ -132,7 +140,8 @@ impl WatchLimits {
                 "Ask for a longer interval.",
             ));
         }
-        let longest = i64::try_from(self.longest.as_millis()).unwrap_or(i64::MAX);
+        let longest = self.longest.min(WATCH_LONGEST);
+        let longest = i64::try_from(longest.as_millis()).unwrap_or(i64::MAX);
         if ends_at
             .as_unix_millis()
             .saturating_sub(now.as_unix_millis())
@@ -143,7 +152,7 @@ impl WatchLimits {
                 WATCH_TOO_LONG,
                 format!(
                     "A watch lasts at most {} days from when it is asked for.",
-                    self.longest.as_secs() / 86_400
+                    self.longest.min(WATCH_LONGEST).as_secs() / 86_400
                 ),
                 "Ask for an earlier end.",
             ));
@@ -347,6 +356,58 @@ pub struct DueCheck {
     pub due: Due,
 }
 
+/// What [`Scheduler::due_watches`] gives: the checks due now, and the runs of
+/// checks that a watch's end closed, which the caller cancels.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DueWatches {
+    /// The checks due now.
+    pub checks: Vec<DueCheck>,
+    /// The runs of checks under way when their watch's end came. The watch
+    /// has ended; its run is the caller's to cancel.
+    pub cancel: Vec<RunId>,
+}
+
+/// The budget all watches on the watch's surface share, with its limit
+/// brought to the share of the surface's own budget in force.
+pub(crate) fn share_key(
+    tx: &mut Tx<'_>,
+    default: &RateLimit,
+    limits: &WatchLimits,
+    watch: &WatchRow,
+) -> Result<BudgetKey, Failure> {
+    let surface = BudgetKey::surface(
+        watch.workspace,
+        &watch.target,
+        &watch.environment,
+        watch.surface.as_str(),
+    )?;
+    let limit = budget::share_limit(tx, default, &surface, limits.budget_share_percent)?;
+    let share = BudgetKey::watch_share(&surface);
+    budget::ensure_limit(tx, &share, &limit)?;
+    Ok(share)
+}
+
+/// Ends every watch past its end that a plan does not end: one asked, paused,
+/// or running. A confirmed watch is left to [`plan`], which records the due
+/// times that passed before its end as a gap. Gives the runs of the checks
+/// it closed.
+fn end_past_their_end(tx: &mut Tx<'_>, now: Timestamp) -> Result<Vec<RunId>, Failure> {
+    let mut cancel = Vec::new();
+    for watch in tx.watches().past_end(now)? {
+        match watch.state {
+            WatchState::Confirmed | WatchState::Ended => continue,
+            WatchState::Running => {
+                if let Some(seq) = watch.running_check {
+                    cancel.push(tx.watches().check(watch.id, seq)?.run);
+                }
+            }
+            WatchState::Asked | WatchState::Paused => {}
+        }
+        tx.watches().end(watch.id, WatchReason::EndReached)?;
+    }
+    Ok(cancel)
+}
+
 /// A check that was admitted and begun.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckStarted {
@@ -410,42 +471,64 @@ impl Scheduler {
     }
 
     /// Records the confirmation of the watch's own person, with the phase
-    /// made from its identifier. Its first due time is now plus that phase.
+    /// made from its identifier, while `current` is its target's published
+    /// version. Its first due time is now plus that phase.
+    ///
+    /// In the same transaction, the watch must fit in its surface's share of
+    /// `limit`, the surface's rate limit, beside every other open watch of
+    /// the same surface as the store holds them now: two confirmations at
+    /// once cannot both take the last of the share (decision 0262).
     ///
     /// # Errors
     ///
-    /// The ledger's refusals: `policy`/`watch_not_yours`, a watch that is not
-    /// `asked`.
+    /// `busy`/`watch_over_budget_share`; the ledger's refusals:
+    /// `policy`/`watch_not_yours`, `policy`/`watch_needs_confirmation` for a
+    /// watch asked under another version, `policy`/`watch_ended`, a watch
+    /// that is not `asked`.
     pub async fn confirm_watch(
         &self,
         watch: WatchId,
-        by: a2m_core::PrincipalId,
+        by: PrincipalId,
+        current: Digest,
+        limit: RateLimit,
     ) -> Result<WatchRow, Failure> {
         let limits = self.settings().watch;
         let row = self
             .store()
             .write(Durability::Synced, move |tx| {
                 let interval = tx.watches().get(watch)?.interval;
-                tx.watches()
-                    .confirm(watch, by, limits.phase(watch, interval))
+                let row =
+                    tx.watches()
+                        .confirm(watch, by, limits.phase(watch, interval), &current)?;
+                let others: Vec<(Duration, u32)> = tx
+                    .watches()
+                    .on_surface(&row.workspace, &row.target, &row.environment, &row.surface)?
+                    .into_iter()
+                    .filter(|other| other.id != watch)
+                    .map(|other| (other.interval, other.requests_per_check))
+                    .collect();
+                limits.fits_budget(&limit, row.interval, row.requests_per_check, &others)?;
+                Ok(row)
             })
             .await?;
         self.wake();
         Ok(row)
     }
 
-    /// Looks over every confirmed watch, in one transaction: records a gap
-    /// for due times that passed with no check, ends a watch whose end has
-    /// come, and answers the checks due now. Running and paused watches are
-    /// passed over: a watch never runs two checks at once.
+    /// Looks over every watch, in one transaction: ends every watch whose
+    /// end has come, whatever its state, giving the run of a check it closed
+    /// to be cancelled; records a gap for due times of a confirmed watch that
+    /// passed with no check; and answers the checks due now. Running and
+    /// paused watches have no check due: a watch never runs two at once.
     ///
     /// # Errors
     ///
     /// `busy` failures of the store.
-    pub async fn due_watches(&self) -> Result<Vec<DueCheck>, Failure> {
+    pub async fn due_watches(&self) -> Result<DueWatches, Failure> {
         self.store()
             .write(Durability::Synced, move |tx| {
                 let now = tx.now();
+                let cancel = end_past_their_end(tx, now)?;
                 let mut due = Vec::new();
                 for watch in tx.watches().open()? {
                     match plan(&watch, now) {
@@ -469,14 +552,17 @@ impl Scheduler {
                         }
                     }
                 }
-                Ok(due)
+                Ok(DueWatches {
+                    checks: due,
+                    cancel,
+                })
             })
             .await
     }
 
     /// The earliest moment at which [`Scheduler::due_watches`] has something
-    /// to do; `None` when no watch is confirmed. Whoever calls `sweep` waits
-    /// on the earlier of this and [`Scheduler::next_due`].
+    /// to do; `None` when no watch is open or asked. Whoever calls `sweep`
+    /// waits on the earlier of this and [`Scheduler::next_due`].
     ///
     /// # Errors
     ///
@@ -486,13 +572,26 @@ impl Scheduler {
             .read(move |tx| {
                 let now = tx.now();
                 let mut earliest: Option<Timestamp> = None;
+                let mut sooner = |at: Timestamp| {
+                    earliest = Some(earliest.map_or(at, |earliest: Timestamp| earliest.min(at)));
+                };
                 for watch in tx.watches().open()? {
-                    let at = match plan(&watch, now) {
-                        None => continue,
-                        Some(DuePlan::Waiting { at }) => at,
-                        Some(_) => now,
-                    };
-                    earliest = Some(earliest.map_or(at, |earliest| earliest.min(at)));
+                    match plan(&watch, now) {
+                        Some(DuePlan::Waiting { at }) => sooner(at),
+                        Some(_) => sooner(now),
+                        // Running or paused: nothing is due before its end,
+                        // which ends it.
+                        None => sooner(watch.ends_at.max(now)),
+                    }
+                }
+                // An asked watch ends at its end too, confirmed or not.
+                for watch in tx
+                    .watches()
+                    .past_end(Timestamp::from_unix_millis(i64::MAX))?
+                {
+                    if watch.state == WatchState::Asked {
+                        sooner(watch.ends_at.max(now));
+                    }
                 }
                 Ok(earliest)
             })
@@ -541,12 +640,19 @@ impl Scheduler {
                         .err()
                         .unwrap_or_else(|| failure::invalid("a watch that is not confirmed")));
                 }
-                let (run, job) =
-                    match tables::admit(tx, &settings, submission, settings.watch.reserve_percent)?
-                    {
-                        Admitted::New { run, job } => (run, Some(job)),
-                        Admitted::Existing { run } => (run, None),
-                    };
+                // The check spends the surface's share for watches as well
+                // as the budgets the submission names.
+                let share = share_key(tx, &settings.default_rate, &settings.watch, &row)?;
+                let (run, job) = match tables::admit(
+                    tx,
+                    &settings,
+                    submission,
+                    settings.watch.reserve_percent,
+                    Some(share),
+                )? {
+                    Admitted::New { run, job } => (run, Some(job)),
+                    Admitted::Existing { run } => (run, None),
+                };
                 let check = tx.watches().begin_check(watch, due, run)?;
                 Ok(CheckStarted { run, job, check })
             })

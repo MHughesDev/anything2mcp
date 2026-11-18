@@ -189,6 +189,10 @@ impl Control for Timed<'_> {
         self.inner.project_folder()
     }
 
+    fn discovery_files(&self) -> std::collections::BTreeMap<String, String> {
+        self.inner.discovery_files()
+    }
+
     // Not timed here: the driver's question is held to the step's own
     // deadline by `Prepared::recorded_elsewhere`.
     fn other_records(

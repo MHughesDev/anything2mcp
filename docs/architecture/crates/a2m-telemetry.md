@@ -256,6 +256,8 @@ A trace with no end line is incomplete. A change that a reader of version 1 woul
 
 One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `level` (`error`, `warn`, `info`, `debug`, `trace`), `target`, `message`, and optionally `fields`, in the order the caller gave them. The file is `engine.log` in the folder given to `start`. When the next line would take it past the size in the settings it becomes `engine.log.1`, older files move up by one, and the oldest beyond the count kept is deleted. On Linux and macOS a log file is made with mode `0600`, and one found with wider permissions is narrowed when it is opened: a line is redacted, and it still names runs, sessions, and targets. On Windows a file takes the permissions of its folder, which is in the user's own profile.
 
+`recent_lines(logs: &Path, lines: usize) -> Result<Vec<String>, Failure>` gives the last `lines` lines of the log in `logs`, oldest first: from `engine.log`, and before it from `engine.log.1`, `.2`, and on, until enough are found or a numbered file is missing. It opens no file for writing and makes nothing; a folder that is not there is an empty log. An empty line is left out, and so is a last line of the current file with no line feed after it, which is still being written. The command line's `engine logs` reads the log with it, where the engine runs ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)).
+
 ## Used by, and uses
 
 | Caller | Uses |
@@ -266,6 +268,7 @@ One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `l
 | Packs | `record_headers` when they build an exchange; `MaskReport` when they take an image. The engine offers what they return |
 | The front doors | `Telemetry::call_span` with the caller's `TraceContext`; the redactor is the vault's, not this crate's |
 | `a2m-actions` | `start` at `Kernel::open`; `read_trace` and the line types for `trace.show` and `trace.export`; `LOG_FILE_NAME` for `engine.logs` |
+| `anything2mcp` | `recent_lines` and `LOG_FILE_NAME` for `engine logs`, read by the command line |
 | Every crate above it | Logging, through the `tracing` macros and the subscriber this crate installs |
 | `bench` | `Telemetry::in_memory` with a `ManualClock`, and `metrics` |
 
@@ -284,9 +287,10 @@ It calls only `a2m-core`, and the `Redact` and `KeyedDigest` it was given.
 
 | Class | Code | When |
 | --- | --- | --- |
-| `busy` | `storage_full` | The log folder cannot be written. Not returned by `start`: the engine keeps running, logs go to standard error, redacted, and `Telemetry::log_destination` carries the failure |
+| `busy` | `storage_full` | The log folder cannot be written. Not returned by `start`: the engine keeps running, logs go to standard error, redacted, and `Telemetry::log_destination` carries the failure. It does not pass by itself |
 | `input` | `trace_holds_secret` | A finished trace still held a registered secret at the check on the way out. The trace is dropped; `TraceRefused` converts to this |
 | `input` | `telemetry_settings_invalid` | The settings given to `start` name a log file size of zero |
+| `busy` | `log_unreadable` | `recent_lines` found a file of the log that is there and cannot be read. It does not pass by itself |
 | `input` | `schema_invalid` | `read_trace` met a line that is not a line of a step trace |
 
 A trace that passes its size limit is not a failure. It is cut, and the cut is a `truncated` limitation. `export_unavailable` comes with the exporter.
@@ -319,7 +323,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 
 1. Done: `StepRecord`, `TraceBuilder` with `minimal`, `finish`, and the signature. Package 1.2.
 2. Done: the JSON Lines schema, published above; `standard` with snapshots at checkpoints and failures. Package 1.2.
-3. Done: logs, with rotation.
+3. Done: logs, with rotation; `recent_lines`, the reader of the recent lines ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)). The crate's codes are one `failure_codes!` table in `codes`.
 4. Done against a test redactor: redaction at capture; the check on the way out; headers, labelled fields. Still to do with package 2.1: the same tests with the vault's redactor, and the planted secret in the test application's traffic.
 5. Done: spans, metrics, and the `full` level. Not built: export to an outside collector, its cargo feature, its bounded buffer, `export_unavailable`, and a random trace id.
 6. Not built: what policy says about a labelled field beyond its label (masked or left out); the benchmarks.

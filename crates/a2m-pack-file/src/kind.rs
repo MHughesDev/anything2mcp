@@ -485,6 +485,37 @@ impl FileKind for DocumentKind {
         Vec::new()
     }
 
+    /// Each record kind that declares no `key` and is one place: a `path`,
+    /// to one record of a JSON document or one section or dictionary of a
+    /// settings file, or a named `cell`. Named `document.record`. Rows, a
+    /// table, or a sheet with no key are many records, listed and never
+    /// written, and are not one place (decision 0252).
+    fn fixed_places(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
+        let document = document_name(doc);
+        doc.get("records")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .filter(|record| {
+                let keyed = record
+                    .value
+                    .get("key")
+                    .is_some_and(|key| !key.items().is_empty());
+                let one_place =
+                    record.value.get("path").is_some() || record.value.get("cell").is_some();
+                !keyed && one_place
+            })
+            .map(|record| {
+                Located::new(
+                    DefinedName {
+                        name: format!("{document}.{}", record.key.value),
+                    },
+                    record.value.at.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// A document describes a write when it marks a field `writable`, or
     /// states how the file is held open (`may_be_open`, `lock_signal`),
     /// which only a write needs. A value that is not plainly `false` counts:
@@ -549,5 +580,36 @@ impl FileKind for DocumentKind {
                     "Keep the documents to names, texts, and whole numbers.",
                 ))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record with no key is one place only where its place is one: a
+    /// path to one record of a JSON document or a settings file, or a named
+    /// cell. Rows, a table, or a sheet with no key are many records.
+    #[test]
+    fn a_record_with_no_key_is_a_fixed_place_only_where_its_place_is_one() {
+        let text = "surface: desk\nfile: one.json\nformat: json\nrecords:\n  \
+            general: {path: [general], fields: {a: {path: [a], type: text}}}\n  \
+            root: {path: [], fields: {a: {path: [a], type: text}}}\n  \
+            total: {cell: {name: total}, fields: {a: {type: text}}}\n  \
+            items: {path: [items], key: [id], fields: {id: {path: [id], type: text}}}\n  \
+            rows: {rows: all, fields: {a: {header: a, type: text}}}\n  \
+            sheet: {sheet: Sheet1, fields: {a: {header: a, type: text}}}\n  \
+            table: {table: {sheet: Sheet1, name: T}, fields: {a: {header: a, type: text}}}\n";
+        let file = a2m_files::RelPath::new("documents/settings.yaml").unwrap();
+        let docs = a2m_files::parse_yaml(&file, text).unwrap();
+        let names: Vec<String> = DocumentKind::new()
+            .fixed_places(&docs[0])
+            .into_iter()
+            .map(|place| place.value.name)
+            .collect();
+        assert_eq!(
+            names,
+            ["settings.general", "settings.root", "settings.total"]
+        );
     }
 }

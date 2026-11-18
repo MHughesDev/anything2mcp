@@ -34,7 +34,8 @@ use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
 use crate::shape::Shape;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
-    ProbeStep, RequestStep, Take, VersionSource, build, parse_path,
+    ProbeStep, RequestStep, Take, VersionSource, build, is_override_field, is_override_header,
+    override_may_change, parse_path,
 };
 
 /// The most warm clients the driver keeps.
@@ -106,6 +107,17 @@ struct Held {
     cookies: Vec<(String, String, Secret)>,
     /// A credential the session placed that this driver cannot use.
     cannot: Option<Failure>,
+    /// The name of the first header the session placed whose name begins
+    /// `a2m-`: one of the product's own carriers between its parts, never
+    /// kept and never sent (decision 0270).
+    product_header: Option<String>,
+}
+
+/// Whether a header's name is one of the product's own: it begins `a2m-`,
+/// in any letter case.
+pub(crate) fn is_product_header(name: &str) -> bool {
+    name.get(..4)
+        .is_some_and(|start| start.eq_ignore_ascii_case("a2m-"))
 }
 
 impl fmt::Debug for Held {
@@ -119,6 +131,10 @@ impl fmt::Debug for Held {
 
 impl CredentialSink for Held {
     fn header(&mut self, name: &str, value: &Secret) {
+        if is_product_header(name) {
+            self.product_header.get_or_insert_with(|| name.to_owned());
+            return;
+        }
         self.headers
             .push((name.to_owned(), Secret::new(value.expose())));
     }
@@ -240,10 +256,17 @@ struct Session {
     /// What this pass knows of a record's version: by the endpoint that
     /// read the record and the record's key.
     versions: BTreeMap<(String, Vec<u8>), Known>,
-    /// What the run may do to the system, and whether its environment is
-    /// of kind `test`: the driver's own read-only guard (decision 0249).
+    /// What the run may do to the system: the driver's own read-only guard
+    /// (decision 0249).
     posture: Posture,
-    test_environment: bool,
+    /// Whether a read an endpoint asserts may be sent outside a live run:
+    /// the plan is a published version's, and the run's environment is of
+    /// kind `test` in it (decision 0270). Under the drafts both facts are
+    /// the drafts' own word, and it is never sent outside a live run.
+    asserted_reads: bool,
+    /// Where this pass's reads are counted while they run past their
+    /// deadline: the surface's name at its origin.
+    reading_place: String,
 }
 
 /// What a pass knows of one record's version, from reading the record
@@ -264,6 +287,8 @@ pub(crate) struct HttpDriver {
     max_response_bytes: u64,
     /// Warm clients, by session and origin.
     clients: Mutex<BTreeMap<String, reqwest::Client>>,
+    /// The reads of answers still running past their step's deadline.
+    overruns: Arc<Overruns>,
 }
 
 fn failure_of(
@@ -299,6 +324,7 @@ impl HttpDriver {
             redact,
             max_response_bytes,
             clients: Mutex::new(BTreeMap::new()),
+            overruns: Arc::new(Overruns::default()),
         }
     }
 
@@ -417,6 +443,9 @@ impl HttpDriver {
         if let Some(lease) = lease {
             let mut placed = Held::default();
             lease.apply(&mut placed).map_err(unsent)?;
+            if let Some(name) = &placed.product_header {
+                return Err(unsent(codes::product_header_refused(name)));
+            }
             held = Some(placed);
             client_key = format!("{} {}", lease.session(), origin.text);
             for code in [401_u16, 403] {
@@ -463,7 +492,6 @@ impl HttpDriver {
                 .client(&client_key, origin.text.starts_with("https://"))
                 .map_err(unsent)?,
             client_key,
-            origin,
             surface: surface.name.as_str().to_owned(),
             unencrypted_accepted,
             sections,
@@ -472,10 +500,13 @@ impl HttpDriver {
             answer: None,
             versions: BTreeMap::new(),
             posture: cx.posture,
-            test_environment: cx
-                .plan
-                .environment_named(&cx.surface.environment)
-                .is_some_and(|environment| environment.kind == EnvironmentKind::Test),
+            asserted_reads: published(cx.plan)
+                && cx
+                    .plan
+                    .environment_named(&cx.surface.environment)
+                    .is_some_and(|environment| environment.kind == EnvironmentKind::Test),
+            reading_place: format!("{} {}", surface.name.as_str(), origin.text),
+            origin,
         })
     }
 }
@@ -906,7 +937,6 @@ impl HttpDriver {
                 "the endpoint `{name}` writes, and the step is not marked as a commit point"
             )));
         }
-        may_send(session, &name, &template, step)?;
         let payload: RequestStep = step
             .payload
             .decode()
@@ -947,6 +977,12 @@ impl HttpDriver {
             },
         )
         .map_err(StepFailure::not_sent)?;
+        may_send(session, &name, &template, &built, step)?;
+        // A read that could not be begun is refused now, before anything
+        // is sent, and not once the answer is in (decision 0270).
+        self.overruns
+            .check(&session.reading_place)
+            .map_err(StepFailure::not_sent)?;
 
         let credentials = match template.auth {
             Auth::None => None,
@@ -1047,20 +1083,90 @@ impl HttpDriver {
     }
 }
 
-/// The driver's own read-only guard (decision 0249). A request that may
-/// change something, by its method or by its endpoint's `effect`, is sent
-/// in a live run; outside one it is sent only as the commit point of a
-/// write to a declared test record, in the context the engine prepared for
-/// that write, or, for an endpoint whose `read_asserted` says that a
-/// method HTTP does not mark safe only reads, against an environment of
-/// kind `test`. A discovery sends none. Refused, nothing is sent.
+/// Whether a plan is a published version's, as far as a driver can tell:
+/// a draft is always compiled as the draft version, and a published
+/// version under any other (decision 0161). A version published as the
+/// draft version's number is taken for a draft, which is the safe side.
+fn published(plan: &a2m_core::Plan) -> bool {
+    plan.header.version != a2m_files::DRAFT_VERSION
+}
+
+/// Percent-decoded text of a query's name or value, `+` read as a space,
+/// as a server reads it. An escape that is not two hexadecimal digits is
+/// kept as written.
+fn query_text(written: &str) -> String {
+    let bytes = written.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let digit = |offset: usize| {
+            bytes
+                .get(at + offset)
+                .and_then(|b| char::from(*b).to_digit(16))
+        };
+        match (byte, digit(1), digit(2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push(u8::try_from(high * 16 + low).unwrap_or(b'%'));
+                at += 3;
+            }
+            (b'+', _, _) => {
+                out.push(b' ');
+                at += 1;
+            }
+            _ => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether a built request may change the system by its method: its own
+/// method is one HTTP does not mark safe, or an override in a header or in
+/// the query names one that may change it (decision 0270). An override is
+/// judged as the method it names, and never makes a request safer than
+/// its own method: whether a system honours an override cannot be known.
+/// A body's `_method` is not looked at: only a method HTTP does not mark
+/// safe carries a body.
+fn may_change_by_method(built: &Built) -> bool {
+    !built.method.is_safe() || overrides_to_unsafe(built)
+}
+
+/// Whether an override in a built request, in a header or in the query,
+/// names a method that may change the system.
+fn overrides_to_unsafe(built: &Built) -> bool {
+    let by_header = built
+        .headers
+        .iter()
+        .any(|(name, value)| is_override_header(name) && override_may_change(value));
+    let by_query = built.query.split('&').any(|entry| {
+        let (name, value) = entry.split_once('=').unwrap_or((entry, ""));
+        is_override_field(&query_text(name)) && override_may_change(&query_text(value))
+    });
+    by_header || by_query
+}
+
+/// The driver's own read-only guard (decisions 0249 and 0270). A request
+/// that may change something, by its method, by a method override it
+/// carries, or by its endpoint's `effect`, is sent in a live run; outside
+/// one it is sent only as the commit point of a write to a declared test
+/// record, in the context the engine prepared for that write, or, for an
+/// endpoint whose `read_asserted` says that a method HTTP does not mark
+/// safe only reads, when the plan is a published version's and the run's
+/// environment is of kind `test` in it. An asserted read is never sent
+/// outside a live run with an override that may change the system: the
+/// assertion is about the endpoint's own method. A discovery sends none.
+/// Refused, nothing is sent.
 fn may_send(
     session: &Session,
     name: &str,
     template: &EndpointTemplate,
+    built: &Built,
     step: &Step,
 ) -> Result<(), StepFailure> {
-    let may_change = template.writes || !template.method.is_safe();
+    let overridden = overrides_to_unsafe(built);
+    let may_change = template.writes || may_change_by_method(built);
     if !may_change {
         return Ok(());
     }
@@ -1070,7 +1176,7 @@ fn may_send(
             if step.commits {
                 test_records
             } else {
-                template.read_asserted && session.test_environment
+                template.read_asserted && !overridden && session.asserted_reads
             }
         }
         Posture::Discovery => false,
@@ -1078,15 +1184,22 @@ fn may_send(
     if allowed {
         return Ok(());
     }
+    let by = if overridden {
+        format!(
+            "{} with a method override that names a method HTTP does not mark safe",
+            built.method.word()
+        )
+    } else {
+        built.method.word().to_owned()
+    };
     Err(StepFailure::not_sent(codes::failure(
         FailureClass::Policy,
         a2m_provider::codes::READ_ONLY_POSTURE,
         format!(
-            "The endpoint `{name}` is reached by {}, which may change the system, and this run may not change it; nothing was sent.",
-            template.method.word()
+            "The endpoint `{name}` is reached by {by}, which may change the system, and this run may not change it; nothing was sent."
         ),
         if template.read_asserted {
-            "Run the operation live, or try it against an environment of kind `test`."
+            "Run the operation live, or try a published version of it against an environment of kind `test`."
         } else {
             "Run the operation live, or against a declared test record."
         },
@@ -1190,26 +1303,185 @@ enum OffThread<T> {
     OutOfTime,
     /// The thread ended without an answer.
     Lost,
+    /// So many reads are still running past their deadline that this one
+    /// was not begun.
+    Busy(Failure),
+}
+
+/// The most reads left running past their step's deadline, on one surface.
+const MOST_LATE_READS_PER_SURFACE: usize = 4;
+/// The most reads left running past their step's deadline, in the pack.
+const MOST_LATE_READS: usize = 16;
+
+/// The reads of answers that are still running after their step stopped
+/// waiting for them, counted for the pack and for each surface (decision
+/// 0270). A read is counted from the moment its step stops waiting, at its
+/// deadline or because the step itself was dropped, until its thread ends;
+/// at either ceiling a new read is not begun. Each such read holds a
+/// blocking thread of the engine and up to the ceiling of an answer in
+/// memory, and a pattern's compile and match cannot be stopped midway.
+pub(crate) struct Overruns {
+    counts: Mutex<LateCounts>,
+    most_per_surface: usize,
+    most: usize,
+}
+
+#[derive(Default)]
+struct LateCounts {
+    all: usize,
+    by_place: BTreeMap<String, usize>,
+}
+
+impl Default for Overruns {
+    fn default() -> Self {
+        Self::with_ceilings(MOST_LATE_READS_PER_SURFACE, MOST_LATE_READS)
+    }
+}
+
+/// A read's place in the count: still awaited, left running, or ended.
+const AWAITED: u8 = 0;
+const LEFT: u8 = 1;
+const ENDED: u8 = 2;
+
+/// One read, as the count knows it. Its state changes only under the
+/// count's lock.
+struct Reading {
+    overruns: Arc<Overruns>,
+    place: String,
+    state: std::sync::atomic::AtomicU8,
+}
+
+/// Held by the step that waits: when it stops waiting before the read has
+/// ended, at its deadline or because the step was dropped, the read is
+/// told to stop and is counted as left running.
+struct Awaiting {
+    reading: Arc<Reading>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Awaiting {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.reading.overruns.left(&self.reading);
+    }
+}
+
+/// Held by the blocking thread: when the work ends, or is dropped unrun,
+/// a read left running is no longer counted.
+struct Ending(Arc<Reading>);
+
+impl Drop for Ending {
+    fn drop(&mut self) {
+        self.0.overruns.ended(&self.0);
+    }
+}
+
+impl Overruns {
+    pub(crate) fn with_ceilings(most_per_surface: usize, most: usize) -> Self {
+        Self {
+            counts: Mutex::new(LateCounts::default()),
+            most_per_surface,
+            most,
+        }
+    }
+
+    fn counts(&self) -> std::sync::MutexGuard<'_, LateCounts> {
+        self.counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// `busy`/`reads_still_running` when a new read on `place` may not be
+    /// begun.
+    pub(crate) fn check(&self, place: &str) -> Result<(), Failure> {
+        let counts = self.counts();
+        let here = counts.by_place.get(place).copied().unwrap_or(0);
+        if here < self.most_per_surface && counts.all < self.most {
+            return Ok(());
+        }
+        Err(codes::failure(
+            FailureClass::Busy,
+            codes::READS_STILL_RUNNING,
+            format!(
+                "{} answers of this surface, and {} of the HTTP pack, are still being read after their steps ran out of time; no new one is begun, and nothing was sent.",
+                here, counts.all
+            ),
+            "Run the tool again once those reads have ended, or ask the endpoint's owner why its answers take so long to read.",
+        ))
+    }
+
+    fn left(&self, reading: &Reading) {
+        let mut counts = self.counts();
+        if reading
+            .state
+            .compare_exchange(AWAITED, LEFT, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            counts.all += 1;
+            *counts.by_place.entry(reading.place.clone()).or_insert(0) += 1;
+        }
+    }
+
+    fn ended(&self, reading: &Reading) {
+        let mut counts = self.counts();
+        if reading.state.swap(ENDED, Ordering::SeqCst) == LEFT {
+            counts.all = counts.all.saturating_sub(1);
+            if let Some(here) = counts.by_place.get_mut(&reading.place) {
+                *here = here.saturating_sub(1);
+                if *here == 0 {
+                    counts.by_place.remove(&reading.place);
+                }
+            }
+        }
+    }
+
+    /// How many reads are counted as left running.
+    #[cfg(test)]
+    pub(crate) fn running_late(&self) -> usize {
+        self.counts().all
+    }
 }
 
 /// Runs `work` on a blocking thread, and waits for it until `until`. At the
 /// deadline the flag `work` is handed is set, and the step goes on without
-/// waiting: an async thread of the engine is never held by an answer.
+/// waiting: an async thread of the engine is never held by an answer. A
+/// read that is not waited for to its end is counted against `place` until
+/// it ends, and none is begun past the ceilings (decision 0270).
 async fn off_thread<T: Send + 'static>(
+    overruns: &Arc<Overruns>,
+    place: &str,
     until: tokio::time::Instant,
     work: impl FnOnce(&AtomicBool) -> T + Send + 'static,
 ) -> OffThread<T> {
+    if let Err(failure) = overruns.check(place) {
+        return OffThread::Busy(failure);
+    }
+    let reading = Arc::new(Reading {
+        overruns: Arc::clone(overruns),
+        place: place.to_owned(),
+        state: std::sync::atomic::AtomicU8::new(AWAITED),
+    });
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
-    let task = tokio::task::spawn_blocking(move || work(&flag));
-    tokio::select! {
+    let awaiting = Awaiting {
+        reading: Arc::clone(&reading),
+        stop: Arc::clone(&stop),
+    };
+    let ending = Ending(reading);
+    let task = tokio::task::spawn_blocking(move || {
+        let _ending = ending;
+        work(&flag)
+    });
+    let outcome = tokio::select! {
         biased;
         joined = task => joined.map_or(OffThread::Lost, OffThread::Done),
         () = tokio::time::sleep_until(until) => {
             stop.store(true, Ordering::Relaxed);
             OffThread::OutOfTime
         }
-    }
+    };
+    drop(awaiting);
+    outcome
 }
 
 async fn validate(
@@ -1217,6 +1489,7 @@ async fn validate(
     step: &Step,
     input: &StepInput<'_>,
     redact: &Arc<dyn Redact>,
+    overruns: &Arc<Overruns>,
 ) -> Result<StepOutcome, StepFailure> {
     let (name, template) = judged_endpoint(session, step)?;
     let answer = held_answer(&mut session.answer, &name)?;
@@ -1253,10 +1526,15 @@ async fn validate(
         template.response.clone(),
         Arc::clone(redact),
     );
-    let read = match off_thread(until(step, input), move |stop| {
-        let read = read_body(&spec, &shape, accepted, said, &body, clean.as_ref(), stop);
-        (body, read)
-    })
+    let read = match off_thread(
+        overruns,
+        &session.reading_place,
+        until(step, input),
+        move |stop| {
+            let read = read_body(&spec, &shape, accepted, said, &body, clean.as_ref(), stop);
+            (body, read)
+        },
+    )
     .await
     {
         OffThread::Done((body, read)) => {
@@ -1285,6 +1563,15 @@ async fn validate(
                 "its answer could not be read".to_owned(),
             ));
         }
+        // The count rose between the request and its reading: the answer
+        // is in and unread. A write's is in doubt.
+        OffThread::Busy(_) if answer.wrote => {
+            return Err(in_doubt(
+                &name,
+                "its answer was not read: too many reads are still running past their deadline",
+            ));
+        }
+        OffThread::Busy(failure) => return Err(answered(failure)),
     };
     let body = match read {
         Read::Accepted(record) => {
@@ -1640,7 +1927,7 @@ impl Driver for HttpDriver {
             if step.kind == REQUEST {
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
-                validate(session, step, input, &self.redact).await
+                validate(session, step, input, &self.redact, &self.overruns).await
             } else if step.kind == EXTRACT {
                 self.extract(session, step, input)
             } else if step.kind == PROBE {
@@ -1681,7 +1968,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{Answer, Expiry, OffThread, Origin, Session, off_thread, taken};
+    use super::{Answer, Expiry, OffThread, Origin, Overruns, Session, off_thread, taken};
     use crate::codes;
     use crate::json::Json;
     use crate::template::{Built, Method, Take};
@@ -1737,7 +2024,8 @@ mod tests {
             answer: None,
             versions: BTreeMap::new(),
             posture: a2m_provider::Posture::Live,
-            test_environment: false,
+            asserted_reads: false,
+            reading_place: "api http://app.example.test".to_owned(),
         }
     }
 
@@ -1864,9 +2152,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn work_that_outlasts_the_deadline_is_left_and_told_to_stop() {
         use std::sync::atomic::Ordering;
+        let overruns = std::sync::Arc::new(Overruns::default());
         let (told, heard) = std::sync::mpsc::channel();
         let until = tokio::time::Instant::now() + std::time::Duration::from_millis(50);
-        let outcome = off_thread(until, move |stop| {
+        let outcome = off_thread(&overruns, "api", until, move |stop| {
             while !stop.load(Ordering::Relaxed) {
                 std::hint::spin_loop();
             }
@@ -1877,7 +2166,146 @@ mod tests {
         heard
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap();
-        let done = off_thread(until + std::time::Duration::from_secs(30), |_| 7).await;
+        let done = off_thread(
+            &overruns,
+            "api",
+            until + std::time::Duration::from_secs(30),
+            |_| 7,
+        )
+        .await;
         assert!(matches!(done, OffThread::Done(7)));
+    }
+
+    /// Reads left running past their deadline are counted for each surface
+    /// and for the pack. At either ceiling a new read is refused `busy`
+    /// before its work begins; once the reads left behind end, the count
+    /// falls and reads run again (decision 0270). The work here ends only
+    /// when the test lets it, as a match that cannot be stopped would.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reads_left_past_their_deadline_are_bounded_and_the_next_is_refused_busy() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        let overruns = Arc::new(Overruns::with_ceilings(2, 3));
+        let mut holds = Vec::new();
+        let mut left = |surface: &'static str| {
+            let (hold, wait) = std::sync::mpsc::channel::<()>();
+            holds.push(hold);
+            let overruns = Arc::clone(&overruns);
+            async move {
+                let soon = tokio::time::Instant::now() + Duration::from_millis(20);
+                off_thread(&overruns, surface, soon, move |_| {
+                    // Ends when its sender is dropped, never by the flag.
+                    let _ = wait.recv();
+                })
+                .await
+            }
+        };
+        assert!(matches!(left("a").await, OffThread::OutOfTime));
+        assert!(matches!(left("a").await, OffThread::OutOfTime));
+        assert_eq!(overruns.running_late(), 2);
+        let began = Arc::new(AtomicBool::new(false));
+        let far = tokio::time::Instant::now() + Duration::from_secs(30);
+        let try_on = |surface: &'static str| {
+            let began = Arc::clone(&began);
+            let overruns = Arc::clone(&overruns);
+            async move {
+                off_thread(&overruns, surface, far, move |_| {
+                    began.store(true, Ordering::SeqCst);
+                })
+                .await
+            }
+        };
+        // The surface's ceiling: refused before any work.
+        match try_on("a").await {
+            OffThread::Busy(failure) => {
+                assert_eq!(failure.class(), a2m_core::FailureClass::Busy);
+                assert_eq!(failure.code(), &codes::READS_STILL_RUNNING);
+            }
+            _ => panic!("a third read on the surface was not refused"),
+        }
+        assert!(!began.load(Ordering::SeqCst));
+        // Another surface has room until the pack's ceiling.
+        assert!(matches!(left("b").await, OffThread::OutOfTime));
+        assert_eq!(overruns.running_late(), 3);
+        assert!(matches!(try_on("c").await, OffThread::Busy(_)));
+        assert!(!began.load(Ordering::SeqCst));
+        // The reads left behind end; their places return.
+        drop(holds);
+        let by = tokio::time::Instant::now() + Duration::from_secs(10);
+        while overruns.running_late() > 0 && tokio::time::Instant::now() < by {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(overruns.running_late(), 0);
+        assert!(matches!(try_on("a").await, OffThread::Done(())));
+        assert!(began.load(Ordering::SeqCst));
+    }
+
+    /// A read whose waiting is dropped, as a shadow's is at its budget, is
+    /// counted as left running until its thread ends.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_read_whose_waiting_is_dropped_is_counted_until_it_ends() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        let overruns = Arc::new(Overruns::with_ceilings(1, 1));
+        let (hold, wait) = std::sync::mpsc::channel::<()>();
+        let far = tokio::time::Instant::now() + Duration::from_secs(30);
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(20),
+            off_thread(&overruns, "a", far, move |_| {
+                let _ = wait.recv();
+            }),
+        )
+        .await;
+        assert!(dropped.is_err());
+        assert_eq!(overruns.running_late(), 1);
+        assert!(matches!(
+            off_thread(&overruns, "b", far, |_| ()).await,
+            OffThread::Busy(_)
+        ));
+        drop(hold);
+        let by = tokio::time::Instant::now() + Duration::from_secs(10);
+        while overruns.running_late() > 0 && tokio::time::Instant::now() < by {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(overruns.running_late(), 0);
+    }
+
+    /// The method a request is judged by: its own, and every method an
+    /// override in it names. An override never makes a request safer than
+    /// its own method, and one that names no known method may change the
+    /// system (decision 0270).
+    #[test]
+    fn a_request_is_judged_by_its_method_and_every_override_in_it() {
+        let with = |method: Method, headers: &[(&str, &str)], query: &str| Built {
+            method,
+            path: "/x".to_owned(),
+            query: query.to_owned(),
+            headers: headers
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+            body: None,
+        };
+        assert!(!super::may_change_by_method(&with(Method::Get, &[], "")));
+        assert!(!super::may_change_by_method(&with(
+            Method::Get,
+            &[("x-http-method-override", "head")],
+            "a=1&_method=GET"
+        )));
+        for request in [
+            with(Method::Get, &[("X-HTTP-Method-Override", "DELETE")], ""),
+            with(Method::Get, &[("x-http-method", "PUT")], ""),
+            with(Method::Get, &[("x-method-override", "MERGE")], ""),
+            with(Method::Get, &[], "q=1&_method=patch"),
+            with(Method::Get, &[], "_METHOD=POST"),
+            with(Method::Get, &[], "%5Fmethod=DELETE"),
+            with(Method::Head, &[], "_method=DELETE&x=1"),
+            with(Method::Post, &[("x-http-method-override", "GET")], ""),
+            with(Method::Post, &[], "_method=GET"),
+        ] {
+            assert!(super::may_change_by_method(&request), "{request:?}");
+        }
     }
 }

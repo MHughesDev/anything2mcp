@@ -16,7 +16,8 @@
 //! before it opens the store; and a client that connects while the kernel
 //! opens waits for its hello instead of finding nothing.
 
-use std::sync::Arc;
+use std::io::Write as _;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use a2m_actions::{
@@ -101,6 +102,109 @@ impl IdleHolds for Holds {
     }
 }
 
+/// What asked the engine to stop: a signal of the operating system, or
+/// `engine.stop` from a process of the user. The first to ask is the one
+/// recorded ([`StopAsk`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopBy {
+    /// A signal, or on Windows a console event, by the system's own name
+    /// for it, such as `SIGTERM` or `CTRL_CLOSE_EVENT`.
+    Signal(&'static str),
+    /// `engine.stop`, dispatched on the local channel, and the process that
+    /// sent it where the operating system says.
+    EngineStop {
+        /// The process on the other end of the connection.
+        process: Option<u32>,
+    },
+}
+
+impl StopBy {
+    /// What asked, in one word: the signal's name, or `engine.stop`.
+    #[must_use]
+    pub const fn word(&self) -> &'static str {
+        match self {
+            Self::Signal(name) => name,
+            Self::EngineStop { .. } => STOP_ACTION,
+        }
+    }
+
+    /// The process that sent `engine.stop`, where the system says.
+    #[must_use]
+    pub const fn process(&self) -> Option<u32> {
+        match self {
+            Self::Signal(_) => None,
+            Self::EngineStop { process } => *process,
+        }
+    }
+
+    /// The line the engine writes to standard error when it is asked.
+    #[must_use]
+    pub fn line(&self) -> String {
+        match self {
+            Self::Signal(name) => {
+                format!("anything2mcp: the engine was asked to stop by the signal {name}.")
+            }
+            Self::EngineStop {
+                process: Some(process),
+            } => format!(
+                "anything2mcp: the engine was asked to stop by {STOP_ACTION} from process {process}."
+            ),
+            Self::EngineStop { process: None } => format!(
+                "anything2mcp: the engine was asked to stop by {STOP_ACTION} from a process the system does not name."
+            ),
+        }
+    }
+}
+
+/// The one way the engine is asked to stop from outside: it records what
+/// asked, the first only, says so on standard error, and stops the channel.
+/// Cheap to clone.
+#[derive(Debug, Clone)]
+pub struct StopAsk {
+    by: Arc<OnceLock<StopBy>>,
+    control: ChannelControl,
+}
+
+impl StopAsk {
+    fn new(control: ChannelControl) -> Self {
+        Self {
+            by: Arc::new(OnceLock::new()),
+            control,
+        }
+    }
+
+    /// Asks the engine to stop, because of `by`. A second ask changes
+    /// neither what is recorded nor the reason the channel stops for.
+    pub fn ask(&self, by: StopBy) {
+        if self.by.set(by).is_ok() {
+            let mut error = std::io::stderr().lock();
+            // A closed standard error is not a reason not to stop.
+            let _ = writeln!(error, "{}", by.line());
+            let _ = error.flush();
+        }
+        self.control.stop(StopReason::Asked);
+    }
+
+    /// What asked first, if anything has.
+    #[must_use]
+    pub fn by(&self) -> Option<StopBy> {
+        self.by.get().copied()
+    }
+}
+
+/// Why the channel stopped, in the word `serve`'s last object and the log
+/// use.
+#[must_use]
+pub const fn stop_word(reason: StopReason) -> &'static str {
+    match reason {
+        StopReason::Idle => "idle",
+        StopReason::Asked => "asked",
+        StopReason::Restart => "restart",
+        StopReason::DataGone => "data_gone",
+        StopReason::Failed => "failed",
+    }
+}
+
 fn minutes(settings: &Settings, key: &str) -> Option<Duration> {
     let minutes = u64::try_from(settings.int(key)?).ok()?;
     (minutes > 0).then(|| Duration::from_secs(minutes * 60))
@@ -111,6 +215,7 @@ fn minutes(settings: &Settings, key: &str) -> Option<Duration> {
 struct Door {
     kernel: Kernel,
     control: ChannelControl,
+    ask: StopAsk,
     place: LockPlace,
 }
 
@@ -233,7 +338,7 @@ async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -
     };
     let stop = format!("{REST_PREFIX}/actions/{STOP_ACTION}");
     if request.method() == Method::POST && request.uri().path() == stop {
-        return stop_engine(&door, caller, request).await;
+        return stop_engine(&door, caller, peer.process, request).await;
     }
     request.extensions_mut().insert(caller);
     if let Some(project) = project {
@@ -246,7 +351,12 @@ async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -
 /// first, so that the one decider decides and the decision is recorded;
 /// it answers that the action is the client end's to carry out, and this
 /// process, which serves the channel, then stops serving.
-async fn stop_engine(door: &Door, mut caller: Caller, request: HttpRequest) -> HttpResponse {
+async fn stop_engine(
+    door: &Door,
+    mut caller: Caller,
+    process: Option<u32>,
+    request: HttpRequest,
+) -> HttpResponse {
     // The body is read so that the answer can be delivered; an input is
     // not taken, because the action has none.
     let _ = axum::body::to_bytes(request.into_body(), STOP_BODY_LIMIT).await;
@@ -260,7 +370,7 @@ async fn stop_engine(door: &Door, mut caller: Caller, request: HttpRequest) -> H
         .as_ref()
         .is_some_and(|error| error.code == codes::CLIENT_ACTION.as_str());
     if allowed {
-        door.control.stop(StopReason::Asked);
+        door.ask.ask(StopBy::EngineStop { process });
         response.ok = true;
         response.error = None;
         response.result = Some(json!({"stopping": true}));
@@ -271,7 +381,12 @@ async fn stop_engine(door: &Door, mut caller: Caller, request: HttpRequest) -> H
 
 /// The one router of the local engine: the REST router and the MCP
 /// endpoint of each built-in toolset, behind [`admit`].
-fn service(kernel: &Kernel, control: ChannelControl, place: LockPlace) -> Result<Router, Failure> {
+fn service(
+    kernel: &Kernel,
+    control: ChannelControl,
+    ask: StopAsk,
+    place: LockPlace,
+) -> Result<Router, Failure> {
     let mut router = a2m_api::router(kernel.clone(), ApiSettings::default())?;
     let settings = McpSettings::from_settings(kernel.settings())?;
     for toolset in [BuiltInToolset::Use, BuiltInToolset::Build] {
@@ -283,6 +398,7 @@ fn service(kernel: &Kernel, control: ChannelControl, place: LockPlace) -> Result
         Door {
             kernel: kernel.clone(),
             control,
+            ask,
             place,
         },
         admit,
@@ -296,6 +412,7 @@ pub struct LocalEngine {
     channel: Channel,
     service: Router,
     idle: IdlePolicy,
+    ask: StopAsk,
 }
 
 impl std::fmt::Debug for LocalEngine {
@@ -356,7 +473,13 @@ impl LocalEngine {
             ),
             None => IdlePolicy::never(),
         };
-        let service = match service(engine.kernel(), channel.control(), channel.lock_place()) {
+        let ask = StopAsk::new(channel.control());
+        let service = match service(
+            engine.kernel(),
+            channel.control(),
+            ask.clone(),
+            channel.lock_place(),
+        ) {
             Ok(service) => service,
             Err(failure) => {
                 engine.close().await;
@@ -369,6 +492,7 @@ impl LocalEngine {
             channel,
             service,
             idle,
+            ask,
         })
     }
 
@@ -408,13 +532,34 @@ impl LocalEngine {
         self.channel.control()
     }
 
+    /// The handle that asks the engine to stop from outside and records
+    /// what asked: `serve` gives it to its signals, and `engine.stop` uses
+    /// it. Read [`StopAsk::by`] once [`LocalEngine::serve`] has returned.
+    #[must_use]
+    pub fn stop_ask(&self) -> StopAsk {
+        self.ask.clone()
+    }
+
     /// Serves the channel until the engine is asked to stop or has been
     /// idle for `engine.idle_stop_minutes`, then closes the kernel. A page
     /// that still waits for a person is lost with the engine, which is a
     /// decline. The engine lock is held until the kernel has closed, so
     /// that no second engine opens the store while this one still writes.
+    ///
+    /// The engine's log says that it stopped, why, and, when it was asked,
+    /// what asked (decision 0266).
     pub async fn serve(self) -> StopReason {
         let (stopped, lock) = self.channel.serve(self.service, self.idle).await;
+        let word = stop_word(stopped);
+        match self.ask.by().filter(|_| stopped == StopReason::Asked) {
+            Some(by) => match by.process() {
+                Some(process) => {
+                    tracing::info!(why = word, by = by.word(), process, "engine.stopped")
+                }
+                None => tracing::info!(why = word, by = by.word(), "engine.stopped"),
+            },
+            None => tracing::info!(why = word, "engine.stopped"),
+        }
         let why = match stopped {
             StopReason::Idle => CloseReason::Idle,
             StopReason::Restart => CloseReason::Restart,

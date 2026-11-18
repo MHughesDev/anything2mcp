@@ -25,7 +25,7 @@ use tracing::subscriber::Interest;
 use tracing::{Event, Metadata, Subscriber};
 
 use crate::clock::Clock;
-use crate::failure::STORAGE_FULL;
+use crate::codes::STORAGE_FULL;
 use crate::rotate::{RotatingFile, Rotation};
 use crate::text::{limit_text, strip_hidden};
 
