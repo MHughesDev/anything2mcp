@@ -232,7 +232,7 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Accepted (owner decision, by 0242) |
 | 0232 | [Whether a credential the machine holds for the person may be used through its holder](0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Accepted (owner decision, by 0242) |
 | 0233 | [Whether being told by another machine is serving it](0233-whether-being-told-by-another-machine-is-serving-it.md) | Accepted (owner decision, by 0242) |
-| 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Proposed (design decision) |
+| 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Accepted (by 0247, which builds it) |
 | 0236 | [A declared setting whose feature is not built is refused by name](0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) | Accepted (design decision) |
 | 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |
 | 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Accepted (owner decision, by 0242) |

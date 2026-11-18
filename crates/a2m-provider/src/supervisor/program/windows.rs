@@ -528,7 +528,9 @@ pub(super) fn keep_private(path: &Path) -> io::Result<()> {
         )
     };
     let status = if ok == 0 || present == 0 || list.is_null() {
-        Err(io::Error::other("the private access list could not be read back"))
+        Err(io::Error::other(
+            "the private access list could not be read back",
+        ))
     } else {
         // SAFETY: the handle is open for `WRITE_DAC` and owned by `folder`,
         // which outlives the call; `list` points into `descriptor`, still
@@ -586,8 +588,8 @@ mod tests {
 
     impl Place {
         fn new(name: &str) -> Self {
-            let root =
-                std::env::temp_dir().join(format!("a2m-provider-check-{name}-{}", std::process::id()));
+            let root = std::env::temp_dir()
+                .join(format!("a2m-provider-check-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("real")).unwrap();
             std::fs::write(root.join("real").join("example-tool.exe"), b"MZ").unwrap();

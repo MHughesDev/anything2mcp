@@ -479,3 +479,115 @@ fn a_delete_is_irreversible_because_nothing_restores_the_row() {
         "{problems}"
     );
 }
+
+#[test]
+fn a_folder_a_settings_file_or_a_growing_file_the_pack_cannot_carry_out_does_not_compile() {
+    let registry = registry(Roots::none());
+    type Case<'a> = (&'a [(&'a str, &'a str, &'a str)], &'a str, &'a str);
+    let cases: [Case<'_>; 10] = [
+        // A folder write whose verb the folder does not declare.
+        (
+            &[(
+                "folders/inbox.yaml",
+                "writes: [create, update, rename, delete]",
+                "writes: [create, update, delete]",
+            )],
+            "file.binding_invalid",
+            "does not declare",
+        ),
+        // A folder written whose entries may be held open, or not said.
+        (
+            &[("folders/inbox.yaml", "may_be_open: false\n", "")],
+            "file.folder_invalid",
+            "no application",
+        ),
+        // A record of a settings file with a key of its own.
+        (
+            &[(
+                "documents/plist_settings.yaml",
+                "path: [Orders]",
+                "path: [Orders]\n    key: [prefix]",
+            )],
+            "file.document_invalid",
+            "no key of its own",
+        ),
+        // An INI record that names two sections.
+        (
+            &[(
+                "documents/ini_settings.yaml",
+                "path: [warehouse W1]",
+                "path: [warehouse W1, more]",
+            )],
+            "file.document_invalid",
+            "one section",
+        ),
+        // A value of a settings file added.
+        (
+            &[(
+                "operations/ini_orders_set.yaml",
+                "verb: update",
+                "verb: create",
+            )],
+            "file.binding_invalid",
+            "nothing can be added",
+        ),
+        // A record of a document renamed.
+        (
+            &[("operations/stock_set.yaml", "verb: update", "verb: rename")],
+            "file.binding_invalid",
+            "not renamed",
+        ),
+        // A growing file written.
+        (
+            &[(
+                "operations/orders_log_read.yaml",
+                "verb: read",
+                "verb: update",
+            )],
+            "file.binding_invalid",
+            "only read",
+        ),
+        // A folder write read back from something other than its entry.
+        (
+            &[(
+                "operations/inbox_add.yaml",
+                "read_back: {record: entry}",
+                "read_back: {record: note}",
+            )],
+            "file.binding_invalid",
+            "entry it wrote",
+        ),
+        // An INI dialect on a JSON document.
+        (
+            &[(
+                "documents/settings.yaml",
+                "format: json",
+                "format: json\ndialect: {separator: \":\"}",
+            )],
+            "file.document_invalid",
+            "dialect",
+        ),
+        // A growing file named with a step out of its folder.
+        (
+            &[(
+                "logs/orders.yaml",
+                "file: orders.log",
+                "file: ../orders.log",
+            )],
+            "file.folder_invalid",
+            "one name",
+        ),
+    ];
+    for (changes, code, says) in cases {
+        let changed = Changed::new(changes);
+        let problems = match compile(&changed.0, registry.compiler_set()) {
+            Ok(_) => panic!("{code}: the changed target compiled"),
+            Err(problems) => problems,
+        };
+        let found = problems
+            .find(code)
+            .unwrap_or_else(|| panic!("no `{code}` among {problems:?}"));
+        assert!(found.message.contains(says), "{code}: {}", found.message);
+        assert!(!found.fix.is_empty(), "{code} gives no fix");
+    }
+}

@@ -296,6 +296,36 @@ impl KeeperWorker {
             rung,
         };
         let next = job.session.epoch.saturating_add(1);
+        // Nothing reaches a provider for an entry whose credentials belong
+        // to another target, or that would send to an address the target
+        // does not declare; and nothing signs in or renews on a drafts'
+        // word alone, without the person (decision 0248).
+        let reaches = matches!(
+            job.work,
+            Work::SignIn | Work::Renew(_) | Work::SignOut
+        );
+        if reaches {
+            if let Err(failure) =
+                crate::provider::checked(provider.as_ref(), &job.entry, &job.session.key.target)
+            {
+                if matches!(job.work, Work::SignOut) {
+                    self.live.end(session, job.session.epoch);
+                    return WorkOutcome::Ended;
+                }
+                return WorkOutcome::Failed(failure);
+            }
+            let surfaces = &job.entry.surfaces;
+            let allowed = match job.work {
+                Work::SignIn => surfaces.from_published || surfaces.shown_to_person,
+                Work::Renew(_) => surfaces.from_published,
+                _ => true,
+            };
+            if !allowed {
+                return classify(failure::not_published(
+                    "it would sign in or renew without its person",
+                ));
+            }
+        }
         match &job.work {
             Work::SignIn | Work::Renew(Rung::FullSignIn) => {
                 let made = match provider.check(&job.entry) {

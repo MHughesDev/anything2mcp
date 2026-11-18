@@ -24,6 +24,7 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 - Per-session parallelism and the cap on a caller's waiting jobs.
 - Holds: scopes for which no job is handed out, the stop-everything switch among them.
 - Detecting lost leases and queueing the reconcile jobs that follow.
+- When each check of a watch is due, the gap for due times that passed with no check, and a check's admission as the lowest work ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)).
 
 It must never: call the engine, a driver, or the session keeper; read a plan; decide policy; change a record row of the ledger; let a job run twice at once; take, release, or quarantine a record lock itself.
 
@@ -77,7 +78,19 @@ impl Scheduler {
 
     pub async fn job(&self, job: JobId) -> Result<JobRow, Failure>;
     pub fn settings(&self) -> &SchedSettings;
+
+    // Watches (decision 0247). The rows are the ledger's; the times are the scheduler's.
+    pub async fn ask_watch(&self, new: NewWatch) -> Result<WatchRow, Failure>;        // the floor, the longest, the most per person
+    pub async fn confirm_watch(&self, watch: WatchId, by: PrincipalId) -> Result<WatchRow, Failure>;  // with its phase
+    pub async fn due_watches(&self) -> Result<Vec<DueCheck>, Failure>;   // records gaps, ends watches past their end
+    pub async fn next_watch_due(&self) -> Result<Option<Timestamp>, Failure>;
+    pub async fn submit_check(&self, check: &DueCheck, s: Submission) -> Result<CheckAdmission, Failure>;  // batch; Started | Deferred
 }
+pub struct WatchLimits { pub shortest_interval, pub longest, pub most_per_person, pub jitter_most,
+                         pub budget_share_percent, pub reserve_percent }   // 60 s (never below), 7 days, 20, 5 min, 10, 50
+impl WatchLimits { pub fn check_new(..); pub fn phase(&self, WatchId, Duration) -> Duration; pub fn fits_budget(..) }
+pub fn due_at(confirmed_at: Timestamp, phase: Duration, interval: Duration, index: u64) -> Timestamp;
+pub fn plan(watch: &WatchRow, now: Timestamp) -> Option<DuePlan>;   // Waiting | Due | Missed { gap, then } | EndReached
 
 pub struct Submission {
     pub run: NewRun,                       // the run row; its caller, tool version, and input hash are the dedupe key, which the ledger computes
@@ -128,7 +141,7 @@ pub struct RateLimit { pub capacity: u32, pub refill: u32, pub per: Duration }
 pub struct RateGrant { pub requests: u32, pub over: Duration }
 pub enum HoldScope { Everything, Workspace(WorkspaceId), Target(WorkspaceId, TargetName), Caller(WorkspaceId, PrincipalId) }
 pub struct SweepReport { pub lost: Vec<JobId>, pub reconcile: Vec<JobId>, pub expired: Vec<JobId>, pub waits_ended: usize }
-pub struct SchedSettings { queue_length, caller_queue_cap, queue_wait, lease_length, heartbeat_interval, lost_after, quarantine, default_rate, reconcile_wait, reconcile_wait_ceiling }
+pub struct SchedSettings { queue_length, caller_queue_cap, queue_wait, lease_length, heartbeat_interval, lost_after, quarantine, default_rate, reconcile_wait, reconcile_wait_ceiling, watch: WatchLimits }
 ```
 
 Contracts the signatures do not show:
@@ -211,6 +224,17 @@ A budget is a token bucket named by a `BudgetKey`: for a target, a surface, a se
 
 Buckets are kept in the store, in whole numbers, and refill by the store's clock and nothing else. A restart does not refill them. The moment a bucket is counted to never goes back: when the clock is set back, the bucket refills nothing until the clock has passed that moment again, so no stretch of time is counted twice.
 
+## Watches
+
+A watch is the ledger's row ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)); its times are the scheduler's, computed from that row and the store's clock, so a restart finds them again.
+
+- **Due times.** Due time `n` is the moment of confirmation, plus a phase, plus `n` intervals. The phase is made from the digest of the watch's identifier, below the smaller of a tenth of the interval and `jitter_most` (five minutes): it spreads watches and is the same on every machine. The interval is whole seconds, at least `shortest_interval`, which is never below 60 seconds whatever the setting says.
+- **One check at a time, and none before confirmation.** `due_watches` looks only at confirmed watches; a running or paused one is passed over, and the ledger refuses a second check of a watch under way.
+- **A missed due time is a gap.** When the latest due time that has come is past the next one not handled, the ones between are one `gap` (first, last, how many) and one check follows for the latest, marked `catch_up`. A due time is never checked late as if on time. Due times that passed while the watch was paused or held are the same gap when it goes on. A watch whose end has come records the gap of what passed before it and ends `end_reached`.
+- **The lowest work.** A check is `batch`, whatever its submission said, so every interactive job is dispatched first. Its job writes nothing; the registry gives it the kind `canary`, which the engine already refuses for a tool that writes. A refusal to wait out (a hold, a full queue, a spent budget, no runner, a degraded kernel) keeps nothing, and the watch is not tried again before the shorter of a lease's length and its interval.
+- **The budget.** A check spends the same budgets as any read of its surface. Its grant, at admission and through `rate`, never takes a bucket below `reserve_percent` (half) of its capacity, so a caller's own reads always find half the burst; the scheduler knows a check's job by asking the ledger whether its run is a check under way. `fits_budget`, which the registry calls at confirmation, keeps all the watches on one surface within `budget_share_percent` (a tenth) of its sustained rate.
+- **Waking.** `next_watch_due` answers the earliest moment `due_watches` has work; the task that sweeps waits on the earlier of it and `next_due`. `next_due` itself does not include watches, so a task that does not call `due_watches` never spins.
+
 ## Holds
 
 `hold` puts a scope on hold: everything, a workspace, a target, or a caller. While it lasts, a submission the scope covers is refused, no job it covers is handed out, and the heartbeat of a leased job it covers answers `pause`: the runner stops at its next commit point and ends the job as `Stopped`, which leaves the run resumable. A hold does not use up a waiting job's queue limit: the time it lasted is given back on release. Holds are kept in the store.
@@ -250,6 +274,8 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | `possible_commit` | `runner_lost` | Written on a run whose lease was lost |
 | `unknown_variant` | `runner_protocol_unsupported` | A runner speaks neither the current protocol version nor the one before |
 | `input` | `schema_invalid`, `not_found` | A submission is malformed; there is no such job or run |
+| `input` | `watch_interval_too_short`, `watch_too_long` | A watch's interval below the floor; an end further than the longest a watch lasts |
+| `busy` | `watch_too_many`, `watch_over_budget_share` | The person has the most watches they may; the watches on a surface would pass their share of its budget |
 
 ## Invariants
 
@@ -271,6 +297,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | A waiter whose lease has run out is granted nothing | A key freed at the moment the waiter's lease ended, before any sweep; the store is asked who holds it |
 | What one write holds alone has one key, and two jobs that name it run one after the other | Three jobs on two surfaces with three free slots |
 | Everything queued or leased is found again after a restart | The store closed and opened again: the queue, the lease, the runner, the hold; a job whose runner is gone is recovered by the deadline rule |
+| A watch checks nothing before its person confirms it, never two at once, is admitted behind interactive work, leaves half of each budget, and turns missed due times into one gap and one check | `tests/watch.rs`, on a clock that moves only when told, with a restart |
 | No fixed sleeps | Every test runs on a clock that moves only when told; a source test forbids sleeping in the crate |
 | The scheduler names no mode and does not depend on the engine | The audit's layering rule; a source test |
 
@@ -282,7 +309,8 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 4. Done: per-session parallelism, exclusive resources, priority, and round robin between callers. Not built: a weighted share for a caller.
 5. Done: rate budgets, kept in the store.
 6. Done in part: `hello`, matching by capability and home runner, `drain`, `bye`, `cancel`, holds. Not built: enrollment and revoking a runner, which belong to the runner link of slices 7.1 and 7.2; marking a runner offline when it falls silent.
-7. Not built: several control planes over one store, a claim on Postgres, and waking a waiter in another process. Slice 9.4. On one store with one writer the same tables serve.
+7. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): a watch's due times, gaps, and admission; the reserve in a budget's grant. Not built: a priority below `batch` and a job kind of a check's own, each a rebuilt `jobs` table; calendar forms of a schedule, which wait for named time zones; signals that bring a due time forward.
+8. Not built: several control planes over one store, a claim on Postgres, and waking a waiter in another process. Slice 9.4. On one store with one writer the same tables serve.
 
 ## Open points
 

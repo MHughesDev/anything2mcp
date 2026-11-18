@@ -138,6 +138,7 @@ pub(crate) fn endpoint_schema() -> JsonSchema {
         .optional("response_schema", JsonSchema::any())
         .optional("answer", answer_form_schema())
         .required("effect", JsonSchema::words(&["read", "write"]))
+        .optional("read_asserted", JsonSchema::bool())
         .optional(
             "responses",
             JsonSchema::object()
@@ -475,6 +476,7 @@ pub(crate) fn template_of(
             _ => Auth::Session,
         },
         writes: doc.text("effect") == Some("write"),
+        read_asserted: doc.get("read_asserted").and_then(Located::as_bool) == Some(true),
         request,
         response,
         answer,
@@ -554,8 +556,9 @@ impl FileKind for EndpointKind {
     /// is one HTTP marks safe. An effect that is an open question is not
     /// known to read. A method that is not safe may change something
     /// whatever the entry says: marking such a request `read` is a person's
-    /// judgment, which the lint `http.effect_method` asks them to confirm,
-    /// and a draft never makes it. The answer is the same on every surface
+    /// judgment, which the lint `http.effect_method` refuses until they
+    /// write `read_asserted: true`, and a draft never makes it; the entry is
+    /// still a write to the drafter. The answer is the same on every surface
     /// kind the file kind is registered for.
     fn writes(&self, doc: &Located<Doc>) -> bool {
         let safe = doc
@@ -727,32 +730,50 @@ impl LintRule for EffectMethod {
         code("effect_method")
     }
 
+    /// An error (decision 0249): a request the driver sends in a shadow, a
+    /// try, or a discovery must be one that cannot write. An endpoint that
+    /// reads by a method HTTP does not mark safe, such as a search behind
+    /// `POST`, says so with `read_asserted: true`, which is the developer's
+    /// word, and is then sent outside a live run only against an
+    /// environment of kind `test`.
     fn level(&self, _mode: CompileMode) -> Level {
-        Level::Warning
+        Level::Error
     }
 
     fn summary(&self) -> &str {
-        "An endpoint marked `read` uses a method HTTP marks safe."
+        "An endpoint marked `read` uses a method HTTP marks safe, or says with `read_asserted` that one it does not mark safe only reads."
     }
 
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
         entries(view)
-            .filter(|doc| doc.text("effect") == Some("read"))
             .filter_map(|doc| {
                 let method = doc.get("method")?;
                 let safe = method
                     .as_text()
                     .and_then(Method::from_word)
                     .is_some_and(Method::is_safe);
-                (!safe).then(|| {
-                    problem(
+                let reads = doc.text("effect") == Some("read");
+                let asserted = doc.get("read_asserted");
+                let says_so = asserted.and_then(Located::as_bool) == Some(true);
+                match (reads, safe, says_so) {
+                    (true, false, false) => Some(problem(
                         "effect_method",
                         Stage::Lint,
                         &method.at,
                         "The endpoint is marked `read`, and HTTP does not mark its method as safe.",
-                        "Mark the endpoint `write`, or confirm with the system's owner that the request changes nothing.",
-                    )
-                })
+                        "Mark the endpoint `write`; or, once the system's owner confirms that the request changes nothing, add `read_asserted: true`.",
+                    )),
+                    (true, true, true) | (false, _, true) => asserted.map(|asserted| {
+                        problem(
+                            "effect_method",
+                            Stage::Lint,
+                            &asserted.at,
+                            "`read_asserted` belongs only to an endpoint marked `read` whose method HTTP does not mark safe.",
+                            "Remove `read_asserted`.",
+                        )
+                    }),
+                    _ => None,
+                }
             })
             .collect()
     }

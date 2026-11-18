@@ -50,8 +50,8 @@ pub const WATCH_NEEDS_CONFIRMATION: FailureCode = FailureCode::fixed("watch_need
 /// A check's run has not reached an end the watch can take. Class `busy`.
 pub const WATCH_CHECK_UNFINISHED: FailureCode = FailureCode::fixed("watch_check_unfinished");
 /// Due times passed with no check: the engine was not running, the watch
-/// was paused or held, or a check could not be admitted in time. The code of
-/// a `gap`, class `busy`.
+/// was paused or held, or a check could not be admitted in time. A `gap`
+/// carries it. Class `busy`.
 pub const WATCH_DUE_MISSED: FailureCode = FailureCode::fixed("watch_due_missed");
 
 /// A check's run ended without completing and gave no failure: it was

@@ -131,7 +131,11 @@ enum Want {
 /// # Errors
 ///
 /// The first reason found.
-pub fn check_program(path: &Path, trust: &ProgramTrust, role: ProgramRole) -> Result<(), ProgramRefused> {
+pub fn check_program(
+    path: &Path,
+    trust: &ProgramTrust,
+    role: ProgramRole,
+) -> Result<(), ProgramRefused> {
     if !path.is_absolute() {
         return Err(ProgramRefused::NotAbsolute);
     }
@@ -407,7 +411,9 @@ pub fn interpreter_form(path: &str, fixed: &[String]) -> Result<(), InterpreterR
         .iter()
         .find(|form| form.names.contains(&stem.as_str()) || form.names.contains(&base.as_str()))
         .ok_or(InterpreterRefused::NotKnown)?;
-    if fixed.len() == form.args.len() && fixed.iter().zip(form.args).all(|(given, its)| given == its) {
+    if fixed.len() == form.args.len()
+        && fixed.iter().zip(form.args).all(|(given, its)| given == its)
+    {
         Ok(())
     } else {
         Err(InterpreterRefused::NotItsForm(form.args))
@@ -536,7 +542,11 @@ mod os {
     /// the same way. So when this passes, nobody else can change what the
     /// declared path names between this check and a start. A folder at the
     /// end of the path is entered, and checked, as every other.
-    pub(super) fn walk(declared: &Path, trust: &ProgramTrust, _want: Want) -> Result<PathBuf, ProgramRefused> {
+    pub(super) fn walk(
+        declared: &Path,
+        trust: &ProgramTrust,
+        _want: Want,
+    ) -> Result<PathBuf, ProgramRefused> {
         let us = rustix::process::getuid().as_raw();
         let root = PathBuf::from("/");
         let top = std::fs::metadata(&root).map_err(|_| ProgramRefused::Missing)?;
@@ -627,7 +637,11 @@ mod os {
 
     use super::{ProgramRefused, ProgramTrust, Want};
 
-    pub(super) fn walk(declared: &Path, _trust: &ProgramTrust, _want: Want) -> Result<PathBuf, ProgramRefused> {
+    pub(super) fn walk(
+        declared: &Path,
+        _trust: &ProgramTrust,
+        _want: Want,
+    ) -> Result<PathBuf, ProgramRefused> {
         Err(ProgramRefused::Unreadable(declared.to_path_buf()))
     }
 
@@ -652,21 +666,14 @@ mod os {
 /// system's own identities, on Windows: a protected access list that
 /// grants the folder's owner, the local system account, and the built-in
 /// Administrators group full control, and nobody else anything. On Linux
-/// and macOS a folder is made with the mode `0700`, and this does nothing.
+/// and macOS a private folder is made with the mode `0700` instead.
 ///
 /// # Errors
 ///
 /// When the access list could not be set.
+#[cfg(windows)]
 pub(crate) fn keep_folder_private(path: &Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        os::keep_private(path)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    os::keep_private(path)
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1131,15 +1132,91 @@ fn said_by_refusal(body: Option<&Json>, redact: &dyn Redact) -> Option<String> {
     ["message", "detail", "error"]
         .iter()
         .find_map(|field| match body.get(field)? {
-            Json::Text(text) => Some(redact.redact(text)),
+            // Text with a control character this pack never returns is
+            // left out whole (decision 0249).
+            Json::Text(text) if !refused_control(text) => Some(redact.redact(text)),
             _ => None,
         })
 }
 
-fn validate(
+/// What reading an answer gave, off the engine's async threads.
+enum Read {
+    /// An answer of a status the endpoint accepts: its record, checked
+    /// against the declared shape, or why it is refused.
+    Accepted(Result<Json, Unread>),
+    /// An answer of any other status: its body, when it is JSON, to match
+    /// the declared answers against.
+    Other(Option<Json>),
+}
+
+/// Reads an answer's body: parses it in its declared form and checks its
+/// record against the declared shape, for an accepted status; parses it as
+/// JSON, for any other. All of it runs on a blocking thread, never on the
+/// engine's async threads, and stops once `stop` is set.
+fn read_body(
+    spec: &AnswerSpec,
+    shape: &Shape,
+    accepted: bool,
+    said: Option<Charset>,
+    body: &[u8],
+    redact: &dyn Redact,
+    stop: &AtomicBool,
+) -> Read {
+    if !accepted {
+        return Read::Other(Json::parse_until(body, Some(stop)).ok());
+    }
+    let record = if spec.form != Form::Json {
+        spec.read(body, said, redact, stop)
+    } else if body.is_empty() {
+        Ok(Json::Null)
+    } else {
+        ascii_if_said(body, said).and_then(|()| {
+            Json::parse_until(body, Some(stop)).map_err(|error| {
+                Unread::Shape(format!(
+                    "the body is not JSON at byte {}, where {}",
+                    error.at, error.what
+                ))
+            })
+        })
+    };
+    Read::Accepted(record.and_then(|json| shape.check(&json).map(|()| json).map_err(Unread::Shape)))
+}
+
+/// How work handed to a blocking thread ended.
+enum OffThread<T> {
+    Done(T),
+    /// The deadline came first. The work is told to stop and is not waited
+    /// for.
+    OutOfTime,
+    /// The thread ended without an answer.
+    Lost,
+}
+
+/// Runs `work` on a blocking thread, and waits for it until `until`. At the
+/// deadline the flag `work` is handed is set, and the step goes on without
+/// waiting: an async thread of the engine is never held by an answer.
+async fn off_thread<T: Send + 'static>(
+    until: tokio::time::Instant,
+    work: impl FnOnce(&AtomicBool) -> T + Send + 'static,
+) -> OffThread<T> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let task = tokio::task::spawn_blocking(move || work(&flag));
+    tokio::select! {
+        biased;
+        joined = task => joined.map_or(OffThread::Lost, OffThread::Done),
+        () = tokio::time::sleep_until(until) => {
+            stop.store(true, Ordering::Relaxed);
+            OffThread::OutOfTime
+        }
+    }
+}
+
+async fn validate(
     session: &mut Session,
     step: &Step,
-    redact: &dyn Redact,
+    input: &StepInput<'_>,
+    redact: &Arc<dyn Redact>,
 ) -> Result<StepOutcome, StepFailure> {
     let (name, template) = judged_endpoint(session, step)?;
     let answer = held_answer(&mut session.answer, &name)?;
@@ -1148,67 +1225,110 @@ fn validate(
         return Ok(StepOutcome::Absent(Observed::default()));
     }
     let status = answer.status;
-    if template.answers.ok.contains(&status) && !answer.absent {
-        let shape = &template.response;
-        let drift = |why: String| {
-            answered(failure_of(
-                FailureClass::Drift,
-                codes::RESPONSE_SCHEMA_MISMATCH,
-                format!(
-                    "The answer of the endpoint `{name}` does not fit the shape the endpoint declares: {why}."
-                ),
-                "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
-            ))
-        };
-        // The answer's content type is held to its declared form: a page
-        // answered in place of the data stops here. JSON with no content
-        // type declared is not checked, as before (decision 0217).
+    let accepted = template.answers.ok.contains(&status) && !answer.absent;
+    let drift = |why: String| {
+        answered(failure_of(
+            FailureClass::Drift,
+            codes::RESPONSE_SCHEMA_MISMATCH,
+            format!(
+                "The answer of the endpoint `{name}` does not fit the shape the endpoint declares: {why}."
+            ),
+            "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
+        ))
+    };
+    // The answer's content type is held to its declared form: a page
+    // answered in place of the data stops here. JSON with no content type
+    // declared is not checked, as before (decision 0217).
+    let said = if accepted {
         template
             .answer
-            .check_content_type(answer.header("content-type"))
-            .map_err(drift)?;
-        // A body that is not JSON is never read as nothing, whatever the
-        // shape: a page answered in place of the data stops here.
-        let json = if template.answer.form != Form::Json {
-            template
-                .answer
-                .read(&answer.body, redact)
-                .map_err(|unread| match unread {
-                    Unread::Shape(why) => drift(why),
-                    Unread::DocumentType => answered(failure_of(
-                        FailureClass::UnknownVariant,
-                        codes::DOCUMENT_TYPE_REFUSED,
-                        format!(
-                            "The answer of the endpoint `{name}` declares a document type, which is never read; no value was taken from it."
-                        ),
-                        "Ask the system's owner for the answer without a document type, or read it another way.",
-                    )),
-                    Unread::TooLarge(why) => answered(failure_of(
-                        FailureClass::UnknownVariant,
-                        codes::RESPONSE_TOO_LARGE,
-                        format!(
-                            "The answer of the endpoint `{name}` is past a bound of what is read: {why}."
-                        ),
-                        "Raise `max_depth` or `max_elements` under the endpoint's `answer` if the answer is meant to be that large.",
-                    )),
-                })?
-        } else if answer.body.is_empty() {
-            Json::Null
-        } else {
-            Json::parse(&answer.body).map_err(|error| {
-                drift(format!(
-                    "the body is not JSON at byte {}, where {}",
-                    error.at, error.what
-                ))
-            })?
-        };
-        shape.check(&json).map_err(drift)?;
-        answer.json = Some(json);
-        return Ok(StepOutcome::Done(Observed::default()));
-    }
+            .check_content_type(&answer.headers_named("content-type"))
+            .map_err(drift)?
+    } else {
+        None
+    };
+    let body = std::mem::take(&mut answer.body);
+    let (spec, shape, clean) = (
+        template.answer.clone(),
+        template.response.clone(),
+        Arc::clone(redact),
+    );
+    let read = match off_thread(until(step, input), move |stop| {
+        let read = read_body(&spec, &shape, accepted, said, &body, clean.as_ref(), stop);
+        (body, read)
+    })
+    .await
+    {
+        OffThread::Done((body, read)) => {
+            answer.body = body;
+            read
+        }
+        OffThread::OutOfTime if answer.wrote => {
+            return Err(in_doubt(
+                &name,
+                "its answer was not read in the time the step allows",
+            ));
+        }
+        OffThread::OutOfTime => {
+            return Err(answered(failure_of(
+                FailureClass::Transient,
+                a2m_provider::codes::TIMEOUT,
+                format!(
+                    "The answer of the endpoint `{name}` was not read in the time the step allows."
+                ),
+                "Run the tool again, or raise the step's timeout in the target's defaults.",
+            )));
+        }
+        OffThread::Lost => {
+            return Err(cannot_judge(
+                Some(answer),
+                "its answer could not be read".to_owned(),
+            ));
+        }
+    };
+    let body = match read {
+        Read::Accepted(record) => {
+            // A body that is not JSON is never read as nothing, whatever the
+            // shape: a page answered in place of the data stops here.
+            let json = record.map_err(|unread| match unread {
+                Unread::Shape(why) => drift(why),
+                Unread::DocumentType => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::DOCUMENT_TYPE_REFUSED,
+                    format!(
+                        "The answer of the endpoint `{name}` declares a document type, which is never read; no value was taken from it."
+                    ),
+                    "Ask the system's owner for the answer without a document type, or read it another way.",
+                )),
+                Unread::TooLarge(why) => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::RESPONSE_TOO_LARGE,
+                    format!(
+                        "The answer of the endpoint `{name}` is past a bound of what is read: {why}."
+                    ),
+                    "Raise `max_depth` or `max_elements` under the endpoint's `answer` if the answer is meant to be that large; the other bounds are fixed.",
+                )),
+                Unread::HoldsSecret => answered(failure_of(
+                    FailureClass::UnknownVariant,
+                    codes::ANSWER_HOLDS_SECRET,
+                    format!(
+                        "The answer of the endpoint `{name}` holds a registered secret, so neither its length nor its digest is returned."
+                    ),
+                    "Ask the system's owner why the answer carries the credential, or read it another way.",
+                )),
+                // The flag is set only at the deadline, which was met here.
+                Unread::Stopped => cannot_judge(
+                    Some(answer),
+                    "its reading was stopped".to_owned(),
+                ),
+            })?;
+            answer.json = Some(json);
+            return Ok(StepOutcome::Done(Observed::default()));
+        }
+        Read::Other(body) => body,
+    };
 
     // Not accepted. Which of the answers the endpoint declares is it?
-    let body = Json::parse(&answer.body).ok();
     let is = |answers: &[crate::template::Answer]| {
         answers
             .iter()
@@ -1269,7 +1389,7 @@ fn validate(
             ),
             "Correct the input the system refused, then run the tool again.",
         ));
-        return Err(match said_by_refusal(body.as_ref(), redact) {
+        return Err(match said_by_refusal(body.as_ref(), redact.as_ref()) {
             Some(said) => refused.with_said(said),
             None => refused,
         });
@@ -1326,6 +1446,16 @@ fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
     }
 }
 
+/// Whether a value taken, or an entry of it, is text that holds a control
+/// character this pack never returns.
+fn holds_control(value: &Value) -> bool {
+    match value {
+        Value::Text(text) => refused_control(text),
+        Value::List(items) => items.iter().any(holds_control),
+        _ => false,
+    }
+}
+
 impl HttpDriver {
     fn extract(
         &self,
@@ -1364,6 +1494,20 @@ impl HttpDriver {
                     "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs.",
                 ))
             })?;
+            // Of every form, a value is data, and never a control
+            // character but a tab or a line break (decision 0249).
+            if holds_control(&value) {
+                return Err(StepFailure::answered(failure_of(
+                    FailureClass::Drift,
+                    codes::RESPONSE_SCHEMA_MISMATCH,
+                    format!(
+                        "The answer of the endpoint `{name}` holds a control character at `{}`, which is never returned as the operation's output `{}`.",
+                        wanted.path.join("."),
+                        wanted.name
+                    ),
+                    "Ask the system's owner why the value carries a control character; a tab and a line break are kept.",
+                )));
+            }
             values.insert(wanted.name.clone(), value);
         }
         // What the pass now knows of the record's version, read through
@@ -1496,7 +1640,7 @@ impl Driver for HttpDriver {
             if step.kind == REQUEST {
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
-                validate(session, step, self.redact.as_ref())
+                validate(session, step, input, &self.redact).await
             } else if step.kind == EXTRACT {
                 self.extract(session, step, input)
             } else if step.kind == PROBE {
@@ -1592,6 +1736,8 @@ mod tests {
             expiry: Expiry::default(),
             answer: None,
             versions: BTreeMap::new(),
+            posture: a2m_provider::Posture::Live,
+            test_environment: false,
         }
     }
 

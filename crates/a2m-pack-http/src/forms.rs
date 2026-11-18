@@ -251,6 +251,17 @@ impl<'a> Work<'a> {
         Ok(())
     }
 
+    /// A budget that does not grow with the answer, for a test that holds
+    /// a read to a fixed count of work.
+    #[cfg(test)]
+    pub(crate) const fn with_budget(budget: u64, stop: &'a AtomicBool) -> Self {
+        Self {
+            used: 0,
+            budget,
+            stop,
+        }
+    }
+
     /// The units spent so far.
     #[cfg(test)]
     pub(crate) const fn used(&self) -> u64 {
@@ -1000,11 +1011,15 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
 
 #[cfg(test)]
 mod tests {
-    use a2m_core::NoSecrets;
+    use std::sync::atomic::AtomicBool;
 
-    use super::{AnswerSpec, Charset, Form, TextField, TextForm, Unread, typed};
+    use a2m_core::{NoSecrets, Redact};
+
+    use super::{AnswerSpec, Charset, Form, TextField, TextForm, Unread, refused_control, typed};
     use crate::json::Json;
     use crate::shape::Kind;
+
+    const GOING: AtomicBool = AtomicBool::new(false);
 
     #[test]
     fn a_text_is_typed_exactly_or_not_at_all() {
@@ -1028,35 +1043,85 @@ mod tests {
         assert_eq!(typed("1", Kind::Boolean), None);
     }
 
-    #[test]
-    fn the_content_type_and_its_charset_are_held_to_the_form() {
-        let text = AnswerSpec {
+    fn text_form(charset: Charset) -> AnswerSpec {
+        AnswerSpec {
             form: Form::Text(TextForm {
-                charset: Charset::Utf8,
+                charset,
                 pattern: None,
                 fields: Vec::new(),
             }),
             content_types: vec!["text/plain".to_owned()],
-        };
-        assert!(text.check_content_type(Some("text/plain")).is_ok());
-        assert!(
-            text.check_content_type(Some("Text/Plain; charset=UTF-8"))
-                .is_ok()
+        }
+    }
+
+    #[test]
+    fn the_content_type_and_its_charset_are_held_to_the_form() {
+        let text = text_form(Charset::Utf8);
+        assert_eq!(text.check_content_type(&["text/plain"]), Ok(None));
+        assert_eq!(
+            text.check_content_type(&["Text/Plain; charset=UTF-8"]),
+            Ok(Some(Charset::Utf8))
         );
         assert!(
-            text.check_content_type(Some("text/plain; charset=iso-8859-1"))
+            text.check_content_type(&["text/plain; charset=iso-8859-1"])
                 .is_err()
         );
-        assert!(text.check_content_type(Some("text/html")).is_err());
-        assert!(text.check_content_type(None).is_err());
+        assert!(text.check_content_type(&["text/html"]).is_err());
+        assert!(text.check_content_type(&[]).is_err());
         let xml = AnswerSpec {
             form: Form::Bytes,
             content_types: vec!["application/*+xml".to_owned()],
         };
-        assert!(xml.check_content_type(Some("application/atom+xml")).is_ok());
-        assert!(xml.check_content_type(Some("application/json")).is_err());
+        assert!(xml.check_content_type(&["application/atom+xml"]).is_ok());
+        assert!(xml.check_content_type(&["application/json"]).is_err());
         // JSON with nothing declared is not checked, as before.
-        assert!(AnswerSpec::default().check_content_type(None).is_ok());
+        assert!(AnswerSpec::default().check_content_type(&[]).is_ok());
+    }
+
+    #[test]
+    fn a_disagreement_about_the_character_set_is_a_stop() {
+        let text = text_form(Charset::Utf8);
+        // A second header, or a second charset in one, is refused, even
+        // when the two agree.
+        assert!(
+            text.check_content_type(&["text/plain", "text/plain"])
+                .is_err()
+        );
+        assert!(
+            text.check_content_type(&["text/plain; charset=utf-8; charset=utf-8"])
+                .is_err()
+        );
+        // JSON whose header names another character set.
+        let json = AnswerSpec {
+            form: Form::Json,
+            content_types: vec!["application/json".to_owned()],
+        };
+        assert!(
+            json.check_content_type(&["application/json; charset=iso-8859-1"])
+                .is_err()
+        );
+        // A header that names US-ASCII holds the body to ASCII.
+        assert!(matches!(
+            text.read("caf\u{e9}".as_bytes(), Some(Charset::UsAscii), &NoSecrets, &GOING),
+            Err(Unread::Shape(_))
+        ));
+        // A byte-order mark before a body declared in another set.
+        let latin = text_form(Charset::Iso8859_1);
+        for marked in [&b"\xEF\xBB\xBFok"[..], b"\xFE\xFF\x00o", b"\xFF\xFEo\x00"] {
+            assert!(
+                matches!(
+                    latin.read(marked, None, &NoSecrets, &GOING),
+                    Err(Unread::Shape(_))
+                ),
+                "{marked:?}"
+            );
+        }
+        assert!(latin.read(b"ok \xE9", None, &NoSecrets, &GOING).is_ok());
+        // UTF-8's own mark is taken for UTF-8.
+        assert!(
+            text.read(b"\xEF\xBB\xBFok", None, &NoSecrets, &GOING)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1075,17 +1140,67 @@ mod tests {
         };
         let latin = b"size 12\xE9";
         assert!(matches!(
-            form(Charset::Utf8).read(latin, &NoSecrets),
+            form(Charset::Utf8).read(latin, None, &NoSecrets, &GOING),
             Err(Unread::Shape(_))
         ));
         assert!(matches!(
-            form(Charset::UsAscii).read(latin, &NoSecrets),
+            form(Charset::UsAscii).read(latin, None, &NoSecrets, &GOING),
             Err(Unread::Shape(_))
         ));
         // Anchored: the trailing character is outside the pattern.
-        assert!(form(Charset::Iso8859_1).read(latin, &NoSecrets).is_err());
-        let read = form(Charset::Utf8).read(b"size 12", &NoSecrets).unwrap();
+        assert!(
+            form(Charset::Iso8859_1)
+                .read(latin, None, &NoSecrets, &GOING)
+                .is_err()
+        );
+        let read = form(Charset::Utf8)
+            .read(b"size 12", None, &NoSecrets, &GOING)
+            .unwrap();
         assert_eq!(read.get("size"), Some(&Json::Number("12".to_owned())));
         assert_eq!(read.get("text"), Some(&Json::Text("size 12".to_owned())));
+    }
+
+    /// A redactor that knows one secret.
+    struct One(&'static str);
+
+    impl Redact for One {
+        fn redact(&self, text: &str) -> String {
+            text.replace(self.0, a2m_core::REDACTED)
+        }
+    }
+
+    #[test]
+    fn a_body_that_holds_a_registered_secret_gives_no_length_and_no_digest() {
+        let bytes = AnswerSpec {
+            form: Form::Bytes,
+            content_types: Vec::new(),
+        };
+        let secret = One("secret-for-tests-label-0249");
+        // Between bytes that are not UTF-8, the secret is still found.
+        let mut body = vec![0xFF, 0xC3];
+        body.extend_from_slice(b"secret-for-tests-label-0249");
+        body.extend_from_slice(&[0xE2, 0x82, 0x00]);
+        assert_eq!(
+            bytes.read(&body, None, &secret, &GOING),
+            Err(Unread::HoldsSecret)
+        );
+        let read = bytes
+            .read(&[0xFF, 0x00, 0x01], None, &secret, &GOING)
+            .unwrap();
+        assert_eq!(read.get("length"), Some(&Json::Number("3".to_owned())));
+        assert_eq!(
+            read.get("digest").and_then(Json::as_text),
+            Some(super::body_digest(&[0xFF, 0x00, 0x01]).to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn a_tab_and_a_line_break_are_kept_and_every_other_control_character_is_refused() {
+        for kept in ["a\tb", "a\nb\r\n", "plain", "\u{e9}\u{202e}"] {
+            assert!(!refused_control(kept), "{kept:?}");
+        }
+        for refused in ["\u{0}", "\u{7}", "\u{8}", "\u{b}", "\u{c}", "\u{1b}[31m", "\u{7f}", "\u{85}", "\u{9b}"] {
+            assert!(refused_control(refused), "{refused:?}");
+        }
     }
 }

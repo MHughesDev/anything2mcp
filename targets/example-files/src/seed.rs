@@ -147,7 +147,10 @@ pub fn files() -> Vec<SeedFile> {
         seed(ARCHIVED_STOCK_CSV, archived_stock_csv()),
         seed(SETTINGS_INI, settings_ini()),
         seed(SETTINGS_PLIST, settings_plist()),
-        seed(INBOX_NOTE_ONE, b"First note of the example inbox.\n".to_vec()),
+        seed(
+            INBOX_NOTE_ONE,
+            b"First note of the example inbox.\n".to_vec(),
+        ),
         seed(
             INBOX_NOTE_TWO,
             lines(&["Second note,", "two lines."], "\r\n", false),

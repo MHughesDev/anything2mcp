@@ -14,7 +14,8 @@
 //!   used, is refused with 403 and changes nothing.
 //!
 //! A refused note is answered with 422, quoting the body it was sent, the
-//! token too when it came in the body, as some applications do.
+//! token too when it came in the body, as some applications do; its
+//! message then quotes that token again in capitals.
 //!
 //! What was stored, how often, and how many writes were refused for their
 //! token are reported under `/__control/notes`. Every token is made up and
@@ -287,6 +288,7 @@ async fn write(
     // back does: a page's token sent in the body comes back in the answer.
     let received = Value::Object(fields.clone().into_iter().collect());
     let in_body = fields.remove(TOKEN_FIELD);
+    let from_body = in_body.is_some();
     let token = match (in_header, in_body) {
         (Some(token), None) => Some(token),
         (None, Some(Value::String(token))) => Some(token),
@@ -319,12 +321,19 @@ async fn write(
         && !note.chars().any(char::is_control)
         && fields.len() == 1;
     if !fits {
+        // A token that came in the body is quoted in the message too, in
+        // capitals, as an application that echoes what it refused in a
+        // spelling of its own does (decision 0245, audit finding S4).
+        let mut message = "A note is 1 to 200 characters of text on one line, and the body holds nothing else.".to_owned();
+        if from_body {
+            message.push_str(&format!(" The page's token was {}.", token.to_uppercase()));
+        }
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             axum::Json(json!({
                 "error": "invalid",
                 "field": "note",
-                "message": "A note is 1 to 200 characters of text on one line, and the body holds nothing else.",
+                "message": message,
                 "received": received,
             })),
         )

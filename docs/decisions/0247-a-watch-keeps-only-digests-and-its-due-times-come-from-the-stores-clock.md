@@ -41,10 +41,10 @@ The phase spreads watches: it is made from the digest of the watch's identifier,
 | `unseen` | Each check in which a key is not seen | Once, in the check right after the last one that saw it | The same reason |
 | `removed` | Both checks complete | The newer check complete, and a complete check in the baseline | The baseline's own form of "both complete" |
 | What a change holds of the record | Its key | The workspace's keyed digest of its key under the purpose `record_key`, the name a record row and a lock give it. A door finds the record in the check run's result with `Watches::key_of` | A key is often business data (an order number); a change holds no value |
-| States | `proposed`, `waiting_for_sign_in` | `asked`, `confirmed`, `running`, `paused` with a reason (`needs_login`, `needs_input`, a drift's code, `version_changed`, `on_hold`, `paused_by_person`), `ended` with a reason | One paused state with a reason covers every wait; `running` is the guard against two checks at once |
+| States | `proposed`, `waiting_for_sign_in` | `asked`, `confirmed`, `running`, `paused`, `ended`. A pause or an end has a reason, `WatchReason`, a state of the watch and not a failure code: `needs_login`, `needs_input`, `drifted`, `version_changed`, `on_hold`, `paused_by_person`; `ended_by_person`, `ended_by_caller`, `end_reached`, `version_withdrawn`, `declined`. A pause a check's failure caused keeps that failure's class and code beside its reason | One paused state with a reason covers every wait; `running` is the guard against two checks at once. A reason is not a failure, so it is not a `FailureCode`, and the codes `needs_login` and `on_hold` stay declared once, where they are failures |
 | Whose watch | Implied: the person | `asked_by` (the caller) and `acts_for` (the person whose session is used); only `acts_for` confirms, and a check's run must be that person's | "A user's session is theirs alone" |
 | The longest | From confirmation | From the ask, which is earlier, so the same or shorter | The end is fixed when the watch is asked, before the person sees it |
-| How a check ends | | Read from its run's row, never from the caller: `completed` is compared; `needs_login`, `needs_input`, or a class `session_expired` or `drift` pause the watch; any other end is a `gap` with the run's class and code | As the ledger takes an acknowledgement from the run's stored diff (decision 0172) |
+| How a check ends | | Read from its run's row, never from the caller: `completed` is compared; `needs_login`, `needs_input`, or a class `session_expired` or `drift` pause the watch; any other end is a `gap` with the run's class and code, or `busy`/`watch_check_not_completed` when it gave none | As the ledger takes an acknowledgement from the run's stored diff (decision 0172) |
 | A changed version | Drift pauses | A new published version of the target pauses every confirmed watch tied to another (`version_changed`), and such a pause, like a drift's, never resumes: only a new watch its person confirms | A watch is tied to the plan its person confirmed |
 | The condition | An expression that ends the watch | Not built: it needs `a2m-expr` in the registry; when built, it ends the watch with the reason `condition_met` | |
 
@@ -63,6 +63,10 @@ The phase spreads watches: it is made from the digest of the watch's identifier,
 | 9. History is append-only | A change never changes; a check is written when it begins and once when it ends; a watch, its checks, and its changes leave only with the retention job. The baseline is working state, not history, and changes only while a check is under way |
 
 The nine rule tests in `tests/rules.rs` still pass.
+
+### Failure codes
+
+Each code is declared once, with its class, in a table a program reads: the ledger's thirteen in `WATCH_CODES` of the `codes` module of `a2m-ledger` (`watch_not_a_read`, `watch_not_confirmed`, `watch_not_yours`, `watch_ended`, `watch_run_not_its_own`, `watch_needs_confirmation`: `policy`; `watch_check_running`, `watch_paused`, `watch_check_unfinished`, `watch_due_missed`, `watch_check_not_completed`: `busy`; `watch_key_repeated`, `watch_shapes_mixed`: `unknown_variant`), the scheduler's four in `WATCH_CODES` of the `codes` module of `a2m-sched` (`watch_interval_too_short`, `watch_too_long`: `input`; `watch_too_many`, `watch_over_budget_share`: `busy`). No code is in both; a test in each crate holds its table to its constants.
 
 ### Retention
 

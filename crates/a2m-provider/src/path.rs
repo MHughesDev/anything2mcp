@@ -158,6 +158,36 @@ fn parts(relative: &str) -> Result<Vec<&str>, Failure> {
     Ok(found)
 }
 
+/// Makes `path` and the folders above it that are not there, each kept to
+/// the engine's user.
+fn private_dir_all(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let mut missing = Vec::new();
+        let mut at = Some(path);
+        while let Some(folder) = at {
+            if folder.exists() {
+                break;
+            }
+            missing.push(folder.to_path_buf());
+            at = folder.parent();
+        }
+        fs::create_dir_all(path)?;
+        for folder in missing.iter().rev() {
+            crate::supervisor::keep_folder_private(folder)?;
+        }
+        Ok(())
+    }
+}
+
 /// A path that exists, with every link in it followed, in the one form in
 /// which every root holds its folder and every checked path is made: so a
 /// path resolved by this function and the folder of a root compare like
@@ -863,6 +893,46 @@ impl CheckedPath {
                 self.unavailable("cannot be made")
             }
         })
+    }
+
+    /// As [`CheckedPath::create_dir`], and the folder is the engine's
+    /// user's alone from the moment it exists: on Linux and macOS its mode
+    /// is `0700`; on Windows it is given a protected access list that
+    /// grants its owner, the local system account, and the Administrators
+    /// group full control and nobody else anything (decision 0250).
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPath::create_dir`].
+    pub fn create_private_dir(&self) -> Result<(), Failure> {
+        self.writable()?;
+        let (folder, name) = self.place()?;
+        let folder = self
+            .folder_now(folder)?
+            .ok_or_else(|| self.unavailable("cannot be made: the folder above it is not there"))?;
+        folder.create_private_dir(name).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                self.unavailable("cannot be made new: something is already there")
+            } else {
+                self.unavailable("cannot be made")
+            }
+        })
+    }
+
+    /// As [`CheckedPath::create_dir_all`], and each folder this call makes
+    /// is made as [`CheckedPath::create_private_dir`] makes one. A folder
+    /// that is there already is left as it is; whoever needs it closed
+    /// checks it, as [`crate::check_program`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPath::create_dir_all`].
+    pub fn create_private_dir_all(&self) -> Result<(), Failure> {
+        self.writable()?;
+        self.still_inside()?;
+        let made = private_dir_all(&self.full);
+        made.map_err(|_| self.unavailable("cannot be made"))?;
+        self.still_inside()
     }
 
     /// Removes the file. A link at the name is not removed and not

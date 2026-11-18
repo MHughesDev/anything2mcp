@@ -59,9 +59,10 @@ pub struct AuthEntry {
     pub attempt_limit: u32,
     /// Whether the session's state may be saved and restored.
     pub movable: bool,
-    /// What the plan holds about the surfaces the entry covers, for a
-    /// provider that reaches a surface itself. Empty for the providers that
-    /// only hold or exchange a credential (decision 0245).
+    /// What the plan holds about the entry's sign-in: the surfaces it
+    /// covers, for a provider that reaches a surface itself (decision
+    /// 0245); every address the target declares, where a sign-in may send;
+    /// and whether the plan is a published version's (decision 0248).
     pub surfaces: crate::surfaces::EntrySurfaces,
 }
 
@@ -87,6 +88,16 @@ impl AuthEntry {
     #[must_use]
     pub fn setting(mut self, name: &str, value: &str) -> Self {
         self.settings.insert(name.to_owned(), value.to_owned());
+        self
+    }
+
+    /// The entry marked as taken from a published version's plan, as
+    /// [`EntrySurfaces::published`](crate::EntrySurfaces::published) marks
+    /// its surfaces. Only the caller that loaded the plan from the version
+    /// store says so (decision 0248).
+    #[must_use]
+    pub fn published(mut self) -> Self {
+        self.surfaces.from_published = true;
         self
     }
 

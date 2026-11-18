@@ -324,10 +324,17 @@ mod tests {
     fn a_path_that_is_not_a_file_is_not_checked() {
         assert!(!InstallationKeeper::of_file(Path::new("relative.toml")).may_loosen());
         let place = Place::new("missing");
-        assert!(matches!(
-            InstallationKeeper::of_file(&place.0.join("no-such.toml")),
-            InstallationKeeper::NotChecked(_)
-        ));
+        // Not there: never the administrator's. As the superuser the walk
+        // reaches the end of the path and says so; as anyone else it stops
+        // at the test's own folder first.
+        let missing = InstallationKeeper::of_file(&place.0.join("no-such.toml"));
+        assert!(!missing.may_loosen());
+        if is_root() {
+            assert!(
+                matches!(missing, InstallationKeeper::NotChecked(_)),
+                "{missing:?}"
+            );
+        }
         assert!(!InstallationKeeper::default().may_loosen());
     }
 }

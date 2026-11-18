@@ -53,10 +53,10 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
-use super::{ForeignPipe, StartError};
+use super::{PipeAt, StartError};
 
 /// The two ends of a foreign link that stay with the engine.
 pub(crate) type Pipes = (
@@ -275,9 +275,9 @@ impl Program {
 }
 
 /// Starts the command with its first thread suspended: the process exists
-/// and has run nothing.
-fn start_suspended(command: &mut Command) -> io::Result<Child> {
-    command.creation_flags(CREATE_SUSPENDED);
+/// and has run nothing. `more` are further creation flags.
+fn start_suspended(command: &mut Command, more: u32) -> io::Result<Child> {
+    command.creation_flags(CREATE_SUSPENDED | more);
     command.spawn()
 }
 
@@ -358,18 +358,41 @@ fn resume(process_id: u32) -> io::Result<()> {
 /// builds for the path it is given. The child is created suspended, placed
 /// in the job, and then resumed, so nothing it starts is outside the job.
 /// With `foreign`, the child inherits the two pipe ends, named by value in
-/// one added argument.
+/// one added argument; or, for its standard streams, as its standard input
+/// and output, started with no console window of its own.
 pub(crate) fn spawn(
     program: &Program,
     command: impl FnOnce(&Path) -> Command,
-    foreign: Option<&ForeignPipe>,
+    foreign: Option<PipeAt<'_>>,
 ) -> Result<(Group, Option<Pipes>), StartError> {
     let job = new_job()?;
     let mut command = command(&program.named);
     let mut child_ends = None;
+    let mut flags = 0;
     let pipes = match foreign {
         None => None,
-        Some(pipe_spec) => {
+        Some(PipeAt::Standard) => {
+            let ForeignEnds {
+                to_child,
+                from_child,
+                child_reads,
+                child_writes,
+            } = foreign_ends()?;
+            // The standard library hands the child a copy of each of these
+            // as its standard input and output, made inheritable for that
+            // start alone. The two here are dropped with the command, below,
+            // so that a dead child shows as the end of the pipe.
+            command
+                .stdin(std::process::Stdio::from(child_reads))
+                .stdout(std::process::Stdio::from(child_writes));
+            // A program that speaks over its standard streams is a console
+            // program: without this, an engine with no console of its own
+            // would have the system open a window for it.
+            flags = CREATE_NO_WINDOW;
+            let pipes: Pipes = (Box::new(to_child), Box::new(from_child));
+            Some(pipes)
+        }
+        Some(PipeAt::Handles(pipe_spec)) => {
             let ForeignEnds {
                 to_child,
                 from_child,
@@ -406,7 +429,7 @@ pub(crate) fn spawn(
             set_inherit(reads, true)?;
             set_inherit(writes, true)?;
         }
-        let started = start_suspended(&mut command);
+        let started = start_suspended(&mut command, flags);
         if let Some((reads, writes)) = &child_ends {
             set_inherit(reads, false)?;
             set_inherit(writes, false)?;
@@ -414,8 +437,10 @@ pub(crate) fn spawn(
         started?
     };
     // Close this process's copies of the child's ends, so that a dead child
-    // shows as the end of the pipe.
+    // shows as the end of the pipe: those named in an argument, and those
+    // the command holds as the child's standard streams.
     drop(child_ends);
+    drop(command);
     // Into the job first, and only then allowed to run.
     let id = child.id().unwrap_or(0);
     if let Err(error) = admit(&job, &child).and_then(|()| resume(id)) {
@@ -570,7 +595,7 @@ mod tests {
         let job = new_job().unwrap();
         let mut command = Command::new(shell());
         command.args(["/c", "exit 7"]);
-        let mut child = start_suspended(&mut command).unwrap();
+        let mut child = start_suspended(&mut command, 0).unwrap();
         assert!(
             tokio::time::timeout(Duration::from_secs(3), child.wait())
                 .await

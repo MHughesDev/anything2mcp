@@ -1204,15 +1204,19 @@ impl Session {
                 ),
                 "Reconcile the record: read it back before anything is written again; then run the tool again, and the page is loaded afresh with a new token.",
             ))),
+            // In doubt as well, for the same reason: the refusal may answer
+            // a second sending of a write whose first sending landed, and
+            // the record moved on under it (decision 0245, after audit
+            // finding S3). The record is read back before it is settled.
             Verdict::Refused(said) => {
-                let refused = StepFailure::answered(fail(
-                    FailureClass::Rejected,
-                    codes::APP_VALIDATION_ERROR,
+                let refused = StepFailure::unknown(fail(
+                    FailureClass::PossibleCommit,
+                    a2m_provider::codes::NO_CONFIRMATION,
                     format!(
-                        "The application refused the request `{name}` with the status {}, which the entry declares as a refusal.",
+                        "The application refused the request `{name}` with the status {}, which the entry declares as a refusal of its values; the browser may have sent it twice, so the refusal can answer a second sending of a write that landed.",
                         answer.status
                     ),
-                    "Correct the values and run the tool again; the application refused them.",
+                    "Reconcile the record: read it back before anything is written again; if it did not change, correct the values and run the tool again.",
                 ));
                 Err(match said {
                     Some(said) => refused.with_said(said),
@@ -1240,6 +1244,13 @@ fn in_doubt(name: &str, why: &str) -> StepFailure {
 /// declare, a declared refusal whose fields do not match, and a written
 /// status in a shape the entry does not declare are all unknown.
 fn verdict(name: &str, entry: &PageRequest, write: &WriteForm, answer: &PageAnswer) -> Verdict {
+    // An answer that quoted the page's token was withheld in the page: no
+    // word of it is read, and nothing says what became of the write.
+    if answer.withheld {
+        return Verdict::Unknown(
+            "its answer quoted the page's anti-forgery token, so the page withheld it whole".to_owned(),
+        );
+    }
     let json = answer.media_type == "application/json" || answer.media_type.ends_with("+json");
     let body: Option<Json> = if json {
         serde_json::from_str(&answer.body).ok()

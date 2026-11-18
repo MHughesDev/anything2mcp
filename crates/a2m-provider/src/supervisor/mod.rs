@@ -8,10 +8,15 @@
 //! reaches it only through a [`ScopedSupervisor`], which starts nothing the
 //! pack's manifest, or the published plan, does not declare.
 //!
-//! Two kinds of link are built: [`OneShot`], a program run to completion
-//! with its output captured, and a foreign link ([`ForeignPipe`]), a
-//! program that speaks its own protocol over a pair of pipes. The framed
-//! link of a plug-in, with its launch handshake, is not built yet.
+//! Three kinds of link are built: [`OneShot`], a program run to completion
+//! with its output captured; a foreign link ([`ForeignPipe`]), a program
+//! that speaks its own protocol over a pair of pipes it is handed; and the
+//! same over its standard input and output ([`LinkKind::Standard`]). The
+//! framed link of a plug-in, with its launch handshake, is not built yet.
+//!
+//! Before any of them starts a program, the pack that asks holds it to
+//! [`check_program`]: who may change the program's file and the folders on
+//! the way to it.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -35,6 +40,7 @@ use crate::path::CheckedPath;
 // by its verdict.
 #[cfg_attr(not(unix), allow(dead_code))]
 mod ending;
+mod program;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
@@ -43,6 +49,13 @@ use unix as os;
 mod windows;
 #[cfg(windows)]
 use windows as os;
+
+#[cfg(windows)]
+pub(crate) use program::keep_folder_private;
+pub use program::{
+    InterpreterRefused, ProgramRefused, ProgramRole, ProgramTrust, check_program, interpreter_form,
+    is_shell_or_interpreter, reads_its_line_as_code, redirects_loading,
+};
 
 /// The variable that carries the owner mark into a child's environment.
 pub const OWNER_MARK_VARIABLE: &str = "ANYTHING2MCP_OWNER_MARK";
@@ -150,6 +163,20 @@ pub enum LinkKind {
     OneShot(OneShot),
     /// The program's own protocol over a pair of pipes, framed by its pack.
     Foreign(ForeignPipe),
+    /// The program's own protocol over its standard input and output,
+    /// framed by its pack, on every system (decision 0250). Its standard
+    /// error goes to the system's null device, as a foreign link's does.
+    Standard,
+}
+
+/// Where the child of a link over pipes receives them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PipeAt<'a> {
+    /// As the foreign link says: two descriptors, or two handles named in
+    /// an argument.
+    Handles(&'a ForeignPipe),
+    /// On its standard input and output.
+    Standard,
 }
 
 /// How a program ended.
@@ -531,7 +558,7 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
         // The last line of defence: the engine's own variables are never
         // copied into a child, whatever a launch asks for. A launch that
         // names one is refused before this point, in `launch`.
-        if is_engine_variable(name) {
+        if is_engine_variable(name) || redirects_loading(name) {
             continue;
         }
         if let Some(value) = std::env::var_os(name) {
@@ -539,6 +566,10 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
         }
     }
     for (name, value) in &spec.env.set {
+        // As above: a launch that names one is refused in `launch`.
+        if is_engine_variable(name) || redirects_loading(name) {
+            continue;
+        }
         command.env(name, value);
     }
     command.env(OWNER_MARK_VARIABLE, mark);
@@ -557,7 +588,7 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
         }
-        LinkKind::Foreign(_) => {
+        LinkKind::Foreign(_) | LinkKind::Standard => {
             command
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -586,7 +617,8 @@ fn identify_and_start(
         verified,
     } = identify(&spec.program, scope)?;
     let foreign = match link {
-        LinkKind::Foreign(pipe) => Some(pipe),
+        LinkKind::Foreign(pipe) => Some(PipeAt::Handles(pipe)),
+        LinkKind::Standard => Some(PipeAt::Standard),
         LinkKind::OneShot(_) => None,
     };
     let started = os::spawn(
@@ -810,6 +842,23 @@ impl Supervisor {
                 "Remove the variable from the launch; a program is given only variables of its own.",
             ));
         }
+        if let Some(name) = spec
+            .env
+            .pass
+            .iter()
+            .map(String::as_str)
+            .chain(spec.env.set.iter().map(|(name, _)| name.as_str()))
+            .find(|name| redirects_loading(name))
+        {
+            return Err(codes::policy(
+                codes::VARIABLE_REFUSED,
+                format!(
+                    "A launch names the variable `{}`, which makes a program load code other than its own.",
+                    name.chars().take(64).collect::<String>()
+                ),
+                "Remove the variable from the target's files: a program is never told through its environment to load other code.",
+            ));
+        }
         if !spec.program.path.is_absolute() {
             return Err(codes::input(
                 codes::PROGRAM_NOT_FOUND,
@@ -843,7 +892,7 @@ impl Supervisor {
             for_whom,
             link: match link {
                 LinkKind::OneShot(_) => "one_shot",
-                LinkKind::Foreign(_) => "foreign",
+                LinkKind::Foreign(_) | LinkKind::Standard => "foreign",
             },
             group: Arc::clone(&group),
         };
@@ -1036,14 +1085,41 @@ impl Supervisor {
         self.start_foreign_for(spec, pipe, None).await
     }
 
+    /// Starts a program that speaks its own protocol over its standard
+    /// input and output, on every system: on Linux and macOS the two pipes
+    /// are placed on descriptors 0 and 1; on Windows they are the child's
+    /// standard input and output handles, it is started with no console
+    /// window, and it runs in its job object as every child does. Its
+    /// standard error goes to the null device. Otherwise as
+    /// [`Supervisor::start_foreign`].
+    ///
+    /// # Errors
+    ///
+    /// As the not-started failures of [`Supervisor::run`].
+    pub async fn start_on_standard_streams(
+        &self,
+        spec: LaunchSpec,
+    ) -> Result<ForeignLink, Failure> {
+        self.start_linked(spec, LinkKind::Standard, None).await
+    }
+
     async fn start_foreign_for(
         &self,
         spec: LaunchSpec,
         pipe: ForeignPipe,
         scope: Option<&Scope>,
     ) -> Result<ForeignLink, Failure> {
-        let (id, group, pipes, program_digest, verified) =
-            self.launch(&spec, scope, &LinkKind::Foreign(pipe)).await?;
+        self.start_linked(spec, LinkKind::Foreign(pipe), scope)
+            .await
+    }
+
+    async fn start_linked(
+        &self,
+        spec: LaunchSpec,
+        link: LinkKind,
+        scope: Option<&Scope>,
+    ) -> Result<ForeignLink, Failure> {
+        let (id, group, pipes, program_digest, verified) = self.launch(&spec, scope, &link).await?;
         let Some((to_child, from_child)) = pipes else {
             self.forget(id);
             group.reap().await;
@@ -1256,6 +1332,21 @@ impl ScopedSupervisor {
     ) -> Result<ForeignLink, Failure> {
         self.supervisor
             .start_foreign_for(spec, pipe, Some(&self.scope))
+            .await
+    }
+
+    /// As [`Supervisor::start_on_standard_streams`], for a declared program.
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`effect_not_declared`; then as
+    /// [`Supervisor::start_on_standard_streams`].
+    pub async fn start_on_standard_streams(
+        &self,
+        spec: LaunchSpec,
+    ) -> Result<ForeignLink, Failure> {
+        self.supervisor
+            .start_linked(spec, LinkKind::Standard, Some(&self.scope))
             .await
     }
 

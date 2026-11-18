@@ -24,6 +24,9 @@ pub const RESPONSE_TOO_LARGE: FailureCode = FailureCode::fixed("response_too_lar
 /// read, so no entity it defines is expanded and nothing it names is
 /// fetched (decision 0217).
 pub const DOCUMENT_TYPE_REFUSED: FailureCode = FailureCode::fixed("document_type_refused");
+/// `unknown_variant`: a `bytes` answer whose body holds a registered
+/// secret. Neither its length nor its digest is returned (decision 0249).
+pub const ANSWER_HOLDS_SECRET: FailureCode = FailureCode::fixed("answer_holds_secret");
 /// `transient`: an answer the endpoint declares as "not now".
 pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
 /// `policy`: a request, or a redirect, that leaves the declared surfaces.
@@ -57,6 +60,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::UnknownVariant, "response_too_large"),
     (FailureClass::UnknownVariant, "document_type_refused"),
+    (FailureClass::UnknownVariant, "answer_holds_secret"),
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "surface_not_declared"),
     (FailureClass::Policy, "link_not_encrypted"),

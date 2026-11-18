@@ -1,9 +1,16 @@
 //! Stored credentials: what an auth file's `vault://` references name.
+//!
+//! A credential belongs to the target it was stored for (decision 0248). A
+//! reference's first part is that target's name, `vault://<target>/...`; an
+//! auth entry that names a reference of another target is refused by name
+//! before anything is opened; and the vault seals the credential with the
+//! target in its context, so it does not open under another target even
+//! where a check above were missed.
 
 use std::sync::Arc;
 
-use a2m_core::{Failure, Identity, Secret, WorkspaceId};
-use a2m_vault::{BoxFuture, ItemId, OwnerRef, SealContext, SealedKind, Vault};
+use a2m_core::{Failure, Identity, Secret, TargetName, WorkspaceId};
+use a2m_vault::{BoxFuture, OwnerRef, SealContext, Vault};
 
 use crate::failure;
 use crate::key::SessionKey;
@@ -34,8 +41,9 @@ pub trait Credentials: Send + Sync {
 }
 
 /// Credentials sealed in the vault under their owner's key and kept in the
-/// keeper's rows. A credential stored for one identity cannot be opened for
-/// another: the owner is part of what the vault authenticates.
+/// keeper's rows. A credential stored for one identity, or for one target,
+/// cannot be opened for another: the owner and the target are part of what
+/// the vault authenticates.
 #[derive(Debug, Clone)]
 pub struct StoredCredentials {
     store: SessionStore,
@@ -50,11 +58,15 @@ impl StoredCredentials {
     }
 
     /// Stores `secret` under `reference` for one identity of one workspace,
-    /// replacing what was there. The secret is registered with the redactor.
+    /// replacing what was there, sealed for the target the reference
+    /// belongs to: its first part. The secret is registered with the
+    /// redactor.
     ///
     /// # Errors
     ///
-    /// The vault's failures when it cannot seal.
+    /// `input`/`credential_of_another_target` when the reference's first
+    /// part is not a target's name; the vault's failures when it cannot
+    /// seal.
     pub async fn put(
         &self,
         workspace: &WorkspaceId,
@@ -63,7 +75,8 @@ impl StoredCredentials {
         secret: &Secret,
     ) -> Result<(), Failure> {
         self.vault.register(secret);
-        let cx = context(workspace, identity, reference)?;
+        let target = target_of(reference)?;
+        let cx = context(workspace, identity, &target, reference)?;
         let sealed = self.vault.seal(&cx, secret.expose().as_bytes()).await?;
         self.store
             .put_credential(*workspace, identity.to_string(), reference.clone(), sealed)
@@ -98,6 +111,7 @@ impl Credentials for StoredCredentials {
         reference: &'a CredentialRef,
     ) -> BoxFuture<'a, Result<Secret, Failure>> {
         Box::pin(async move {
+            belongs_to(reference, &session.target)?;
             let sealed = self
                 .store
                 .credential(
@@ -107,21 +121,65 @@ impl Credentials for StoredCredentials {
                 )
                 .await?
                 .ok_or_else(|| failure::credential_missing(reference.as_str()))?;
-            let cx = context(&session.workspace, &session.identity, reference)?;
-            self.vault.open_secret(&cx, &sealed).await
+            let cx = context(
+                &session.workspace,
+                &session.identity,
+                &session.target,
+                reference,
+            )?;
+            self.vault
+                .open_secret(&cx, &sealed)
+                .await
+                .map_err(|failure| {
+                    // Sealed for another target, or before the target was
+                    // part of the context: the person stores it again.
+                    if failure.code() == &a2m_vault::codes::SEALED_ITEM_MISMATCH {
+                        failure::credential_unreadable(reference.as_str())
+                    } else {
+                        failure
+                    }
+                })
         })
     }
 }
 
-fn context(
+/// The target a reference belongs to: its first part.
+fn target_of(reference: &CredentialRef) -> Result<TargetName, Failure> {
+    reference
+        .as_str()
+        .strip_prefix(CredentialRef::SCHEME)
+        .and_then(|path| path.split('/').next())
+        .and_then(|first| TargetName::new(first).ok())
+        .ok_or_else(|| failure::reference_names_no_target(reference.as_str()))
+}
+
+/// Refuses a reference that does not belong to `target`.
+///
+/// # Errors
+///
+/// `input`/`credential_of_another_target`.
+pub(crate) fn belongs_to(reference: &CredentialRef, target: &TargetName) -> Result<(), Failure> {
+    match target_of(reference) {
+        Ok(own) if &own == target => Ok(()),
+        _ => Err(failure::credential_of_another_target(
+            reference.as_str(),
+            target.as_str(),
+        )),
+    }
+}
+
+/// What a stored credential is sealed as: its workspace, its owner, the
+/// target it is for, and its reference.
+pub(crate) fn context(
     workspace: &WorkspaceId,
     identity: &Identity,
+    target: &TargetName,
     reference: &CredentialRef,
 ) -> Result<SealContext, Failure> {
-    Ok(SealContext {
-        workspace: *workspace,
-        owner: OwnerRef::of(identity),
-        kind: SealedKind::Credential,
-        item: ItemId::new(reference.as_str())?,
-    })
+    SealContext::credential(
+        *workspace,
+        OwnerRef::of(identity),
+        target,
+        reference.as_str(),
+    )
 }

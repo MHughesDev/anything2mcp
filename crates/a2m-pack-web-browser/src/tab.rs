@@ -1871,6 +1871,7 @@ impl Page {
             status,
             media_type: self.redact.redact(&answer.media_type),
             body: self.redact.redact(&answer.body),
+            withheld: false,
         })
     }
 
@@ -1893,6 +1894,7 @@ impl Page {
             status: Option<u16>,
             media_type: String,
             body: String,
+            withheld: bool,
         }
         let shape =
             || BrowserError::Unexpected("a helper argument could not be written".to_owned());
@@ -1956,7 +1958,12 @@ impl Page {
         Ok(PageAnswer {
             status,
             media_type: self.redact.redact(&answer.media_type),
-            body: self.redact.redact(&answer.body),
+            body: if answer.withheld {
+                String::new()
+            } else {
+                self.redact.redact(&answer.body)
+            },
+            withheld: answer.withheld,
         })
     }
 
@@ -3042,9 +3049,14 @@ async fn prepare(
         .await?;
     } else {
         // A tab that may act holds only the requests of documents: that is
-        // where it is kept on the origins it was opened for.
+        // where it is kept on the origins it was opened for. The page's
+        // service worker is passed by here too, so that a write from inside
+        // the page reaches the application as sent, once, and no worker
+        // answers or changes it (decision 0245, audit finding M6).
         page.call(&fetch_documents(), deadline).await?;
         page.call(&NetworkEnable::keeping(page.max_read), deadline)
+            .await?;
+        page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }

@@ -355,6 +355,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `policy` | `caller_not_verified` | `a2m-actions` | The caller's credential is not one this engine accepts. |
 | `policy` | `connection_leads_elsewhere` | `a2m-pack-data` |  |
 | `policy` | `denied_by_store` | `a2m-pack-data` | The store refused a write it holds no right to make. |
+| `policy` | `destination_not_declared` | `a2m-auth` | A sign-in would send a credential, a token, or the person to an address the target does not declare for its surfaces in the session's environment. Nothing was sent (decision 0248). |
 | `policy` | `device_serial_not_declared` | `a2m-pack-device` | The surface declares no serial for the device of the run's environment, so nothing is written to it. Nothing was sent. |
 | `policy` | `discovery_identifies_only` | `a2m-pack-device` | A frame other than identification was asked for in the discovery posture. Nothing was sent. |
 | `policy` | `effect_not_declared` | `a2m-provider` | A registration, a start, or a root beyond what the manifest declares. |
@@ -402,6 +403,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `policy` | `surface_not_declared` | `a2m-pack-data`, `a2m-pack-device`, `a2m-pack-http`, `a2m-pack-stream`, `a2m-pack-web-browser`, `a2m-pack-web-probe`, `a2m-pack-web-ui` | The link's address is not one the run may reach. |
 | `policy` | `take_too_large` | `a2m-pack-stream` | A message taken is larger than may be recorded before it is acknowledged; it was given back. |
 | `policy` | `transport_refused` | `a2m-pack-stream` | The connection would carry the session in plain text to an address that is not this machine's own, or to a server that asks for TLS. |
+| `policy` | `variable_refused` | `a2m-provider` | A launch names a variable that makes a program load code other than its own. |
 | `policy` | `vault_passphrase_not_enabled` | `a2m-vault` | The passphrase route was asked for and is not switched on. |
 | `policy` | `watch_ended` | `a2m-ledger` | The watch has ended. |
 | `policy` | `watch_needs_confirmation` | `a2m-ledger` | A paused watch cannot go on without a person confirming a new one: its version changed or its read drifted. |
@@ -428,6 +430,8 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `input` | `contract_unsupported` | `a2m-provider` | A manifest was written for a contract this build does not accept. |
 | `input` | `credential_missing` | `a2m-auth` | A credential reference names nothing that is stored. |
 | `input` | `credential_not_carried` | `a2m-pack-data`, `a2m-pack-stream` | The session holds a credential the wire protocol cannot present. |
+| `input` | `credential_of_another_target` | `a2m-auth` | An auth entry names a credential reference that belongs to another target: its first part is not the target's name (decision 0248). |
+| `input` | `credential_unreadable` | `a2m-auth` | What is stored under a reference does not open for this target: it was stored for another target, or before a credential was bound to its target (decision 0248). |
 | `input` | `decision_not_found` | `a2m-policy` | No decision with that identifier is recorded. |
 | `input` | `description_too_large` | `a2m-pack-http` | A published description that is larger, deeper, or wider once its references are followed than the import reads. |
 | `input` | `description_unreadable` | `a2m-pack-http` | A published description that cannot be read. |
@@ -550,6 +554,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `drift` | `shape_changed` | `a2m-pack-stream` | The channel's shape or key is not the one its file declares. |
 | `drift` | `store_file_replaced` | `a2m-pack-data` | The embedded store's file was replaced by another file at its name after the run was prepared. |
 | `drift` | `upstream_tool_changed` | `a2m-pack-mcp` | A mapped tool's definition is not the one its mapping pins, or the tool is gone. |
+| `unknown_variant` | `answer_holds_secret` | `a2m-pack-http` | A `bytes` answer whose body holds a registered secret. Neither its length nor its digest is returned (decision 0249). |
 | `unknown_variant` | `anti_forgery_unreadable` | `a2m-pack-web-ui` | The page holds two different anti-forgery tokens where its entry says, or one of a form that is not sent. Nothing was sent. |
 | `unknown_variant` | `application_ambiguous` | `a2m-pack-desktop` | More than one running application is the program and the name the surface states. |
 | `unknown_variant` | `application_not_proven` | `a2m-pack-desktop` | The running application's program is not the one whose digest the surface states. |
@@ -697,7 +702,7 @@ The table is generated from the crates' own class tables (`ALL`, the `codes!` ma
 | `busy` | `watch_check_not_completed` | `a2m-ledger` | A check's run ended without completing and gave no failure: it was cancelled, or it expired. |
 | `busy` | `watch_check_running` | `a2m-ledger` | A check of the watch is under way already. |
 | `busy` | `watch_check_unfinished` | `a2m-ledger` | A check's run has not reached an end the watch can take. |
-| `busy` | `watch_due_missed` | `a2m-ledger` | Due times passed with no check: the engine was not running, the watch was paused or held, or a check could not be admitted in time. The code of a `gap`, |
+| `busy` | `watch_due_missed` | `a2m-ledger` | Due times passed with no check: the engine was not running, the watch was paused or held, or a check could not be admitted in time. A `gap` carries it. |
 | `busy` | `watch_over_budget_share` | `a2m-sched` | The watches on one surface would take more of its budget than their share. |
 | `busy` | `watch_paused` | `a2m-ledger` | The watch is paused. |
 | `busy` | `watch_too_many` | `a2m-sched` | The person has as many watches as they may have. |

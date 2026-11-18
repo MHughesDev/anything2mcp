@@ -564,10 +564,52 @@
         text += decoder.decode();
         if (text.length > limit) return { too_large: true };
       }
+      // An answer that quotes the token in any spelling is withheld whole:
+      // the scrub above knows three spellings, and an application can echo
+      // it in others (decision 0245, after audit finding S4).
+      if (token !== null && echoes(text, token)) {
+        return { status: response.status, media_type: scrub(type), body: "", withheld: true };
+      }
       return { status: response.status, media_type: scrub(type), body: scrub(text) };
     } catch (_) {
       return { failed: true };
     }
+  }
+
+  // Whether `text` holds `token`, or its first half, in any spelling that
+  // JSON escapes, HTML character references, percent-encoding in either
+  // case, or a change of case can make of it, alone or after one another.
+  function echoes(text, token) {
+    const point = (code) => {
+      try {
+        return String.fromCodePoint(code);
+      } catch (_) {
+        return "";
+      }
+    };
+    const json = (s) =>
+      s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => point(parseInt(h, 16))).replace(/\\(.)/g, "$1");
+    const entities = (s) =>
+      s
+        .replace(/&#x([0-9a-fA-F]{1,6});?/g, (_, h) => point(parseInt(h, 16)))
+        .replace(/&#([0-9]{1,7});?/g, (_, d) => point(parseInt(d, 10)))
+        .replace(/&(amp|quot|apos|lt|gt|sol|plus|equals|tilde|num|percnt);/gi, (_, n) =>
+          ({ amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", sol: "/", plus: "+", equals: "=", tilde: "~", num: "#", percnt: "%" })[n.toLowerCase()]
+        );
+    const percent = (s) => s.replace(/%([0-9a-fA-F]{2})/g, (_, h) => point(parseInt(h, 16)));
+    const lower = token.toLowerCase();
+    const half = lower.slice(0, Math.max(8, Math.ceil(lower.length / 2)));
+    let forms = [text];
+    for (let round = 0; round < 3; round += 1) {
+      const next = [];
+      for (const form of forms) next.push(json(form), entities(form), percent(form));
+      forms = forms.concat(next);
+      if (forms.length > 200) break;
+    }
+    return forms.some((form) => {
+      const seen = form.toLowerCase();
+      return seen.includes(lower) || seen.includes(half);
+    });
   }
 
   const page = () => ({ address: location.href, title: document.title });

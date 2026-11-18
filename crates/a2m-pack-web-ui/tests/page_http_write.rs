@@ -668,16 +668,19 @@ async fn each_fault_of_a_write_stops_by_name_unsent_or_in_doubt_as_the_request_l
     );
     assert_eq!(ran.sent, Sent::NotSent);
     handle.release(prepared, true).await;
-    // A note the application refuses, by an answer the entry declares: the
-    // application's verdict, and nothing stored.
+    // A note the application refuses, by an answer the entry declares: in
+    // doubt all the same, with what the application said, because the
+    // browser may have sent the write twice and the refusal may answer the
+    // second sending of one that landed (decision 0245, audit finding S3).
+    // The stand shows nothing stored.
     let long = "x".repeat(201);
     let (ran, prepared) = write_in(&scene, &write, &note("A-100", &long)).await;
     let ran = ran.unwrap_err();
     assert_eq!(
         class_and_code(&ran),
-        (FailureClass::Rejected, "app_validation_error")
+        (FailureClass::PossibleCommit, "no_confirmation")
     );
-    assert_eq!(ran.sent, Sent::Answered);
+    assert_eq!(ran.sent, Sent::Unknown);
     assert!(
         ran.failure
             .said()
@@ -831,4 +834,35 @@ async fn each_fault_of_a_write_stops_by_name_unsent_or_in_doubt_as_the_request_l
     assert_eq!(stored.writes["A-100"], 2);
     assert_eq!(stored.notes["A-100"], "Lost on the way back");
     secure.stand.end().await;
+}
+
+/// Audit finding S4 (decision 0245): an answer that quotes the page's
+/// token in a spelling the page's scrub does not know, here in capitals,
+/// is withheld whole in the page. The write is in doubt, and no form of the
+/// token reaches the failure, what the application said, or a log.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_answer_that_quotes_the_token_in_any_spelling_is_withheld_whole() {
+    let app = TestApp::start().await.unwrap();
+    let scene = scene("page-http-echo", &app, PUT_ENTRY, |text| {
+        text.replace("header: X-CSRF-Token", "field: authenticity_token")
+    });
+    let write = Write::new(&["A-100"]).await;
+    let (ran, prepared) = write_in(&scene, &write, &note("A-100", &"x".repeat(201))).await;
+    let mut said = everything(&ran);
+    let ran = ran.unwrap_err();
+    assert_eq!(
+        class_and_code(&ran),
+        (FailureClass::PossibleCommit, "no_confirmation")
+    );
+    assert!(ran.failure.said().is_none(), "{:?}", ran.failure.said());
+    scene.handle_of(&page_http_mode()).release(prepared, true).await;
+    said.extend(bytes_below(&scene.stand.folder.path().join("logs")));
+    let upper = TOKEN_PREFIX.to_uppercase();
+    assert!(!holds(&said, TOKEN_PREFIX));
+    assert!(!holds(&said, &upper));
+    // The stand refused the note, and its token was used up by it.
+    let stored = app.stored_notes().await.unwrap();
+    assert!(stored.writes.is_empty(), "{stored:?}");
+    assert_eq!(stored.tokens_used, 1);
+    scene.stand.end().await;
 }

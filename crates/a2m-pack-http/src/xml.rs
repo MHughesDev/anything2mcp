@@ -669,11 +669,53 @@ fn close(state: &mut State<'_>, stack: &mut Stack, root_closed: &mut bool) -> Re
 
 #[cfg(test)]
 mod tests {
-    use crate::forms::{Unread, XmlField, XmlForm, XmlName, XmlPath, XmlTake};
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+
+    use crate::forms::{Charset, Unread, Work, XmlField, XmlForm, XmlName, XmlPath, XmlTake};
     use crate::json::Json;
     use crate::shape::Kind;
 
     const NS: &str = "urn:example:orders";
+
+    fn read(body: &[u8], form: &XmlForm) -> Result<Json, Unread> {
+        super::read(body, form, None, &AtomicBool::new(false))
+    }
+
+    /// Reads under a fixed budget of work, whatever the size of the body,
+    /// and gives what was spent and how long it took.
+    fn counted(body: &[u8], form: &XmlForm, budget: u64) -> (Result<Json, Unread>, u64, Duration) {
+        let stop = AtomicBool::new(false);
+        let mut work = Work::with_budget(budget, &stop);
+        let began = Instant::now();
+        let read = super::read_counted(body, form, None, &mut work);
+        (read, work.used(), began.elapsed())
+    }
+
+    /// A field at `o:order/@id`, in a namespace of `uri`.
+    fn order_id(uri: &str) -> XmlForm {
+        let name = |local: &str| XmlName {
+            namespace: Some(uri.to_owned()),
+            local: local.to_owned(),
+        };
+        XmlForm {
+            fields: vec![XmlField {
+                name: "order_id".to_owned(),
+                take: XmlTake::One(XmlPath {
+                    elements: vec![name("order")],
+                    attribute: Some(name("id")),
+                }),
+                kind: Kind::String,
+                required: false,
+            }],
+            max_depth: 64,
+            max_elements: 100_000,
+        }
+    }
+
+    fn too_large(read: &Result<Json, Unread>, what: &str) -> bool {
+        matches!(read, Err(Unread::TooLarge(why)) if why.contains(what))
+    }
 
     fn name(text: &str) -> XmlName {
         XmlName {
@@ -729,7 +771,7 @@ mod tests {
             kind: Kind::String,
             required: true,
         };
-        let read = super::read(
+        let read = read(
             ORDER.as_bytes(),
             &form(vec![
                 one("order_id", &["order"], Some("id"), Kind::String),
@@ -756,17 +798,17 @@ mod tests {
 
     #[test]
     fn a_path_that_matches_nothing_or_twice_and_a_document_type_are_refused() {
-        let nothing = super::read(
+        let nothing = read(
             ORDER.as_bytes(),
             &form(vec![one("note", &["order", "note"], None, Kind::String)]),
         );
         assert!(matches!(nothing, Err(Unread::Shape(why)) if why.contains("matches nothing")));
         let mut optional = one("note", &["order", "note"], None, Kind::String);
         optional.required = false;
-        let read = super::read(ORDER.as_bytes(), &form(vec![optional])).unwrap();
+        let read = read(ORDER.as_bytes(), &form(vec![optional])).unwrap();
         assert_eq!(read.get("note"), Some(&Json::Null));
 
-        let twice = super::read(
+        let twice = read(
             ORDER.as_bytes(),
             &form(vec![one(
                 "code",
@@ -779,13 +821,13 @@ mod tests {
 
         let declared = "<?xml version=\"1.0\"?><!DOCTYPE o [<!ENTITY a \"b\">]><o>&a;</o>";
         assert_eq!(
-            super::read(declared.as_bytes(), &form(Vec::new())),
+            read(declared.as_bytes(), &form(Vec::new())),
             Err(Unread::DocumentType)
         );
         // An entity no document type defines is refused, never left as it is.
         let undeclared = "<order xmlns=\"urn:example:orders\"><customer>&who;</customer></order>";
         assert!(matches!(
-            super::read(
+            read(
                 undeclared.as_bytes(),
                 &form(vec![one(
                     "customer",
@@ -799,7 +841,7 @@ mod tests {
         // Mixed content where text is declared is refused.
         let mixed = "<order xmlns=\"urn:example:orders\"><customer>a<b/></customer></order>";
         assert!(matches!(
-            super::read(
+            read(
                 mixed.as_bytes(),
                 &form(vec![one(
                     "customer",
@@ -816,24 +858,195 @@ mod tests {
     fn depth_and_the_number_of_elements_are_bounded() {
         let deep = format!("{}{}", "<a>".repeat(9), "</a>".repeat(9));
         assert!(matches!(
-            super::read(deep.as_bytes(), &form(Vec::new())),
+            read(deep.as_bytes(), &form(Vec::new())),
             Err(Unread::TooLarge(_))
         ));
         let wide = format!("<a>{}</a>", "<b/>".repeat(20));
         assert!(matches!(
-            super::read(wide.as_bytes(), &form(Vec::new())),
+            read(wide.as_bytes(), &form(Vec::new())),
             Err(Unread::TooLarge(_))
         ));
         let fits = format!("<a>{}</a>", "<b/>".repeat(19));
-        assert!(super::read(fits.as_bytes(), &form(Vec::new())).is_ok());
+        assert!(read(fits.as_bytes(), &form(Vec::new())).is_ok());
         for broken in ["", "<a>", "<a></b>", "<a/><b/>", "text<a/>"] {
             assert!(
                 matches!(
-                    super::read(broken.as_bytes(), &form(Vec::new())),
+                    read(broken.as_bytes(), &form(Vec::new())),
                     Err(Unread::Shape(_))
                 ),
                 "{broken:?}"
             );
         }
+    }
+
+    /// The audit's document (decision 0249): a default namespace of 4 MB
+    /// and 99,999 empty elements under it. It was once a copy of the
+    /// address for every element, hundreds of gigabytes; it is refused at
+    /// the first element, for the length of the address.
+    #[test]
+    fn a_namespace_address_past_its_bound_is_refused_at_once() {
+        let uri = format!("urn:{}", "x".repeat(4_000_000));
+        let body = format!("<a xmlns=\"{uri}\">{}</a>", "<b/>".repeat(99_999));
+        let (read, used, took) = counted(body.as_bytes(), &order_id(NS), 1_000);
+        assert!(too_large(&read, "namespace's address"), "{read:?}");
+        assert!(used <= 16, "{used}");
+        assert!(took < Duration::from_secs(5), "{took:?}");
+    }
+
+    /// The same document with an address at the bound, compared on every
+    /// element with a declared address of the same length that differs in
+    /// its last byte: nothing is copied, and the work is one count for each
+    /// element and each comparison.
+    #[test]
+    fn names_are_compared_with_the_declared_ones_and_never_copied() {
+        let declared = format!("urn:{}a", "x".repeat(2_043));
+        let written = format!("urn:{}b", "x".repeat(2_043));
+        assert_eq!(written.len(), crate::forms::MAX_NAMESPACE_BYTES);
+        let body = format!("<a xmlns=\"{written}\">{}</a>", "<b/>".repeat(99_998));
+        let (read, used, took) = counted(body.as_bytes(), &order_id(&declared), 2_000_000);
+        assert_eq!(read, Ok(Json::Object(vec![("order_id".to_owned(), Json::Null)])));
+        assert!(used < 1_000_000, "{used}");
+        assert!(took < Duration::from_secs(5), "{took:?}");
+
+        // 64 elements nested, the most the form allows, each declaring the
+        // address again: read, with nothing copied; one more is refused.
+        let nested = |depth: usize| {
+            format!(
+                "{}{}",
+                format!("<a xmlns=\"{written}\">").repeat(depth),
+                "</a>".repeat(depth)
+            )
+        };
+        let (read, used, _) = counted(nested(64).as_bytes(), &order_id(&declared), 10_000);
+        assert!(read.is_ok(), "{read:?}");
+        assert!(used < 2_000, "{used}");
+        let (read, _, _) = counted(nested(65).as_bytes(), &order_id(&declared), 10_000);
+        assert!(too_large(&read, "nested deeper"), "{read:?}");
+    }
+
+    #[test]
+    fn a_long_name_a_long_value_and_many_namespaces_are_each_refused_by_name() {
+        let form = order_id(NS);
+        let long_element = format!("<{}/>", "n".repeat(257));
+        let long_attribute = format!("<a {}=\"\"/>", "n".repeat(257));
+        let long_value = format!("<a v=\"{}\"/>", "v".repeat(65_537));
+        let many: String = (0..65).map(|n| format!(" xmlns:p{n}=\"urn:{n}\"")).collect();
+        let many = format!("<a{many}/>");
+        for (body, what) in [
+            (long_element, "element's name"),
+            (long_attribute, "attribute's name"),
+            (long_value, "attribute's value"),
+            (many, "namespaces at once"),
+        ] {
+            let (read, used, took) = counted(body.as_bytes(), &form, 1_000);
+            assert!(too_large(&read, what), "{what}: {read:?}");
+            assert!(used <= 100, "{what}: {used}");
+            assert!(took < Duration::from_secs(5), "{what}: {took:?}");
+        }
+        // At the bounds, each is read.
+        let at_bounds: String = (0..64).map(|n| format!(" xmlns:p{n}=\"urn:{n}\"")).collect();
+        let at_bounds = format!(
+            "<{}{at_bounds} v=\"{}\"/>",
+            "n".repeat(256),
+            "v".repeat(65_536)
+        );
+        assert!(read(at_bounds.as_bytes(), &form).is_ok());
+    }
+
+    /// The audit's other document: one element with 300,000 attributes of a
+    /// prefix bound to a long address, on the element a field's attribute
+    /// is read from. Each attribute is looked at a fixed number of times.
+    #[test]
+    fn many_attributes_cost_work_in_proportion_to_their_number() {
+        let uri = format!("urn:{}", "x".repeat(2_000));
+        let attributes: String = (0..300_000).map(|n| format!(" p:a{n}=\"\"")).collect();
+        let body = format!("<order xmlns=\"{NS}\" xmlns:p=\"{uri}\" id=\"A-1\"{attributes}/>");
+        let (read, used, took) = counted(body.as_bytes(), &order_id(NS), 2_000_000);
+        let id = read.unwrap();
+        assert_eq!(id.get("order_id"), None.or(Some(&Json::Null)));
+        assert!(used < 1_000_000, "{used}");
+        assert!(took < Duration::from_secs(5), "{took:?}");
+    }
+
+    #[test]
+    fn a_read_stops_past_its_budget_and_once_its_flag_is_set() {
+        let body = format!("<a>{}</a>", "<b/>".repeat(1_000));
+        let (read, _, _) = counted(body.as_bytes(), &order_id(NS), 100);
+        assert!(too_large(&read, "more work"), "{read:?}");
+        let stop = AtomicBool::new(true);
+        assert_eq!(
+            super::read(body.as_bytes(), &order_id(NS), None, &stop),
+            Err(Unread::Stopped)
+        );
+        // The budget an answer is given holds an ordinary document.
+        assert!(read_ok(&body));
+    }
+
+    fn read_ok(body: &str) -> bool {
+        read(body.as_bytes(), &order_id(NS)).is_ok()
+    }
+
+    #[test]
+    fn two_attributes_that_match_one_path_are_a_stop() {
+        let unprefixed = XmlForm {
+            fields: vec![one("order_id", &["order"], Some("id"), Kind::String)],
+            max_depth: 8,
+            max_elements: 20,
+        };
+        let written_twice = format!("<order xmlns=\"{NS}\" id=\"A\" id=\"B\"/>");
+        assert!(matches!(
+            read(written_twice.as_bytes(), &unprefixed),
+            Err(Unread::Shape(_))
+        ));
+        // Two prefixes of one namespace name one attribute twice.
+        let two_prefixes = format!(
+            "<o:order xmlns:o=\"{NS}\" xmlns:x=\"{NS}\" xmlns:y=\"{NS}\" x:id=\"A\" y:id=\"B\"/>"
+        );
+        let read_twice = read(two_prefixes.as_bytes(), &order_id(NS));
+        assert!(
+            matches!(&read_twice, Err(Unread::Shape(why)) if why.contains("more than one")),
+            "{read_twice:?}"
+        );
+        let once = format!("<o:order xmlns:o=\"{NS}\" xmlns:x=\"{NS}\" x:id=\"A\" other=\"B\"/>");
+        assert_eq!(
+            read(once.as_bytes(), &order_id(NS)).unwrap().get("order_id"),
+            Some(&Json::Text("A".to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_document_and_its_header_agree_about_the_character_set_or_it_is_refused() {
+        let form = order_id(NS);
+        let ascii = format!("<?xml version=\"1.0\" encoding=\"us-ascii\"?><order xmlns=\"{NS}\"/>");
+        let utf8 = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><order xmlns=\"{NS}\"/>");
+        let stop = AtomicBool::new(false);
+        let with = |body: &str, said| super::read(body.as_bytes(), &form, said, &stop);
+        assert!(with(&ascii, None).is_ok());
+        assert!(with(&utf8, Some(Charset::Utf8)).is_ok());
+        assert!(with(&ascii, Some(Charset::Utf8)).is_err());
+        assert!(with(&utf8, Some(Charset::UsAscii)).is_err());
+        // A mark of UTF-8 before a document that declares US-ASCII.
+        assert!(with(&format!("\u{feff}{ascii}"), None).is_err());
+        // A document that declares US-ASCII and is not.
+        let not_ascii = format!(
+            "<?xml version=\"1.0\" encoding=\"us-ascii\"?><order xmlns=\"{NS}\" id=\"\u{e9}\"/>"
+        );
+        assert!(with(&not_ascii, None).is_err());
+        // A declaration that is not at the start.
+        assert!(with(&format!("<!-- first -->{utf8}"), None).is_err());
+    }
+
+    #[test]
+    fn a_cdata_section_or_a_reference_outside_the_root_element_is_refused() {
+        let form = order_id(NS);
+        for body in [
+            format!("<![CDATA[x]]><order xmlns=\"{NS}\"/>"),
+            format!("<order xmlns=\"{NS}\"/><![CDATA[x]]>"),
+            format!("&#x41;<order xmlns=\"{NS}\"/>"),
+            format!("<order xmlns=\"{NS}\"/>&amp;"),
+        ] {
+            assert!(matches!(read(body.as_bytes(), &form), Err(Unread::Shape(_))), "{body}");
+        }
+        assert!(read(format!(" \n<order xmlns=\"{NS}\"/>\n").as_bytes(), &form).is_ok());
     }
 }

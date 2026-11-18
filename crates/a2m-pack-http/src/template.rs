@@ -192,6 +192,11 @@ pub(crate) struct EndpointTemplate {
     pub auth: Auth,
     /// Whether the endpoint changes the system.
     pub writes: bool,
+    /// Whether the developer says that an endpoint marked `read`, whose
+    /// method HTTP does not mark safe, only reads (decision 0249). Left
+    /// out of the payload when false, so other endpoints compile as before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_asserted: bool,
     pub request: Option<Shape>,
     /// The shape the answer's record must fit: the body itself for JSON,
     /// the declared fields for any other form.
@@ -211,6 +216,14 @@ pub(crate) struct EndpointTemplate {
     pub max_response_bytes: Option<u64>,
     /// Request fields ignored when a shadow is compared.
     pub volatile: Vec<String>,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `skip_serializing_if` passes a reference"
+)]
+const fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 impl EndpointTemplate {
@@ -636,6 +649,7 @@ mod tests {
             headers: BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]),
             auth: Auth::None,
             writes: method.has_body(),
+            read_asserted: false,
             request: None,
             response: Shape::of(Kind::Any),
             answer: crate::forms::AnswerSpec::default(),
