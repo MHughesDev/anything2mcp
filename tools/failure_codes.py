@@ -361,8 +361,7 @@ def classes_of_uses(texts, name, helper_of):
 
 
 def layers(root):
-    """Crate -> its layer, from the layering table of the reference; a crate the table does not
-    name is put above every layer."""
+    """Crate -> its layer number, from the layering table of the reference."""
     text = (root / REFERENCE).read_text(encoding="utf-8")
     start = text.find("## Crate layering")
     table = text[start:text.find("\n## ", start + 1)] if start >= 0 else ""
@@ -375,10 +374,18 @@ def layers(root):
 
 def preference(root):
     """The order in which the crates that declare one code are shown, the first giving the row's
-    meaning: the core, then the provider contract, then by layer, lowest first, then by name."""
+    meaning: the core, then the provider contract, then the other kernel crates by layer, lowest
+    first, then the pack crates, bases and packs alike, then any crate the layering table does not
+    name; by name within each. A pack base's wording is its own kind of system's, so it is not put
+    before the packs'."""
     layer = layers(root)
     first = {"a2m-core": 0, "a2m-provider": 1}
-    return lambda crate: (first.get(crate, 2), layer.get(crate, 99), crate)
+
+    def key(crate):
+        n = layer.get(crate)
+        rank = 100 if n is None else 90 if crate.startswith("a2m-pack-") else n
+        return (first.get(crate, 2), rank, crate)
+    return key
 
 
 def resolve(f, root=repo):
