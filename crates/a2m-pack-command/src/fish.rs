@@ -166,7 +166,9 @@ const OPENS: &[&str] = &["function", "if", "for", "while", "switch", "begin"];
 /// Whether a word is a plain command word: a letter or digit, then
 /// letters, digits, `_`, `.`, `:`, or `-`.
 fn plain_word(word: &str) -> bool {
-    word.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+    word.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
         && word
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_.:-".contains(c))
@@ -290,8 +292,7 @@ fn complete(args: &[String], program: &str) -> Result<(Applies, FileOption), Unr
             };
             take(letter, value)?;
         } else if let Some(cluster) = arg.strip_prefix('-').filter(|rest| !rest.is_empty()) {
-            let mut letters = cluster.char_indices();
-            while let Some((index, letter)) = letters.next() {
+            for (index, letter) in cluster.char_indices() {
                 let Some(&(_, valued, _)) = SPEC.iter().find(|(known, _, _)| *known == letter)
                 else {
                     return Err("not_read_form");
@@ -463,7 +464,11 @@ mod tests {
             Applies::Seen(vec![vec!["item".to_owned()], vec!["set".to_owned()]])
         );
         assert_eq!(read.stated[2].option.takes, Takes::NotStated);
-        assert_eq!(read.stated[4].option.takes, Takes::Value, "`-xc` is `-x -c`");
+        assert_eq!(
+            read.stated[4].option.takes,
+            Takes::Value,
+            "`-xc` is `-x -c`"
+        );
         let unread: Vec<(&str, u64)> = read.unread.iter().map(|(w, n)| (*w, *n)).collect();
         assert_eq!(
             unread,

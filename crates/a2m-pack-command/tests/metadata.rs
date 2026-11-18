@@ -17,11 +17,11 @@ use std::time::Duration;
 use a2m_core::{
     Archetype, Environment, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
 };
+use a2m_pack_command::codes;
 use a2m_provider::{
     Access, CheckedPaths, Deadline, Destinations, DiscoveryReport, Posture, PrepareContext,
     ProgramRef, ReadOnlyPort, Registry, RootName, Roots, SurfaceDescription, SurfaceRef,
 };
-use a2m_pack_command::codes;
 use common::{Folder, registry, stand_files};
 use example_cli::harness::Stand;
 
@@ -67,13 +67,19 @@ fn description(surface: &SurfaceRef) -> SurfaceDescription {
 
 /// Runs the pack's discoverer on the stand, handed `files`: each a name
 /// and the bytes of a file put in a `sources` folder of the test's own.
+/// Also gives how many starts the stand had recorded when the discovery
+/// began, after `prepare` asked the version.
 async fn discover(
     stand: &Stand,
     folder: &Folder,
     registry: &Registry,
     files: &[(&str, &str, Vec<u8>)],
     redact: &dyn Redact,
-) -> (Result<DiscoveryReport, a2m_core::Failure>, Vec<Finding>) {
+) -> (
+    Result<DiscoveryReport, a2m_core::Failure>,
+    Vec<Finding>,
+    usize,
+) {
     let plan = common::stand_plan(stand, registry.compiler_set());
     let surface = SurfaceRef {
         target: plan.header.target.clone(),
@@ -112,6 +118,7 @@ async fn discover(
         supervisor: &supervisor,
     };
     let prepared = handle.prepare(&cx, None).await.unwrap();
+    let before = stand.control().invocations().unwrap().len();
     let discoverers = registry.discoverers_for(&description(&surface));
     assert_eq!(discoverers.len(), 1);
     let port = ReadOnlyPort::new(handle.clone(), prepared);
@@ -127,7 +134,7 @@ async fn discover(
     let report = discoverers[0].discover(&port, &scope, &mut found).await;
     let (handle, prepared) = port.into_parts();
     handle.release(prepared, false).await;
-    (report, found.0)
+    (report, found.0, before)
 }
 
 fn of_kind<'a>(findings: &'a [Finding], kind: &str) -> Vec<&'a Finding> {
@@ -153,7 +160,13 @@ fn option<'a>(found: &'a serde_json::Value, flag: &str) -> &'a serde_json::Value
         .as_array()
         .unwrap()
         .iter()
-        .find(|option| option["flags"].as_array().unwrap().iter().any(|f| f == flag))
+        .find(|option| {
+            option["flags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f == flag)
+        })
         .unwrap_or_else(|| panic!("no option {flag} in {found}"))
 }
 
@@ -188,13 +201,21 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
         .collect();
     assert_eq!(taken, ["completions", "manual"]);
 
-    let (report, findings) = discover(
+    let (report, findings, _) = discover(
         &stand,
         &folder,
         &registry,
         &[
-            ("completions", "example-cli.fish", source("example-cli.fish")),
-            ("manual", "example-cli-item-list.1", source("example-cli-item-list.1")),
+            (
+                "completions",
+                "example-cli.fish",
+                source("example-cli.fish"),
+            ),
+            (
+                "manual",
+                "example-cli-item-list.1",
+                source("example-cli-item-list.1"),
+            ),
         ],
         &NoSecrets,
     )
@@ -205,7 +226,6 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     let files = of_kind(&findings, "command_file");
     assert_eq!(files.len(), 2);
     for file in &files {
-        eprintln!("{}", file.found());
         assert_eq!(file.level(), EvidenceLevel::Inferred);
         assert_eq!(file.source(), Source::Artifact);
         assert_eq!(file.coverage(), a2m_core::Coverage::Partial);
@@ -222,9 +242,15 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
         })
     );
     assert_eq!(fish["unlisted"], serde_json::json!(["archive"]));
-    assert_eq!(fish["program_options"][0]["flags"], serde_json::json!(["--home"]));
+    assert_eq!(
+        fish["program_options"][0]["flags"],
+        serde_json::json!(["--home"])
+    );
     let manual = json(files[1]);
-    assert_eq!((manual["form"].as_str(), manual["read"].as_u64()), (Some("man"), Some(4)));
+    assert_eq!(
+        (manual["form"].as_str(), manual["read"].as_u64()),
+        (Some("man"), Some(4))
+    );
     assert_eq!(manual["unread"], serde_json::json!({"optional_value": 1}));
     assert_eq!(report.dropped, 9);
 
@@ -247,7 +273,11 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     let show = json(command(&findings, "item show"));
     assert_eq!(from(option(&show, "--format")), ["help", "completions"]);
     let set = json(command(&findings, "item set"));
-    assert_eq!(option(&set, "--yes")["disagree"], false, "not stated agrees");
+    assert_eq!(
+        option(&set, "--yes")["disagree"],
+        false,
+        "not stated agrees"
+    );
     // A command no file speaks of is what the help alone gives.
     let add = command(&findings, "item add");
     assert_eq!(add.level(), EvidenceLevel::Discovered);
@@ -264,14 +294,22 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
             "{:?}",
             start.args
         );
-        assert!(!start.args.iter().any(|arg| arg == "--yes"), "{:?}", start.args);
+        assert!(
+            !start.args.iter().any(|arg| arg == "--yes"),
+            "{:?}",
+            start.args
+        );
     }
     assert!(control.writes().unwrap().is_empty());
     assert_eq!(control.stored_items().unwrap(), seed);
 
     let described = registry.discoverers_for(&description(&surface))[0]
         .describe(&findings, a2m_provider::DescribeForm::Summary);
-    assert!(described.text.contains("2 handed files"), "{}", described.text);
+    assert!(
+        described.text.contains("2 handed files"),
+        "{}",
+        described.text
+    );
 
     // The drafts: a file's words word a question, a flag the sources
     // disagree on and a flag only a file states are questions, never
@@ -308,9 +346,21 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert!(asked("item list", "--limit").contains("does not show it"));
     assert!(asked("catalog push", "--dry-run").contains("does not show it"));
     assert!(asked("item show", "How to print the item").contains("what a file handed"));
-    let draft = std::fs::read_to_string(target.path().join("commands").join("item_list.yaml"))
-        .unwrap();
+    let draft =
+        std::fs::read_to_string(target.path().join("commands").join("item_list.yaml")).unwrap();
     assert!(!draft.contains("limit:"), "{draft}");
+    // Each draft compiles but for the questions it leaves: every problem
+    // the compiler and the lints find is an open question, a value that
+    // only a person can write.
+    for (path, problems) in &drafted.kept_failing {
+        for problem in problems.iter() {
+            assert_eq!(
+                problem.code.as_str(),
+                "kernel.open_question",
+                "{path:?}: {problem:?}"
+            );
+        }
+    }
     for never in ["effect: read", "effect: write"] {
         assert!(!draft.contains(never), "{draft}");
     }
@@ -328,7 +378,7 @@ async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_not
 
     // A page compressed in a form the pack does not read stops the
     // discovery before any program is started.
-    let (report, findings) = discover(
+    let (report, findings, before) = discover(
         &stand,
         &folder,
         &registry,
@@ -339,7 +389,7 @@ async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_not
     let failure = report.unwrap_err();
     assert_eq!(failure.code(), &codes::COMMAND_FILE_UNREADABLE);
     assert!(findings.is_empty());
-    assert!(control.invocations().unwrap().is_empty());
+    assert_eq!(control.invocations().unwrap().len(), before);
 
     // A description holding a secret reaches no finding.
     let page = format!(
@@ -348,7 +398,7 @@ async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_not
     let fish = format!(
         "complete -c example-cli -n '__fish_seen_subcommand_from show' -l format -x -d 'uses {SECRET}'\n"
     );
-    let (report, findings) = discover(
+    let (report, findings, _) = discover(
         &stand,
         &folder,
         &registry,

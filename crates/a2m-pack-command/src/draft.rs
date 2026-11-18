@@ -378,7 +378,12 @@ mod tests {
             flags: vec!["--rows".to_owned()],
             said: vec![
                 said("help", Takes::Value, Some("n"), None),
-                said("manual", Takes::Value, Some("N"), Some("At most N rows, a whole number.")),
+                said(
+                    "manual",
+                    Takes::Value,
+                    Some("N"),
+                    Some("At most N rows, a whole number."),
+                ),
             ],
             disagree: false,
         };
@@ -391,7 +396,10 @@ mod tests {
             ],
             disagree: false,
         };
-        assert_eq!(typed("form", Some(&form)), Typed::AskQuoting("How to print it"));
+        assert_eq!(
+            typed("form", Some(&form)),
+            Typed::AskQuoting("How to print it")
+        );
         // The help's own words never count as a file's.
         let help_only = OptionFound {
             flags: vec!["--x".to_owned()],

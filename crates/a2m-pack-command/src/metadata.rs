@@ -284,7 +284,10 @@ pub(crate) fn options_of(
 
 /// What a file states that fits no listed command: the program's own
 /// options, and the words of commands the help does not list.
-pub(crate) fn beyond_commands(read: &FileRead, listed: &[String]) -> (Vec<FileOption>, Vec<String>) {
+pub(crate) fn beyond_commands(
+    read: &FileRead,
+    listed: &[String],
+) -> (Vec<FileOption>, Vec<String>) {
     let mut program = Vec::new();
     let mut unlisted: Vec<String> = Vec::new();
     for stated in &read.stated {
@@ -312,7 +315,10 @@ pub(crate) fn plain_flag(flag: &str) -> bool {
         .or_else(|| flag.strip_prefix('-'))
         .unwrap_or("");
     flag.len() <= 66
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
@@ -349,7 +355,9 @@ pub(crate) fn about(text: &str, redact: &dyn a2m_core::Redact) -> Option<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{Applies, FileOption, FileRead, Handed, Stated, Takes, beyond_commands, options_of};
+    use super::{
+        Applies, FileOption, FileRead, Handed, Stated, Takes, beyond_commands, options_of,
+    };
 
     fn option(flags: &[&str], takes: Takes, about: &str) -> FileOption {
         FileOption {
@@ -382,8 +390,14 @@ mod tests {
             file(
                 "completions",
                 vec![
-                    (seen_set(), option(&["--yes"], Takes::NotStated, "Do not ask")),
-                    (seen_set(), option(&["-n", "--dry-run"], Takes::Nothing, "Try")),
+                    (
+                        seen_set(),
+                        option(&["--yes"], Takes::NotStated, "Do not ask"),
+                    ),
+                    (
+                        seen_set(),
+                        option(&["-n", "--dry-run"], Takes::Nothing, "Try"),
+                    ),
                     (Applies::Program, option(&["--home"], Takes::Value, "Home")),
                 ],
             ),

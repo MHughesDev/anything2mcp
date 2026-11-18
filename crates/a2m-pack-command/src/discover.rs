@@ -621,7 +621,10 @@ impl HelpDiscoverer {
         }
         // The files' own findings come first: a command's finding that uses
         // what a file says is derived from that file's.
-        let listed: Vec<String> = commands.iter().map(|(found, _)| found.name.clone()).collect();
+        let listed: Vec<String> = commands
+            .iter()
+            .map(|(found, _)| found.name.clone())
+            .collect();
         let mut parents = Vec::new();
         for (file, digest) in files {
             report.dropped += file.read.unread_total();
@@ -708,7 +711,10 @@ impl Describer for HelpDescriber {
                 _ => 0,
             })
             .sum();
-        let described = read.iter().filter(|found| !found.options.is_empty()).count();
+        let described = read
+            .iter()
+            .filter(|found| !found.options.is_empty())
+            .count();
         let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         let mut text = format!(
             "The program's help lists {} commands. None was run: whether a command reads or writes is not known until a person declares it.",

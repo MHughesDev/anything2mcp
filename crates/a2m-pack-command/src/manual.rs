@@ -224,7 +224,10 @@ fn request(line: &str) -> Option<(&str, Vec<String>)> {
 }
 
 fn is_comment(line: &str) -> bool {
-    line.starts_with(".\\\"") || line.starts_with("'\\\"") || line.starts_with(".\\#") || line == "."
+    line.starts_with(".\\\"")
+        || line.starts_with("'\\\"")
+        || line.starts_with(".\\#")
+        || line == "."
 }
 
 /// The text of a font request of the `man` macros: `.B`, `.I`, and the
@@ -526,7 +529,9 @@ fn mdoc_head(args: &[String]) -> Result<(Vec<String>, Takes, Option<String>), Un
         if word(at) != Some("Fl") {
             return Err("not_read_form");
         }
-        let name = word(at + 1).filter(|name| !is_macro(name)).ok_or("not_read_form")?;
+        let name = word(at + 1)
+            .filter(|name| !is_macro(name))
+            .ok_or("not_read_form")?;
         let flag = format!("-{}", plain(name)?);
         if !plain_flag(&flag) {
             return Err("not_read_form");
@@ -549,12 +554,20 @@ fn mdoc_head(args: &[String]) -> Result<(Vec<String>, Takes, Option<String>), Un
         match (word(at), word(at + 1), word(at + 2), word(at + 3)) {
             (Some("Ar"), ..) => {
                 let name = named(at + 1)?;
-                at += if word(at + 1).is_some_and(|w| !is_macro(w)) { 2 } else { 1 };
+                at += if word(at + 1).is_some_and(|w| !is_macro(w)) {
+                    2
+                } else {
+                    1
+                };
                 value.get_or_insert(name);
             }
             (Some("Ns"), Some("="), Some("Ns"), Some("Ar")) => {
                 let name = named(at + 4)?;
-                at += if word(at + 4).is_some_and(|w| !is_macro(w)) { 5 } else { 4 };
+                at += if word(at + 4).is_some_and(|w| !is_macro(w)) {
+                    5
+                } else {
+                    4
+                };
                 value.get_or_insert(name);
             }
             (Some("Op"), ..) => return Err("optional_value"),
@@ -585,7 +598,11 @@ fn read_mdoc(text: &str, program: &str, redact: &dyn Redact) -> FileRead {
         .iter()
         .flatten()
         .any(|(name, args)| *name == "Sh" && section(args) == "OPTIONS");
-    let wanted = if has_options { "OPTIONS" } else { "DESCRIPTION" };
+    let wanted = if has_options {
+        "OPTIONS"
+    } else {
+        "DESCRIPTION"
+    };
     let title = asked
         .iter()
         .flatten()
@@ -697,6 +714,10 @@ mod tests {
     use super::{crc32, read, text_of};
     use crate::metadata::{Applies, Takes};
 
+    /// One option read: its flags, whether it takes a value, the value's
+    /// name, and its description.
+    type Row<'a> = (Vec<&'a str>, Takes, Option<&'a str>, Option<&'a str>);
+
     fn unread(read: &crate::metadata::FileRead) -> Vec<(&str, u64)> {
         read.unread.iter().map(|(w, n)| (*w, *n)).collect()
     }
@@ -746,7 +767,7 @@ mod tests {
         );
         let read = read(page, "example-cli", &NoSecrets).unwrap();
         assert_eq!(read.form, "man");
-        let got: Vec<(Vec<&str>, Takes, Option<&str>, Option<&str>)> = read
+        let got: Vec<Row<'_>> = read
             .stated
             .iter()
             .map(|s| {
@@ -837,7 +858,7 @@ mod tests {
         );
         let read = read(page, "example-cli", &NoSecrets).unwrap();
         assert_eq!(read.form, "mdoc");
-        let got: Vec<(Vec<&str>, Takes, Option<&str>, Option<&str>)> = read
+        let got: Vec<Row<'_>> = read
             .stated
             .iter()
             .map(|s| {
