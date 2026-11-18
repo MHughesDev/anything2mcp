@@ -1917,6 +1917,557 @@ async fn the_drafted_document_names_the_surface_its_file_was_observed_on() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+// ---- discovering and drafting folders, settings files, and growing files ----
+
+/// Discovers a surface's own folder, as the engine does when it hands no
+/// files, through a port that can only read; with `depth`, the kernel's
+/// tighter bound.
+async fn discovered_surface(
+    scene: &Scene,
+    name: &str,
+    depth: Option<u32>,
+) -> (Vec<a2m_core::Finding>, a2m_provider::DiscoveryReport) {
+    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_provider::{Deadline, DiscoveryScope, ReadOnlyPort};
+
+    let surface = scene.surface(name);
+    let description = a2m_provider::SurfaceDescription {
+        kind: SurfaceKind::new("file").unwrap(),
+        archetype: Archetype::Artifact,
+        address: surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let mut bounds = discoverer.declared().bounds;
+    if let Some(depth) = depth {
+        bounds.depth = depth;
+    }
+    let (handle, prepared) = scene.prepared(&surface, None, Posture::Discovery).await;
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &surface,
+        bounds,
+        deadline: Deadline::after(std::time::Duration::from_secs(30)),
+        paths: &scene.paths,
+        redact: &a2m_core::NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    let report = discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    (kept.0, report)
+}
+
+/// Drafts from findings into a new folder that holds the fixtures' own
+/// `target.yaml`.
+fn drafted_into(
+    scene: &Scene,
+    label: &str,
+    findings: &[a2m_core::Finding],
+) -> (std::path::PathBuf, a2m_files::DraftReport) {
+    let folder = std::env::temp_dir().join(format!(
+        "a2m-pack-file-kinds-{label}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(
+        common::fixtures().join("target.yaml"),
+        folder.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(
+        scene.registry.compiler_set(),
+        &a2m_files::TargetRoot::new(&folder),
+    )
+    .draft(findings)
+    .unwrap();
+    (folder, report)
+}
+
+/// What the findings of one kind hold.
+fn found_of<T: serde::de::DeserializeOwned>(findings: &[a2m_core::Finding], kind: &str) -> Vec<T> {
+    findings
+        .iter()
+        .filter(|finding| finding.kind().as_str() == kind)
+        .map(|finding| serde_json::from_str(finding.found()).unwrap())
+        .collect()
+}
+
+/// Every file below a folder, with its text.
+fn texts_below(folder: &std::path::Path) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let text = std::fs::read_to_string(&path).unwrap();
+                found.push((path.display().to_string(), text));
+            }
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn a_folder_is_discovered_to_its_depth_and_its_drafted_reads_list_what_the_stand_holds() {
+    use a2m_pack_file::{EntryKindFound, FILE_FOLDER, FolderFound};
+
+    let mut scene = Scene::new();
+    let (findings, report) = discovered_surface(&scene, "inbox_files", None).await;
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert_eq!(report.coverage, a2m_core::Coverage::Complete);
+    assert!(report.bounds_hit.is_empty(), "{report:?}");
+    // The folder alone: no file in it has a name the pack reads as a format.
+    assert_eq!(findings.len(), 1);
+    let [folder]: [FolderFound; 1] = found_of(&findings, FILE_FOLDER).try_into().unwrap();
+    assert_eq!(folder.depth, 1);
+    assert!(folder.cut.is_empty() && !folder.truncated);
+    let names: Vec<&str> = folder.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "later",
+            "later/note-3.txt",
+            "note-1.txt",
+            "note-2.txt",
+            "scan.bin"
+        ]
+    );
+    // Kinds and sizes, as the stand holds them; never a content.
+    for entry in &folder.entries {
+        let stored = scene.stand.bytes(&format!("inbox/{}", entry.name)).unwrap();
+        match entry.kind {
+            EntryKindFound::Folder => assert_eq!((entry.size, stored), (None, None)),
+            EntryKindFound::File => {
+                assert_eq!(entry.size, stored.map(|bytes| bytes.len() as u64));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(!findings[0].found().contains("note of the example"));
+
+    // Drafted: the folder's file and two reads, each with no question.
+    let (dir, drafted) = drafted_into(&scene, "folder", &findings);
+    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        written,
+        [
+            "folders/inbox_files.yaml",
+            "operations/inbox_files_get.yaml",
+            "operations/inbox_files_list.yaml"
+        ]
+    );
+    assert!(drafted.refused.is_empty() && drafted.open_questions.is_empty());
+    assert!(drafted.kept_failing.is_empty(), "{:?}", drafted.kept_failing);
+    let declared =
+        std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
+    assert!(declared.contains("depth: 1"), "{declared}");
+    // Nothing is drafted for a write.
+    assert!(
+        !declared.contains("writes") && !declared.contains("may_be_open"),
+        "{declared}"
+    );
+
+    // The drafted list gives what the stand holds.
+    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let observed = scene
+        .read_operation("example_inbox_files_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(
+        &scene.plan,
+        "example_inbox_files_list",
+        last_values(&observed),
+    );
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    assert_eq!(
+        column("name"),
+        names.iter().map(|name| text(name)).collect::<Vec<_>>()
+    );
+    assert_eq!(column("kind")[0], text("folder"));
+    for (name, size) in names.iter().zip(column("size")) {
+        let stored = scene.stand.bytes(&format!("inbox/{name}")).unwrap();
+        let expected =
+            stored.map_or(Value::Null, |bytes| Value::Int(i64::try_from(bytes.len()).unwrap()));
+        assert_eq!(size, expected, "{name}");
+    }
+    assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
+    // The drafted read gives one entry by its name, a folder down too.
+    let one = scene
+        .read_operation(
+            "example_inbox_files_get",
+            &inputs(&[("name", text("later/note-3.txt"))]),
+        )
+        .await
+        .unwrap();
+    let one = common::outputs_of(&scene.plan, "example_inbox_files_get", last_values(&one));
+    let stored = scene.stand.bytes(seed::INBOX_DEEP).unwrap().unwrap();
+    assert_eq!(
+        one.get("size"),
+        Some(&Value::Int(i64::try_from(stored.len()).unwrap()))
+    );
+    assert!(scene.stand.observe().unwrap().is_empty());
+
+    // A write over the drafted folder does not compile, and says why: the
+    // folder's file names no write.
+    std::fs::write(
+        dir.join("operations").join("inbox_files_add.yaml"),
+        "operation: example_inbox_files_add
+effect: write
+key: name
+commit_points: 1
+inputs:
+  name: {type: file}
+  content: {type: text}
+outputs:
+  content: {type: text}
+bindings:
+  - mode: file
+    verb: create
+    folder: inbox_files
+    key: {name: input.name}
+    fields: {content: input.content}
+    read_back: {record: entry}
+description: >
+  Adds a note to the inbox.
+",
+    )
+    .unwrap();
+    let refused = common::compile(&dir, scene.registry.compiler_set()).unwrap_err();
+    assert!(
+        refused.iter().any(|problem| problem
+            .message
+            .contains("does not declare that it is written by `create`")),
+        "{refused:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_folder_deeper_than_the_bound_is_cut_and_a_link_out_of_the_root_is_never_followed() {
+    use a2m_core::LimitationCode;
+    use a2m_pack_file::{EntryKindFound, FILE_FOLDER, FolderFound};
+
+    let scene = Scene::new();
+    // The kernel's bound is tighter than the manifest's: the folder's own
+    // entries alone.
+    let (findings, report) = discovered_surface(&scene, "inbox_files", Some(0)).await;
+    let [folder]: [FolderFound; 1] = found_of(&findings, FILE_FOLDER).try_into().unwrap();
+    let names: Vec<&str> = folder.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["later", "note-1.txt", "note-2.txt", "scan.bin"]);
+    // What was not looked into is named, and the finding and the report
+    // say they were cut.
+    assert_eq!(folder.cut, ["later"]);
+    assert_eq!(report.bounds_hit, ["depth"]);
+    assert_eq!(report.coverage, a2m_core::Coverage::Partial);
+    assert_eq!(findings[0].coverage(), a2m_core::Coverage::Partial);
+    assert!(
+        findings[0]
+            .limitations()
+            .iter()
+            .any(|limitation| limitation.code == LimitationCode::Truncated)
+    );
+    let (dir, drafted) = drafted_into(&scene, "cut", &findings);
+    let declared =
+        std::fs::read_to_string(dir.join("folders").join("inbox_files.yaml")).unwrap();
+    assert!(!declared.contains("depth"), "{declared}");
+    let list =
+        std::fs::read_to_string(dir.join("operations").join("inbox_files_list.yaml")).unwrap();
+    assert!(list.contains("did not look below the depth"), "{list}");
+    assert!(drafted.refused.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // A link to a file and a link to a folder, each outside the root: each
+    // is an entry of the kind `link`, never opened, never looked into.
+    let file_link = scene.stand.set_fault(Fault::LinkOut {
+        at: "inbox/out.csv".to_owned(),
+    });
+    let folder_link = scene.stand.set_fault(Fault::FolderLinkOut {
+        at: "inbox/away".to_owned(),
+    });
+    if file_link.is_err() || folder_link.is_err() {
+        // A system where this user may not make a link; CI's runs make them.
+        return;
+    }
+    let (findings, _) = discovered_surface(&scene, "inbox_files", None).await;
+    let [folder]: [FolderFound; 1] = found_of(&findings, FILE_FOLDER).try_into().unwrap();
+    for name in ["out.csv", "away"] {
+        let entry = folder.entries.iter().find(|e| e.name == name).unwrap();
+        assert_eq!((entry.kind, entry.size), (EntryKindFound::Link, None), "{name}");
+    }
+    assert!(
+        !folder
+            .entries
+            .iter()
+            .any(|entry| entry.name.starts_with("away/"))
+    );
+    // The link's name says delimited text, and nothing was read through it.
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding.kind().as_str() == a2m_pack_file::FILE_LAYOUT)
+    );
+    assert!(scene.stand.outside_untouched().unwrap());
+}
+
+#[tokio::test]
+async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_secret_reaches_evidence()
+ {
+    use a2m_core::LimitationCode;
+    use a2m_pack_file::{FILE_LAYOUT, Format, LayoutFound, ValueShape, Withheld};
+
+    const PASSWORD: &str = "secret-for-tests-7hq2x";
+    const HEADER: &str = "Bearer example-token-for-tests-0001";
+    let mut scene = Scene::new();
+    // Another program adds a section that holds a password and a header.
+    scene
+        .stand
+        .set_fault(Fault::changed(
+            seed::SETTINGS_INI,
+            Change::Appended(
+                format!("\r\n[service]\r\npassword = {PASSWORD}\r\nheader = {HEADER}\r\nretries = 3")
+                    .into_bytes(),
+            ),
+        ))
+        .unwrap();
+    let (findings, _) = discovered_surface(&scene, "config_files", None).await;
+    assert!(scene.stand.observe().unwrap().is_empty());
+    let layouts: Vec<LayoutFound> = found_of(&findings, FILE_LAYOUT);
+    let layout = |file: &str| layouts.iter().find(|found| found.file == file).unwrap();
+    let shapes = |found: &LayoutFound| -> Vec<(String, ValueShape, Option<Withheld>)> {
+        found
+            .settings
+            .iter()
+            .map(|setting| (setting.path.join("/"), setting.shape, setting.withheld))
+            .collect()
+    };
+    let ini = layout("example.ini");
+    assert_eq!(ini.format, Format::Ini);
+    assert_eq!(ini.sections, ["orders", "warehouse W1", "service"]);
+    let shape = |path: &str, shape, withheld| (path.to_owned(), shape, withheld);
+    assert_eq!(
+        shapes(ini),
+        [
+            shape("title", ValueShape::Text, None),
+            shape("orders/prefix", ValueShape::Text, None),
+            shape("orders/next_number", ValueShape::Number, None),
+            // In quotes, which the file does not say are part of it.
+            shape("orders/note", ValueShape::Unread, None),
+            shape("orders/empty", ValueShape::Empty, None),
+            shape("warehouse W1/open", ValueShape::Boolean, None),
+            // A comment after the value, which programs read two ways.
+            shape("warehouse W1/cutoff", ValueShape::Unread, None),
+            shape(
+                "service/password",
+                ValueShape::Withheld,
+                Some(Withheld::KeyNamesASecret)
+            ),
+            shape(
+                "service/header",
+                ValueShape::Withheld,
+                Some(Withheld::ValueLooksLikeACredential)
+            ),
+            shape("service/retries", ValueShape::Number, None),
+        ]
+    );
+    let plist = layout("example.plist");
+    assert_eq!(plist.format, Format::PropertyList);
+    assert_eq!(
+        plist.headers,
+        ["Title", "NextNumber", "Open", "Orders", "Warehouses"]
+    );
+    assert_eq!(
+        shapes(plist),
+        [
+            shape("Title", ValueShape::Text, None),
+            shape("NextNumber", ValueShape::Number, None),
+            shape("Open", ValueShape::Boolean, None),
+            shape("Orders", ValueShape::Record, None),
+            shape("Orders/Prefix", ValueShape::Text, None),
+            shape("Orders/Rate", ValueShape::Number, None),
+            shape("Warehouses", ValueShape::List, None),
+        ]
+    );
+    // The INI file's finding says it withheld what it withheld.
+    let ini_finding = findings
+        .iter()
+        .find(|finding| finding.found().contains("\"example.ini\""))
+        .unwrap();
+    assert!(
+        ini_finding
+            .limitations()
+            .iter()
+            .any(|limitation| limitation.code == LimitationCode::Redacted)
+    );
+
+    // Drafted: a document and its reads for each settings file.
+    let (dir, drafted) = drafted_into(&scene, "settings", &findings);
+    assert!(drafted.refused.is_empty(), "{:?}", drafted.refused);
+    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    for file in [
+        "documents/example_ini.yaml",
+        "documents/example_plist.yaml",
+        "operations/example_ini_general_get.yaml",
+        "operations/example_ini_orders_get.yaml",
+        "operations/example_ini_warehouse_w1_get.yaml",
+        "operations/example_ini_service_get.yaml",
+        "operations/example_plist_general_get.yaml",
+        "operations/example_plist_orders_get.yaml",
+    ] {
+        assert!(written.contains(&file), "{file}: {written:?}");
+        assert!(
+            !drafted
+                .open_questions
+                .iter()
+                .any(|question| question.file.as_str() == file),
+            "{file}"
+        );
+    }
+    // No secret, and no field for a value withheld, in any finding, in what
+    // the describer gives, or in any drafted file.
+    let discoverer = scene
+        .registry
+        .discoverers_for(&a2m_provider::SurfaceDescription {
+            kind: a2m_core::SurfaceKind::new("file").unwrap(),
+            archetype: a2m_core::Archetype::Artifact,
+            address: "config".to_owned(),
+            facts: Values::new(),
+        })
+        .remove(0);
+    let described = discoverer.describe(&findings, a2m_provider::DescribeForm::Full);
+    assert!(described.text.contains("2 settings value(s) withheld"), "{}", described.text);
+    let evidence = findings
+        .iter()
+        .map(|finding| finding.found().to_owned())
+        .chain(described.untrusted)
+        .chain(std::iter::once(described.text))
+        .chain(texts_below(&dir).into_iter().map(|(_, text)| text));
+    for said in evidence {
+        for secret in [PASSWORD, HEADER, "example-token"] {
+            assert!(!said.contains(secret), "{said}");
+        }
+    }
+    let document = std::fs::read_to_string(dir.join("documents").join("example_ini.yaml")).unwrap();
+    assert!(
+        !document.contains("password") && !document.contains("header:"),
+        "{document}"
+    );
+    assert!(!document.contains("writable") && !document.contains("may_be_open"));
+
+    // Set aside what holds a question (the JSON documents'), the rest
+    // compiles, and each read gives what the stand holds.
+    for question in &drafted.open_questions {
+        let _ = std::fs::remove_file(dir.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let read = |operation: &'static str| {
+        let scene = &scene;
+        async move {
+            let observed = scene
+                .read_operation(operation, &Values::new())
+                .await
+                .unwrap();
+            common::outputs_of(&scene.plan, operation, last_values(&observed))
+        }
+    };
+    let stored = String::from_utf8(scene.stand.bytes(seed::SETTINGS_INI).unwrap().unwrap()).unwrap();
+    assert!(stored.contains("prefix = A-") && stored.contains("next_number=103"));
+    let orders = read("example_example_ini_orders_get").await;
+    assert_eq!(orders.get("prefix"), Some(&text("A-")));
+    assert_eq!(orders.get("next_number"), Some(&text("103")));
+    assert_eq!(orders.get("empty"), Some(&Value::Null));
+    assert_eq!(orders.get("note"), None);
+    let service = read("example_example_ini_service_get").await;
+    assert_eq!(service.get("retries"), Some(&text("3")));
+    assert_eq!(service.len(), 1);
+    let general = read("example_example_plist_general_get").await;
+    assert_eq!(general.get("title"), Some(&text("Rails & brackets")));
+    assert_eq!(general.get("nextnumber"), Some(&decimal("103")));
+    assert_eq!(general.get("open"), Some(&Value::Bool(true)));
+    let orders = read("example_example_plist_orders_get").await;
+    assert_eq!(orders.get("prefix"), Some(&text("A-")));
+    assert_eq!(orders.get("rate"), Some(&decimal("2.50")));
+    assert!(scene.stand.observe().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_growing_file_is_discovered_drafted_and_read_from_the_start_through_the_draft() {
+    use a2m_core::{EvidenceLevel, LimitationCode};
+    use a2m_pack_file::{FILE_LOG, LogFound};
+
+    let mut scene = Scene::new();
+    let (findings, _) = discovered_surface(&scene, "log_files", None).await;
+    let [log]: [LogFound; 1] = found_of(&findings, FILE_LOG).try_into().unwrap();
+    assert_eq!(log.file, "orders.log");
+    // Two complete lines; the third is not finished and is not a line.
+    // Plain text: no line form is named.
+    assert_eq!((log.lines_seen, log.line_form), (2, None));
+    let finding = findings
+        .iter()
+        .find(|finding| finding.kind().as_str() == FILE_LOG)
+        .unwrap();
+    assert_eq!(finding.level(), EvidenceLevel::Inferred);
+    let codes: Vec<LimitationCode> = finding.limitations().iter().map(|l| l.code).collect();
+    assert_eq!(codes, [LimitationCode::NotExercised, LimitationCode::Sampled]);
+    for finding in &findings {
+        assert!(!finding.found().contains("A-100"), "{}", finding.found());
+    }
+
+    let (dir, drafted) = drafted_into(&scene, "log", &findings);
+    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    assert!(
+        written.contains(&"logs/orders.yaml") && written.contains(&"operations/orders_read.yaml"),
+        "{written:?}"
+    );
+    assert!(drafted.refused.is_empty() && drafted.open_questions.is_empty());
+    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let observed = scene
+        .read_operation("example_orders_read", &Values::new())
+        .await
+        .unwrap();
+    let first = common::outputs_of(&scene.plan, "example_orders_read", last_values(&observed));
+    // The complete lines the stand holds, by its own bytes.
+    let stored = scene.stand.bytes(seed::ORDERS_LOG).unwrap().unwrap();
+    let mut lines: Vec<&[u8]> = stored.split(|byte| *byte == b'\n').collect();
+    lines.pop();
+    let expected: Vec<Value> = lines
+        .iter()
+        .map(|line| text(std::str::from_utf8(line.strip_suffix(b"\r").unwrap_or(line)).unwrap()))
+        .collect();
+    assert_eq!(
+        first.get("lines").and_then(Value::as_list).unwrap(),
+        expected.as_slice()
+    );
+    assert_eq!(first.get("outcome"), Some(&text("read")));
+    assert_eq!(first.get("more"), Some(&Value::Bool(false)));
+    // From the position it gave, nothing new.
+    let position = first.get("position").unwrap().clone();
+    let observed = scene
+        .read_operation("example_orders_read", &inputs(&[("position", position)]))
+        .await
+        .unwrap();
+    let next = common::outputs_of(&scene.plan, "example_orders_read", last_values(&observed));
+    assert_eq!(
+        next.get("lines").and_then(Value::as_list).map(<[Value]>::len),
+        Some(0)
+    );
+    assert!(scene.stand.observe().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---- the guard of the driver ----
 
 #[tokio::test]

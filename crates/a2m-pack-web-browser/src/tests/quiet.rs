@@ -115,6 +115,7 @@ async fn an_acting_tab_hears_no_posted_body_and_its_cookies_and_token_only_where
         assert!(other.is_empty(), "heard in {other:?}");
         heard
     };
+    eprintln!("FRAMES {:?}", witness::frames(TYPED));
     assert!(!only(TYPED, &["Fetch.requestPaused"]).is_empty());
     let carried = [
         "Fetch.requestPaused",

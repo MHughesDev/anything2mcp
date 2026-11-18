@@ -3143,7 +3143,14 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
                 .call(
                     &world.person,
                     "tool.call",
-                    json!({"tool": "example_order_get", "input": {"order_id": order}}),
+                    // Shadow evidence counts only from production, which
+                    // the compiler implies where a target does not declare
+                    // it (decision 0251).
+                    json!({
+                        "tool": "example_order_get",
+                        "environment": "production",
+                        "input": {"order_id": order},
+                    }),
                 )
                 .await;
             let called = called.result.unwrap();
@@ -3192,7 +3199,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert_eq!(standing["matches"], 5, "{reported}");
     assert_eq!(standing["distinct_inputs"], 1, "{reported}");
     assert_eq!(standing["not_promotable"], "too_few", "{reported}");
-    assert_eq!(standing["evidence_from"], json!(["test"]), "{reported}");
+    assert_eq!(standing["evidence_from"], json!(["production"]), "{reported}");
     assert_eq!(standing["against_verified_now"], true, "{reported}");
     assert_eq!(standing["environments"][0]["requests"], 5, "{reported}");
     assert!(!reported.to_string().contains("SO-1001"), "{reported}");
@@ -3268,7 +3275,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert_eq!(promoted["evidence"]["shadow"]["distinct_inputs"], 5);
     assert_eq!(
         promoted["evidence"]["shadow"]["environments"],
-        json!([{"environment": "test", "distinct_inputs": 5, "matches": 5}])
+        json!([{"environment": "production", "distinct_inputs": 5, "matches": 5}])
     );
     assert_eq!(
         std::fs::read_to_string(&operation).unwrap(),
@@ -3476,7 +3483,10 @@ async fn a_drafted_sign_in_sends_no_stored_credential_until_its_person_sees_ever
             && page.contains("as the drafts declare it, not published"),
         "{page}"
     );
-    assert!(page.contains("vault://example/service/client_secret"), "{page}");
+    assert!(
+        page.contains("vault://example/service/client_secret"),
+        "{page}"
+    );
     assert!(!page.contains("secret-for-tests-client-f1"), "{page}");
 
     // The drafts change again before the person presses: the press is

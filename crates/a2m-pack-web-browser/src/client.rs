@@ -486,6 +486,20 @@ pub(crate) mod witness {
         }
     }
 
+    /// Every message kept that holds `needle`, whole.
+    pub(crate) fn frames(needle: &str) -> Vec<String> {
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|frame| {
+                frame
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+            })
+            .map(|frame| String::from_utf8_lossy(frame).into_owned())
+            .collect()
+    }
+
     /// The method of every message kept that holds `needle`, or `reply`
     /// for an answer to a request.
     pub(crate) fn holding(needle: &str) -> Vec<String> {
