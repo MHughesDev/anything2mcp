@@ -53,10 +53,15 @@ pub trait KeyStore: Send + Sync {
 pub struct Binding { pub key: KeyId, pub layer: Layer, pub generation: Generation }
 
 pub struct OsKeyStore;          // OsKeyStore::open(&InstallationName).await
+                                // OsKeyStore::IN_THIS_BUILD: true on Windows and macOS, by the same cfg as the back end
 pub struct PassphraseKeyStore;  // PassphraseKeyStore::derive(PassphraseRoute, &Secret, &PassphraseSalt).await
                                 // PassphraseKeyStore::SHORTEST_PASSPHRASE is 16 bytes
+                                // PassphraseKeyStore::not_given(variable) -> Failure: input/vault_passphrase_missing
 pub struct MemoryKeyStore;      // MemoryKeyStore::new(); remove_root() stands for a reset credential store
-pub enum PassphraseRoute { NotEnabled, Enabled }     // the protected setting, read by the caller
+pub enum PassphraseRoute { NotEnabled, Enabled }     // PassphraseRoute::of_backend(settings.text("vault.backend"))
+pub const BACKEND_OS_KEY_STORE: &str = "os_keystore";
+pub const BACKEND_PASSPHRASE: &str = "passphrase";
+pub const DEFAULT_BACKEND: &str;  // the store where the build has one, the passphrase route where not (decision 0220)
 pub struct PassphraseSalt(/* 16 bytes, not secret */);
 impl PassphraseSalt {
     /// The salt kept in `file`, made there once, under the creation lock, when the file is missing.
@@ -198,7 +203,8 @@ Contracts that the signatures do not show:
 | Every front door | The `Redactor`, as a `Redact`, on every result and error |
 | `a2m-actions` | A back end and `Vault::with_random` at start, with the engine's random source; `keyed_digest` and `redactor` to hand on; `seal` for `secret.set`; `health` for `doctor` and the kernel's health state; later `rotate` for `vault.rotate` |
 | `a2m-provider` | A `KeyStore` adapter for a key-service back end that a plug-in supplies, joined by `a2m-actions` |
-| `anything2mcp` | `OsKeyStore::open`, or `PassphraseKeyStore::derive` with the salt of `PassphraseSalt::load_or_create`, to build the machine's key store |
+| `anything2mcp` | `OsKeyStore::open`, or `PassphraseKeyStore::derive` with the salt of `PassphraseSalt::load_or_create`, to build the machine's key store; `PassphraseKeyStore::not_given` when the route is chosen and no passphrase came |
+| `a2m-actions` (settings) | `DEFAULT_BACKEND`, as the default of `vault.backend` |
 
 It calls only `a2m-core`, and through its two traits, the back end and the key records it was given.
 
@@ -223,7 +229,8 @@ It calls only `a2m-core`, and through its two traits, the back end and the key r
 | `busy` | `key_store_entry_missing` | The root that wrapped a key is gone, as when a credential store is reset. The next step says that saved sessions must be signed in again |
 | `input` | `sealed_item_mismatch` | An envelope does not open under the context given: a swapped item, a wrong owner, a damaged envelope or key record, or a secret that is not text. Never says which |
 | `input` | `sealed_format_unsupported` | An envelope's format or cipher id is one this engine does not know |
-| `policy` | `vault_passphrase_not_enabled` | The passphrase route was asked for and is not switched on as a protected setting |
+| `policy` | `vault_passphrase_not_enabled` | The passphrase route was asked for and `vault.backend` does not choose it |
+| `input` | `vault_passphrase_missing` | The passphrase route is chosen and no passphrase was given. The next step names the environment variable and says what the passphrase is for |
 | `input` | `vault_passphrase_mismatch` | The passphrase given at start is not the one the keys were wrapped under |
 | `input` | `vault_passphrase_too_short` | The passphrase has fewer than 16 bytes. Nothing is derived from it |
 | `busy` | `key_record_conflict` | A key record exists already, or changed before a rotation could replace it; nothing changed |
@@ -265,7 +272,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 2. Done: the cipher crate, the key-store crates, the memory-wiping crate, and the rest verified and recorded in [decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md).
 3. Done: `KeyStore` with the operating-system back end and the in-memory one; `KeyRecords` with an in-memory implementation; `seal`, `open`, `open_secret`; `keyed_digest`. The operating-system back end is proven against the outside crates' in-memory credential store on every machine. Against a real key store it is one ignored test, which has not been run on any of the three systems: this build machine has none. The Windows and macOS code is type-checked from Linux and has never run.
 4. Done here: the restart test, over the in-memory records. Not done: `KeyRecords` in `a2m-ledger`.
-5. Done: the passphrase route, behind `PassphraseRoute`, which the caller fills from the protected setting.
+5. Done: the passphrase route, behind `PassphraseRoute`, which the caller fills from `vault.backend`. Where the build has no operating-system key store, the route is that setting's default ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)): `DEFAULT_BACKEND`, from the same `cfg` as the back end, proven by `where_the_build_has_no_key_store_the_passphrase_route_is_the_default_and_opens`. The settings schema takes its default from it once its owner changes one line.
 6. Not built: a key-service back end, for the server profile. Phase 6.
 7. Not built: `rotate`, with `vault.rotate`. Phase 9. `KeyRecords` already keeps one row per generation and has `replace` for it.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: the creation lock for the root and the salt, the passphrase floor, the redactor's stream and its further forms, the registered set without digests, and the check on a random source that repeats itself. The creation lock's Windows and macOS code is the standard library's file lock; it is type-checked from Linux and has run only on Linux.
@@ -280,5 +287,5 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 - **The creation lock is shared only by engines that agree on the temporary directory.** Two engines of one user whose temporary directories differ, as on a Windows server that gives each sign-in session its own, do not exclude each other, and can still lose a root between them. Reading the store at every `wrap` narrows the time in which that can happen and does not close it. The macOS Keychain can refuse to add an item that exists, which would let the key store itself decide; the store crate offers no such call, and going around it means matching its item's attributes in code that cannot be run here.
 - **A predictable random source in a running engine is not detected.** Only one that repeats itself is. The product hands the kernel the operating system's source; nothing in the types holds it to that.
 - **A dedicated account as a third kind of owner,** instead of a service identity with a reserved beginning to its name. It needs the store's reading of an owner changed in the same step, because the store makes an owner again from the kind and identifier it kept.
-- **Linux has no operating-system key store in this build.** The Secret Service back end was removed when the advisory check refused its tree ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)); the passphrase route is the one route there until the store crate stands on maintained crates.
+- **Linux has no operating-system key store in this build.** The Secret Service back end was removed when the advisory check refused its tree ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)); the passphrase route is the one route there, and the default, until the store crate stands on maintained crates ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)). When the back end returns, `OsKeyStore::IN_THIS_BUILD` turns true on Linux, the default there becomes the key store again, and an installation that sealed under the passphrase must keep `backend = "passphrase"` in its installation file or its keys stop opening: that release needs a note and a check in `doctor`.
 - **Registering many secrets one at a time, each followed by a search,** rebuilds the matcher each time. Registrations in a row with no search between them build it once. If a session keeper's pattern of use makes this slow, the matcher can be built in two tiers.
