@@ -606,6 +606,23 @@ async fn ask_through_agent(prompt: &Arc<PolkitPrompt>, deadline: Instant) -> Pro
     .await
 }
 
+/// Waits until polkit has let go of the agent that was just stopped. Its
+/// process is gone, and polkit learns so a moment later: until then an ask
+/// is passed to the agent that is gone and fails at once, which is no
+/// answer about the next agent. polkit says "no agent" once it has none.
+async fn agent_is_gone(prompt: &Arc<PolkitPrompt>, deadline: Instant) {
+    within("polkit's letting go of the agent before", async {
+        loop {
+            let got = prompt.ask(text(), deadline).await;
+            if reason(&got) == Some(PresenceReason::NoAgent) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+}
+
 /// The real prompt against a real polkit on the system bus, on a machine
 /// prepared as the variable says. Nothing here needs a person: the
 /// password is typed by a text agent the test starts for its own process.
@@ -661,6 +678,7 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
         "{got:?}"
     );
     drop(agent);
+    agent_is_gone(&prompt, far).await;
 
     // The right one is, and it is polkit that says so.
     let asking = tokio::spawn({
@@ -693,6 +711,7 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     // polkit holds nothing against this process from the cancelled check:
     // the next prompt is raised and passed.
     drop(agent);
+    agent_is_gone(&prompt, far).await;
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move { ask_through_agent(&prompt, far).await }
