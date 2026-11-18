@@ -237,6 +237,15 @@ fn rendered(report: &Json) -> String {
             file["state"].as_str().unwrap_or_default()
         ));
     }
+    if list(&content["drafted"]["written"]).next().is_some() {
+        // A draft nobody asked for is the person's to remove: a publish
+        // needs a passing offline test of every operation left (decision
+        // 0219).
+        lines.push(
+            "Each draft is a proposal. Remove those nobody wants with `draft.delete`, all in one call by `files`, before a publish: it needs a passing offline test of every operation left."
+                .to_owned(),
+        );
+    }
     for tool in list(&content["tried"]["tools"]) {
         if tool["state"] == "not_tried" {
             lines.push(format!(

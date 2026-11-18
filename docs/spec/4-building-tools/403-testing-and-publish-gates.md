@@ -13,7 +13,7 @@ A version is published only when every gate passes, and the evidence is stored w
 | Idempotency | The same pipeline run twice; the second run changes nothing | Write pipelines |
 | Resume | A run killed at a random step, then resumed, finishes with no duplicates | Write pipelines |
 | Fault injection | Expired session, slow network, blocked surface, bad input, stale approval, and edge block each stop with the right class | All |
-| Performance | Each operation meets its budget; no regression over 10% against the last version | All |
+| Performance | Each operation meets its budget; no regression over 10% against the last version. Not built | All |
 | Agent usability | A test agent with no prior knowledge completes scripted tasks using only the generated names, descriptions, and results | Each toolset |
 | Human review | A person reads the generated description, schema, effect class, and permissions | All |
 

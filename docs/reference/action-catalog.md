@@ -46,7 +46,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `spec.import` | Operations from an OpenAPI, GraphQL, or OData description, or an upstream MCP server | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
 | `draft.write` | Write a draft file after validation and lint | Builder | build | 5 |
-| `draft.delete` | Remove a draft file of the project; a published version keeps its copy | Builder | build | 5 |
+| `draft.delete` | Remove draft files of the project, one or several, all or none; a published version keeps its copy | Builder | build | 5 |
 | `draft.lint` | Compile drafts and report every problem | Builder | build | 1 |
 | `draft.try` | Run a draft binding in the sandbox | Builder | build | 5 |
 | `test.run` | Run the publish gates and return evidence | Builder | build | 3 |

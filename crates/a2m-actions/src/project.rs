@@ -42,6 +42,11 @@ pub(crate) struct Places {
 }
 
 impl Places {
+    /// The person's home folder, when the system names one.
+    pub(crate) fn home(&self) -> Option<&Path> {
+        self.home.as_deref()
+    }
+
     /// The places of this process's machine.
     pub(crate) fn of_process() -> Self {
         Self::of(&Env::of_process(), Some(std::env::temp_dir()))

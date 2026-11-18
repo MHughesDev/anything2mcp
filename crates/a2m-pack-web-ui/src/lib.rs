@@ -20,8 +20,8 @@
 //! ```
 //!
 //! Not built yet, and so not declared in the pack's manifest: the
-//! `page_http` and `site_tools` modes; the `form_login`, `sso_oidc`, and
-//! `sso_saml` auth providers and the sign-in window; signs of expiry;
+//! `site_tools` mode; `page_http` writes beyond `update` by PUT; the
+//! `form_login`, `sso_oidc`, and `sso_saml` auth providers and the sign-in window; signs of expiry;
 //! frames; platform profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
 //! identity by a stamp or a search; setting a finding against existing

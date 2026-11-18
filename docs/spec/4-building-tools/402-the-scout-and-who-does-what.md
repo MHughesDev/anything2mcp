@@ -109,18 +109,20 @@ On one machine, with one user, these are light: a prompt from the operating syst
 
 ## What is left out on purpose
 
-| Left out | Because |
-| --- | --- |
-| A model inside the product, or an agent framework | Principles 3 and 4 of [section 103](../1-product/103-design-principles.md). The developer brings their own agent, of any make |
-| A catalog of definitions for real products | [Record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps |
-| Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop |
-| A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
-| Hosting | The product runs where the developer runs it |
-| Guessing | Principle 11. Unknown means stop |
+Each line carries its kind, as [SCOPE.md](../../../SCOPE.md) does: a rule (one of the ten rules in AGENTS.md, or an owner decision), a choice (a design choice in force today), or not yet. A line here describes where the product stands; it is not by itself a reason to refuse an idea ([decision 0230](../../decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)).
+
+| Left out | Because | Kind |
+| --- | --- | --- |
+| A model inside the product, or an agent framework | Principles 3 and 4 of [section 103](../1-product/103-design-principles.md). The developer brings their own agent, of any make | Rule 1, for a model in a run. Choice, for an agent framework |
+| A catalog of definitions for real products | [Record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps | Rule 9 and owner decision 0058 |
+| Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop | Rule 5 |
+| A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) | Choice, for the shell. Rules 1 and 7, for clicking by position; a read-only form is a question open for the owner ([decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md)) |
+| Hosting | The product runs where the developer runs it | Owner decision 0058 |
+| Guessing | Principle 11. Unknown means stop | Rule 7 |
 
 ## Settings
 
-Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-configuration.md)). Key names are a draft, as all are until the settings loader is written.
+Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-configuration.md)). The keys are declared in the settings schema of `a2m-actions`, where an unknown key is refused.
 
 | Key | Values | Default |
 | --- | --- | --- |

@@ -304,10 +304,45 @@ handler!(
     draft_delete,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let path = draft_path(call.required("file")?)?;
+        // One file by `file`, or several by `files` (decision 0219): the
+        // same checks for each, every one checked before any is removed,
+        // and all removed or none.
+        let named: Vec<String> = match (call.text("file"), call.input.get("files")) {
+            (Some(one), None) => vec![one.to_owned()],
+            (None, Some(Json::Array(many))) if !many.is_empty() => many
+                .iter()
+                .map(|file| file.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    codes::input(
+                        codes::SCHEMA_INVALID,
+                        "`files` holds a value that is not a path.",
+                        "Give each draft's path inside the target's folder as text.",
+                    )
+                })?,
+            _ => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    "`draft.delete` takes one draft by `file`, or several by `files`, and not both.",
+                    "Name the drafts to remove, by their paths inside the target's folder.",
+                ));
+            }
+        };
+        let mut paths = Vec::with_capacity(named.len());
+        for file in &named {
+            let path = draft_path(file)?;
+            if paths.contains(&path) {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("`{path}` is named twice."),
+                    "Name each draft once.",
+                ));
+            }
+            paths.push(path);
+        }
         let project_folder = call.project_folder()?.to_path_buf();
-        let (kernel, named, at) = (kernel.clone(), target.clone(), path.clone());
-        let (digest, problems) = off_thread(move || {
+        let (kernel, named, all) = (kernel.clone(), target.clone(), paths.clone());
+        let (removed, problems) = off_thread(move || {
             let set = kernel.providers().compiler_set();
             let folder = target_folder(&project_folder, &named)?;
             if !folder.is_dir() {
@@ -317,37 +352,54 @@ handler!(
                     "Call `target.list` to see the project's targets.",
                 ));
             }
-            if at.folder().is_none() {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
-                    "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
-                ));
-            }
-            no_link_on_the_way(&folder, &at)?;
-            let file = draft_file(&folder, &at)?;
-            match file.entry_kind()? {
-                EntryKind::File => {}
-                EntryKind::Absent => return Err(no_such_file(&named, &at)),
-                _ => {
+            let mut checked = Vec::with_capacity(all.len());
+            for at in &all {
+                if at.folder().is_none() {
                     return Err(codes::input(
                         codes::PATH_NOT_ALLOWED,
-                        format!("`{at}` is not a regular file: a link, a folder, or a device is never removed."),
-                        "Name a file of the target's folder.",
+                        format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
+                        "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
+                    ));
+                }
+                no_link_on_the_way(&folder, at)?;
+                let file = draft_file(&folder, at)?;
+                match file.entry_kind()? {
+                    EntryKind::File => {}
+                    EntryKind::Absent => return Err(no_such_file(&named, at)),
+                    _ => {
+                        return Err(codes::input(
+                            codes::PATH_NOT_ALLOWED,
+                            format!("`{at}` is not a regular file: a link, a folder, or a device is never removed."),
+                            "Name a file of the target's folder.",
+                        ));
+                    }
+                }
+                let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
+                if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
+                    && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
+                {
+                    return Err(codes::input(
+                        codes::PATH_NOT_ALLOWED,
+                        format!("`{at}` is not in a folder of the target's drafts: no file kind claims it, so it is not removed."),
+                        "Name a draft the compiler reads; `target.status` lists them.",
+                    ));
+                }
+                checked.push((at.clone(), file, bytes));
+            }
+            // Every file passed its checks: each is removed. A removal that
+            // fails puts back the ones removed before it.
+            for (done, (at, file, _)) in checked.iter().enumerate() {
+                if let Err(failure) = file.remove_file() {
+                    for (_, earlier, bytes) in &checked[..done] {
+                        let _ = earlier.write(bytes);
+                    }
+                    return Err(codes::busy(
+                        failure.code().clone(),
+                        format!("`{at}` could not be removed, so no draft was: {}", failure.message()),
+                        failure.next_step(),
                     ));
                 }
             }
-            let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
-            if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
-                && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
-            {
-                return Err(codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    format!("`{at}` is not in a folder of the target's drafts: no file kind claims it, so it is not removed."),
-                    "Name a draft the compiler reads; `target.status` lists them.",
-                ));
-            }
-            file.remove_file()?;
             let root = TargetRoot::new(folder.as_path());
             let problems = match a2m_files::load(&root, set) {
                 Ok(sources) => match a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION) {
@@ -356,18 +408,29 @@ handler!(
                 },
                 Err(problems) => problems,
             };
-            Ok((a2m_core::Digest::of(&bytes), problems))
+            let removed: Vec<(String, a2m_core::Digest)> = checked
+                .iter()
+                .map(|(at, _, bytes)| (at.as_str().to_owned(), a2m_core::Digest::of(bytes)))
+                .collect();
+            Ok((removed, problems))
         })
         .await?;
-        Ok(Output::ok(json!({
+        let mut shown = json!({
             "target": target.as_str(),
-            "file": path.as_str(),
+            "files": removed
+                .iter()
+                .map(|(file, digest)| json!({"file": file, "digest": digest.to_string()}))
+                .collect::<Vec<_>>(),
             "removed": true,
-            "digest": digest.to_string(),
             "ok": !problems.has_errors(),
             "problems": problems_json(&problems),
-        }))
-        .then(Next::new(
+        });
+        // One file named by `file` is answered as before.
+        if let ([(file, digest)], Some(_)) = (removed.as_slice(), call.text("file")) {
+            shown["file"] = json!(file);
+            shown["digest"] = json!(digest.to_string());
+        }
+        Ok(Output::ok(shown).then(Next::new(
             "test.run",
             json!({"target": target.as_str()}),
             "to run the gates on the drafts that are left",

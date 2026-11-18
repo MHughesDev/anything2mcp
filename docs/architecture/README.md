@@ -4,7 +4,7 @@ How the code of Anything2MCP is put together: which crate owns what, which inter
 
 Nothing here overrides a rule. Where this folder and a spec section differ on what the system does, the spec wins and this folder is corrected. Where they differ on how the code is arranged, this folder wins.
 
-Most of what is described here is not built yet. The Rust in this folder is a sketch of shape and ownership. The slice that builds an interface settles its final form, and records the choice when it differs from the sketch.
+Every crate described here exists, and each is built in part or in full, except `a2m-runner`, which is empty. Each crate design's build order says which steps are done. The Rust in this folder is a sketch of shape and ownership: the slice that builds an interface settles its final form, and the decision record of that slice says where the code differs from the sketch.
 
 ## The system in one picture
 
@@ -214,7 +214,7 @@ Test stands, the pip and npm packages, the pages, profiles, plug-in examples, be
 
 ## Pack designs
 
-A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). The crate designs for the four first packs are in [crates/](crates). The command, data, file, stream, and device packs have crates too, such as `a2m-pack-command`, each with a stub design that the package building the pack completes. Every pack is designed in the specification, and listed in its [index](../spec/README.md).
+A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). Every pack crate has a full design in [crates/](crates), next to the kernel's: the web pack's three crates and those of the HTTP, MCP, desktop, command, data, file, stream, and device packs. Every pack is designed in the specification, and listed in its [index](../spec/README.md).
 
 ## Using this folder
 

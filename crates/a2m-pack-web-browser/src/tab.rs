@@ -1035,7 +1035,7 @@ impl Page {
         &self,
         on: On<'_>,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         by_value: bool,
         await_promise: bool,
         deadline: Deadline,
@@ -1124,7 +1124,7 @@ impl Page {
     async fn in_world(
         &self,
         function: &str,
-        arguments: impl Fn() -> Option<Vec<CallArgument<'static>>>,
+        arguments: impl Fn() -> Option<Vec<CallArgument>>,
         by_value: bool,
         await_promise: bool,
         deadline: Deadline,
@@ -1192,7 +1192,7 @@ impl Page {
         &self,
         element: &Element,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         deadline: Deadline,
     ) -> Result<Evaluated, BrowserError> {
         if element.tab != self.serial {
@@ -1549,7 +1549,7 @@ impl Page {
         &self,
         element: &Element,
         function: &str,
-        arguments: Vec<CallArgument<'_>>,
+        arguments: Vec<CallArgument>,
         deadline: Deadline,
     ) -> Result<Checked, BrowserError> {
         let evaluated = self

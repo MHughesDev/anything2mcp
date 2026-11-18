@@ -1,6 +1,6 @@
 # The test application and the driver conformance suite
 
-Anything2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Phase 0 builds the first part of both; later phases add to them.
+Anything2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Package 0.3 built the first cases and later packages added more; [What is built](#what-is-built) lists each.
 
 ## Principles
 
@@ -103,7 +103,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 31 | The fault "changed shape" renames one field in a JSON answer | |
 | 32 | The four trap pages, each write counted by name | The WebSocket route refuses the upgrade after counting the handshake, so no socket opens |
 | 32 | The `/leaving/{how}/orders/{order}/items/{item}` pages for the interface driver ([decision 0144](../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)): the line-item form that moves itself to the other loopback name on load (`load`), after Save (`click`), or opens a window on it (`window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at a trap route that counts what arrives | |
-| 33 | The delivery-details page and its JSON routes | No automated test drives the page's script; that waits for the interface driver |
+| 33 | The delivery-details page and its JSON routes | No automated test drives the page's script: the interface driver exists, and none of its tests uses this page yet |
 | 34 | A redirect to the other loopback name on the same port | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
@@ -112,7 +112,7 @@ The fault "redirect after commit" was added after case 17 ([decision 0139](../de
 - **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.
-- The form was driven once by hand in a real browser, located by role and label: an update, a second save, a validation message, and a create all behaved. No automated test covers the page's script yet; the first one comes with the interface driver.
+- The line-item form is driven by the interface driver's tests, in `crates/a2m-pack-web-ui/tests/driver.rs`, in a browser the engine starts: a write stored once and read back, and a write the application refuses.
 - The product's crates may use the application in their tests only. `tools/docs_audit.py` refuses it, and every other crate under `targets/`, as an ordinary dependency.
 
 As of 2026-11-17 the stands for the other kinds of system are built too. Each follows the principles above, and its README lists its cases, its control interface, and its faults.

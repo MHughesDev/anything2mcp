@@ -6,12 +6,12 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
-Nothing usable yet. The project is in its foundation phase.
+Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS, and Linux; nothing has been tried against a real system, and nothing is published to a package registry.
 
 ### Added
 
 - A Cargo workspace of 29 crates: a neutral kernel (`a2m-*`), packs that each know one kind of system (`a2m-pack-*`), and the product crate.
-- The `anything2mcp` command, and `a2m` as a short name for it. Both report the version and nothing else.
+- The `anything2mcp` command, and `a2m` as a short name for it.
 - The kernel's shared vocabulary in `a2m-core`: archetypes, effect classes, hazards, failure classes, evidence levels, and the states of runs, records, sessions, and bindings, with a secret type that cannot be printed or serialized.
 - Findings in `a2m-core`: what discovery returns, with a subject that can be told apart from any other, a level that cannot exceed what its source supports, and an identifier that is a digest of its content.
 - Expressions in target files: a typed subset of CEL with no floating-point numbers. A decimal is written `decimal("1.5")` and takes `+`, `-`, `*`, and comparisons; division is `div(a, b, places, rounding)`.
@@ -23,7 +23,7 @@ Nothing usable yet. The project is in its foundation phase.
 - Sessions: one renewer for each session, and built-in sign-in providers for keys, tokens, basic and digest credentials, client certificates, and OAuth.
 - A test application with a web interface, a JSON interface, a control interface, and injectable faults.
 - The engine loop: a tool runs as a read, or as a verified write that records its intent first and reads the value back. A resume reads before it writes, so a write whose answer was lost is never sent twice.
-- The action registry: 43 of its actions are served (counted as the match arms of `handler_for` in `crates/a2m-actions/src/handlers/mod.rs`), through one dispatcher that records a policy decision for every call. Settings load in layers, with presets; an unknown key is refused, and no layer above the installation can loosen a protected setting.
+- The action registry: every action in the [action catalog](docs/reference/action-catalog.md) is defined; those with a handler are served, and the rest answer `action_not_built`. One dispatcher records a policy decision for every call. Settings load in layers, with presets; an unknown key is refused, and no layer above the installation can loosen a protected setting.
 - The REST interface: every action at one route, five resource aliases, and a generated OpenAPI 3.1 document.
 - The HTTP pack: tools over a JSON interface, with verified writes. An OpenAPI description can be imported to draft endpoint entries. HTTPS is in a build with the feature `tls`, which is on by default since decision 0181.
 - The command pack: a program can be a target. Arguments are typed, and no shell is used.
@@ -34,7 +34,7 @@ Nothing usable yet. The project is in its foundation phase.
 - The MCP pack: an upstream MCP server is reached through a mapping file, and a changed upstream tool is detected as drift.
 - The browser engine: it starts an installed Chrome, Edge, or Chromium over the debugging pipe, locates elements by role and name, and has an observing tab that cannot write.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
-- A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start. It now builds eight platform wheels and a source distribution, checks all nine together, and publishes them through one gated job. It has never run.
+- A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start. It now builds eight platform wheels and a source distribution, checks all nine together, and publishes them through one gated job. It has run on pull requests and has never published.
 - `anything2mcp serve` starts the local engine. A second engine on the same data directory is refused by name before it opens the store. A command is a thin client of a running engine, and runs the engine inside itself when none runs; `--in-process` asks for the second way and is refused while an engine runs ([decision 0131](docs/decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)).
 - `anything2mcp bridge` carries MCP over standard input and output to a running engine. While none runs it answers each request with the failure and the next step, and carries the next request as soon as one does. The Python and TypeScript reference client libraries connected through it in both protocol revisions.
 - `engine.stop`, the terminal's interrupt, and an idle engine with nothing waiting all stop `serve`.
@@ -100,8 +100,8 @@ Nothing usable yet. The project is in its foundation phase.
 - [SCOPE.md](SCOPE.md) shows what the product does and answers for, and what it does not, with each limit marked as a rule, a design choice, or not built yet ([decision 0230](docs/decisions/0230-the-scope-is-written-down-on-both-sides-and-describes-without-ruling.md)).
 - A command whose settings variables differ from those the running engine was started with is warned (`settings_differ`), by name and never by value. The engine is not restarted ([decision 0192](docs/decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md)).
 - The Python and Node clients start the engine when none runs, unless told not to ([decision 0192](docs/decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md)).
-- The release workflow has jobs that build the eight npm platform packages from the wheels, check the set of nine together, and publish them with trusted publishing, and a job that lists each target's dependencies. It has never run, and nothing is published ([decision 0186](docs/decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)).
-- The design: a specification of 59 sections in seven parts, 144 decision records, 21 research notes, and a register of 40 hypotheses.
+- The release workflow has jobs that build the eight npm platform packages from the wheels, check the set of nine together, and publish them with trusted publishing, and a job that lists each target's dependencies. They have run on pull requests and have never published; nothing is on a registry ([decision 0186](docs/decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)).
+- The design: a specification in seven parts, decision records, research notes, and a register of hypotheses ([documentation](docs/README.md)).
 - The design of configuration: eight layers, twelve scopes, presets, a group of settings for every pack, and the rules that no setting can loosen.
 - The bar: what being the best of its kind means, as twelve things that can be measured, with a scorecard.
 - The architecture: which crate defines, implements, and joins every interface, with a design for each of the 29 crates, the command, data, file, stream, and device packs among them.

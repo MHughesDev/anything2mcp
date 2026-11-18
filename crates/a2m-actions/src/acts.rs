@@ -642,6 +642,34 @@ impl Kernel {
         // The publish gates run now, as they will when the person presses:
         // a publish they would refuse is not put to a person, and the page
         // says which gates ran and which are not built (decision 0180).
+        // Whether the target file declares `production`: the compiler
+        // implies one, at each surface's own address, for a target that
+        // does not, and the page says so rather than show it as declared
+        // (decision 0219).
+        let implied_production = {
+            let (kernel, folder, named) = (self.clone(), folder.clone(), target.clone());
+            crate::handlers::build::off_thread(move || {
+                let set = kernel.providers().compiler_set();
+                let at = crate::handlers::build::target_folder(&folder, &named)?;
+                let declared = a2m_files::load(&a2m_files::TargetRoot::new(at.as_path()), set)
+                    .ok()
+                    .and_then(|sources| {
+                        sources.file("target.yaml").map(|file| {
+                            file.docs.iter().any(|doc| {
+                                doc.get("environments").is_some_and(|environments| {
+                                    environments
+                                        .entries()
+                                        .iter()
+                                        .any(|entry| entry.key.value == "production")
+                                })
+                            })
+                        })
+                    })
+                    .unwrap_or(true);
+                Ok(!declared)
+            })
+            .await?
+        };
         let gates = crate::offline::run_gates(
             self,
             folder,
@@ -703,6 +731,18 @@ impl Kernel {
         // also as lines: a page prints them once (decision 0199).
         let shown = publish_shown(self, &compiled);
         let mut details = details;
+        if implied_production
+            && compiled
+                .plan
+                .environments
+                .iter()
+                .any(|environment| environment.name.as_str() == "production")
+        {
+            details.push(
+                "The environment `production` is not declared in the target file: every target has one, and where the file does not declare it, it is implied, leading to each surface's own address. A published tool may be called there."
+                    .to_owned(),
+            );
+        }
         details.extend(gates.lines());
         Ok((input, details, shown, Vec::new()))
     }

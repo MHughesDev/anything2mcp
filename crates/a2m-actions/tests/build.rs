@@ -1103,6 +1103,15 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
         "{fields:?}"
     );
     assert!(!ask.details.is_empty(), "the review summary is shown");
+    // The target declares only `test`: the page says `production` is
+    // implied, not declared (decision 0219).
+    assert!(
+        ask.details
+            .iter()
+            .any(|line| line.starts_with("The environment `production` is not declared")),
+        "{:?}",
+        ask.details
+    );
     let nothing = world.call(&agent, "target.list", json!({})).await;
     assert_eq!(
         nothing.result.unwrap()["targets"]
@@ -1967,6 +1976,11 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     unmarked["text"] = Json::Null;
     assert!(marked_only(&unmarked, false, needle), "{report}");
     assert!(!report["text"].as_str().unwrap().contains(needle));
+    // The report says how drafts nobody asked for are removed.
+    assert!(
+        report["text"].as_str().unwrap().contains("`draft.delete`, all in one call by `files`"),
+        "{report}"
+    );
     let listed = world
         .call(&agent, "unknown.list", json!({"target": "example"}))
         .await
@@ -2422,6 +2436,44 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
         .unwrap();
     assert_eq!(removed["removed"], true, "{removed}");
     assert!(!test_file.exists());
+    // Several drafts in one call (decision 0219): every one checked before
+    // any is removed, and one that may not be removed keeps them all.
+    let spares = ["calls/spare_a.yaml", "calls/spare_b.yaml"];
+    for (at, spare) in spares.iter().enumerate() {
+        std::fs::write(
+            target_dir.join(spare),
+            format!("call: spare_{at}\npath: \"/spare/{at}\"\neffect: read\n"),
+        )
+        .unwrap();
+    }
+    let kept = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "files": [spares[0], spares[1], "target.yaml"]}),
+        )
+        .await;
+    assert_eq!(kept.error.unwrap().code, "path_not_allowed");
+    assert!(spares.iter().all(|spare| target_dir.join(spare).is_file()));
+    let twice = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "file": spares[0], "files": [spares[1]]}),
+        )
+        .await;
+    assert_eq!(twice.error.unwrap().code, "schema_invalid");
+    let both = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "files": spares}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(both["files"].as_array().unwrap().len(), 2, "{both}");
+    assert!(spares.iter().all(|spare| !target_dir.join(spare).exists()));
     // The operation has no test now: the gate names both ways on, and the
     // action failed (decision 0219).
     let tested = world

@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, `0009-actions-installation-toolsets-and-scout-stages.sql`, `0011-actions-run-sources.sql`, `0012-ledger-rules-three-five-and-seven-in-triggers.sql`, and `0013-ledger-caller-idempotency.sql`. There is no `0008` or `0010`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`, numbered in order; a number that was never used is skipped. Where this page and a file differ, the file is right. Two tables here, `run_steps` and `outbox`, have no migration and are not built. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -32,6 +32,8 @@ Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on
 Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id, state)`; on `(principal_id, created_at)`.
 
 ## run_steps
+
+Not built: no migration creates this table.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -255,6 +257,8 @@ As built by migration `0006`, which `a2m-auth` owns: the table also has `workspa
 | `retention_class`, `created_at` | enum, ts | Retention |
 
 ## outbox
+
+Not built: no migration creates this table.
 
 | Column | Type | Notes |
 | --- | --- | --- |

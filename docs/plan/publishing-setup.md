@@ -63,7 +63,7 @@ The owner makes each of these; the workflow cannot, and an agent does not hold a
 [RELEASING.md](../../RELEASING.md) has the steps. In short:
 
 - `bindings/python/` holds the pip package: the real pre-alpha software, one maturin wheel for each of eight platforms and a source distribution. It is no longer a placeholder ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)).
-- `.github/workflows/release.yml` builds the eight wheels and the source distribution, and the nine npm packages from the wheels' binaries, on every pull request that touches either package, and checks each set together (eight wheels and one source distribution; the launcher and eight platform packages). It has never run yet.
+- `.github/workflows/release.yml` builds the eight wheels and the source distribution, and the nine npm packages from the wheels' binaries, on every pull request that touches either package, and checks each set together (eight wheels and one source distribution; the launcher and eight platform packages). It has run on pull requests; it has never published.
 - It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own. It then publishes to PyPI and to npm in two separate jobs, each behind its own environment.
 - **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the name to be held as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)); a publish now sends the real pre-alpha wheels, not a placeholder.
 - After a publish, check `pip install anything2mcp` in a clean environment and mark the name as held in the table above.
@@ -74,5 +74,5 @@ A build session could do neither on 2026-11-17: its access to GitHub does not le
 
 - The registry tokens used to publish the earlier placeholders were single-purpose and should be revoked by the owner.
 - A first publish to crates.io or npm needs the owner's account once. If a token is used for it, it belongs in the repository's GitHub Actions secrets, entered by the owner. It never goes in a file, a commit, a document, or a chat with an agent.
-- The agreed secret names are `CARGO_REGISTRY_TOKEN` for crates.io and `NPM_TOKEN` for npm. A workflow reads them by those names and must fail with a clear message when one it needs is missing.
+- No workflow reads a registry token today: the release workflow publishes with trusted publishing and stores none. If a job ever needs one, the names are `CARGO_REGISTRY_TOKEN` for crates.io and `NPM_TOKEN` for npm, and the job fails with a clear message when the one it needs is missing.
 - An agent building this project must not ask for a registry token to be pasted into the conversation.

@@ -123,11 +123,13 @@ A neutral kernel does the work that is the same everywhere; a pack knows one kin
 
 ## What it does not do
 
-- **It does not improvise.** No model runs at run time, so when a page or a response changes, a tool stops with a named failure instead of finding its way around.
-- **It does not use your everyday browser profile.** The browser runs with a data directory the engine owns.
-- **It does not click by pixel or read a screenshot.** It reaches controls through the page or the accessibility tree, or not at all.
-- **It does not get past a sign-in, a licence check, or bot protection.** A block is a named stop.
-- **It does not loosen its rules by setting.** An empty settings file is the safe single-user installation; layers closer to a project can only make things stricter ([configuration](docs/spec/2-kernel/226-configuration.md)).
+Each limit carries its kind, as in [SCOPE.md](SCOPE.md): a rule (one of the ten rules in AGENTS.md, which only the owner changes), a choice (a design choice in force today), or not yet.
+
+- **It does not improvise.** No model runs at run time, so when a page or a response changes, a tool stops with a named failure instead of finding its way around. Rule 1.
+- **It does not use your everyday browser profile.** The browser runs with a data directory the engine owns. Rule 5; whether that may ever change is a question open for the owner ([decision 0211](docs/decisions/0211-whether-the-engine-may-ever-act-in-a-session-the-person-already-has.md)).
+- **It does not click by pixel or read a screenshot.** It reaches controls through the page or the accessibility tree, or not at all. Rules 1 and 7; whether a read-only form is ever wanted is a question open for the owner ([decision 0212](docs/decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md)).
+- **It does not get past a sign-in, a licence check, or bot protection.** A block is a named stop. Rule 5.
+- **It does not loosen its rules by setting.** An empty settings file is the safe single-user installation; layers closer to a project can only make things stricter ([configuration](docs/spec/2-kernel/226-configuration.md)). Choice ([decision 0066](docs/decisions/0066-configuration-in-layers-that-may-only-tighten-and-a-bar-that-is-measured.md)).
 
 ## Installing
 

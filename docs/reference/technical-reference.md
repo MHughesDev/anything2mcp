@@ -278,7 +278,7 @@ The design of [`a2m-api`](../architecture/crates/a2m-api.md) gives the interface
 
 ## Data model
 
-The same schema runs on SQLite and Postgres. Column-level definitions for the run, ledger, scheduling, and evidence tables are in the [ledger schema](ledger-schema.md).
+This is the data model as designed. The tables that exist are those the migrations in `crates/a2m-ledger/migrations/` create, which the [ledger schema](ledger-schema.md) describes column by column; a table named here and not there is not built. The migrations are SQLite's; Postgres is package 6.1 and is not built.
 
 | Table | Holds | Key columns |
 | --- | --- | --- |

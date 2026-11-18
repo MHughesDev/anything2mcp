@@ -2,7 +2,7 @@
 
 Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct.
 
-**Budgets.** These are initial targets to be confirmed by benchmark in phase 1, then enforced in CI.
+**Budgets.** These are targets. None is measured yet; package 1.7 measures them, and a budget is then confirmed or revised by decision record.
 
 | Path | Budget for Anything2MCP's own overhead |
 | --- | --- |
@@ -30,4 +30,4 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 
 **Guardrails.** Speed never overrides the first two priorities. A faster binding is used only after shadow verification. A binding in shadow holds a live read up by at most its time limit, 2 seconds unless set, once per operation in a job; past it the shadow is cancelled and counted as not compared ([decision 0207](../../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)). Rate budgets per surface still apply, so Anything2MCP is never faster than the system's owner allows.
 
-**Measured, always.** A benchmark suite runs in CI against a local test stand for every mode. A change that slows a budgeted path by more than 10% fails the build. Each run's trace records time spent in Anything2MCP against time spent waiting on the system, so slow tools are visible in production.
+**Measured, always.** A benchmark suite runs in CI against a local test stand for every mode. A change that slows a budgeted path by more than 10% is to fail the build. The comparison exists (`a2m-bench compare`); CI runs the harness and stores its results, and does not run the comparison yet, because no budgeted path is measured and no baseline is stored. Each run's trace records time spent in Anything2MCP against time spent waiting on the system, so slow tools are visible in production.

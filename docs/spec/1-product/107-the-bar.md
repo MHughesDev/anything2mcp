@@ -51,7 +51,7 @@ Each dimension names a proof that can fail. A proof is a test in the suite, a be
 ### Speed
 
 **The best:** Anything2MCP adds almost nothing to the time the system itself takes, and uses the fastest binding that has been proven correct.
-**The numbers:** the overhead budgets of [section 225](../2-kernel/225-performance.md): under 100 ms from start to ready; under 3 ms for the policy check, scheduling, and ledger write of a call; under 5 ms beyond the system for a direct request; under 50 ms for a step in an interface. An operation that gains a request binding through shadow runs at least ten times faster than through the interface, with identical results. A regression over 10% on a budgeted path fails the build.
+**The numbers:** the overhead budgets of [section 225](../2-kernel/225-performance.md): under 100 ms from start to ready; under 3 ms for the policy check, scheduling, and ledger write of a call; under 5 ms beyond the system for a direct request; under 50 ms for a step in an interface. An operation that gains a request binding through shadow runs at least ten times faster than through the interface, with identical results. A regression over 10% on a budgeted path is to fail the build; the comparison exists (`a2m-bench compare`) and CI does not run it yet, because no budgeted path is measured.
 **Measured in:** packages 0.7, 1.7, and 4.5; hypothesis H-20.
 
 ### Configurability
@@ -110,22 +110,22 @@ No existing approach combines every mode in one engine with verified writes, rea
 
 ## The scorecard
 
-One row per dimension. **State** is `designed` (a section designs it), `built` (code exists and its tests pass), or `measured` (the proof has run and its number is recorded). Today the design is ahead of the code, and almost every row is `designed`.
+One row per dimension. **State** is `designed` (a section designs it), `built` (code exists and its tests pass), or `measured` (the proof has run and its number is recorded). A row that says `built` names the part its test covers; the rest of that row is still `designed`. No row is `measured` yet.
 
 | Dimension | Target | Proof | State |
 | --- | --- | --- | --- |
-| Correctness of writes | No duplicate and nothing unverified after any interruption | Kill-and-resume on every test stand; the nine ledger rules as tests | designed |
-| Determinism | One trace signature across five runs and three operating systems | Package 1.2; H-16 | designed |
-| Honesty about evidence | No finding above `discovered`; no listed tool below its level | Packages B2, E3, E5 | built, for the finding's level alone (B2); the rest designed |
-| Safety against a steered agent | Every named attack fails, and its test fails when the defence is removed | The manipulation suite, package 9.3 | designed |
-| Secrets | A planted secret appears nowhere outside the vault | Package 2.1 | built, for a secret that cannot be printed (B1); the rest designed |
-| Breadth | Each kind supported only after its pack clears the entry bar; the second kind needs no kernel change | Milestones 4, 8, 10; H-26 | designed: the web pack and eight more |
-| Developer effort | A first verified read tool in under ten minutes; most drafted reads kept untouched | Package 5.6, H-18; H-31 | designed |
-| Speed | The overhead budgets of section 225; ten times faster through a promoted request binding | Packages 1.7, 4.5; H-20 | designed |
-| Configurability | Empty file complete; unknown key an error; no guardrail loosened by any layer | Tests over the settings schema | designed |
-| How it fails | Every named failure has a fault test; nothing unclassified | Package 9.3 | designed |
+| Correctness of writes | No duplicate and nothing unverified after any interruption | Kill-and-resume on every test stand; the nine ledger rules as tests | built, for the nine ledger rules (`crates/a2m-ledger/tests/rules.rs`, package 3.1) and for a process killed after a write was sent, on the test application (`crates/anything2mcp/tests/verified_write.rs`); kill-and-resume on every test stand is designed |
+| Determinism | One trace signature across five runs and three operating systems | Package 1.2; H-16 | built, for five runs on one machine with one signature (`crates/anything2mcp/tests/first_read.rs`); the same signature across three operating systems is designed |
+| Honesty about evidence | No finding above `discovered`; no listed tool below its level | Packages B2, E3, E5 | built, for the finding's level (B2, and the store of package E1); the rest designed |
+| Safety against a steered agent | Every named attack fails, and its test fails when the defence is removed | The manipulation suite, package 9.3 | built, for the engine's manipulation tests (`crates/a2m-engine/tests/manipulation.rs`, package 3.10); the full suite is designed |
+| Secrets | A planted secret appears nowhere outside the vault | Package 2.1 | built, for a secret that cannot be printed (B1), and for a planted secret through the REST and MCP doors, a result, and a log line; package 2.1's proof, a secret planted in a system's own answer, is not yet shown |
+| Breadth | Each kind supported only after its pack clears the entry bar; the second kind needs no kernel change | Milestones 4, 8, 10; H-26 | built in part: nine packs have crates tested against their stands; the result of H-26 (package D4) is not yet written |
+| Developer effort | A first verified read tool in under ten minutes; most drafted reads kept untouched | Package 5.6, H-18; H-31 | built, for the flow from an empty folder to a published read with no hand step (`crates/anything2mcp/tests/first_hour.rs`); the ten-minute measure with an agent of no prior knowledge has not run |
+| Speed | The overhead budgets of section 225; ten times faster through a promoted request binding | Packages 1.7, 4.5; H-20 | built, for the harness, which runs in CI (package 0.7); no budget is measured, and the 10% gate is not wired |
+| Configurability | Empty file complete; unknown key an error; no guardrail loosened by any layer | Tests over the settings schema | built, for the settings loader (package 1.4a); the rest designed |
+| How it fails | Every named failure has a fault test; nothing unclassified | Package 9.3 | built, for the engine's fault tests (`crates/a2m-engine/tests/faults.rs`, package 3.10); the rest designed |
 | Openness | No outside connection unasked; green on three operating systems | The CI connection test; package 0.1 | built, for the three operating systems (0.1); the rest designed |
-| Neutrality | Two unrelated clients pass; decisions independent of the client label | Packages 0.5, 1.5 | designed |
+| Neutrality | Two unrelated clients pass; decisions independent of the client label | Packages 0.5, 1.5 | built in part: two unrelated clients called the spike of package 0.5, and two outside client libraries called the product's `bridge` by hand, not in CI (package 1.5); the rest designed |
 
 ## How the bar is kept
 

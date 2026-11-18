@@ -1,6 +1,6 @@
 # Anything2MCP documentation
 
-Everything known about Anything2MCP: the design, the reasons, the evidence, and the plan. The design came first and the code is being built to it, so most of what is described here does not run yet; the [changelog](../CHANGELOG.md) says what does.
+Everything known about Anything2MCP: the design, the reasons, the evidence, and the plan. The design came first and the code is built to it, in small proven steps. Much of it is now built and tested against the test stands; the [roadmap](plan/roadmap.md) and each crate design say what is built, [readiness](spec/7-project/704-readiness.md) gives the state of each section in one table, and [SCOPE.md](../SCOPE.md) says what the product does not do today.
 
 The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says what the product does and answers for, and what it does not, with each limit marked as a rule, a design choice, or not built yet.
 
@@ -9,14 +9,14 @@ The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says wha
 | Folder | What it holds | Files |
 | --- | --- | --- |
 | [spec/](spec/README.md) | The specification: what the system does and why, in seven parts | 59 sections |
-| [architecture/](architecture/README.md) | How the code is put together: who defines, implements, and joins every interface, and one design per crate | 31 |
+| [architecture/](architecture/README.md) | How the code is put together: who defines, implements, and joins every interface, and one design per crate | 29 designs and 2 pages |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), a [walkthrough](reference/walkthrough.md), and the generated list of every [source URL](reference/sources.md) cited, by document | 8 |
-| [plan/](plan/roadmap.md) | The [roadmap](plan/roadmap.md) of every work package, the [working method](plan/working-method.md), the [design review lenses](plan/design-review-lenses.md), the [test application plan](plan/test-application.md), the [publishing setup](plan/publishing-setup.md), the [coverage map](plan/coverage-map.md) of every way a computer's software can be reached, the [coverage review](plan/coverage-review-2026-11-18.md) that drew it, and the [adoption plan](plan/adoption.md) for being found, tried, and trusted | 8 |
+| [plan/](plan/README.md) | The [roadmap](plan/roadmap.md) of every work package, the [working method](plan/working-method.md), the [design review lenses](plan/design-review-lenses.md), the [test application plan](plan/test-application.md), the [publishing setup](plan/publishing-setup.md), the [coverage map](plan/coverage-map.md) of every way a computer's software can be reached, the [coverage review](plan/coverage-review-2026-11-18.md) that drew it, the [adoption plan](plan/adoption.md) for being found, tried, and trusted, and the [network awareness proposal](plan/network-awareness.md); the folder's [index](plan/README.md) sorts them by kind | 9 |
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 218 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 42 open |
-| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 9 |
+| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 8 entries |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 29 |
-| [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 45 |
+| [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 44 documents and 1 image |
 | assets/ | Diagrams | 3 |
 
 ## Reading paths
@@ -39,6 +39,8 @@ The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says wha
 | Speed budgets and the ten-minute setup target | Targets, not measurements |
 | Example field names, URLs, and commands | Placeholders |
 
+Where a part is built, its tests against a test stand are firmer evidence than any row of this table.
+
 The notes on [what remains unresearched](research/11-open-research.md) and the [open questions](spec/7-project/703-open-questions.md) are part of the design, not an afterthought. Close them before the phase that depends on them.
 
 ## Keeping these documents true
@@ -49,3 +51,4 @@ The notes on [what remains unresearched](research/11-open-research.md) and the [
 - New research gets its own file in `research/`, and the brief it answers is removed from the open list.
 - A tested hypothesis gets a result file in `hypotheses/` and its status updated in the register.
 - Every session ends with a journal entry.
+- Examples, tests, and fixtures name no real application; they use the imaginary `example` target (rule 9 of AGENTS.md, [decision 0021](decisions/0021-no-real-application-is-named-in-the-repository.md)).

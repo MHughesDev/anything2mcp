@@ -28,7 +28,7 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 
 - **Do not wait.** Plan, build, open a pull request, and merge it when every check is green. Write the plan and the alternative you weighed in the pull request or the journal. Nobody has to answer them.
 - **Tell, do not ask.** Every choice between real alternatives is a decision record. A record the owner has not read says so in its status line and is in force. Every session ends with a journal entry.
-- **Machines hold the gates.** A change merges only when the build, the lints, the tests, and the documentation audit pass on Windows, macOS, and Linux. Never skip, disable, or weaken a check to get there, and never merge over a red one.
+- **Machines hold the gates.** A change merges only when every check in CI passes: the build, the lints, and the tests on Windows, macOS, and Linux, and the documentation audit and the licence check on Linux. Never skip, disable, or weaken a check to get there, and never merge over a red one.
 - **Work in parallel.** One work package, one branch, one pull request. Two agents do not change the same crate at the same time. An agent that leads others gives each a package with a stated proof, and merges what passes.
 - **Write the owner's direction in exact words of your own.** The owner gives direction in conversation, often aloud and unfinished. Do not quote it. Work out where it is heading, finish the thought, and state the decision whole and exact, in the glossary's terms: what it is, what it changes, what it leaves alone. Say what you inferred, so the owner can correct it. The words in these documents steer every agent that comes after you, so choose each one, and make each sentence true ([decision 0231](docs/decisions/0231-the-owners-direction-is-written-in-exact-words-of-the-agents-own.md)).
 - **Know whose a decision is.** A record marked as a design decision can be superseded by any agent, with a new record that gives the evidence. A record marked as an owner decision, and the ten rules below, are changed only by the owner. If you think one is wrong, write a record with status Proposed and carry on with other work.
@@ -117,8 +117,8 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 - Every crate has unit tests. Every driver and widget driver has tests against a test stand, described in [docs/plan/test-application.md](docs/plan/test-application.md).
 - A test stand imitates the part of its kind of system that makes the kind hard, and nothing else. Make it as real as is cheap.
 - Tests ask the test stand what it stored. A test never proves a write using Anything2MCP's own read path alone.
-- CI runs on Windows, macOS, and Linux.
-- The benchmark suite in `bench/` runs in CI. A regression over 10% on a budgeted path fails the build. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
+- CI runs the build, the lints, and the tests on Windows, macOS, and Linux.
+- The benchmark suite in `bench/` runs in CI and stores its results. A regression over 10% on a budgeted path is to fail the build: the comparison is built (`a2m-bench compare`) and CI does not run it yet, because no budgeted path is measured. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
 - The nine ledger rules in spec section 208 are each a test; a change that breaks one cannot merge.
 - Fault-injection tests are part of the definition of done for anything that writes: expired session, lost connection after a write was sent, bad input, stale approval, blocked surface.
 - Fixtures must be synthetic or scrubbed. Never commit recorded business data.
@@ -144,7 +144,7 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, the walkthrough, and the generated list of every source URL cited |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
-| `docs/plan/` | The roadmap, the working method, the design review lenses, the test application plan, publishing setup |
+| `docs/plan/` | The roadmap; plans for work outside the build; the working method and the design review lenses; the test application plan and publishing setup; review results. Its README sorts them by kind |
 | `docs/archive/` | The first design's consolidated sections and its plans, kept as history, with the key from old section numbers to new |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
 | `docs/journal/` | One entry per session; read the newest first |

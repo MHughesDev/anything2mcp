@@ -493,19 +493,15 @@ command!(HandleDialog<'_>, "Page.handleJavaScriptDialog" => Nothing);
 pub(crate) struct RuntimeEnable {}
 command!(RuntimeEnable, "Runtime.enable" => Nothing);
 
-/// One argument of a call: a plain value, or an object the page holds.
+/// One argument of a call: a plain value. An element is passed as `this`,
+/// through `object_id`, not as an argument.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum CallArgument<'a> {
+pub(crate) enum CallArgument {
     Value(Value),
-    #[allow(
-        dead_code,
-        reason = "an element is passed as `this`; kept for a second element"
-    )]
-    ObjectId(&'a str),
 }
 
-impl CallArgument<'static> {
+impl CallArgument {
     /// Any plain data, by value. `None` when it cannot be written as JSON.
     pub(crate) fn of<T: Serialize>(data: &T) -> Option<Self> {
         serde_json::to_value(data).ok().map(Self::Value)
@@ -528,7 +524,7 @@ pub(crate) struct CallFunctionOn<'a> {
     pub object_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_context_id: Option<i64>,
-    pub arguments: Vec<CallArgument<'a>>,
+    pub arguments: Vec<CallArgument>,
     pub return_by_value: bool,
     pub await_promise: bool,
 }
