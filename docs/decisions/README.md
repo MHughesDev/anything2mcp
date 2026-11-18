@@ -275,3 +275,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0282 | [Whether the command pack may start programs that run what their arguments name](0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md) | Proposed (design decision) |
 | 0283 | [Watches reach an agent through the registry, and their person confirms each on the page](0283-watches-reach-an-agent-through-the-registry-and-their-person-confirms-each-on-the-page.md) | Accepted (design decision) |
 | 0264 | [The publish page renders the typed review, sign-ins first, from one keeper call](0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md) | Accepted (design decision) |
+| 0284 | [The command pack's scout reads a fish completion file and a manual page it is handed](0284-the-command-packs-scout-reads-a-fish-completion-file-and-a-manual-page-it-is-handed.md) | Accepted (design decision) |
