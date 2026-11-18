@@ -875,7 +875,27 @@ async fn the_kernel_says_how_much_work_it_has_in_hand() {
     }
     let done = world.call("run.get", json!({"run_id": run})).await;
     assert_eq!(status(&done), "completed", "{done:?}");
-    assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
+    // The engine's write ends the run; the runner records the job's end in
+    // a transaction of its own after it, and then says that a run changed
+    // (decision 0132). Until then the one job is still in a runner's hands
+    // and is counted, and nothing else is; once it is recorded, nothing is.
+    let mut changed = world.kernel.run_watch();
+    let job_ended = async {
+        loop {
+            // Marked seen before the read, so that the runner's notice
+            // given between the read and the wait still wakes this.
+            changed.borrow_and_update();
+            let in_hand = world.kernel.runs_in_hand().await.unwrap();
+            if in_hand == nothing {
+                break;
+            }
+            assert_eq!((in_hand.working, in_hand.waiting_for_person), (1, 0));
+            changed.changed().await.unwrap();
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), job_ended)
+        .await
+        .unwrap();
     world.kernel.close(CloseReason::Asked).await;
 }
 
