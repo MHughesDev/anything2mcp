@@ -148,7 +148,7 @@ mod os {
         }
         // No group is the administrator's here, the administrators' group
         // of macOS included: the person's own account is usually in it.
-        if mode & GROUP_WRITE != 0 && ![80, rustix::process::getegid().as_raw()].contains(&metadata.gid()) {
+        if mode & GROUP_WRITE != 0 {
             return Some(
                 "may be changed by the members of a group, and the person's own account may be one",
             );
@@ -276,8 +276,7 @@ mod os {
                 why,
             };
         }
-        let _ = beyond_the_mode;
-        InstallationKeeper::Administrator
+        beyond_the_mode(real)
     }
 
     /// What the access lists of the file and of every folder on the way

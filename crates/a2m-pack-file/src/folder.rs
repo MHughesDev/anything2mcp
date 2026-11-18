@@ -845,6 +845,163 @@ fn not_empty() -> StepFailure {
 mod tests {
     use super::*;
 
+    /// A root with the surface's folder `inbox` in it, and a folder outside
+    /// the root, removed when dropped.
+    #[cfg(unix)]
+    struct Swap {
+        root: PathBuf,
+        outside: PathBuf,
+        roots: a2m_provider::Roots,
+    }
+
+    #[cfg(unix)]
+    impl Swap {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "a2m-pack-file-swap-{tag}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&base);
+            let root = base.join("root");
+            let outside = base.join("outside");
+            fs::create_dir_all(root.join("inbox")).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            let mut roots = a2m_provider::Roots::none();
+            roots
+                .add(
+                    a2m_provider::RootName::new("files").unwrap(),
+                    &root,
+                    a2m_provider::Access::Write,
+                )
+                .unwrap();
+            Self {
+                root,
+                outside,
+                roots,
+            }
+        }
+
+        fn folder(&self) -> Folder {
+            let name = a2m_provider::RootName::new("files").unwrap();
+            let root = self
+                .roots
+                .folder(&name, a2m_provider::Access::Write)
+                .unwrap();
+            Folder::new(
+                self.roots
+                    .check(&name, "inbox", a2m_provider::Access::Write)
+                    .unwrap(),
+                &root,
+            )
+        }
+
+        /// A moment long past, given to the folder outside the root: a name
+        /// made or removed there, even for a moment, replaces it.
+        fn mark_outside(&self) -> std::time::SystemTime {
+            let past = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+            fs::File::open(&self.outside)
+                .unwrap()
+                .set_modified(past)
+                .unwrap();
+            past
+        }
+
+        /// What another program does between the pack's look and its act:
+        /// the folder moved away inside the root, and a link to the folder
+        /// outside the root put at its name.
+        fn swap(&self) {
+            fs::rename(self.root.join("inbox"), self.root.join("inbox-moved")).unwrap();
+            std::os::unix::fs::symlink(&self.outside, self.root.join("inbox")).unwrap();
+        }
+
+        /// The names outside the root, and whether its folder was changed
+        /// at all since it was marked.
+        fn outside(&self, marked: std::time::SystemTime) -> (Vec<String>, bool) {
+            let mut names: Vec<String> = fs::read_dir(&self.outside)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            let touched = fs::metadata(&self.outside).unwrap().modified().unwrap() != marked;
+            (names, touched)
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Swap {
+        fn drop(&mut self) {
+            if let Some(base) = self.root.parent() {
+                let _ = fs::remove_dir_all(base);
+            }
+        }
+    }
+
+    // Each of the three is a test-only pause point between the pack's last
+    // look and its act: no other way puts a change in that moment every time.
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_the_look_gets_no_created_file_outside_the_root() {
+        let swap = Swap::new("create");
+        let marked = swap.mark_outside();
+        let done = create_with(&swap.folder(), "new.txt", b"new bytes\n", 100, || swap.swap());
+        assert_eq!(swap.outside(marked), (Vec::new(), false));
+        let failure = done.unwrap_err();
+        assert_eq!(failure.sent, a2m_provider::Sent::Unknown, "the act was made, in the held folder");
+        let moved = swap.root.join("inbox-moved");
+        assert_eq!(fs::read(moved.join("new.txt")).unwrap(), b"new bytes\n");
+        assert_eq!(fs::read_dir(&moved).unwrap().count(), 1, "no temporary file is left");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_the_look_gets_no_renamed_name_outside_the_root() {
+        let swap = Swap::new("rename");
+        fs::write(swap.root.join("inbox").join("a.txt"), b"inside\n").unwrap();
+        fs::write(swap.outside.join("a.txt"), b"outside\n").unwrap();
+        let marked = swap.mark_outside();
+        let folder = swap.folder();
+        let read = identity(&folder, "a.txt", 0).unwrap().unwrap();
+        let done = rename_with(&folder, "a.txt", "b.txt", read, 100, || swap.swap());
+        assert_eq!(swap.outside(marked), (vec!["a.txt".to_owned()], false));
+        assert!(done.is_err());
+        assert_eq!(fs::read(swap.outside.join("a.txt")).unwrap(), b"outside\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_the_look_gets_no_folder_removed_outside_the_root() {
+        let swap = Swap::new("delete");
+        fs::create_dir_all(swap.root.join("inbox").join("old")).unwrap();
+        fs::create_dir_all(swap.outside.join("old")).unwrap();
+        let marked = swap.mark_outside();
+        let done = delete_with(&swap.folder(), "old", Kind::Folder, None, || swap.swap());
+        assert_eq!(swap.outside(marked), (vec!["old".to_owned()], false));
+        assert!(done.is_err());
+    }
+
+    /// A file put at the entry's name after the look is never the one
+    /// removed: the delete is stale and the file stays.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_put_at_the_name_after_the_look_is_not_the_one_deleted() {
+        let swap = Swap::new("replaced");
+        let inbox = swap.root.join("inbox");
+        fs::write(inbox.join("a.txt"), b"read\n").unwrap();
+        let folder = swap.folder();
+        let read = identity(&folder, "a.txt", 0).unwrap().unwrap();
+        let done = delete_with(&folder, "a.txt", Kind::File, Some(read), || {
+            fs::remove_file(inbox.join("a.txt")).unwrap();
+            fs::write(inbox.join("a.txt"), b"another\n").unwrap();
+        });
+        assert_eq!(
+            done.unwrap_err().failure.code(),
+            &codes::CHANGED_SINCE_PREVIEW
+        );
+        assert_eq!(fs::read(inbox.join("a.txt")).unwrap(), b"another\n");
+        assert_eq!(fs::read_dir(&inbox).unwrap().count(), 1);
+    }
+
     #[test]
     fn a_moment_is_written_in_utc_to_the_second() {
         let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);

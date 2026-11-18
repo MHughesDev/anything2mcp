@@ -893,7 +893,7 @@ impl Redact for Knows {
 #[tokio::test]
 async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_name() {
     let service = Service::start("authorization", "none").await;
-    let scene = Scene::new("handed", &service.address);
+    let scene = Scene::new("secured", &service.address);
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
         archetype: Archetype::Request,
