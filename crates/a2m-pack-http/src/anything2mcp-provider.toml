@@ -121,6 +121,10 @@ class = "unknown_variant"
 code = "response_too_large"
 
 [[failure_codes]]
+class = "unknown_variant"
+code = "document_type_refused"
+
+[[failure_codes]]
 class = "transient"
 code = "upstream_unavailable"
 

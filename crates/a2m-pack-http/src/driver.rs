@@ -25,6 +25,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
+use crate::forms::{Form, Unread};
 use crate::json::Json;
 use crate::link;
 use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
@@ -1092,9 +1093,39 @@ fn validate(
                 "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
             ))
         };
+        // The answer's content type is held to its declared form: a page
+        // answered in place of the data stops here. JSON with no content
+        // type declared is not checked, as before (decision 0217).
+        template
+            .answer
+            .check_content_type(answer.header("content-type"))
+            .map_err(drift)?;
         // A body that is not JSON is never read as nothing, whatever the
         // shape: a page answered in place of the data stops here.
-        let json = if answer.body.is_empty() {
+        let json = if template.answer.form != Form::Json {
+            template
+                .answer
+                .read(&answer.body, redact)
+                .map_err(|unread| match unread {
+                    Unread::Shape(why) => drift(why),
+                    Unread::DocumentType => answered(failure_of(
+                        FailureClass::UnknownVariant,
+                        codes::DOCUMENT_TYPE_REFUSED,
+                        format!(
+                            "The answer of the endpoint `{name}` declares a document type, which is never read; no value was taken from it."
+                        ),
+                        "Ask the system's owner for the answer without a document type, or read it another way.",
+                    )),
+                    Unread::TooLarge(why) => answered(failure_of(
+                        FailureClass::UnknownVariant,
+                        codes::RESPONSE_TOO_LARGE,
+                        format!(
+                            "The answer of the endpoint `{name}` is past a bound of what is read: {why}."
+                        ),
+                        "Raise `max_depth` or `max_elements` under the endpoint's `answer` if the answer is meant to be that large.",
+                    )),
+                })?
+        } else if answer.body.is_empty() {
             Json::Null
         } else {
             Json::parse(&answer.body).map_err(|error| {
@@ -1203,6 +1234,7 @@ fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
             (Take::Decimal, Json::Text(text)) => {
                 a2m_core::Decimal::parse(text).ok().map(Value::Decimal)
             }
+            (Take::Date, Json::Text(text)) => text.parse().ok().map(Value::Date),
             _ => None,
         };
     };

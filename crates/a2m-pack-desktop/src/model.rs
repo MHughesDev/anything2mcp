@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// The version of the shapes below. A plan written in another is refused.
-pub(crate) const PAYLOAD_FORMAT: u16 = 1;
+/// Format 2 added a screen's actions and variants, and the payloads of
+/// `set` and `invoke` (decision 0218).
+pub(crate) const PAYLOAD_FORMAT: u16 = 2;
 
 /// Every screen of the target's desktop surfaces, by name.
 pub(crate) type ScreenSection = BTreeMap<String, Screen>;
@@ -26,6 +28,31 @@ pub(crate) struct Screen {
     pub fields: BTreeMap<String, Field>,
     /// Its table of rows, when it has one.
     pub rows: Option<Rows>,
+    /// Its actions, by name.
+    pub actions: BTreeMap<String, Action>,
+    /// The states it may show instead of an action's confirmation, by
+    /// name. Each stops the run as the application's refusal.
+    pub variants: BTreeMap<String, Variant>,
+}
+
+/// One action of a screen: the element it is done on, the name of the
+/// action the element offers, what the window shows once it is done, and
+/// whether it saves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Action {
+    pub locate: Vec<Locator>,
+    /// The name of the element's action, as its interface lists it.
+    pub perform: String,
+    pub confirm: Cond,
+    pub commits: bool,
+}
+
+/// A state a screen may show after an action instead of its confirmation:
+/// the application's refusal. What the element its condition names shows
+/// is carried as the application's own words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Variant {
+    pub when: Cond,
 }
 
 /// How a screen's window is told from the application's other windows: by
@@ -94,6 +121,19 @@ pub(crate) struct ReadStep {
     pub fields: Vec<ReadItem>,
     /// Outputs read from the table's columns, each a list.
     pub columns: Vec<ReadItem>,
+}
+
+/// The payload of a `set` step: the field of its screen it sets. The value
+/// is the step's argument [`VALUE_ARG`](crate::lower::VALUE_ARG).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct SetStep {
+    pub field: String,
+}
+
+/// The payload of an `invoke` step: the action of its screen it does.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct InvokeStep {
+    pub action: String,
 }
 
 /// The fields of a surface of the kind `desktop` beside its program, which

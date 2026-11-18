@@ -9,6 +9,7 @@ use a2m_files::{
     JsonSchema, KindContext, Level, LintRule, Located, Place, ResolvedView, Stage,
 };
 
+use crate::forms;
 use crate::shape::{Kind, Shape};
 use crate::template::{
     Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
@@ -96,6 +97,28 @@ fn answer_schema() -> JsonSchema {
         .optional("current", JsonSchema::text())
 }
 
+/// The schema of an endpoint's `answer`. What each form takes, and the
+/// fields of an XML or a text answer, are checked as the entry compiles
+/// (decision 0217).
+fn answer_form_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("form", JsonSchema::words(forms::FORMS))
+        .optional("content_type", JsonSchema::non_empty_list(JsonSchema::text()))
+        .optional("charset", JsonSchema::words(forms::CHARSETS))
+        .optional("pattern", JsonSchema::text())
+        .optional("namespaces", JsonSchema::map_of(JsonSchema::text()))
+        .optional("fields", JsonSchema::any())
+        .optional("max_depth", JsonSchema::int_between(1, 1024))
+        .optional("max_elements", JsonSchema::int_between(1, 10_000_000))
+}
+
+/// Whether an entry declares an answer in a form other than JSON.
+pub(crate) fn answers_otherwise(doc: &Located<Doc>) -> bool {
+    doc.get("answer")
+        .and_then(|answer| answer.text("form"))
+        .is_some_and(|form| form != "json")
+}
+
 /// The schema of one endpoint entry.
 pub(crate) fn endpoint_schema() -> JsonSchema {
     let status = || JsonSchema::int_between(100, 599);
@@ -110,6 +133,7 @@ pub(crate) fn endpoint_schema() -> JsonSchema {
         .optional("anti_forgery", JsonSchema::any())
         .optional("request_schema", JsonSchema::any())
         .optional("response_schema", JsonSchema::any())
+        .optional("answer", answer_form_schema())
         .required("effect", JsonSchema::words(&["read", "write"]))
         .optional(
             "responses",
@@ -267,6 +291,7 @@ pub(crate) fn template_of(
         }
     }
 
+    let answer = forms::answer_of(doc, problems).unwrap_or_default();
     let mut shape_of = |key: &str| -> Option<Shape> {
         let written = doc.get(key)?;
         match Shape::from_doc(written) {
@@ -286,8 +311,13 @@ pub(crate) fn template_of(
     let request = shape_of("request_schema");
     // An entry without a response shape is refused by the lint rule
     // `http.no_response_schema`; it compiles to a shape that accepts nothing
-    // but an absent body, so that nothing unchecked can pass.
-    let response = shape_of("response_schema").unwrap_or_else(|| Shape::of(Kind::Null));
+    // but an absent body, so that nothing unchecked can pass. An answer in
+    // another form is the record of the fields it declares.
+    let response = if answers_otherwise(doc) {
+        forms::record_shape(&answer.form)
+    } else {
+        shape_of("response_schema").unwrap_or_else(|| Shape::of(Kind::Null))
+    };
     let mut refuse = |rule: &'static str, at: &Place, message: String, fix: &str| {
         problems.push(problem(rule, Stage::Lower, at, message, fix));
     };
@@ -444,6 +474,7 @@ pub(crate) fn template_of(
         writes: doc.text("effect") == Some("write"),
         request,
         response,
+        answer,
         answers,
         idempotency_header,
         version,
@@ -668,7 +699,7 @@ impl LintRule for NoResponseSchema {
 
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
         entries(view)
-            .filter(|doc| doc.get("response_schema").is_none())
+            .filter(|doc| doc.get("response_schema").is_none() && !answers_otherwise(doc))
             .map(|doc| {
                 problem(
                     "no_response_schema",

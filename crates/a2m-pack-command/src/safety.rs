@@ -450,7 +450,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_folder_or_a_file_a_group_can_write_is_refused_whatever_the_group() {
+    fn a_folder_or_a_file_a_group_can_write_is_refused_unless_the_group_counts() {
         let place = Place::new("group");
         let folder = place.folder("grouped", 0o775);
         let program = folder.join("example-tool");
@@ -461,5 +461,69 @@ mod tests {
         assert_eq!(check(&program), Ok(()));
         Place::mode(&program, 0o775);
         assert_eq!(check(&program), Err(Refused::Writable(program.clone())));
+    }
+
+    /// A group-writable folder with a program in it, and the folder's group.
+    #[cfg(unix)]
+    fn grouped(place: &Place) -> (std::path::PathBuf, std::path::PathBuf, u32) {
+        use std::os::unix::fs::MetadataExt as _;
+        let folder = place.folder("grouped", 0o775);
+        let program = folder.join("example-tool");
+        std::fs::copy(place.0.join("real").join("example-tool"), &program).unwrap();
+        Place::mode(&program, 0o775);
+        let group = std::fs::metadata(&folder).unwrap().gid();
+        (folder, program, group)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_the_person_names_counts_as_the_administrators_and_no_other_does() {
+        let place = Place::new("named");
+        let (folder, program, group) = grouped(&place);
+        let named =
+            |groups: Vec<u32>| super::check(&program, &Trust::with_groups(groups), Role::Program);
+        // Named: the folder and the file that group may write are started.
+        assert_eq!(named(vec![group]), Ok(()));
+        // Not named, or another group named: refused, as before.
+        assert_eq!(named(vec![]), Err(Refused::Writable(folder.clone())));
+        assert_eq!(
+            named(vec![group.wrapping_add(1)]),
+            Err(Refused::Writable(folder.clone()))
+        );
+        // A group's name never stands for it: only the system's own list
+        // and the setting's numbers do. Others' write is refused whatever
+        // group is named.
+        Place::mode(&folder, 0o777);
+        assert_eq!(named(vec![group]), Err(Refused::Writable(folder.clone())));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_no_group_counts_by_default() {
+        let place = Place::new("linux");
+        let (folder, program, _) = grouped(&place);
+        assert_eq!(check(&program), Err(Refused::Writable(folder)));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn on_macos_the_administrators_group_counts_and_staff_does_not() {
+        let place = Place::new("macos");
+        let (folder, program, _) = grouped(&place);
+        // Giving a file to a group needs no privilege when the test's user
+        // is in it; the runner's user is an administrator, but a machine
+        // where it is not cannot prove this.
+        for (group, path) in [(80, &folder), (80, &program)] {
+            if let Err(error) = std::os::unix::fs::chown(path, None, Some(group)) {
+                println!("skipped: this user cannot give a file to the group {group}: {error}");
+                return;
+            }
+        }
+        assert_eq!(check(&program), Ok(()));
+        if let Err(error) = std::os::unix::fs::chown(&folder, None, Some(20)) {
+            println!("skipped: this user cannot give a file to the group 20: {error}");
+            return;
+        }
+        assert_eq!(check(&program), Err(Refused::Writable(folder)));
     }
 }

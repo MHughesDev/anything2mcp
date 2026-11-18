@@ -13,6 +13,7 @@ use a2m_core::{Failure, FailureClass, Value, Values};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
+use crate::forms::AnswerSpec;
 use crate::json::{Json, is_plain_number};
 use crate::shape::{Kind, Shape};
 
@@ -192,7 +193,13 @@ pub(crate) struct EndpointTemplate {
     /// Whether the endpoint changes the system.
     pub writes: bool,
     pub request: Option<Shape>,
+    /// The shape the answer's record must fit: the body itself for JSON,
+    /// the declared fields for any other form.
     pub response: Shape,
+    /// The form of the answer. Left out of the payload for JSON with
+    /// nothing declared, so such an endpoint compiles as it did before.
+    #[serde(default, skip_serializing_if = "AnswerSpec::is_plain_json")]
+    pub answer: AnswerSpec,
     pub answers: Answers,
     /// The header that carries the record's idempotency token.
     pub idempotency_header: Option<String>,
@@ -271,6 +278,8 @@ pub(crate) enum Take {
     Int,
     Decimal,
     Bool,
+    /// A calendar day, written `YYYY-MM-DD`.
+    Date,
 }
 
 /// One value an `extract` step takes out of an answer.
@@ -629,6 +638,7 @@ mod tests {
             writes: method.has_body(),
             request: None,
             response: Shape::of(Kind::Any),
+            answer: crate::forms::AnswerSpec::default(),
             answers: Answers::default(),
             idempotency_header: Some("idempotency-key".to_owned()),
             version: VersionRule::default(),

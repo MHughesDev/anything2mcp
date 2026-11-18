@@ -9,13 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_core::{Digest, FieldBase, FileKindName, Hazard, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
-    KindContext, Located, Place, Stage, expr_text,
+    KindContext, Located, Place, RelPath, Stage, expr_text,
 };
 
 use crate::codes::{self, FILE_KIND, FOLDER, SURFACE_KIND, lint};
 use crate::model::{
     Arg, Command, Effect, ExitMeaning, JsonField, JsonKind, Limits, Matching, Output, Param,
-    ParamKind, Program, SECTION_FORMAT, Section, VersionCheck,
+    ParamKind, Program, SECTION_FORMAT, Script, Section, VersionCheck,
 };
 use crate::pattern;
 
@@ -282,7 +282,11 @@ pub(crate) fn schema() -> JsonSchema {
         .optional("stdin", JsonSchema::words(&["none"]))
         .optional("limits", limits_schema())
         .optional("prompts", JsonSchema::list(JsonSchema::text()))
-        .optional("exits", exits_schema());
+        .optional("exits", exits_schema())
+        .optional(
+            "interpreter",
+            JsonSchema::object().required("args", JsonSchema::list(JsonSchema::scalar())),
+        );
     let param = JsonSchema::object()
         .required("type", JsonSchema::field_type())
         .optional("required", JsonSchema::bool())
@@ -342,7 +346,13 @@ pub(crate) fn schema() -> JsonSchema {
             "reaches",
             JsonSchema::object().optional("network", JsonSchema::list(JsonSchema::text())),
         )
-        .optional("limits", limits_schema());
+        .optional("limits", limits_schema())
+        .optional(
+            "script",
+            JsonSchema::object()
+                .required("path", JsonSchema::text())
+                .required("digest", JsonSchema::text()),
+        );
     JsonSchema::object()
         .optional("surface", JsonSchema::surface())
         .required("program", program)
@@ -841,6 +851,108 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         limits: limits(doc.get("limits"), Limits::default(), found),
         prompts,
         exits: exits(doc.get("exits"), &BTreeMap::new(), found),
+        interpreter: interpreter(doc, found),
+    }
+}
+
+/// The fixed arguments of a program declared as the interpreter of fixed
+/// pairs. They come before the script's path, and none of them may be a
+/// flag that hands what follows it to something that runs it: the script's
+/// path follows, and the typed values after it.
+fn interpreter(doc: &Located<Doc>, found: &mut Found) -> Option<Vec<String>> {
+    let block = doc.get("interpreter")?;
+    let args = block.get("args");
+    let fixed = texts(args);
+    if fixed.iter().any(|text| text.contains('\0')) {
+        found.bad(
+            "arg_malformed",
+            &block.at,
+            "An element of an argument list holds a NUL character.".to_owned(),
+            "Remove the character: no program can be given it.",
+        );
+    }
+    if let Some(flag) = fixed
+        .iter()
+        .find(|text| text.starts_with(['-', '/']) && runs_its_value(text))
+    {
+        found.bad(
+            "code_flag",
+            &block.at,
+            format!(
+                "The interpreter is given `{}`, which hands what follows it to something that runs it.",
+                codes::shown(flag)
+            ),
+            "Give the interpreter the arguments that make it read a script file, such as `-File` or none at all.",
+        );
+    }
+    if !doc.get("help").map(Located::items).unwrap_or_default().is_empty() {
+        found.bad(
+            "script_malformed",
+            &block.at,
+            "An interpreter has no help forms: discovery never runs one.".to_owned(),
+            "Remove `help` from a file that declares an `interpreter`.",
+        );
+    }
+    Some(fixed)
+}
+
+/// The script a command of an interpreter's file names: a path inside the
+/// target's folder and the digest of its bytes.
+fn script(name: &str, doc: &Located<Doc>, shared: &Program, found: &mut Found) -> Option<Script> {
+    let block = doc.get("script");
+    match (block, shared.interpreter.is_some()) {
+        (None, false) => None,
+        (Some(block), false) => {
+            found.bad(
+                "script_malformed",
+                &block.at,
+                format!("The command `{name}` names a script, and its file declares no `interpreter`."),
+                "Declare the interpreter under `program.interpreter`, with the arguments that make it read a script file.",
+            );
+            None
+        }
+        (None, true) => {
+            found.bad(
+                "script_malformed",
+                &doc.at,
+                format!(
+                    "The command `{name}` names no script, and its program is an interpreter: an interpreter is given a script the target keeps, or nothing."
+                ),
+                "Add `script: {path: ..., digest: ...}` to the command.",
+            );
+            None
+        }
+        (Some(block), true) => {
+            let path = block
+                .text("path")
+                .filter(|path| RelPath::new(path).is_ok())
+                .map(str::to_owned);
+            if path.is_none() {
+                found.bad(
+                    "script_malformed",
+                    &block.at,
+                    format!("The script of the command `{name}` is not named by a path inside the target's folder."),
+                    "Name the script by its path inside the target's folder, names joined by `/`, with no `..`, no drive, and no leading `/`.",
+                );
+            }
+            let digest = block
+                .text("digest")
+                .and_then(|text| text.strip_prefix("sha256:"))
+                .and_then(|hex| hex.parse::<Digest>().ok())
+                .map(|digest| digest.to_string());
+            if digest.is_none() {
+                found.bad(
+                    "digest_invalid",
+                    &block.at,
+                    "A digest is `sha256:` and 64 lowercase hexadecimal characters.".to_owned(),
+                    "Write the SHA-256 of the script's file, as `sha256:` and its 64 characters.",
+                );
+            }
+            Some(Script {
+                path: path?,
+                digest: digest?,
+            })
+        }
     }
 }
 
@@ -1315,10 +1427,12 @@ fn command(
         }
     };
     let limits = limits(doc.get("limits"), shared.limits, found);
+    let script = script(name, doc, shared, found);
     if found.problems.len() != before {
         return None;
     }
     Some(Command {
+        script,
         program: index,
         effect,
         params,

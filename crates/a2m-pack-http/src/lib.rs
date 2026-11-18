@@ -32,12 +32,14 @@ mod discover;
 mod draft;
 mod driver;
 mod endpoints;
+mod forms;
 mod json;
 mod link;
 mod lower;
 mod openapi;
 mod shape;
 mod template;
+mod xml;
 
 use std::sync::Arc;
 

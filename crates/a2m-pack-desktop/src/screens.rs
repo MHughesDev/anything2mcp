@@ -3,8 +3,11 @@
 //!
 //! Locators live here and nowhere else (rule 8). A desktop locator is a
 //! role and an accessible name, both exact: no text near it, no selector,
-//! no position on the screen. A screen declares no action in this version
-//! of the pack, so a screen file never describes a write.
+//! no position on the screen. A screen may declare actions, each with the
+//! name of the element's action it does, the confirmation the window shows
+//! once it is done, and whether it saves; and variants, the states the
+//! window may show instead, each the application's refusal (decision
+//! 0218). A screen file with an action that saves describes a write.
 
 use std::collections::BTreeMap;
 
@@ -16,7 +19,8 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, WindowMatch,
+    Action, Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, Variant,
+    WindowMatch,
 };
 use crate::roles;
 
@@ -110,6 +114,39 @@ pub(crate) fn screen_schema() -> JsonSchema {
         .required("ready", condition_schema(2))
         .optional("fields", JsonSchema::map_of(field))
         .optional("rows", rows)
+        .optional("actions", JsonSchema::map_of(action_schema()))
+        .optional(
+            "variants",
+            JsonSchema::map_of(
+                JsonSchema::object()
+                    .required("when", condition_schema(1))
+                    .required("handling", JsonSchema::words(&["stop"])),
+            ),
+        )
+}
+
+/// One action: where it is done, which of the element's actions is done
+/// (`click` unless stated), what the window shows once it is done, and
+/// whether it saves.
+fn action_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("locate", locate_schema())
+        .optional("perform", JsonSchema::name())
+        .required("confirm", condition_schema(1))
+        .optional("commits", JsonSchema::bool())
+}
+
+/// The name of the element's action an action does when it states none.
+pub(crate) const DEFAULT_PERFORM: &str = "click";
+
+/// Whether a screen document declares an action that saves.
+fn declares_commit(doc: &Located<Doc>) -> bool {
+    doc.get("actions").is_some_and(|actions| {
+        actions
+            .entries()
+            .iter()
+            .any(|entry| entry.value.get("commits").and_then(Located::as_bool) == Some(true))
+    })
 }
 
 /// Reads documents into the model, collecting what is wrong.
@@ -282,6 +319,29 @@ impl Reader {
             Some(rows) => self.rows(rows),
             None => None,
         };
+        let mut actions = BTreeMap::new();
+        for entry in doc.get("actions").map(Located::entries).unwrap_or_default() {
+            let value = &entry.value;
+            let locate = self.locators(value);
+            let confirm = value.get("confirm").and_then(|cond| self.condition(cond));
+            if let (Some(locate), Some(confirm)) = (locate, confirm) {
+                actions.insert(
+                    entry.key.value.clone(),
+                    Action {
+                        locate,
+                        perform: value.text("perform").unwrap_or(DEFAULT_PERFORM).to_owned(),
+                        confirm,
+                        commits: value.get("commits").and_then(Located::as_bool) == Some(true),
+                    },
+                );
+            }
+        }
+        let mut variants = BTreeMap::new();
+        for entry in doc.get("variants").map(Located::entries).unwrap_or_default() {
+            if let Some(when) = entry.value.get("when").and_then(|cond| self.condition(cond)) {
+                variants.insert(entry.key.value.clone(), Variant { when });
+            }
+        }
         if self.problems.len() != before {
             return None;
         }
@@ -291,6 +351,8 @@ impl Reader {
             ready: ready?,
             fields,
             rows,
+            actions,
+            variants,
         })
     }
 }
@@ -327,10 +389,9 @@ impl FileKind for ScreenKind {
         &self.schema
     }
 
-    /// A desktop screen declares no action in this version: it never
-    /// describes a write.
-    fn writes(&self, _doc: &Located<Doc>) -> bool {
-        false
+    /// A screen with an action that saves describes a write.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        declares_commit(doc)
     }
 
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
@@ -409,6 +470,13 @@ mod tests {
             "unknown_screen",
             "unknown_field",
             "writes_not_built",
+            "action_missing",
+            "unknown_action",
+            "read_acts",
+            "value_type",
+            "password_set",
+            "unreadable_write",
+            "key_unshown",
         ] {
             assert_eq!(code(rule).as_str(), format!("desktop.{rule}"));
         }

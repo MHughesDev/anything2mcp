@@ -20,6 +20,10 @@ pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_s
 pub const UNEXPECTED_STATUS: FailureCode = FailureCode::fixed("unexpected_status");
 /// `unknown_variant`: an answer larger than the limit.
 pub const RESPONSE_TOO_LARGE: FailureCode = FailureCode::fixed("response_too_large");
+/// `unknown_variant`: an XML answer that declares a document type. None is
+/// read, so no entity it defines is expanded and nothing it names is
+/// fetched (decision 0217).
+pub const DOCUMENT_TYPE_REFUSED: FailureCode = FailureCode::fixed("document_type_refused");
 /// `transient`: an answer the endpoint declares as "not now".
 pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
 /// `policy`: a request, or a redirect, that leaves the declared surfaces.
@@ -52,6 +56,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Drift, "response_schema_mismatch"),
     (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::UnknownVariant, "response_too_large"),
+    (FailureClass::UnknownVariant, "document_type_refused"),
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "surface_not_declared"),
     (FailureClass::Policy, "link_not_encrypted"),

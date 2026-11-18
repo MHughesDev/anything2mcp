@@ -33,11 +33,12 @@ use crate::codes::{
     VERSION_CONFLICT, answered, not_sent, not_usable, possible_commit, shown,
 };
 use crate::model::{
-    Command, Effect, ExitMeaning, Limits, Probe, Program, Section, StepPayload, VersionCheck,
+    Command, Effect, ExitMeaning, Limits, Probe, Program, Script, Section, StepPayload,
+    VersionCheck,
 };
 use crate::output::{self, Parsed};
 use crate::pattern;
-use crate::safety::{self, Refused};
+use crate::safety::{self, Refused, Role, Trust};
 
 /// The root the pack makes one fresh folder in for each run.
 pub(crate) const RUNS_ROOT: &str = "command_runs";
@@ -57,6 +58,8 @@ pub(crate) struct CliDriver {
     pub max_timeout_ms: u64,
     pub max_output_bytes: u64,
     pub next_folder: AtomicU64,
+    /// The groups whose write counts as the administrator's.
+    pub trust: Trust,
 }
 
 /// How the last start of a program ended, kept between its three steps.
@@ -81,6 +84,14 @@ struct Session {
     posture: Posture,
     test_environment: bool,
     workdir: CheckedPath,
+    /// Where the copies of the target's scripts are written, when the
+    /// surface's program is the interpreter of fixed pairs.
+    scripts: Option<CheckedPath>,
+    /// The project folder of the request that started the run, in which the
+    /// target's folder is `targets/<target>`.
+    project: Option<CheckedPath>,
+    /// The target's name.
+    target: String,
     last: Option<Last>,
 }
 
@@ -122,6 +133,30 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
                 shown(&what.display().to_string())
             ),
             "Give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.",
+        ),
+        Refused::Unreadable(what) => not_sent(
+            FailureClass::Policy,
+            PROGRAM_PATH_UNSAFE,
+            format!(
+                "The program `{at}` is not started: who may change `{}` could not be read.",
+                shown(&what.display().to_string())
+            ),
+            "Give the file and every folder above it an access list the engine's user can read, naming only that user and the system's own identities.",
+        ),
+        Refused::Link(what) => not_sent(
+            FailureClass::Policy,
+            PROGRAM_PATH_UNSAFE,
+            format!(
+                "The program `{at}` is not started: `{}` is a link, which is not followed on this system.",
+                shown(&what.display().to_string())
+            ),
+            "Name the program by the path it has with no link on the way.",
+        ),
+        Refused::Elsewhere => not_sent(
+            FailureClass::Policy,
+            PROGRAM_PATH_UNSAFE,
+            format!("The program `{at}` is on another machine's share or a device."),
+            "Install the program on a local drive and name it by that path.",
         ),
     }
 }
@@ -368,10 +403,28 @@ impl CliDriver {
             .unwrap_or_default();
 
         // The file itself: there, a program, and nobody else's to replace.
+        // A program is the interpreter of fixed pairs only when every file
+        // on its surface says so; then it is not refused by its name.
+        let on_surface: Vec<&Program> = section
+            .programs
+            .iter()
+            .filter(|program| program.surface == surface)
+            .collect();
+        let interprets = !on_surface.is_empty()
+            && on_surface
+                .iter()
+                .all(|program| program.interpreter.is_some());
+        let role = if interprets {
+            Role::Interpreter
+        } else {
+            Role::Program
+        };
         let checked = path.clone();
-        let verdict =
-            joined(move || safety::check(&checked).map(|()| safety::digest_of(&checked).ok()))
-                .await;
+        let trust = self.trust.clone();
+        let verdict = joined(move || {
+            safety::check(&checked, &trust, role).map(|()| safety::digest_of(&checked).ok())
+        })
+        .await;
         let digest = match verdict {
             Some(Ok(Some(digest))) => digest,
             Some(Err(why)) => return Err(refused(&why, &path)),
@@ -393,6 +446,17 @@ impl CliDriver {
         }
 
         let workdir = self.fresh_folder(cx)?;
+        let scripts = if interprets {
+            match self.fresh_folder(cx) {
+                Ok(folder) => Some(folder),
+                Err(failure) => {
+                    remove_folder(&workdir);
+                    return Err(failure);
+                }
+            }
+        } else {
+            None
+        };
 
         let test_environment = cx
             .plan
@@ -407,6 +471,9 @@ impl CliDriver {
             posture: cx.posture,
             test_environment,
             workdir,
+            scripts,
+            project: cx.paths.project().cloned(),
+            target: cx.surface.target.as_str().to_owned(),
             last: None,
         };
         // The version, once for this run, for each file that declares one.
@@ -420,6 +487,9 @@ impl CliDriver {
         for check in &checks {
             if let Err(failure) = self.version(&session, check, cx.deadline).await {
                 remove_folder(&session.workdir);
+                if let Some(scripts) = &session.scripts {
+                    remove_folder(scripts);
+                }
                 return Err(failure);
             }
         }
@@ -660,6 +730,30 @@ impl CliDriver {
                 stamp: input.stamp,
             },
         )?;
+        // A fixed pair: the interpreter's own arguments, the path of the
+        // checked copy of the script, then the typed values, each its own
+        // element after the script's path, where the interpreter reads none
+        // of them.
+        let elements = match (&program.interpreter, &command.script) {
+            (None, None) => elements,
+            (Some(fixed), Some(script)) => {
+                let copy = script_copy(session, &name, script)?;
+                let mut whole = fixed.clone();
+                whole.push(copy);
+                whole.extend(elements);
+                whole
+            }
+            (Some(_), None) => {
+                return Err(not_usable(&format!(
+                    "the command `{name}` names no script, and its program is an interpreter"
+                )));
+            }
+            (None, Some(_)) => {
+                return Err(not_usable(&format!(
+                    "the command `{name}` names a script, and its program is no interpreter"
+                )));
+            }
+        };
         let limits = command.limits;
         let finished = self
             .start(
@@ -993,6 +1087,66 @@ fn found<'a>(
     Ok((entry, command, program))
 }
 
+/// The most bytes a script the target keeps may have.
+const MOST_SCRIPT_BYTES: u64 = 1024 * 1024;
+
+/// Reads the script of the command `name` from the target's folder, checks
+/// its bytes against the declared digest, and writes them to a file in the
+/// run's own folder of scripts, whose path it gives. The copy is read back
+/// and checked again: the interpreter is handed the bytes that were
+/// checked, in a folder no other user may write, whatever happens to the
+/// target's own file after this.
+fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String, StepFailure> {
+    let (Some(project), Some(folder)) = (session.project.as_ref(), session.scripts.as_ref())
+    else {
+        return Err(StepFailure::not_sent(Failure::new(
+            FailureClass::Input,
+            a2m_provider::codes::PROJECT_FOLDER_MISSING,
+            format!(
+                "The command `{name}` runs a script the target keeps, and the call that started the run came with no project folder to find the target in."
+            ),
+            "Call the tool from inside the project that holds the target.",
+        )));
+    };
+    let shown_path = shown(&script.path);
+    let missing = || {
+        not_sent(
+            FailureClass::Drift,
+            PROGRAM_MISSING,
+            format!("The script `{shown_path}` of the command `{name}` is not in the target's folder, or cannot be read."),
+            "Put the script back at the path its command names, inside the target's folder.",
+        )
+    };
+    let changed = |place: &str| {
+        not_sent(
+            FailureClass::Drift,
+            PROGRAM_DIGEST_CHANGED,
+            format!("The script `{shown_path}` of the command `{name}` {place} is not the one its digest names."),
+            "Review the script, write the SHA-256 of its bytes under the command's `script.digest`, and publish.",
+        )
+    };
+    let original = project
+        .join(&format!("targets/{}/{}", session.target, script.path))
+        .map_err(StepFailure::not_sent)?;
+    let bytes = original.read(MOST_SCRIPT_BYTES).map_err(|_| missing())?;
+    if Digest::of(&bytes).to_string() != script.digest {
+        return Err(changed("in the target's folder"));
+    }
+    let file_name = script.path.rsplit('/').next().unwrap_or(&script.path);
+    let copy = folder
+        .join(&format!("{name}-{file_name}"))
+        .map_err(StepFailure::not_sent)?;
+    copy.write(&bytes).map_err(StepFailure::not_sent)?;
+    let written = copy.read(MOST_SCRIPT_BYTES).map_err(|_| missing())?;
+    if Digest::of(&written).to_string() != script.digest {
+        return Err(changed("as copied for the run"));
+    }
+    copy.as_path()
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| not_usable("the run's folder of scripts has a path that is not text"))
+}
+
 /// How a program ended, as a word for the trace's signature: its status, or
 /// that a signal ended it.
 fn exit_word(exit: &Exit) -> String {
@@ -1054,7 +1208,8 @@ impl Driver for CliDriver {
             let Ok(session) = prepared.into_state::<Session>() else {
                 return Cleanup::complete();
             };
-            if remove_folder(&session.workdir) {
+            let scripts_gone = session.scripts.as_ref().is_none_or(remove_folder);
+            if remove_folder(&session.workdir) && scripts_gone {
                 Cleanup::complete()
             } else {
                 Cleanup::incomplete(vec![Leftover {

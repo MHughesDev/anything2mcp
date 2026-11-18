@@ -416,6 +416,7 @@ impl Stand {
             secret_reads,
             asked,
             tracking: (*tracking).to_owned(),
+            ..Truth::default()
         })
     }
 

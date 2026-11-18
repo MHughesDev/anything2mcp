@@ -1,6 +1,6 @@
 # The manifest of the desktop pack. What is not built is not declared: the
-# write half (set, invoke, a commit point, a read-back), the macOS back
-# end, keys and clicks, starting an application, the
+# verbs `create`, `delete`, `submit`, and `upload`, writes on Windows and
+# macOS, the macOS back end, keys and clicks, starting an application, the
 # `desktop_probe` discoverer, the lint rules of the design, and every
 # control but `desktop_text`. No platform list: the compiler side works on every
 # system, and the driver stops at prepare with `system_not_built` where it
@@ -14,18 +14,22 @@ version = "0.0.1"
 publisher = "Anything2MCP"
 kind = "pack"
 
-# Reads only (decision 0198). `snapshot` is sent by the discoverer only; no
-# lowering gives it. No step saves.
+# Reads (decision 0198) and, on Linux, `update` and `upsert` (decision
+# 0218). `snapshot` is sent by the discoverer only; no lowering gives it.
+# No kind of step always saves: an `invoke` saves when its action is
+# declared to, and the lowering refuses a `commits` mark on any other kind.
+# A write holds the person's screen alone: two runs never type into one
+# desktop at once (spec section 305).
 [[modes]]
 name = "desktop"
 archetype = "interface"
-verbs = ["read", "list"]
-steps = ["goto", "wait", "read", "snapshot"]
+verbs = ["read", "list", "update", "upsert"]
+steps = ["goto", "wait", "read", "set", "invoke", "snapshot"]
 commit_steps = []
 rank = 60
 session_reads = 1
 session_writes = 1
-exclusive = "none"
+exclusive = "screen"
 
 [[surface_kinds]]
 name = "desktop"
@@ -122,6 +126,34 @@ code = "system_not_built"
 [[failure_codes]]
 class = "input"
 code = "step_not_usable"
+
+[[failure_codes]]
+class = "rejected"
+code = "app_validation_error"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "field_read_only"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "value_not_held"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_control"
+
+[[failure_codes]]
+class = "policy"
+code = "password_set_refused"
+
+[[failure_codes]]
+class = "busy"
+code = "session_in_use"
+
+[[failure_codes]]
+class = "busy"
+code = "writes_not_built"
 
 # It reads a running application a person started and the target names, on
 # the person's screen. It starts nothing and reaches no network.

@@ -27,6 +27,7 @@ pub mod store;
 #[cfg(feature = "tls")]
 pub mod tls;
 mod traps;
+pub mod views;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -103,6 +104,7 @@ pub fn router() -> Router {
         .merge(leaving::routes())
         .merge(own_requests::routes())
         .merge(forgery::routes())
+        .merge(views::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

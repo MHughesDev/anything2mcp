@@ -42,6 +42,27 @@ pub const APPLICATION_NOT_OWNED: FailureCode = FailureCode::fixed("application_n
 pub const SYSTEM_NOT_BUILT: FailureCode = FailureCode::fixed("system_not_built");
 /// `input`: a step this driver cannot carry out as the plan wrote it.
 pub const STEP_NOT_USABLE: FailureCode = FailureCode::fixed("step_not_usable");
+/// `rejected`: after a committing action, the window shows a state its
+/// screen declares as the application's refusal. Nothing was stored.
+pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
+/// `unknown_variant`: a field takes no value today: it is read-only, or not
+/// editable. Nothing was set.
+pub const FIELD_READ_ONLY: FailureCode = FailureCode::fixed("field_read_only");
+/// `unknown_variant`: after a `set`, the field holds another value than
+/// the one set: the application changed it. Nothing was saved.
+pub const VALUE_NOT_HELD: FailureCode = FailureCode::fixed("value_not_held");
+/// `unknown_variant`: the element does not offer what the step needs: an
+/// editable text, or an action of the name the screen declares.
+pub const UNEXPECTED_CONTROL: FailureCode = FailureCode::fixed("unexpected_control");
+/// `policy`: a step would set a control that holds a secret. Sign-in to a
+/// desktop application is not built.
+pub const PASSWORD_SET_REFUSED: FailureCode = FailureCode::fixed("password_set_refused");
+/// `busy`: another write holds this engine's desktop past the step's
+/// deadline. Nothing was sent.
+pub const SESSION_IN_USE: FailureCode = FailureCode::fixed("session_in_use");
+/// `busy`: this pack writes only on Linux in this version. Nothing was
+/// sent.
+pub const WRITES_NOT_BUILT: FailureCode = FailureCode::fixed("writes_not_built");
 
 /// Every code of this pack with its one class, as the manifest declares
 /// them. A test holds the two lists together.
@@ -60,6 +81,13 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Busy, "target_elevated"),
     (FailureClass::Busy, "system_not_built"),
     (FailureClass::Input, "step_not_usable"),
+    (FailureClass::Rejected, "app_validation_error"),
+    (FailureClass::UnknownVariant, "field_read_only"),
+    (FailureClass::UnknownVariant, "value_not_held"),
+    (FailureClass::UnknownVariant, "unexpected_control"),
+    (FailureClass::Policy, "password_set_refused"),
+    (FailureClass::Busy, "session_in_use"),
+    (FailureClass::Busy, "writes_not_built"),
 ];
 
 pub(crate) fn failure(
@@ -81,6 +109,21 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
             why.into()
         ),
         "Compile the target again with the version of the desktop pack that is enabled.",
+    ))
+}
+
+/// A write on a system where the pack's acting half is not built. Nothing
+/// was sent.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn writes_not_built() -> StepFailure {
+    StepFailure::not_sent(failure(
+        FailureClass::Busy,
+        WRITES_NOT_BUILT,
+        format!(
+            "The desktop pack changes applications only on Linux in this version; this system is {}. Nothing was sent.",
+            std::env::consts::OS
+        ),
+        "Run the write on Linux. On this system the pack reads only.",
     ))
 }
 

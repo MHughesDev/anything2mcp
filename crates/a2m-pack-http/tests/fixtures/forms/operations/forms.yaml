@@ -1,0 +1,129 @@
+operation: example_order_xml_get
+title: Get an order from its XML view
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  status: {type: identifier}
+  customer: {type: text}
+  item_codes: {type: identifier, list: true}
+  quantities: {type: integer, list: true}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_xml_get
+    extract: {item_codes: "items.*.item_code", quantities: "items.*.quantity"}
+description: >
+  Reads an order's status, customer, and lines from its XML view.
+---
+operation: example_declared_get
+title: Get an order from an answer that declares a document type
+effect: read
+inputs: {}
+outputs:
+  customer: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: declared_xml_get
+description: >
+  Reads an answer that is refused before anything is read from it.
+---
+operation: example_order_json_as_xml_get
+title: Get an order from its JSON interface, declared as XML
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  customer: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_json_as_xml_get
+description: >
+  Reads an answer whose content type is not the declared form's.
+---
+operation: example_status_get
+title: Get the status line
+effect: read
+inputs: {}
+outputs:
+  orders: {type: integer}
+  draft: {type: integer}
+  submitted: {type: integer}
+  newest: {type: identifier}
+  customer: {type: text}
+  text: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: status_get
+description: >
+  Reads the counts of orders from the plain-text status line.
+---
+operation: example_legacy_status_get
+title: Get the status line in its old character set
+effect: read
+inputs: {}
+outputs:
+  orders: {type: integer}
+  state: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: legacy_status_get
+description: >
+  Reads the status line an old device sends in ISO-8859-1.
+---
+operation: example_order_label_get
+title: Get the length and digest of an order's label
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  length: {type: integer}
+  digest: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: label_get
+description: >
+  Reads the binary label of an order, without interpreting it.
+---
+operation: example_line_item_upsert
+title: Create or update a line item, read back from its XML view
+effect: write
+key: [order_id, item_code]
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  description: {type: text, description: "What the item is"}
+  quantity: {type: integer, description: "How many"}
+  length_in: {type: length_ft_in, description: "Length, in inches"}
+outputs:
+  description: {type: text}
+  quantity: {type: integer}
+  length_in: {type: length_ft_in}
+bindings:
+  - mode: http
+    verb: upsert
+    status: shadow
+    endpoint: line_item_put
+    body:
+      description: input.description
+      quantity: input.quantity
+      length_in: input.length_in
+    read_back: {endpoint: line_item_xml_get}
+description: >
+  Creates or updates one line item through the JSON interface, and reads it
+  back through its XML view.

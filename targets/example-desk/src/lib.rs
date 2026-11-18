@@ -76,6 +76,11 @@ pub const WINDOW: &str = "Example order";
 pub const SECRET: &str = "secret-for-tests-desk-access-code";
 /// The value that appears late in the field labelled `Tracking`.
 pub const LATE: &str = "TRK-0001";
+/// The most characters the field labelled `New customer` holds: longer
+/// text is cut, as some applications' fields do.
+pub const CUSTOMER_MOST: usize = 24;
+/// What the application shows under `Message` once Save has stored.
+pub const SAVED: &str = "Saved.";
 /// The variable that makes a missing program a failure rather than a skip,
 /// for the machine that must run these tests.
 pub const REQUIRE_ENV: &str = "A2M_REQUIRE_DESKTOP";
@@ -139,6 +144,45 @@ pub struct Truth {
     pub asked: BTreeMap<String, u64>,
     /// What the field labelled `Tracking` holds now.
     pub tracking: String,
+    /// What the application stores, by name (`customer`, `status`): what
+    /// the labelled values show, and what a window reached afresh shows.
+    /// It changes only when Save stores.
+    pub stored: BTreeMap<String, String>,
+    /// How many times Save stored. A press that stores nothing (a value
+    /// the application refuses, or a fault) is a write and no store.
+    pub stores: u64,
+    /// Every value set into a field, in order, with its window and its
+    /// label. A password field's value is never kept here.
+    pub sets: Vec<FieldSet>,
+    /// What the field labelled `Message` shows now.
+    pub message: String,
+}
+
+/// One value set into one field of the stand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldSet {
+    /// The title of the window the field is in.
+    pub window: String,
+    /// The field's label.
+    pub field: String,
+    /// The value set, before the field changed it; empty for a password
+    /// field.
+    pub value: String,
+}
+
+/// A fault a test switches on through the control interface. Each fault
+/// of Save holds for the next press only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fault {
+    /// Save stores nothing and says nothing.
+    SaveSilently,
+    /// Save stores, and then the application exits before it confirms.
+    /// [`Desk::restart`] starts it again, with what it stored.
+    ExitAfterSave,
+    /// Save stores, and its confirmation appears once this has passed.
+    ConfirmLate(std::time::Duration),
+    /// The field with this label takes no value from now on.
+    ReadOnly(String),
 }
 
 impl Truth {
@@ -319,6 +363,69 @@ impl Desk {
         Handles {
             save: self.inner.save,
             password: self.inner.password,
+        }
+    }
+
+    /// The control interface: switches a fault on.
+    ///
+    /// # Errors
+    ///
+    /// When no field has the label a [`Fault::ReadOnly`] names; on any
+    /// system but Linux, always: the write half of the stand is built for
+    /// Linux only.
+    pub fn fault(&self, fault: &Fault) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.fault(fault)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = fault;
+            Err(StandError(
+                "the stand's faults of a write are built for Linux only".to_owned(),
+            ))
+        }
+    }
+
+    /// The control interface: opens a second window of the application,
+    /// titled `title`, with a field labelled `New customer` of its own.
+    ///
+    /// # Errors
+    ///
+    /// When its nodes cannot be published; on any system but Linux,
+    /// always.
+    pub async fn open_window(&self, title: &str) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.open_window(title).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = title;
+            Err(StandError(
+                "the stand's second window is built for Linux only".to_owned(),
+            ))
+        }
+    }
+
+    /// The control interface: starts the application again after it
+    /// exited (or ends it and starts it again), with what it stored, and
+    /// its fields showing the stored values.
+    ///
+    /// # Errors
+    ///
+    /// When it cannot be published again; on any system but Linux,
+    /// always.
+    pub async fn restart(&mut self) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.restart().await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(StandError(
+                "the stand's restart is built for Linux only".to_owned(),
+            ))
         }
     }
 

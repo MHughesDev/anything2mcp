@@ -24,11 +24,33 @@ impl LintRule for ShellProgram {
     }
 
     fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
-        view.target()
+        let surfaces: Vec<_> = view
+            .target()
             .surfaces()
             .into_iter()
             .filter(|surface| *surface.kind == SURFACE_KIND)
+            .collect();
+        let first = surfaces.first().map(|surface| surface.name.as_str());
+        let docs = view.entries(&FILE_KIND, &SURFACE_KIND);
+        // An interpreter is allowed only as the half of fixed pairs: every
+        // `commands/` file on its surface declares it so, and each of their
+        // commands names its script, which the file kind holds them to.
+        let pairs_only = |surface: &str| {
+            let on: Vec<_> = docs
+                .iter()
+                .filter(|doc| doc.text("surface").or(first) == Some(surface))
+                .collect();
+            !on.is_empty()
+                && on.iter().all(|doc| {
+                    doc.get("program")
+                        .and_then(|program| program.get("interpreter"))
+                        .is_some()
+                })
+        };
+        surfaces
+            .iter()
             .filter(|surface| is_shell_or_interpreter(surface.address))
+            .filter(|surface| !pairs_only(surface.name.as_str()))
             .map(|surface| {
                 Diagnostic::error(
                     self.code(),
@@ -38,7 +60,7 @@ impl LintRule for ShellProgram {
                         "The surface `{}` names a shell, an interpreter, or a script, which reads its arguments as code.",
                         surface.name
                     ),
-                    "Name the program itself, by its absolute path; a shell is never started.",
+                    "Name the program itself, by its absolute path; a shell is never started. An interpreter runs only a script the target keeps: declare `program.interpreter` in every `commands/` file on the surface.",
                 )
             })
             .collect()
