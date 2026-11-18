@@ -2507,11 +2507,10 @@ const RECORDED_READS: [(&str, &str); 3] = [
     ),
 ];
 
-/// `fixture.record` beyond one pack's read (decision 0199): a list read is
-/// cut to three items, each scrubbed, the same original put in place of by
-/// the same text in the input and every answer; a choice, alone or in a
-/// list, by another declared code; and each recorded test passes offline,
-/// read back from its files.
+/// `fixture.record` beyond one pack's read (decisions 0199 and 0200): a
+/// list read is cut to three items, each scrubbed by its place; a choice,
+/// alone or in a list, by its type's first declared code, which the result
+/// says; and each recorded test passes offline, read back from its files.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     let world = World::open().await;
@@ -2565,12 +2564,13 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
         .collect();
     assert_eq!(codes.len(), 3, "{answer}");
     assert!(codes[0] != codes[1] && codes[1] != codes[2] && codes[0] != codes[2]);
-    // The key in the input and the same original in the list are one text.
+    // A made-up value is chosen by its place, not by the original: the
+    // list's `A-7` is not the key's made-up text, which only the key's own
+    // fields share (audit finding FX-3).
     let test = std::fs::read_to_string(target_dir.join("tests/order_lines_get.yaml")).unwrap();
-    assert!(
-        test.contains(&format!("\"order_id\":\"{}\"", codes[0])),
-        "{test}\n{answer}"
-    );
+    assert!(!test.contains(&format!("\"order_id\":\"{}\"", codes[0])), "{test}\n{answer}");
+    assert!(result["limits"].as_array().is_some_and(|limits| !limits.is_empty()), "{result}");
+    assert_eq!(result["trial"]["retention"], "short", "{result}");
     for file in result["files"].as_array().unwrap() {
         let text = std::fs::read_to_string(target_dir.join(file.as_str().unwrap())).unwrap();
         for original in ["A-7", "L-81", "L-82", "L-83", "Lines of"] {
@@ -2578,10 +2578,20 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
         }
     }
 
-    // The read of choices: each code is another the type declares.
+    // The read of choices: every code is the type's first, whatever the
+    // system held, and the result says so (audit finding FX-2).
     let recorded = record("example_order_state_get").await;
     assert!(recorded.ok, "{:?}", recorded.error);
-    assert_eq!(recorded.result.unwrap()["test_state"], "passed");
+    let result = recorded.result.unwrap();
+    assert_eq!(result["test_state"], "passed");
+    assert!(
+        result["limits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|limit| limit.as_str().unwrap().contains("first declared code")),
+        "{result}"
+    );
     let answer: Json = serde_json::from_str(
         &std::fs::read_to_string(target_dir.join("fixtures/order_state_get/order_state.json"))
             .unwrap(),
@@ -2589,7 +2599,7 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     .unwrap();
     assert_eq!(
         answer,
-        json!({"status": "released", "history": ["released", "draft", "released"]}),
+        json!({"status": "draft", "history": ["draft", "draft", "draft"]}),
         "{answer}"
     );
 

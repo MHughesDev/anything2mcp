@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use a2m_core::{
     CanonicalJson, Date, Decimal, Digest, EffectClass, FailureClass, FieldBase, FieldHasher,
     FieldTypePlan, Millis, OperationName, OperationPlan, Plan, Redact, RunState, Step, TestKind,
-    TestPlan, Timestamp, ToolRuns, Value, Values,
+    TestPlan, Timestamp, ToolRuns, Value, ValueType, Values,
 };
 use a2m_provider::{Recorded, RecordedAnswer};
 use serde_json::{Value as Json, json};
@@ -51,13 +51,6 @@ const FIXED_INSTANT_MS: i64 = 946_684_800_000;
 /// The fixed length of time a length of time is put in place of: one
 /// second.
 const FIXED_DURATION_MS: i64 = 1_000;
-
-/// The letters synthetic text is made of, less those of the original.
-const LETTERS: &str = "abcdefghijklmnopqrstuvwxyz";
-
-/// The digits synthetic text is made of where an original holds nearly
-/// every letter.
-const DIGITS: &str = "0123456789";
 
 /// Keeps what a step of a trial observed, when a fixture is being recorded
 /// from the trial whose run digest is `run`; nothing otherwise.
@@ -124,12 +117,15 @@ impl Drop for Recorder<'_> {
     }
 }
 
-/// What scrubbing reads of a value's field type: what it is built on, and
-/// its declared codes for a choice.
+/// What scrubbing reads of a value's field type: what it is built on, its
+/// declared codes for a choice, its decimal places, and whether it is free
+/// text that came from the system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeRule {
     base: FieldBase,
     codes: Vec<String>,
+    places: Option<u32>,
+    untrusted: bool,
 }
 
 impl TypeRule {
@@ -137,8 +133,20 @@ impl TypeRule {
         Self {
             base: ty.base,
             codes: ty.codes.iter().map(|code| code.code.clone()).collect(),
+            places: ty.places,
+            untrusted: ty.untrusted,
         }
     }
+}
+
+/// Where a value stands, as scrubbing needs it: its field type, its
+/// declared type, and whether it is a key field, whose made-up value the
+/// test's input and the fixture must agree on.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Slot {
+    rule: Option<TypeRule>,
+    declared: Option<ValueType>,
+    key: bool,
 }
 
 /// Why a value cannot be scrubbed: no rule of its type writes a synthetic
@@ -153,50 +161,85 @@ fn no_rule(why: &str) -> a2m_core::Failure {
     )
 }
 
-/// Puts synthetic values in place of observed ones, by fixed rules:
+/// The one alphabet every made-up text and key is written in.
+const ALPHABET: [char; 7] = ['j', 'k', 'q', 'v', 'w', 'x', 'z'];
+
+/// The length of made-up text of a field type built on text.
+const TEXT_LENGTH: usize = 8;
+
+/// The length of made-up free text that came from the system.
+const FREE_TEXT_LENGTH: usize = 24;
+
+/// The length of made-up text of no field type.
+const UNTYPED_LENGTH: usize = 12;
+
+/// The length of a made-up key of a map, after its `key_`.
+const KEY_LENGTH: usize = 6;
+
+/// Puts synthetic values in place of observed ones (decision 0200). A
+/// made-up value is chosen without looking at the original, except for what
+/// the replay needs:
 ///
-/// - `null` and `true`/`false` are kept;
 /// - text, of a field type built on text or of no field type, by text of
-///   the same length class (empty; up to 4, 8, 16, 32, 64 characters;
-///   128 above) made of the letters that are not in the original, or the
-///   digits where fewer than two letters are left, so that no character of
-///   the original is kept; the same original gives the same synthetic text
-///   everywhere in the fixture and the test's input, and two originals
-///   never give the same one, so that a key stays one key;
-/// - a choice, by the first declared code that is not the original;
-/// - a whole number, by `10^(d-1) + k` of the same sign and number of
-///   digits `d`, for the `k`-th distinct number of that many digits, and
-///   never the original;
-/// - an exact number, by `1` and zeros of the same number of whole digits
-///   and decimal places (`2` and zeros where that is the original);
+///   one fixed alphabet and one fixed length for its kind of type (8 for
+///   text, 24 for free text that came from the system, 12 for no type);
+///   it is chosen by the value's place in the fixture, so two equal
+///   originals at two places get two made-up texts, and the same place in
+///   two answers of one step gets the same one; in a key field (an input of
+///   the operation's key, or an output of that name), the same original
+///   gets the same made-up text, so that the test's input and the fixture
+///   agree;
+/// - a choice, by its type's first declared code, whatever it was;
+/// - a whole number by `1`, and an exact number by `1` with its type's
+///   decimal places (none where the type states none); in a key field, the
+///   `k`-th distinct whole number by `k`;
+/// - `true` and `false` by place, alternating; `null` is kept;
 /// - a date, a moment, and a length of time, by fixed ones
 ///   (2000-01-01, 2000-01-01T00:00:00Z, one second);
 /// - a list, by its first [`LIST_ITEMS_KEPT`] items, each scrubbed by the
-///   list's field type, which is its items'; a record, field by field, its
-///   names kept.
+///   list's field type, which is its items' (a list's length up to that
+///   number is still shown);
+/// - a record: the names its declared type lists, and an answer's names
+///   that are the operation's declared outputs, are structure and are kept;
+///   every other name is data and is put in place of by a made-up key, the
+///   same original key by the same made-up key throughout the fixture.
 ///
 /// Text of a field type built on a number, a date, or a time has no rule,
 /// and stops the action.
 pub(crate) struct Scrubber<'r> {
     redact: &'r dyn Redact,
-    texts: BTreeMap<String, String>,
-    used: BTreeSet<String>,
-    ints: BTreeMap<i64, i64>,
+    /// The made-up text of each original text of a key field.
+    keys: BTreeMap<String, String>,
+    /// The made-up number of each original whole number of a key field.
+    key_ints: BTreeMap<i64, i64>,
+    /// The made-up key of each original key of a map.
+    data_keys: BTreeMap<String, String>,
+    /// The index of each place a made-up text was chosen for.
+    places: BTreeMap<String, usize>,
+    /// The index of each place a made-up `true` or `false` was chosen for.
+    flags: BTreeMap<String, usize>,
     /// How many values each rule scrubbed, by rule.
     pub(crate) counts: BTreeMap<&'static str, u32>,
-    /// Every original text, for the check that none is in what is written.
+    /// Every original value of the system as text, and every original key,
+    /// for the check that none is in what is written. A choice's code is
+    /// the target's own vocabulary, and is not among them.
     pub(crate) originals: BTreeSet<String>,
+    /// Every made-up text and key written.
+    pub(crate) synthetics: BTreeSet<String>,
 }
 
 impl<'r> Scrubber<'r> {
     pub(crate) fn new(redact: &'r dyn Redact) -> Self {
         Self {
             redact,
-            texts: BTreeMap::new(),
-            used: BTreeSet::new(),
-            ints: BTreeMap::new(),
+            keys: BTreeMap::new(),
+            key_ints: BTreeMap::new(),
+            data_keys: BTreeMap::new(),
+            places: BTreeMap::new(),
+            flags: BTreeMap::new(),
             counts: BTreeMap::new(),
             originals: BTreeSet::new(),
+            synthetics: BTreeSet::new(),
         }
     }
 
@@ -204,71 +247,144 @@ impl<'r> Scrubber<'r> {
         *self.counts.entry(rule).or_insert(0) += 1;
     }
 
-    /// The values of a record, each by the field type of its name, where
-    /// `types` names one.
+    /// Keeps an original as text, raw and as the redactor gives it.
+    fn original(&mut self, text: &str) {
+        self.originals.insert(text.to_owned());
+        let redacted = self.redact.redact(text);
+        if redacted != text {
+            self.originals.insert(redacted);
+        }
+    }
+
+    /// Keeps an original as a file would write it.
+    fn original_as_written(&mut self, value: &Value) {
+        match serde_json::to_value(value) {
+            Ok(Json::String(text)) => self.original(&text),
+            Ok(Json::Number(number)) => self.original(&number.to_string()),
+            _ => {}
+        }
+    }
+
+    /// The index of a place, the same for the same place.
+    fn place(&mut self, at: &str) -> usize {
+        let next = self.places.len();
+        *self.places.entry(at.to_owned()).or_insert(next)
+    }
+
+    /// The values of a record at `at`: a name `slot` answers for is
+    /// structure, and its value is scrubbed in that slot; every other name
+    /// is data, and is put in place of by a made-up key.
     pub(crate) fn values(
         &mut self,
         values: &Values,
-        types: &dyn Fn(&str) -> Option<TypeRule>,
+        at: &str,
+        slot: &dyn Fn(&str) -> Option<Slot>,
     ) -> Result<Values, a2m_core::Failure> {
         let mut out = Values::new();
         for (name, value) in values.iter() {
-            let ty = types(name);
-            out.insert(name.to_owned(), self.value(value, ty.as_ref())?);
+            let (kept, slot) = match slot(name) {
+                Some(slot) => (name.to_owned(), slot),
+                None => (self.data_key(name), Slot::default()),
+            };
+            let here = format!("{at}/{kept}");
+            out.insert(kept, self.value(value, &here, &slot)?);
         }
         Ok(out)
     }
 
-    fn value(&mut self, value: &Value, ty: Option<&TypeRule>) -> Result<Value, a2m_core::Failure> {
+    /// The made-up key of an original key of a map, the same for the same
+    /// key throughout the fixture.
+    fn data_key(&mut self, original: &str) -> String {
+        if let Some(made) = self.data_keys.get(original) {
+            return made.clone();
+        }
+        self.original(original);
+        let made = format!("key_{}", encode(self.data_keys.len(), KEY_LENGTH));
+        self.count("a map's key by a made-up key");
+        self.synthetics.insert(made.clone());
+        self.data_keys.insert(original.to_owned(), made.clone());
+        made
+    }
+
+    fn value(&mut self, value: &Value, at: &str, slot: &Slot) -> Result<Value, a2m_core::Failure> {
+        let base = slot.rule.as_ref().map(|rule| rule.base);
         Ok(match value {
             Value::Null => {
                 self.count("null kept");
                 Value::Null
             }
-            Value::Bool(flag) => {
-                self.count("true or false kept");
-                Value::Bool(*flag)
+            Value::Bool(_) => {
+                self.count("true or false by place, alternating");
+                let next = self.flags.len();
+                let index = *self.flags.entry(at.to_owned()).or_insert(next);
+                Value::Bool(index.is_multiple_of(2))
             }
-            Value::Text(text) => {
-                let text = self.redact.redact(text);
-                match ty.map(|ty| ty.base) {
-                    Some(FieldBase::Choice) => {
-                        let codes = ty.map(|ty| ty.codes.clone()).unwrap_or_default();
-                        let code = codes
-                            .into_iter()
-                            .find(|code| *code != text)
-                            .ok_or_else(|| no_rule("a choice with no other code"))?;
-                        // A code is one the target's own field type
-                        // declares, never text of the system's: the codes
-                        // stand for one another, so the code observed is
-                        // not looked for in what is written (decision
-                        // 0199), where another code may stand for it.
-                        self.count("choice by another declared code");
-                        Value::Text(code)
-                    }
-                    None | Some(FieldBase::Text) => {
-                        self.count("text by synthetic text of its length class");
-                        Value::Text(self.text(&text)?)
-                    }
-                    Some(base) => {
-                        return Err(no_rule(&format!("text of a field type built on `{base}`")));
-                    }
+            Value::Text(text) => match base {
+                Some(FieldBase::Choice) => {
+                    // A code is one the target's own field type declares;
+                    // the first stands for every one (audit finding FX-2),
+                    // so the code observed is not looked for in what is
+                    // written.
+                    let code = slot
+                        .rule
+                        .as_ref()
+                        .and_then(|rule| rule.codes.first().cloned())
+                        .ok_or_else(|| no_rule("a choice whose type declares no code"))?;
+                    self.count("choice by its type's first declared code");
+                    Value::Text(code)
                 }
-            }
+                None | Some(FieldBase::Text) => {
+                    self.original(text);
+                    let length = match &slot.rule {
+                        Some(rule) if rule.untrusted => FREE_TEXT_LENGTH,
+                        Some(_) => TEXT_LENGTH,
+                        None => UNTYPED_LENGTH,
+                    };
+                    let made = if slot.key {
+                        let next = self.keys.len();
+                        self.keys
+                            .entry(text.clone())
+                            .or_insert_with(|| encode(next, length))
+                            .clone()
+                    } else {
+                        // Places are counted apart from keys: a made-up key
+                        // text is never another place's text.
+                        let index = self.place(at);
+                        format!("{}{}", ALPHABET[ALPHABET.len() - 1], encode(index, length - 1))
+                    };
+                    self.count("text by made-up text of its type's length");
+                    self.synthetics.insert(made.clone());
+                    Value::Text(made)
+                }
+                Some(base) => {
+                    return Err(no_rule(&format!("text of a field type built on `{base}`")));
+                }
+            },
             Value::Int(number) => {
-                self.count("whole number by a fixed number of its digits");
-                Value::Int(self.int(*number))
+                self.original(&number.to_string());
+                let made = if slot.key {
+                    let next = i64::try_from(self.key_ints.len()).unwrap_or(i64::MAX - 1) + 1;
+                    *self.key_ints.entry(*number).or_insert(next)
+                } else {
+                    1
+                };
+                self.count("whole number by a fixed number");
+                Value::Int(made)
             }
             Value::Decimal(number) => {
-                self.count("exact number by a fixed number of its scale");
-                Value::Decimal(decimal_of_scale(number)?)
+                self.original(&number.to_string());
+                let places = slot.rule.as_ref().and_then(|rule| rule.places).unwrap_or(0);
+                self.count("exact number by a fixed number of its type's places");
+                Value::Decimal(fixed_decimal(places)?)
             }
             Value::Date(_) => {
+                self.original_as_written(value);
                 self.count("date by a fixed date");
                 let (year, month, day) = FIXED_DATE;
                 Value::Date(Date::new(year, month, day).map_err(|_| no_rule("a date"))?)
             }
             Value::Instant(_) => {
+                self.original_as_written(value);
                 self.count("moment by a fixed moment");
                 Value::Instant(Timestamp::from_unix_millis(FIXED_INSTANT_MS))
             }
@@ -282,169 +398,128 @@ impl<'r> Scrubber<'r> {
                 }
                 // A list output's field type is its items' type: a list of
                 // choices is scrubbed code by code (decision 0199).
+                let item = Slot {
+                    rule: slot.rule.clone(),
+                    declared: match &slot.declared {
+                        Some(ValueType::List(item)) => Some((**item).clone()),
+                        other => other.clone(),
+                    },
+                    key: slot.key,
+                };
                 let mut out = Vec::new();
-                for item in items.iter().take(LIST_ITEMS_KEPT) {
-                    out.push(self.value(item, ty)?);
+                for (position, value) in items.iter().take(LIST_ITEMS_KEPT).enumerate() {
+                    out.push(self.value(value, &format!("{at}/{position}"), &item)?);
                 }
                 Value::List(out)
             }
-            Value::Record(values) => Value::Record(self.values(values, &|_| None)?),
+            Value::Record(values) => {
+                // The names the declared type lists are structure; every
+                // other name is data (audit finding FX-1).
+                let fields = match &slot.declared {
+                    Some(ValueType::Record(fields)) => fields.clone(),
+                    _ => Vec::new(),
+                };
+                let named = move |name: &str| {
+                    fields.iter().find(|field| field.name == name).map(|field| Slot {
+                        rule: None,
+                        declared: Some(field.ty.clone()),
+                        key: false,
+                    })
+                };
+                Value::Record(self.values(values, at, &named)?)
+            }
         })
-    }
-
-    fn text(&mut self, original: &str) -> Result<String, a2m_core::Failure> {
-        if let Some(synthetic) = self.texts.get(original) {
-            return Ok(synthetic.clone());
-        }
-        let length = original.chars().count();
-        let class = match length {
-            0 => 0,
-            1..=4 => 4,
-            5..=8 => 8,
-            9..=16 => 16,
-            17..=32 => 32,
-            33..=64 => 64,
-            _ => 128,
-        };
-        if class == 0 {
-            self.texts.insert(String::new(), String::new());
-            return Ok(String::new());
-        }
-        let lower = original.to_lowercase();
-        let free =
-            |set: &str| -> Vec<char> { set.chars().filter(|c| !lower.contains(*c)).collect() };
-        let mut alphabet = free(LETTERS);
-        if alphabet.len() < 2 {
-            alphabet = free(DIGITS);
-        }
-        if alphabet.len() < 2 {
-            return Err(no_rule(
-                "text that holds nearly every letter and every digit",
-            ));
-        }
-        let mut index = self.texts.len();
-        let synthetic = loop {
-            let candidate = encode(index, &alphabet, class);
-            if !self.used.contains(&candidate) {
-                break candidate;
-            }
-            index += 1;
-        };
-        self.originals.insert(original.to_owned());
-        self.used.insert(synthetic.clone());
-        self.texts.insert(original.to_owned(), synthetic.clone());
-        Ok(synthetic)
-    }
-
-    fn int(&mut self, number: i64) -> i64 {
-        if let Some(synthetic) = self.ints.get(&number) {
-            return *synthetic;
-        }
-        let digits = number
-            .unsigned_abs()
-            .checked_ilog10()
-            .map_or(1, |log| log + 1);
-        let base = 10_i64.saturating_pow(digits.saturating_sub(1));
-        let sign = if number < 0 { -1 } else { 1 };
-        let mut k = self
-            .ints
-            .keys()
-            .filter(|earlier| {
-                earlier
-                    .unsigned_abs()
-                    .checked_ilog10()
-                    .map_or(1, |log| log + 1)
-                    == digits
-            })
-            .count();
-        let synthetic = loop {
-            let candidate = sign * base.saturating_add(i64::try_from(k).unwrap_or(i64::MAX));
-            if candidate != number && !self.ints.values().any(|used| *used == candidate) {
-                break candidate;
-            }
-            k += 1;
-        };
-        self.ints.insert(number, synthetic);
-        synthetic
     }
 }
 
-/// `index` written in the digits of `alphabet`, filled on the left with its
-/// first digit to `length` characters.
-fn encode(mut index: usize, alphabet: &[char], length: usize) -> String {
-    let mut out = vec![alphabet[0]; length];
+/// `index` written in [`ALPHABET`], filled on the left with its first
+/// letter to `length` characters.
+fn encode(mut index: usize, length: usize) -> String {
+    let mut out = vec![ALPHABET[0]; length];
     let mut at = length;
     while index > 0 && at > 0 {
         at -= 1;
-        out[at] = alphabet[index % alphabet.len()];
-        index /= alphabet.len();
+        out[at] = ALPHABET[index % ALPHABET.len()];
+        index /= ALPHABET.len();
     }
     out.into_iter().collect()
 }
 
-/// An exact number of the same number of whole digits and decimal places,
-/// `1` and zeros, or `2` and zeros where that is the original; below one,
-/// `0.0…1` of the same places, or `0.0…2`.
-fn decimal_of_scale(number: &Decimal) -> Result<Decimal, a2m_core::Failure> {
-    let text = number.to_string();
-    let unsigned = text.trim_start_matches('-');
-    let (whole, places) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    let whole_digits = whole.trim_start_matches('0').len().max(1);
-    let fraction_only = whole.trim_start_matches('0').is_empty() && !places.is_empty();
-    let make = |first: char| {
-        if fraction_only {
-            // Below one: `0.0…1`, or `0.0…2`, of the same places.
-            return format!("0.{}{first}", "0".repeat(places.len() - 1));
-        }
-        let mut out = String::new();
-        out.push(first);
-        out.push_str(&"0".repeat(whole_digits - 1));
-        if !places.is_empty() {
-            out.push('.');
-            out.push_str(&"0".repeat(places.len()));
-        }
-        out
+/// The fixed exact number of `places` decimal places: `1`, or `1.0…0`.
+fn fixed_decimal(places: u32) -> Result<Decimal, a2m_core::Failure> {
+    let places = usize::try_from(places.min(18)).unwrap_or(0);
+    let text = if places == 0 {
+        "1".to_owned()
+    } else {
+        format!("1.{}", "0".repeat(places))
     };
-    let mut synthetic = make('1');
-    if synthetic == unsigned {
-        synthetic = make('2');
-    }
-    synthetic
-        .parse::<Decimal>()
+    text.parse::<Decimal>()
         .map_err(|_| no_rule("an exact number"))
 }
 
-/// The field type of each output of the operation, by name.
-fn output_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, TypeRule> {
+/// The slot of each output of the operation, by name: an answer's names
+/// that are declared outputs are structure.
+fn output_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot> {
+    let key = key_names(operation);
     operation
         .outputs
         .iter()
-        .filter_map(|output| {
-            let ty = plan.field_type(output.field_type?)?;
-            Some((output.name.clone(), TypeRule::of(ty)))
+        .map(|output| {
+            let rule = output
+                .field_type
+                .and_then(|index| plan.field_type(index))
+                .map(TypeRule::of);
+            (
+                output.name.clone(),
+                Slot {
+                    rule,
+                    declared: Some(output.ty.clone()),
+                    key: key.contains(&output.name),
+                },
+            )
         })
         .collect()
 }
 
-/// The field type of each input of the operation, by name.
-fn input_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, TypeRule> {
+/// The slot of each input of the operation, by name.
+fn input_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot> {
+    let key = key_names(operation);
     operation
         .inputs
         .iter()
-        .filter_map(|input| {
-            let ty = plan.field_type(input.field_type)?;
-            Some((input.name.clone(), TypeRule::of(ty)))
+        .map(|input| {
+            (
+                input.name.clone(),
+                Slot {
+                    rule: plan.field_type(input.field_type).map(TypeRule::of),
+                    declared: Some(input.ty.clone()),
+                    key: key.contains(&input.name),
+                },
+            )
         })
+        .collect()
+}
+
+/// The names of the operation's key inputs.
+fn key_names(operation: &OperationPlan) -> BTreeSet<String> {
+    operation
+        .identity
+        .key
+        .iter()
+        .filter_map(|index| operation.inputs.get(index.get()))
+        .map(|input| input.name.clone())
         .collect()
 }
 
 /// The recorded answers, scrubbed, by name in the order each name was first
 /// asked: one object where every answer of the name is the same, which
 /// answers every step of it, else a list, given in order (decision 0180).
+/// A value's place is its answer's name and its path inside the answer, so
+/// one step's answers scrubbed alike are one object.
 pub(crate) fn scrubbed_answers(
     scrubber: &mut Scrubber<'_>,
     observed: &[(String, Option<Values>)],
-    types: &BTreeMap<String, TypeRule>,
+    slots: &BTreeMap<String, Slot>,
 ) -> Result<Vec<(String, Json, Vec<RecordedAnswer>)>, a2m_core::Failure> {
     let mut names: Vec<&str> = Vec::new();
     for (name, _) in observed {
@@ -452,7 +527,7 @@ pub(crate) fn scrubbed_answers(
             names.push(name);
         }
     }
-    let lookup = |name: &str| types.get(name).cloned();
+    let lookup = |name: &str| slots.get(name).cloned();
     let mut out = Vec::new();
     for name in names {
         let answers: Vec<&Option<Values>> = observed
@@ -463,19 +538,23 @@ pub(crate) fn scrubbed_answers(
         let mut scrubbed = Vec::new();
         for answer in &answers {
             scrubbed.push(match answer {
-                Some(values) => Recorded::Done(scrubber.values(values, &lookup)?),
+                Some(values) => Recorded::Done(scrubber.values(values, name, &lookup)?),
                 None => Recorded::Absent,
             });
         }
         let repeats = scrubbed.windows(2).all(|pair| pair[0] == pair[1]);
-        let json_of = |answer: &Recorded| match answer {
-            Recorded::Done(values) => serde_json::to_value(values).unwrap_or(Json::Null),
-            Recorded::Absent => Json::Null,
+        let json_of = |answer: &Recorded| -> Result<Json, a2m_core::Failure> {
+            match answer {
+                Recorded::Done(values) => serde_json::to_value(values).map_err(|_| {
+                    no_rule("an answer that cannot be written as JSON")
+                }),
+                Recorded::Absent => Ok(Json::Null),
+            }
         };
         let (file, replayed) = if repeats {
             let one = scrubbed.first().cloned().unwrap_or(Recorded::Absent);
             (
-                json_of(&one),
+                json_of(&one)?,
                 vec![RecordedAnswer {
                     name: name.to_owned(),
                     args: None,
@@ -485,7 +564,7 @@ pub(crate) fn scrubbed_answers(
             )
         } else {
             (
-                Json::Array(scrubbed.iter().map(json_of).collect()),
+                Json::Array(scrubbed.iter().map(json_of).collect::<Result<_, _>>()?),
                 scrubbed
                     .into_iter()
                     .map(|answer| RecordedAnswer {
@@ -500,6 +579,39 @@ pub(crate) fn scrubbed_answers(
         out.push((name.to_owned(), file, replayed));
     }
     Ok(out)
+}
+
+/// What the check that no original is in a written byte found: whether one
+/// is, and how many originals were too short to be looked for (audit
+/// finding FX-3). Each file is looked at with every made-up value taken
+/// out first, so an original that a made-up value happens to hold is not
+/// found in it.
+pub(crate) fn leak_check(scrubber: &Scrubber<'_>, files: &[(String, Vec<u8>)]) -> (bool, usize) {
+    let mut synthetics: Vec<&String> = scrubber.synthetics.iter().collect();
+    synthetics.sort_by_key(|text| std::cmp::Reverse(text.len()));
+    let texts: Vec<String> = files
+        .iter()
+        .map(|(_, bytes)| {
+            let mut text = String::from_utf8_lossy(bytes).into_owned();
+            for synthetic in &synthetics {
+                text = text.replace(synthetic.as_str(), "\u{0}");
+            }
+            text
+        })
+        .collect();
+    let mut short = 0;
+    let mut leaked = false;
+    for original in &scrubber.originals {
+        if original.chars().count() < 3 {
+            short += 1;
+            continue;
+        }
+        if scrubber.synthetics.contains(original) {
+            continue;
+        }
+        leaked |= texts.iter().any(|text| text.contains(original.as_str()));
+    }
+    (leaked, short)
 }
 
 /// A name a fixture folder and a test file may take: lowercase letters,
@@ -522,16 +634,193 @@ fn fixture_name(text: &str) -> Result<String, a2m_core::Failure> {
 }
 
 /// The text of a recorded test file: JSON is YAML, so the input and the
-/// expectation are written as JSON, which the compiler reads.
-fn test_file(tool: &OperationName, name: &str, inputs: &Json, expect: &Json) -> String {
+/// expectation are written as JSON, which the compiler reads. A binding the
+/// call named is named in the test; with none, the test runs the binding
+/// that would act live.
+fn test_file(
+    tool: &OperationName,
+    name: &str,
+    inputs: &Json,
+    expect: &Json,
+    binding: Option<&a2m_engine::BindingPin>,
+) -> String {
+    let binding = binding.map_or_else(String::new, |pin| {
+        format!(
+            "binding: {{mode: {}, position: {}}}\n",
+            pin.mode,
+            pin.position + 1
+        )
+    });
     format!(
         "# Recorded by `fixture.record` from one read, every value scrubbed by rule.\n\
          # A person reads this file and its fixture before committing them.\n\
-         test: {tool}\nkind: offline\nfixture: {name}\ninputs: {inputs}\nexpect: {expect}\n"
+         test: {tool}\nkind: offline\n{binding}fixture: {name}\ninputs: {inputs}\nexpect: {expect}\n"
     )
 }
 
 const MARKER: &str = "scrubbed: true\nnote: \"Recorded by fixture.record from one read; every value was put in place of by a synthetic one, by the rules the action names. A person reads the files before committing them.\"\n";
+
+/// What a recording leaves out of the system's answer, and what it still
+/// shows: said in every result (audit findings FX-2 and FX-3).
+fn limits(scrubber: &Scrubber<'_>, short: usize) -> Vec<String> {
+    let mut said = vec![
+        "A list's length up to 3 items is shown, a longer list is cut to 3; a field that was empty (null) is kept empty.".to_owned(),
+    ];
+    if scrubber
+        .counts
+        .contains_key("choice by its type's first declared code")
+    {
+        said.push("Every choice was written as its type's first declared code, whatever the system held: the recorded test cannot tell the operation's choices apart.".to_owned());
+    }
+    if short > 0 {
+        said.push(format!(
+            "{short} original values were shorter than 3 characters and could not be looked for in the files written; each was put in place of all the same."
+        ));
+    }
+    said
+}
+
+/// One file `fixture.record` made, and what it is, so that it can be
+/// removed again if the call fails after it was made.
+enum Made {
+    Folder(a2m_provider::CheckedPath),
+    File(a2m_provider::CheckedPath, a2m_provider::FileIdentity),
+}
+
+/// Makes a file new at `path` and writes `bytes` to it: nothing that stands
+/// at the name, a file or a link, is replaced or followed (audit finding
+/// FX-5). The file made is then found at the checked path by its identity.
+fn create_new(
+    path: &a2m_provider::CheckedPath,
+    bytes: &[u8],
+) -> Result<a2m_provider::FileIdentity, a2m_core::Failure> {
+    use std::io::Write as _;
+    let there = || {
+        codes::input(
+            codes::SCHEMA_INVALID,
+            format!("`{}` appeared while the read was recorded, and a recorded fixture is never written over anything.", path.relative()),
+            "Give `name` another name, or remove the old files with `draft.delete`.",
+        )
+    };
+    if !matches!(path.entry_kind()?, a2m_provider::EntryKind::Absent) {
+        return Err(there());
+    }
+    // Made new or not at all: an exclusive create refuses whatever stands
+    // at the name, a link among them, without following it.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path.as_path())
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                there()
+            } else {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("`{}` cannot be written.", path.relative()),
+                    "Check that the target's folder may be written, and record again.",
+                )
+            }
+        })?;
+    let identity = a2m_provider::FileIdentity::of_open(&file)?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| {
+            codes::input(
+                codes::SCHEMA_INVALID,
+                format!("`{}` cannot be written.", path.relative()),
+                "Check that the disk has room, and record again.",
+            )
+        })?;
+    if path.identity()? != identity {
+        return Err(codes::input(
+            codes::SCHEMA_INVALID,
+            format!("`{}` is not the file this call made: the folder changed while it was written.", path.relative()),
+            "Make no change to the target's folders while a fixture is recorded, and record again.",
+        ));
+    }
+    Ok(identity)
+}
+
+/// Removes what this call made, newest first, and only what is still the
+/// file it made. Gives the paths it could not remove.
+fn remove_made(made: &[Made]) -> Vec<String> {
+    let mut left = Vec::new();
+    for made in made.iter().rev() {
+        match made {
+            Made::File(path, identity) => {
+                let ours = path.identity().is_ok_and(|now| now == *identity);
+                if !ours || path.remove_file().is_err() {
+                    left.push(path.relative().to_owned());
+                }
+            }
+            Made::Folder(path) => {
+                if std::fs::remove_dir(path.as_path()).is_err() {
+                    left.push(path.relative().to_owned());
+                }
+            }
+        }
+    }
+    left
+}
+
+/// Writes every file of a recording, all or none (audit finding FX-4): the
+/// fixture folder is made new, each file is made new, and on any failure
+/// what this call made is removed again.
+fn write_all_or_none(
+    at: &a2m_provider::CheckedPath,
+    folder: &str,
+    files: &[(String, Vec<u8>)],
+    made: &mut Vec<Made>,
+) -> Result<(), a2m_core::Failure> {
+    let fixtures = at.join("fixtures")?;
+    if !fixtures.is_dir() {
+        fixtures.create_dir()?;
+        made.push(Made::Folder(fixtures));
+    }
+    let fixture = at.join(folder)?;
+    fixture.create_dir().map_err(|_| {
+        codes::input(
+            codes::SCHEMA_INVALID,
+            format!("`{folder}` appeared while the read was recorded, and a recorded fixture is never written over one."),
+            "Give `name` another name, or remove the old files with `draft.delete`.",
+        )
+    })?;
+    made.push(Made::Folder(fixture));
+    for (path, bytes) in files {
+        if let Some((parent, _)) = path.rsplit_once('/')
+            && parent != folder
+        {
+            let parent = at.join(parent)?;
+            if !parent.is_dir() {
+                parent.create_dir()?;
+                made.push(Made::Folder(parent));
+            }
+        }
+        let file = at.join(path)?;
+        let identity = create_new(&file, bytes)?;
+        made.push(Made::File(file, identity));
+    }
+    Ok(())
+}
+
+/// A failure after files were written, with what became of them.
+fn after_written(failure: a2m_core::Failure, left: &[String]) -> a2m_core::Failure {
+    let said = if left.is_empty() {
+        " The files this call wrote were removed again, so the target is as it was.".to_owned()
+    } else {
+        format!(
+            " The files this call wrote were removed again, except: {}; look at them, and remove them with `draft.delete`.",
+            left.join(", ")
+        )
+    };
+    a2m_core::Failure::new(
+        failure.class(),
+        failure.code().clone(),
+        format!("{}{said}", failure.message()),
+        failure.next_step().to_owned(),
+    )
+}
 
 handler!(
     /// `fixture.record`: runs one drafted or published read as a trial in
@@ -602,7 +891,9 @@ handler!(
                 )
             })?;
         // Nothing is written over: a fixture or a test of this name already
-        // there is refused before the read runs.
+        // there is refused before the read runs. Each file is made new when
+        // it is written, too, so one that appears meanwhile is never
+        // replaced (audit finding FX-5).
         let (folder, test_path) = (format!("fixtures/{name}"), format!("tests/{name}.yaml"));
         {
             let (project_folder, target, folder, test_path) = (
@@ -644,16 +935,17 @@ handler!(
         // act live; the trial, the test, and the recorded test name it
         // (audit finding AC-6).
         let binding = crate::handlers::tools::named_binding(&plan, &tool, &call)?;
+        let named = call.text("mode").is_some() || call.int("position").is_some();
         kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&plan));
         let recorder = Recorder::start(kernel, digest);
-        let run = crate::handlers::tools::submit_trial_as(
+        let run = crate::handlers::tools::submit_trial_kept(
             kernel,
             &call,
             &found,
             &input,
             environment,
-            digest,
-            binding.clone(),
+            (digest, binding.clone()),
+            a2m_ledger::RetentionClass::Short,
         )
         .await?;
         let row = kernel
@@ -661,16 +953,26 @@ handler!(
             .await?;
         let observed = recorder.taken();
         drop(recorder);
+        let active = matches!(
+            row.state,
+            RunState::Queued | RunState::Validating | RunState::Running
+        );
+        if active {
+            // Not at rest within the wait: it is cancelled, so that it does
+            // not go on reading the system for nobody (audit finding FX-6).
+            let _ = kernel.sched()?.cancel(run).await;
+        }
         if row.state != RunState::Completed {
             return Err(codes::input(
                 codes::FIXTURE_READ_FAILED,
                 format!(
-                    "The read did not complete in the sandbox (`{}`{}), so nothing was recorded.",
+                    "The read did not complete in the sandbox (`{}`{}){}, so nothing was recorded.",
                     row.state,
                     row.failure
                         .as_ref()
                         .map(|(class, code)| format!(", {class}/{code}"))
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    if active { " within the wait, and was cancelled" } else { "" }
                 ),
                 format!(
                     "Call `run.get` with `{run}` to see why; correct the draft or the input, and record again."
@@ -686,12 +988,14 @@ handler!(
         }
 
         // Scrub: the input first, so that a key keeps one synthetic value
-        // in the input and in every answer.
+        // in the input and in every answer of a key field.
         let redact = kernel.redact();
         let mut scrubber = Scrubber::new(redact.as_ref());
-        let inputs_typed = input_types(&plan, &operation);
-        let inputs = scrubber.values(&input, &|name| inputs_typed.get(name).cloned())?;
-        let answers = scrubbed_answers(&mut scrubber, &observed, &output_types(&plan, &operation))?;
+        let input_slots = input_slots(&plan, &operation);
+        let inputs = scrubber.values(&input, "input", &|name| {
+            Some(input_slots.get(name).cloned().unwrap_or_default())
+        })?;
+        let answers = scrubbed_answers(&mut scrubber, &observed, &output_slots(&plan, &operation))?;
 
         // The test, run against the scrubbed fixture in memory: once for
         // its result, which becomes its expectation, and once to pass.
@@ -782,78 +1086,104 @@ handler!(
             ));
         }
 
-        // The files, and the check that no original text is in any byte.
+        // The files, and the check that no original value or key is in any
+        // byte.
         let inputs_json = crate::render::plain_values(&inputs);
+        let unencodable = || no_rule("an answer that cannot be written as JSON");
         let mut files: Vec<(String, Vec<u8>)> =
             vec![(format!("{folder}/fixture.yaml"), MARKER.as_bytes().to_vec())];
         for (answer, file, _) in &answers {
-            let mut bytes = serde_json::to_vec_pretty(file).unwrap_or_default();
+            let mut bytes = serde_json::to_vec_pretty(file).map_err(|_| unencodable())?;
             bytes.push(b'\n');
             files.push((format!("{folder}/{answer}.json"), bytes));
         }
         files.push((
             test_path.clone(),
-            test_file(&tool.name, &name, &inputs_json, &got).into_bytes(),
+            test_file(
+                &tool.name,
+                &name,
+                &inputs_json,
+                &got,
+                binding.as_ref().filter(|_| named),
+            )
+            .into_bytes(),
         ));
-        let leaked = scrubber
-            .originals
-            .iter()
-            .filter(|original| original.chars().count() >= 3)
-            .any(|original| {
-                files
-                    .iter()
-                    .any(|(_, bytes)| String::from_utf8_lossy(bytes).contains(original.as_str()))
-            });
+        let (leaked, short) = leak_check(&scrubber, &files);
         if leaked {
             return Err(codes::input(
                 codes::FIXTURE_NOT_REPLAYED,
-                "A value the read observed would still be in a file written, so nothing was written.",
+                "A value or a key the read observed would still be in a file written, so nothing was written.",
                 "Write this fixture by hand with synthetic values.",
             ));
         }
         let written: Vec<String> = files.iter().map(|(path, _)| path.clone()).collect();
+        let made: Arc<Mutex<Vec<Made>>> = Arc::new(Mutex::new(Vec::new()));
         {
-            let (project_folder, target, folder) =
-                (project_folder.clone(), target.clone(), folder.clone());
+            let (project_folder, target, folder, made) = (
+                project_folder.clone(),
+                target.clone(),
+                folder.clone(),
+                Arc::clone(&made),
+            );
             crate::handlers::build::off_thread(move || {
                 let at = crate::handlers::build::target_folder(&project_folder, &target)?;
-                at.join(&folder)?.create_dir_all()?;
-                for (path, bytes) in &files {
-                    let file = at.join(path)?;
-                    if let Some(parent) = path.rsplit_once('/').map(|(parent, _)| parent) {
-                        at.join(parent)?.create_dir_all()?;
-                    }
-                    file.write(bytes)?;
+                let mut made = made.lock().unwrap_or_else(PoisonError::into_inner);
+                let written = write_all_or_none(&at, &folder, &files, &mut made);
+                if let Err(failure) = written {
+                    let left = remove_made(&made);
+                    made.clear();
+                    return Err(after_written(failure, &left));
                 }
                 Ok(())
             })
             .await?;
         }
 
-        // Run once more from the files written, as `test.run` would.
-        let compiled = crate::handlers::build::compile_in(
-            kernel,
-            project_folder.clone(),
-            &target,
-            a2m_files::CompileMode::Draft,
-            a2m_files::DRAFT_VERSION,
-        )
-        .await?
-        .map_err(a2m_core::Failure::from)?;
-        let gates =
-            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world, None).await?;
-        let state = gates.gates[1]["tests"]
-            .as_array()
-            .and_then(|tests| tests.iter().find(|shown| shown["test"] == name.as_str()))
-            .map(|shown| shown["state"].clone())
-            .unwrap_or(Json::Null);
-        if state != "passed" {
-            return Err(Failure::new(
-                FailureClass::Input,
-                codes::FIXTURE_NOT_REPLAYED,
-                "The recorded test was written and does not pass when it is read back from its files; the files are left for a person to look at.",
-                "Call `test.run` to see what the test found, and correct or remove the files.",
-            ));
+        // Run once more from the files written, as `test.run` would. Any
+        // failure from here on removes the files this call wrote.
+        let checked = async {
+            let compiled = crate::handlers::build::compile_in(
+                kernel,
+                project_folder.clone(),
+                &target,
+                a2m_files::CompileMode::Draft,
+                a2m_files::DRAFT_VERSION,
+            )
+            .await?
+            .map_err(a2m_core::Failure::from)?;
+            let gates = crate::offline::run_gates(
+                kernel,
+                project_folder.clone(),
+                &target,
+                &compiled,
+                world,
+                None,
+            )
+            .await?;
+            let state = gates.gates[1]["tests"]
+                .as_array()
+                .and_then(|tests| tests.iter().find(|shown| shown["test"] == name.as_str()))
+                .map(|shown| shown["state"].clone())
+                .unwrap_or(Json::Null);
+            if state != "passed" {
+                return Err(Failure::new(
+                    FailureClass::Input,
+                    codes::FIXTURE_NOT_REPLAYED,
+                    "The recorded test does not pass when it is read back from its files.",
+                    "Call `fixture.record` again; where it fails the same way, write the fixture by hand.",
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(failure) = checked {
+            let made = Arc::clone(&made);
+            let left = crate::handlers::build::off_thread(move || {
+                let made = made.lock().unwrap_or_else(PoisonError::into_inner);
+                Ok(remove_made(&made))
+            })
+            .await?;
+            return Err(after_written(failure, &left));
         }
         let rules: Vec<Json> = scrubber
             .counts
@@ -868,7 +1198,10 @@ handler!(
             "files": written,
             "scrubbed": rules,
             "test_state": "passed",
-            "review": "Every value the read observed was put in place of by a synthetic one, by the rules named. A person reads the files before committing them.",
+            "binding": binding.as_ref().map(a2m_engine::BindingPin::to_json),
+            "trial": {"run_id": run.to_string(), "retention": "short"},
+            "limits": limits(&scrubber, short),
+            "review": "Every value and every key of a map the read observed was put in place of by a made-up one, by the rules named, chosen without looking at the original except where the replay needs it. A person reads the files before committing them.",
         }))
         .then(crate::dispatch::Next::new(
             "test.run",
@@ -884,70 +1217,259 @@ use a2m_core::Failure;
 mod tests {
     use super::*;
 
-    /// The fixed rules: nothing of an original text is kept, the same
-    /// original gives the same synthetic value and two never give one,
-    /// numbers keep their scale, and a type with no rule stops.
+    fn text_rule(untrusted: bool) -> TypeRule {
+        TypeRule {
+            base: FieldBase::Text,
+            codes: Vec::new(),
+            places: None,
+            untrusted,
+        }
+    }
+
+    fn texts(values: &Values) -> Vec<(String, String)> {
+        values
+            .iter()
+            .filter_map(|(name, value)| match value {
+                Value::Text(text) => Some((name.to_owned(), text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Audit finding FX-3: a made-up value is chosen without looking at the
+    /// original. Text is of one alphabet and of its type's one length,
+    /// whatever the original's letters and length; equal originals at two
+    /// places are two texts, but a key field keeps one; numbers are fixed,
+    /// with no sign or size kept; booleans alternate by place.
     #[test]
-    fn every_observed_value_is_put_in_place_of_by_a_synthetic_one_of_its_shape() {
+    fn a_made_up_value_says_nothing_of_the_original_but_what_the_replay_needs() {
         let redact = a2m_core::NoSecrets;
         let mut scrubber = Scrubber::new(&redact);
+        let key = Slot {
+            rule: Some(text_rule(false)),
+            declared: Some(ValueType::Text),
+            key: true,
+        };
+        let typed = |name: &str| match name {
+            "order_id" => Some(key.clone()),
+            "first" | "second" => Some(Slot {
+                rule: Some(text_rule(false)),
+                declared: Some(ValueType::Text),
+                key: false,
+            }),
+            "note" => Some(Slot {
+                rule: Some(text_rule(true)),
+                declared: Some(ValueType::Text),
+                key: false,
+            }),
+            "balance" | "count" | "open" | "shut" | "items" => Some(Slot::default()),
+            _ => None,
+        };
         let observed = Values::new()
             .with("order_id", "A-100")
-            .with("customer", "Example Customer One")
-            .with("other", "A-101")
-            .with("lines", Value::Int(57))
+            .with("first", "Same")
+            .with("second", "Same")
+            .with("note", "A rather long note of the system's own")
+            .with("count", Value::Int(-4_711_000))
+            .with("balance", Value::Decimal("-1830.25".parse().unwrap()))
             .with("open", Value::Bool(true))
-            .with("note", Value::Null)
-            .with(
-                "items",
-                Value::List(vec![Value::Text("A-100".to_owned()); 5]),
-            );
-        let scrubbed = scrubber.values(&observed, &|_| None).unwrap();
-        let text = |name: &str| match scrubbed.get(name) {
-            Some(Value::Text(text)) => text.clone(),
+            .with("shut", Value::Bool(true))
+            .with("items", Value::List(vec![Value::Text("A-100".to_owned()); 5]));
+        let scrubbed = scrubber.values(&observed, "answer", &typed).unwrap();
+        let input = scrubber
+            .values(&Values::new().with("order_id", "A-100"), "input", &typed)
+            .unwrap();
+        for (name, text) in texts(&scrubbed) {
+            assert!(text.chars().all(|c| ALPHABET.contains(&c)), "{name}: {text}");
+        }
+        let get = |name: &str| scrubbed.get(name).cloned().unwrap();
+        assert_eq!(get("order_id"), input.get("order_id").cloned().unwrap());
+        assert_eq!(texts(&Values::new().with("x", get("first")))[0].1.len(), TEXT_LENGTH);
+        assert_ne!(get("first"), get("second"));
+        match get("note") {
+            Value::Text(text) => assert_eq!(text.chars().count(), FREE_TEXT_LENGTH),
             other => panic!("{other:?}"),
-        };
-        let id = text("order_id");
-        assert_eq!(id.chars().count(), 8);
-        assert!(!id.chars().any(|c| "a-100".contains(c)), "{id}");
-        assert_ne!(text("other"), id);
-        assert_eq!(text("customer").chars().count(), 32);
-        assert_eq!(scrubbed.get("lines"), Some(&Value::Int(10)));
-        assert_eq!(scrubbed.get("open"), Some(&Value::Bool(true)));
-        assert_eq!(scrubbed.get("note"), Some(&Value::Null));
-        // A list keeps its first items, and a key the same synthetic value.
-        assert_eq!(
-            scrubbed.get("items"),
-            Some(&Value::List(vec![Value::Text(id.clone()); LIST_ITEMS_KEPT]))
-        );
-        let scaled = |text: &str| decimal_of_scale(&text.parse().unwrap()).unwrap();
-        assert_eq!(scaled("125.25"), "100.00".parse().unwrap());
-        assert_eq!(scaled("100.00"), "200".parse().unwrap());
-        assert_eq!(scaled("0.75"), "0.01".parse().unwrap());
+        }
+        assert_eq!(get("count"), Value::Int(1));
+        assert_eq!(get("balance"), Value::Decimal("1".parse().unwrap()));
+        assert_ne!(get("open"), get("shut"));
+        // A list keeps three items, each a place of its own.
+        match get("items") {
+            Value::List(items) => {
+                assert_eq!(items.len(), LIST_ITEMS_KEPT);
+                assert_ne!(items[0], items[1]);
+            }
+            other => panic!("{other:?}"),
+        }
         // Text of a field type built on a number has no rule.
-        let money = TypeRule {
-            base: FieldBase::Money,
-            codes: Vec::new(),
+        let money = Slot {
+            rule: Some(TypeRule {
+                base: FieldBase::Money,
+                codes: Vec::new(),
+                places: Some(2),
+                untrusted: false,
+            }),
+            declared: Some(ValueType::Text),
+            key: false,
         };
         let refused = scrubber
-            .values(&Values::new().with("total", "12.50"), &|_| {
+            .values(&Values::new().with("total", "12.50"), "answer", &|_| {
                 Some(money.clone())
             })
             .unwrap_err();
         assert_eq!(refused.code(), &codes::FIXTURE_NO_SCRUB_RULE);
-        // A choice by another of its codes.
-        let choice = TypeRule {
-            base: FieldBase::Choice,
-            codes: vec!["draft".to_owned(), "submitted".to_owned()],
+    }
+
+    /// Audit finding FX-2: a choice is its type's first declared code,
+    /// whatever it was, so a fixture says nothing of which it was.
+    #[test]
+    fn every_choice_is_its_types_first_code_whatever_it_was() {
+        let redact = a2m_core::NoSecrets;
+        let mut scrubber = Scrubber::new(&redact);
+        let choice = Slot {
+            rule: Some(TypeRule {
+                base: FieldBase::Choice,
+                codes: vec!["active".to_owned(), "blocked".to_owned()],
+                places: None,
+                untrusted: false,
+            }),
+            declared: Some(ValueType::Choice),
+            key: false,
         };
-        let chosen = scrubber
-            .values(&Values::new().with("status", "draft"), &|_| {
-                Some(choice.clone())
+        for original in ["active", "blocked"] {
+            let chosen = scrubber
+                .values(&Values::new().with("status", original), "answer", &|_| {
+                    Some(choice.clone())
+                })
+                .unwrap();
+            assert_eq!(chosen.get("status"), Some(&Value::Text("active".to_owned())));
+        }
+    }
+
+    /// Audit finding FX-1: a map keyed by data has its keys put in place of,
+    /// the same key by the same made-up key throughout, and the check
+    /// that nothing original is written looks at keys too.
+    #[test]
+    fn a_maps_keys_are_data_and_never_reach_a_file() {
+        let redact = a2m_core::NoSecrets;
+        let mut scrubber = Scrubber::new(&redact);
+        let balances = |first: &str| {
+            Value::Record(
+                Values::new()
+                    .with(first, Value::Decimal("1830.20".parse().unwrap()))
+                    .with("cust-5120@example.com", Value::Decimal("12.00".parse().unwrap())),
+            )
+        };
+        let declared = |name: &str| {
+            (name == "balances").then(|| Slot {
+                rule: None,
+                declared: Some(ValueType::Text),
+                key: false,
+            })
+        };
+        let one = scrubber
+            .values(
+                &Values::new()
+                    .with("balances", balances("cust-4711@example.com"))
+                    .with("cust-9@example.com", "undeclared"),
+                "answer",
+                &declared,
+            )
+            .unwrap();
+        let two = scrubber
+            .values(
+                &Values::new().with("balances", balances("cust-4711@example.com")),
+                "answer",
+                &declared,
+            )
+            .unwrap();
+        assert_eq!(one.get("balances"), two.get("balances"));
+        let written = serde_json::to_vec(&one).unwrap();
+        let text = String::from_utf8(written.clone()).unwrap();
+        assert!(text.contains("\"balances\""), "{text}");
+        assert!(!text.contains("example.com"), "{text}");
+        assert!(scrubber.originals.contains("cust-4711@example.com"));
+        let (leaked, _) = leak_check(&scrubber, &[("a.json".to_owned(), written)]);
+        assert!(!leaked);
+        // A key left as it was is found by the check.
+        let (leaked, _) = leak_check(
+            &scrubber,
+            &[("a.json".to_owned(), b"{\"cust-4711@example.com\": 1}".to_vec())],
+        );
+        assert!(leaked);
+    }
+
+    /// The final check: a short original cannot be looked for and is
+    /// counted, never a reason to fail; an original a made-up value happens
+    /// to hold is not found in it.
+    #[test]
+    fn the_leak_check_counts_what_it_cannot_look_for_and_reads_past_made_up_values() {
+        let redact = a2m_core::NoSecrets;
+        let mut scrubber = Scrubber::new(&redact);
+        scrubber
+            .values(&Values::new().with("a", "ab").with("b", "zjj"), "answer", &|_| {
+                Some(Slot::default())
             })
             .unwrap();
+        let made: Vec<String> = scrubber.synthetics.iter().cloned().collect();
+        let bytes = made.join(" ").into_bytes();
+        let (leaked, short) = leak_check(&scrubber, &[("a.json".to_owned(), bytes)]);
+        assert!(!leaked);
+        assert_eq!(short, 1);
+    }
+
+    /// Audit findings FX-4 and FX-5: every file is made new at the moment it
+    /// is written, and a failure after the first file was written removes
+    /// what this call made; what stood there before is left as it was.
+    #[test]
+    fn a_recording_writes_all_its_files_or_none_and_never_over_one_that_appeared() {
+        let folder = std::env::temp_dir().join(format!("a2m-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("tests")).unwrap();
+        // A person wrote the test file while the read was being recorded.
+        std::fs::write(folder.join("tests").join("one.yaml"), "kept: true\n").unwrap();
+        let mut roots = a2m_provider::Roots::none();
+        let name = a2m_provider::RootName::new("target").unwrap();
+        roots
+            .add(name.clone(), &folder, a2m_provider::Access::Write)
+            .unwrap();
+        let at = roots.folder(&name, a2m_provider::Access::Write).unwrap();
+        let files = vec![
+            ("fixtures/one/fixture.yaml".to_owned(), MARKER.as_bytes().to_vec()),
+            ("fixtures/one/order_get.json".to_owned(), b"{}\n".to_vec()),
+            ("tests/one.yaml".to_owned(), b"test: made\n".to_vec()),
+        ];
+        let mut made = Vec::new();
+        let refused = write_all_or_none(&at, "fixtures/one", &files, &mut made).unwrap_err();
+        assert!(refused.message().contains("appeared"), "{}", refused.message());
+        assert!(remove_made(&made).is_empty());
+        assert!(!folder.join("fixtures").exists());
         assert_eq!(
-            chosen.get("status"),
-            Some(&Value::Text("submitted".to_owned()))
+            std::fs::read_to_string(folder.join("tests").join("one.yaml")).unwrap(),
+            "kept: true\n"
         );
+        // A link at a file's name is never followed or replaced.
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(folder.join("tests").join("one.yaml")).unwrap();
+            let elsewhere = folder.join("elsewhere.yaml");
+            std::fs::write(&elsewhere, "outside\n").unwrap();
+            std::os::unix::fs::symlink(&elsewhere, folder.join("tests").join("one.yaml")).unwrap();
+            let mut made = Vec::new();
+            assert!(write_all_or_none(&at, "fixtures/one", &files, &mut made).is_err());
+            assert!(remove_made(&made).is_empty());
+            assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "outside\n");
+            std::fs::remove_file(folder.join("tests").join("one.yaml")).unwrap();
+        }
+        // With nothing in the way, all are written.
+        #[cfg(not(unix))]
+        std::fs::remove_file(folder.join("tests").join("one.yaml")).unwrap();
+        let mut made = Vec::new();
+        write_all_or_none(&at, "fixtures/one", &files, &mut made).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(folder.join("tests").join("one.yaml")).unwrap(),
+            "test: made\n"
+        );
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

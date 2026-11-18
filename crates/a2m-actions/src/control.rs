@@ -906,10 +906,23 @@ impl InProcessControl {
         // Everything leaving passes the redactor; the stored result is what
         // a later `run.get` returns.
         let redacted = self.kernel.redact().redact_values(values);
+        // A trial a fixture is recorded from keeps its result short: the
+        // values are the system's, unscrubbed (audit finding FX-6).
+        let recording = self
+            .kernel
+            .inner
+            .recordings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&self.run.input_hash);
         let blob = self
             .evidence(Evidence {
                 kind: BlobKind::Result,
-                class: RetentionClass::Long,
+                class: if recording {
+                    RetentionClass::Short
+                } else {
+                    RetentionClass::Long
+                },
                 bytes: encode_values(&redacted)?,
             })
             .await?;

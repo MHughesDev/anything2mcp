@@ -1837,6 +1837,29 @@ pub(crate) async fn submit_trial_as(
     input_hash: a2m_core::Digest,
     binding: Option<a2m_engine::BindingPin>,
 ) -> Result<RunId, Failure> {
+    submit_trial_kept(
+        kernel,
+        call,
+        found,
+        input,
+        environment,
+        (input_hash, binding),
+        RetentionClass::Long,
+    )
+    .await
+}
+
+/// As [`submit_trial_as`], with the class its stored input and run are
+/// kept for: a recording's trial keeps them short (audit finding FX-6).
+pub(crate) async fn submit_trial_kept(
+    kernel: &Kernel,
+    call: &Call,
+    found: &FoundTool,
+    input: &Values,
+    environment: Environment,
+    (input_hash, binding): (a2m_core::Digest, Option<a2m_engine::BindingPin>),
+    retention: RetentionClass,
+) -> Result<RunId, Failure> {
     let (name, target, effect) = (
         found.tool.name.clone(),
         found.target.clone(),
@@ -1850,7 +1873,7 @@ pub(crate) async fn submit_trial_as(
             workspace: principal.workspace,
             owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
             kind: BlobKind::Input,
-            class: RetentionClass::Long,
+            class: retention,
             plain: encode_values(input)?,
         })
         .await?;
@@ -1871,7 +1894,7 @@ pub(crate) async fn submit_trial_as(
         effect,
         input_hash,
         input: Some(stored),
-        retention: RetentionClass::Long,
+        retention,
     };
     let facts = CallerFacts::of(&call.caller, call.decision)
         .with_project(call.project.clone())
