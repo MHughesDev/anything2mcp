@@ -40,8 +40,9 @@ fn a_registry_with_only_the_file_pack_builds_and_its_digest_is_stable() {
     );
     // Documents, folders, and growing files (decision 0246).
     assert_eq!(set.file_kinds().count(), 3);
-    // A document from a layout, and the reads over it.
-    assert_eq!(set.drafting_rules().count(), 2);
+    // A document from a layout, and the reads over it; a folder and a
+    // growing file, and the reads over each (decision 0255).
+    assert_eq!(set.drafting_rules().count(), 6);
 }
 
 #[test]
@@ -362,6 +363,185 @@ impl a2m_files::DraftingRule for DraftsAWrite {
     }
 }
 
+/// A rule that drafts folders: one that names its writes, one that says
+/// whether an application may hold an entry open, and one that only reads.
+struct DraftsAFolderThatWrites;
+
+impl a2m_files::DraftingRule for DraftsAFolderThatWrites {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_FOLDER).unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_pack_file::FOLDER_KIND
+    }
+
+    fn draft(
+        &self,
+        _finding: &a2m_core::Finding,
+        _cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
+        use a2m_files::DraftValue;
+        let folder = |name: &str, extra: Option<(&'static str, DraftValue)>| {
+            let mut body = vec![("surface", DraftValue::text("files"))];
+            body.extend(extra);
+            a2m_files::DraftDoc {
+                path: a2m_files::RelPath::new(&format!("folders/{name}.yaml")).unwrap(),
+                body: DraftValue::map(body),
+            }
+        };
+        Ok(vec![
+            folder(
+                "names_writes",
+                Some((
+                    "writes",
+                    DraftValue::List(vec![DraftValue::text("create")]),
+                )),
+            ),
+            folder("says_it_may_be_open", Some(("may_be_open", DraftValue::Bool(false)))),
+            folder("only_lists", None),
+        ])
+    }
+}
+
+/// A rule that drafts an operation that writes, and one that reads.
+struct DraftsAnOperationThatWrites;
+
+impl a2m_files::DraftingRule for DraftsAnOperationThatWrites {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_FOLDER).unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_core::FileKindName::fixed("operation")
+    }
+
+    fn draft(
+        &self,
+        _finding: &a2m_core::Finding,
+        _cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
+        use a2m_files::DraftValue;
+        let operation = |name: &str, effect: &str| a2m_files::DraftDoc {
+            path: a2m_files::RelPath::new(&format!("operations/{name}.yaml")).unwrap(),
+            body: DraftValue::map(vec![
+                ("operation", DraftValue::text(&format!("example_{name}"))),
+                ("effect", DraftValue::text(effect)),
+                ("inputs", DraftValue::Map(Vec::new())),
+                ("outputs", DraftValue::Map(Vec::new())),
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![
+                        ("mode", DraftValue::text("file")),
+                        ("verb", DraftValue::text("list")),
+                        ("folder", DraftValue::text("only_lists")),
+                    ])]),
+                ),
+                ("description", DraftValue::text("A drafted operation.")),
+            ]),
+        };
+        Ok(vec![
+            operation("entry_add", "write"),
+            operation("entries_list", "read"),
+        ])
+    }
+}
+
+/// What the drafter refused, by path, with the reason it gave.
+fn refusals(report: &a2m_files::DraftReport) -> Vec<(&str, &str)> {
+    report
+        .refused
+        .iter()
+        .map(|(path, why)| (path.as_str(), why.as_str()))
+        .collect()
+}
+
+/// The reason the drafter gives for a pack's file that writes.
+const DESCRIBES_A_WRITE: &str =
+    "the drafter drafts nothing that writes; an entry that writes is written by the developer";
+
+#[test]
+fn a_drafting_rule_that_drafts_a_folder_or_an_operation_that_writes_is_refused() {
+    use a2m_core::{Coverage, Finding, ProducedBy, Source, Subject};
+    let mut builder = a2m_files::CompilerSet::builder();
+    builder
+        .file_kind(
+            a2m_pack_file::PACK,
+            std::sync::Arc::new(a2m_pack_file::FolderKind::new()),
+        )
+        .unwrap()
+        .drafting_rule(
+            a2m_pack_file::PACK,
+            std::sync::Arc::new(DraftsAFolderThatWrites),
+        )
+        .unwrap()
+        .drafting_rule(
+            a2m_pack_file::PACK,
+            std::sync::Arc::new(DraftsAnOperationThatWrites),
+        )
+        .unwrap();
+    let set = builder.build();
+    let finding = Finding::about(
+        Subject::File {
+            digest: a2m_core::Digest::of(b"a folder"),
+            format: "folder".to_owned(),
+            part: None,
+        },
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_FOLDER).unwrap(),
+        "{}",
+        Source::LiveSystem,
+        ProducedBy {
+            provider: "file".to_owned(),
+            version: "0.0.1".to_owned(),
+            component: None,
+        },
+        a2m_core::Timestamp::from_unix_millis(0),
+    )
+    .coverage(Coverage::Complete)
+    .build()
+    .unwrap();
+    let root = std::env::temp_dir().join(format!(
+        "a2m-pack-file-draft-folder-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("target.yaml"),
+        "schema_version: 1\ntarget: example\nsurfaces:\n  files:\n    kind: file\n    folder: .\n",
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&finding))
+        .unwrap();
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    let left = (
+        root.join("folders").join("names_writes.yaml").exists(),
+        root.join("operations").join("entry_add.yaml").exists(),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        refusals(&report),
+        [
+            ("folders/names_writes.yaml", DESCRIBES_A_WRITE),
+            ("folders/says_it_may_be_open.yaml", DESCRIBES_A_WRITE),
+            (
+                "operations/entry_add.yaml",
+                "the drafter drafts read operations only; a write is written by the developer"
+            ),
+        ]
+    );
+    assert_eq!(
+        written,
+        ["folders/only_lists.yaml", "operations/entries_list.yaml"]
+    );
+    assert_eq!(left, (false, false));
+}
+
 #[test]
 fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
     use a2m_core::{Coverage, Finding, ProducedBy, Source, Subject};
@@ -407,21 +587,18 @@ fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
     let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
         .draft(std::slice::from_ref(&finding))
         .unwrap();
-    let refused: Vec<&str> = report
-        .refused
-        .iter()
-        .map(|(path, _)| path.as_str())
-        .collect();
     let written: Vec<&str> = report
         .written
         .iter()
         .map(a2m_files::RelPath::as_str)
         .collect();
+    // Each refusal says why: a field marked writable, and a writability
+    // left as a question, each describe a write.
     assert_eq!(
-        refused,
+        refusals(&report),
         [
-            "documents/tries_a_write.yaml",
-            "documents/asks_whether_it_writes.yaml"
+            ("documents/tries_a_write.yaml", DESCRIBES_A_WRITE),
+            ("documents/asks_whether_it_writes.yaml", DESCRIBES_A_WRITE),
         ]
     );
     assert_eq!(written, ["documents/only_reads.yaml"]);

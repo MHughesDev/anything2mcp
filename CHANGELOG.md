@@ -117,6 +117,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - The architecture: which crate defines, implements, and joins every interface, with a design for each of the 29 crates, the command, data, file, stream, and device packs among them.
 - A roadmap of every work package to version 1.0.
 - A web application that signs in through its own sign-in page can now be used: `form_login` fills the page with the username and password you stored, asks you for a one-time code when the page asks, tries a refused password only once, and signs in again by itself when the session expires. The browser keeps the session's cookies in memory only; they are sealed for you in the vault. Signing in yourself in a visible window, and single sign-on through an identity provider's pages, are not built (decision 0245).
+- The MCP pack starts a local MCP server program on Windows as well as on macOS and Linux (written for Windows, and not yet run there).
 
 ### Changed
 
@@ -189,6 +190,9 @@ A safety review read each crate against its design and the ten rules, and every 
 - An answer to a page write that quotes the page's anti-forgery token is withheld whole, and the write is treated as in doubt. A page's refusal of the values of a write is no longer settled as not written. The tab that writes passes the page's service worker by (decision 0245).
 - The HTTP pack reads a hostile XML or JSON answer within bounded work and never on the engine's async threads. Outside a live run it sends no request that may write, unless it is a declared test record's commit or a read the endpoint asserts, against a test environment. An endpoint marked `read` with a method that is not safe now needs `read_asserted: true`. A bytes answer that holds a registered secret gives neither its length nor its digest (decision 0249).
 - A shadow binding is promotable only on matches over distinct inputs, in each environment its evidence must come from, against the verified binding that acts. `shadow report` shows the distinct inputs, the environments, and what the shadow's reads cost in requests, and promoting from shadow asks for presence. All of a call's shadows share one budget of time, and a shadow never asks for a sign-in or takes a caller's share of a rate budget (decision 0251).
+- The MCP pack refuses to start a local server that another user could change, or that is a shell, an interpreter, a batch file, or a script: before, it checked only the program's digest (decision 0250).
+- A command or a local MCP server is no longer given a variable that makes it load other code, such as `LD_PRELOAD` or `NODE_OPTIONS`.
+- A script a target keeps runs only through an interpreter in its one known form, and only from a run folder no other user can change.
 
 ## [0.0.1]
 

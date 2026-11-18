@@ -33,7 +33,7 @@ discoverer = ["file_layout"]
 name = "file_layout"
 archetype = "artifact"
 surface_kinds = ["file"]
-kinds = ["file_layout", "file_key_candidate"]
+kinds = ["file_layout", "file_key_candidate", "file_folder", "file_log"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 67108864, depth = 1 }
@@ -61,6 +61,16 @@ surface_kinds = ["file"]
 
 [[finding_kinds]]
 name = "file_key_candidate"
+surface_kinds = ["file"]
+
+# A surface's folder, its entries to a depth (decision 0255).
+[[finding_kinds]]
+name = "file_folder"
+surface_kinds = ["file"]
+
+# A growing file, and the form of its lines (decision 0255).
+[[finding_kinds]]
+name = "file_log"
 surface_kinds = ["file"]
 
 [[lint_rules]]
@@ -94,6 +104,22 @@ file_kind = "document"
 
 [[drafting_rules]]
 finding_kind = "file_layout"
+file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "file_folder"
+file_kind = "folder"
+
+[[drafting_rules]]
+finding_kind = "file_folder"
+file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "file_log"
+file_kind = "log"
+
+[[drafting_rules]]
+finding_kind = "file_log"
 file_kind = "operation"
 
 [[failure_codes]]

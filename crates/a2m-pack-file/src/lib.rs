@@ -2,10 +2,11 @@
 //!
 //! A file in a known format is the system being operated on (spec section
 //! 308). The pack registers one mode, `file`, of the artifact archetype;
-//! the surface kind `file`, a folder inside a named root; the file kind
-//! `documents/`, which names one file and its record kinds; a driver; a
-//! discoverer of file layouts; and the rules that draft a document and the
-//! reads over it from one.
+//! the surface kind `file`, a folder inside a named root; the file kinds
+//! `documents/`, which names one file and its record kinds, `folders/`, and
+//! `logs/`; a driver; a discoverer of file layouts, of a surface's folder,
+//! and of growing files; and the rules that draft a document, a folder, a
+//! growing file, and the reads over each from what it found.
 //!
 //! A file is read once, parsed through `a2m-sources` with the position of
 //! every value, and written only by patching the bytes of the places
@@ -24,9 +25,11 @@ pub mod codes;
 mod declare;
 mod discover;
 mod draft;
+mod draft_kinds;
 mod drive_folder;
 mod driver;
 mod edit;
+mod evidence;
 mod folder;
 mod kind;
 mod log;
@@ -50,6 +53,10 @@ pub use discover::{
     TableFound,
 };
 pub use drive_folder::SKIPPED;
+pub use evidence::{
+    EntryFound, EntryKindFound, FILE_FOLDER, FILE_LOG, FolderFound, LineForm, LogFound,
+    SettingFound, ValueShape, Withheld,
+};
 pub use driver::{FileDriver, FileLimits};
 pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
@@ -107,7 +114,11 @@ impl Pack for FilePack {
             .file_kind(Arc::new(declare::LogKind::new()))
             .lowering(Arc::new(lower::FileLowering::new(mode)))
             .drafting_rule(Arc::new(draft::DocumentFromLayout::new()?))
-            .drafting_rule(Arc::new(draft::ReadsFromLayout::new()?));
+            .drafting_rule(Arc::new(draft::ReadsFromLayout::new()?))
+            .drafting_rule(Arc::new(draft_kinds::FolderFromFinding::new()?))
+            .drafting_rule(Arc::new(draft_kinds::FolderReads::new()?))
+            .drafting_rule(Arc::new(draft_kinds::LogFromFinding::new()?))
+            .drafting_rule(Arc::new(draft_kinds::LogReads::new()?));
         for rule in lower::lint_rules() {
             compiler = compiler.lint_rule(Arc::new(rule));
         }
@@ -116,6 +127,7 @@ impl Pack for FilePack {
             Arc::new(discover::LayoutDiscoverer::new(
                 cx.telemetry().clock(),
                 limits,
+                cx.roots().clone(),
             )?),
             Arc::new(discover::LayoutDescriber),
         )

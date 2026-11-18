@@ -260,8 +260,15 @@ pub(crate) fn load_settings(options: &EngineOptions) -> Result<Settings, Failure
 }
 
 fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
-    if make && std::fs::create_dir_all(folder).is_err() {
-        return;
+    if make {
+        if std::fs::create_dir_all(folder).is_err() {
+            return;
+        }
+        // The engine's own folders are its user's alone. A run folder for
+        // a kept script is refused when another account could change it
+        // (decision 0250), so a folder made under a permissive default
+        // mode is closed here, not left to the default.
+        let _ = a2m_local::keep_folder_private(folder);
     }
     if let Ok(name) = RootName::new(name) {
         // A folder that does not exist is left out: a pack that needs the

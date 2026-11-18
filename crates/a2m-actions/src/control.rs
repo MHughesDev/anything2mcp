@@ -957,6 +957,8 @@ impl Control for InProcessControl {
                 against: compared.verified.digest,
                 writes: compared.writes,
                 outcome: compared.outcome,
+                input: compared.input,
+                requests: compared.requests,
             };
             self.kernel
                 .store()?
@@ -964,6 +966,50 @@ impl Control for InProcessControl {
                     tx.shadow().record(&comparison).map(|_| ())
                 })
                 .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    /// A binding in shadow's budget: all at once or nothing, never waiting,
+    /// and leaving callers' own reads the share a watch's check leaves them
+    /// (decisions 0247 and 0251).
+    fn shadow_rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<bool, Failure>> {
+        Box::pin(async move {
+            let sched = self.kernel.sched()?;
+            let key = BudgetKey::surface(
+                self.run.workspace,
+                &self.run.target,
+                &self.run.environment,
+                surface.as_str(),
+            )?;
+            // The surface's own declared budget, set once, as `rate` sets it.
+            if let Some(rate) = self
+                .surface_index(surface)
+                .and_then(|index| self.plan.surface(index))
+                .and_then(|surface| surface.rate)
+                && !self.kernel.budget_noted(&key)
+            {
+                sched
+                    .set_budget(
+                        key.clone(),
+                        RateLimit {
+                            capacity: rate.requests.max(1),
+                            refill: rate.requests.max(1),
+                            per: Duration::from_millis(u64::from(rate.per_ms.max(1))),
+                        },
+                    )
+                    .await?;
+                self.kernel.note_budget(&key);
+            }
+            let reserve = sched.settings().watch.reserve_percent;
+            sched
+                .rate_now(&self.lease, &[key], want.max(1), reserve)
+                .await
+                .map(|grant| grant.is_some())
                 .map_err(|failure| self.redacted(failure))
         })
     }

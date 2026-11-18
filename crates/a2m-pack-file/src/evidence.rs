@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(form("order A-100 drafted\norder A-100 sent\n"), (None, None));
         assert_eq!(form("a,b;c\nd,e;f\n"), (None, None));
         assert_eq!(form("a=1,b=2\nc=3,d=4\n"), (None, None));
-        assert_eq!(form("a=1\n\xff\n"), (None, None));
+        assert_eq!(line_form(b"a=1\n\xff\n", &limits()), (2, None, None));
         // A line not ended is not a line.
         assert_eq!(line_form(b"a=1", &limits()), (0, None, None));
     }

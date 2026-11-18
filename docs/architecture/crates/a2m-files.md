@@ -101,11 +101,13 @@ pub enum CompileMode { Draft, Publish }     // Publish: test rules are errors
 /// `version` is what the plan is published as; a draft passes `DRAFT_VERSION`.
 pub fn compile(sources: &Sources, set: &CompilerSet, mode: CompileMode, version: Version) -> Result<Compiled, Diagnostics>;
 pub struct Compiled { pub plan: Plan, pub encoded: EncodedPlan, pub warnings: Diagnostics, pub review: ReviewSummary, pub test_bindings: Vec<Option<usize>> }
-pub struct ReviewSummary { pub items: Vec<ReviewItem> }     // every tool, by hazard, then effect, then name
+pub struct ReviewSummary { pub items: Vec<ReviewItem>, pub sign_ins: Vec<SignInReview> }   // module `review`; see below
 
 /// One edited file, for an agent's `draft.lint`: it takes the place of the file at its path, and the target is compiled as a draft.
 pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Diagnostics;
 ```
+
+**The review summary** ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)). Every field is typed, so a page renders it and prints no sentence built from a system's or an agent's words; the only sentences are the module's constants. `ReviewItem` holds the tool, effect, hazard, commit points, surfaces, destinations, uploads, downloads, `place` (the fixed place of its record, where it has one), `bindings` (for each: operation, mode, surface, the surface's declared programs, and `BindingStates::Stated { runs, environment }` or `NotStated { says: NOT_STATED }`), and `reach` (`Reach::Stated { groups, leaves_this_machine }` or `Partly { known, says: REACH_NOT_STATED }`, the groups by `AddressScope`). A run is a `ProgramRun::Program { path, digests }` or a fixed pair `Script { interpreter, interpreter_digests, arguments, script, script_digest }`, which carries `SCRIPT_NOTICE`; a variable is `Set(value)`, `Secret`, or `Passed`. `SignInReview` holds the entry's place in the plan's `auth`, surfaces, provider, mode, credentials by role and reference, `ProbeReview::Declared` or `Pending`, and per environment `SentTo::NotStated`, `ProviderNotHeld`, or `Addresses { groups, leaves_this_machine }`; `ReviewSummary::state_sent_to(entry, environment, Option<Vec<SentAddress>>)` is how `a2m-actions` fills in what the session keeper says, since the compiler cannot know. Tools are ordered by hazard, effect, then exposure (a reach not stated, then one off the machine; a binding that does not say or starts a kept script, then a program), then name; kinds of place from unreadable, public, and a name to this machine last; sign-ins with a probe not drafted first.
 
 Stages 1 to 9 are those of [section 206](../../spec/2-kernel/206-the-compiler-and-the-plan.md). This crate adds what a builder needs to know about each.
 
@@ -173,7 +175,7 @@ These are data, with the serde form `a2m-sources` reads ([decision 0087](../../d
 | `target` | 2 and 3 | The target's own facts. `defaults.timeouts` and `defaults.limits` are not here: a lowering reads a timeout and writes it into its steps, and a pipeline that states no limit takes the default, so the engine applies none |
 | `environments` | 3 | Test records as record keys, as written; the approval rule. `production` is added when the file does not declare it, and is the default environment unless the file names one |
 | `surfaces` | 2 and 3 | A surface's `programs`: what it states under the fields its kind names as program fields, and, where the path field is the address key, its address in each environment, with the surface's digest. A path that is not absolute, a path with `.` or `..` in it, a program on a network share with no digest, a digest that is not one, and a digest with no program are `program_invalid`, at the value's place |
-| `auth` | 3, after the operations and the pack sections | One entry per group of surfaces. A probe is a `read` operation with the inputs `probe_inputs` gives, or a name a pack's document defines on one of the entry's surfaces; anything else is `unknown_name` or `probe_invalid`. A credential that is not a vault reference is `credential_in_file`, and is never shown |
+| `auth` | 3, after the operations and the pack sections | One entry per group of surfaces. A probe is a `read` operation with the inputs `probe_inputs` gives, or a name a pack's document defines on one of the entry's surfaces; anything else is `unknown_name` or `probe_invalid`. In a draft only, a probe that names nothing, where no operation file of that name exists, is `ProbePlan::Pending` with the warning `probe_pending` ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)). A credential that is not a vault reference is `credential_in_file`, and is never shown |
 | `field_types` | 3 | The normalizer and, from the same rule, the format as data: decimal mark, step, pattern, zone offset, case and whitespace |
 | `pipelines` | 3 to 7 | A source's bare columns go in its payload, a `SourceSpec`; its expressions in `mapping` |
 | `tests` | 7 | One for each document under `tests/` |
@@ -195,7 +197,10 @@ pub trait FileKind: Send + Sync {
     fn compile(&self, docs: &[Located<Doc>], cx: &KindContext<'_>) -> Result<CompiledSection, Diagnostics>;
     /// Whether a document describes something that changes the system. The drafter writes none that does.
     fn writes(&self, doc: &Located<Doc>) -> bool { false }
+    /// The places a document declares that are each exactly one record, which no input chooses (decision 0252).
+    fn fixed_places(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> { Vec::new() }
 }
+pub struct FixedPlace { pub kind: FileKindName, pub name: String }
 pub struct DefinedName { pub name: String }
 pub struct ExprSite { pub text: String, pub at: Place, pub names: Vec<DeclaredName>, pub expected: Option<ValueType> }
 pub struct DeclaredName { pub name: String, pub ty: ValueType }
@@ -212,8 +217,14 @@ pub trait Lowering: Send + Sync {
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass { EffectClass::Read }   // by what the binding does
     fn binding_schema(&self) -> &JsonSchema;        // every key of a binding but mode, verb, status, precondition
     fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible;
+    fn fixed_place(&self, binding: &ResolvedBinding<'_>) -> Option<FixedPlace> { None }   // the one place it names
     fn lower(&self, binding: &ResolvedBinding<'_>, cx: &LowerContext<'_>) -> Result<Lowered, Diagnostics>;
+    /// What it starts, sets, and sends to, for the review summary; asked after `lower` (decision 0252).
+    fn statement(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered, cx: &LowerContext<'_>) -> Statement { Statement::NotStated }
 }
+pub enum Statement { NotStated, Stated(BindingStatement) }
+pub struct BindingStatement { pub runs: Vec<ProgramRun>, pub environment: Vec<EnvironmentVariable>, pub sends: Sends }
+pub enum Sends { NotStated, Only { surface: bool, addresses: Vec<String> } }   // default NotStated
 pub enum Possible { Yes, No(String) }
 /// Whether a step of one kind saves in the system. A lowered step marked otherwise does not compile.
 pub enum StepCommits { Never, Always, AsDeclared }
@@ -327,7 +338,7 @@ pub struct OpenQuestion { pub file: RelPath, pub question: String, pub findings:
 
 ### The test pack
 
-The module `testing`, behind the feature of that name, holds a small imaginary pack called `stand`: one surface kind, the file kind `call` in `calls/`, the mode `stand` with the verbs `read` and `upsert`, one control, one lint rule, and one drafting rule. It states what the compiler asks of a pack: a `fetch` step never saves and a `send` step always does, whatever a call's file says of its effect; the verb `upsert` is a write by what it does; a `fetch` of a call that writes does not compile; and a call whose effect is `write` is a document the drafter does not write. `testing::stand_set()` gives a `CompilerSet` with it, `testing::register_stand(&mut builder)` adds it to a builder, and `testing::example_root()` is the `example` target in `targets/example/`, which is written for it. A crate above names the feature under its dev-dependencies. It is never enabled in the product.
+The module `testing`, behind the feature of that name, holds a small imaginary pack called `stand`: one surface kind, the file kind `call` in `calls/`, the mode `stand` with the verbs `read` and `upsert`, one control, one lint rule, and one drafting rule. It states what the compiler asks of a pack: a `fetch` step never saves and a `send` step always does, whatever a call's file says of its effect; the verb `upsert` is a write by what it does; a `fetch` of a call that writes does not compile; and a call whose effect is `write` is a document the drafter does not write. A call whose path has no placeholder is one fixed place, and a binding names its call as its place; the pack states nothing for the review summary. `testing::stand_set()` gives a `CompilerSet` with it, `testing::register_stand(&mut builder)` adds it to a builder, and `testing::example_root()` is the `example` target in `targets/example/`, which is written for it. A crate above names the feature under its dev-dependencies. It is never enabled in the product.
 
 A crate whose tests need a whole pack, with a driver beside the compiler side, registers the parts itself through `a2m-provider`. The objects are `testing::surface_kind_spec()`, `control()`, `file_kind()`, `lowering()`, `lint_rule()`, and `drafting_rule()`. The names its manifest declares are `PACK`, `FOLDER`, `surface_kind()`, `call_kind()`, `mode()`, `verbs()`, `step_kinds()`, `lint_code()`, and `finding_kind()`. The module's own text says what a driver meets in a plan compiled with it. A test in `a2m-provider` registers the pack this way and compiles the `example` target to the same plan as `stand_set()`. The surface kind takes an optional `helper` program with a `helper_digest`, so that a test can put a declared program in a plan.
 
@@ -380,6 +391,9 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 | A pack is handed another pack's entries only when it declared the read | A test with a second lowering that declared none |
 | A program a surface declares reaches the plan, and one named by a relative path does not compile | Tests with the test pack's helper program, and with a surface kind whose address is the program, in the surface and in an environment |
 | A run-time value is judged by the rules a file is, and each kind of misfit is refused with the path of its field and without the value | `schema::tests`, over named values and over JSON, and one case that compares the words with a file's |
+| A record is one fixed place only where its file kind declares that place fixed in the target's document, every binding names it, and no input is its key | `a_write_of_one_fixed_place_compiles_with_no_identity_input`, `a_fixed_place_is_only_one_its_file_kind_declares_and_no_input_chooses` |
+| The review summary shows what a pack states, and a pack that states nothing is shown as stating nothing, never as nothing | `the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place`, `a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing`, `a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends` |
+| A probe not yet drafted compiles in a draft only, and is marked | `a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only`; in `a2m-core`, `a_probe_not_yet_drafted_stands_only_in_a_draft` |
 
 ## Build order
 
@@ -403,6 +417,8 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 
 12. Done ([decision 0199](../../decisions/0199-the-halves-left-for-each-other-are-joined.md)): `CompilerSet::address_key`; a surface whose address is blank is refused as stating none; and the warning `kernel.acknowledged_with_lookup`, always a warning, for a binding whose evidence is `acknowledged`, on a keyed record, with no read-back step and a lookup: the engine asks the lookup only whether the record landed, and a lookup that returns the record's values is a read-back by another name. The test pack's lowering takes `lookup: {call}`. No first-party pack's lowering makes such a binding: their compile tests pass unchanged.
 13. Done ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)): a test may name the binding it tests, `binding: {mode, position}` (position counted from 1 among the operation's bindings, needed where two share the mode), refused as `kernel.test_binding_unknown` where none, two, or a retired binding match, or the test is of a pipeline; `Compiled::test_bindings` holds the place for each test of the plan, in its order, since `a2m-core`'s `TestPlan` has no field for it. The drafter refuses a drafted binding of any status but `draft` (`a_binding_is_drafted_as_draft_and_never_as_verified`), and, building the check [decision 0203](../../decisions/0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md) left owed, a drafted document of a pack's kind whose surface (the one it names, else the target's first of a kind the file kind is registered for) is of a kind its rule's own pack did not register the kind for, by name, where it is placed (`a_pack_drafts_a_kind_of_a_shared_name_only_for_its_own_surfaces`). `testing::file_kind_for` and `surface_kind_spec_for` give a second pack's registration of the stand's kind.
+
+14. Done ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)): a record that is one fixed place (`identity: {strategy: natural, place: fixed}`, `FileKind::fixed_places`, `Lowering::fixed_place`, `kernel.place_not_fixed`; the test pack's call with no placeholder is one); the review summary's typed fields and `Lowering::statement`, in the module `review`; a sign-in whose probe is not drafted yet, in a draft only (`ProbePlan::Pending`, `kernel.probe_pending`). Not done: the place's own name is not in the plan, so the ledger keys such a record by the operation and its place in the run; no first-party pack states anything for the summary yet.
 
 Not built, in any step:
 

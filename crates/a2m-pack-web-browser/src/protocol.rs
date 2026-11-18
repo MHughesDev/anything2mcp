@@ -908,6 +908,11 @@ pub(crate) struct BypassServiceWorker {
 }
 command!(BypassServiceWorker, "Network.setBypassServiceWorker" => Nothing);
 
+/// Switches a tab's network events off.
+#[derive(Debug, Serialize)]
+pub(crate) struct NetworkDisable {}
+command!(NetworkDisable, "Network.disable" => Nothing);
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GetResponseBody<'a> {

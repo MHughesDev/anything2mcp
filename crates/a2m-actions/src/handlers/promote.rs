@@ -11,9 +11,12 @@
 //! operation that writes, the promote is a person's act; the publish that
 //! follows is a person's act whatever the operation does.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use a2m_core::{BindingStatus, EffectClass, Failure, Mode, OperationName, TargetName, ToolRuns};
+use a2m_core::{
+    BindingStatus, EffectClass, Environment, Failure, Mode, OperationName, TargetName, ToolRuns,
+};
 use a2m_files::{
     CompileMode, Compiled, DRAFT_VERSION, Doc, Located, RelPath, SourceFile, Sources, TargetRoot,
 };
@@ -45,6 +48,11 @@ struct Found {
     /// The binding, by its place, mode, and the digest of what it does:
     /// only evidence that names it is taken (audit finding AC-6).
     pin: a2m_engine::BindingPin,
+    /// The verified binding a binding in shadow beside it is compared
+    /// against: the one that acts (decision 0251).
+    against: Option<a2m_engine::BindingPin>,
+    /// The environments the shadow evidence must come from (decision 0251).
+    environments: Vec<Environment>,
 }
 
 fn not_promotable(message: impl Into<String>, next: impl Into<String>) -> Failure {
@@ -148,6 +156,8 @@ fn locate(
         }
     };
     let pin = a2m_engine::BindingPin::of(plan, operation, position).ok_or_else(no_tool)?;
+    let against = a2m_engine::verified_binding(plan, operation);
+    let environments = a2m_engine::shadow_evidence_environments(plan);
     let status = operation.bindings[position].status;
     match status {
         BindingStatus::Draft | BindingStatus::Verified | BindingStatus::Shadow => {}
@@ -258,6 +268,8 @@ fn locate(
         status,
         compiled,
         pin,
+        against,
+        environments,
     })
 }
 
@@ -457,6 +469,7 @@ async fn trial_evidence(
 /// project, a new file renamed over the name, never through a link, and
 /// refused where the file changed since the binding was found.
 async fn rewrite(
+    kernel: &Kernel,
     project_folder: PathBuf,
     target: &TargetName,
     found: &Found,
@@ -467,7 +480,34 @@ async fn rewrite(
         found.edited.clone(),
         found.original.clone(),
     );
+    let (kernel, tool, mode, position, pinned) = (
+        kernel.clone(),
+        found.pin.operation.clone(),
+        found.pin.mode.clone(),
+        found.pin.position,
+        found.pin.digest,
+    );
     off_thread(move || {
+        // Everything the binding's digest covers is read again from disk:
+        // an endpoint or screen file changed since the binding was found is
+        // not promoted under the digest its evidence named (decision 0251).
+        let again = locate(
+            &kernel,
+            &project_folder,
+            &target,
+            &tool,
+            &mode,
+            Some(position),
+        )?;
+        if again.pin.digest != pinned {
+            return Err(codes::stale(
+                codes::DRAFTS_CHANGED,
+                format!(
+                    "What the binding of `{mode}` of `{tool}` does changed while it was promoted, so nothing was written."
+                ),
+                "Look at `shadow.report` again, then promote.",
+            ));
+        }
         let folder = target_folder(&project_folder, &target)?;
         let file = folder.join(path.as_str())?;
         if !matches!(file.entry_kind()?, a2m_provider::EntryKind::File) {
@@ -505,9 +545,11 @@ fn threshold(kernel: &Kernel) -> a2m_ledger::ShadowThreshold {
     }
 }
 
-/// `binding.promote` of a binding in shadow (decision 0207): a person's
-/// act, on the run of exact matches the ledger counted for the binding's
-/// digest as the drafts compile it. The ledger records the promotion
+/// `binding.promote` of a binding in shadow (decisions 0207 and 0251): a
+/// person's act, asked of the person at this machine, on the distinct
+/// inputs the ledger counted as matching the verified binding that acts, in
+/// each environment the evidence must come from, for the binding's digest
+/// as the drafts compile it. The ledger records the promotion
 /// first, in a transaction that asks again whether it may; the file is
 /// rewritten after. A promotion the ledger holds whose rewrite did not
 /// happen (the file changed in between) is finished by the next call.
@@ -535,6 +577,30 @@ async fn promote_from_shadow(
             ));
         }
     };
+    // A person's act that changes which binding serves every later call:
+    // asked of the person at this machine, as a publish is (decision 0251).
+    if call.presence.is_none() {
+        let def = kernel
+            .actions()
+            .find("binding.promote")
+            .cloned()
+            .ok_or_else(|| {
+                codes::input(
+                    codes::ACTION_NOT_BUILT,
+                    "`binding.promote` is not in this engine's registry.",
+                    "Call `action.search` to see which actions are built.",
+                )
+            })?;
+        kernel.presence(&call.caller, &def, found.effect).await?;
+    }
+    let Some(against) = found.against.clone() else {
+        return Err(not_promotable(
+            format!(
+                "The operation `{tool}` has no verified binding for the binding in shadow to have been compared against."
+            ),
+            "Verify a binding of the operation first.",
+        ));
+    };
     let promotion = a2m_ledger::ShadowPromotion {
         subject: a2m_ledger::ShadowSubject {
             workspace: call.caller.principal.workspace,
@@ -542,6 +608,8 @@ async fn promote_from_shadow(
             operation: tool.clone(),
             binding: found.pin.digest,
             writes: found.effect != EffectClass::Read,
+            against: against.digest,
+            environments: found.environments.clone(),
         },
         mode: found.pin.mode.clone(),
         promoted_by: person,
@@ -559,20 +627,32 @@ async fn promote_from_shadow(
             }
         })
         .await?;
-    rewrite(project_folder, target, &found).await?;
+    rewrite(kernel, project_folder, target, &found).await?;
     let evidence = json!({
         "binding": found.pin.to_json(),
         "shadow": {
-            "matches_in_a_row": row.matches,
+            "distinct_inputs": row.matches,
             "threshold": row.threshold,
             "through_seq": row.through_seq,
+            "against": against.to_json(),
+            "environments": row.evidence.iter().map(|held| json!({
+                "environment": held.environment.as_str(),
+                "distinct_inputs": held.distinct_inputs,
+                "matches": held.matches,
+            })).collect::<Vec<_>>(),
             "recorded_now": recorded,
         },
         "was": "shadow",
     });
     let detail = format!(
-        "{target} {tool} {}: shadow to verified, on {} exact matches in a row",
-        found.pin.mode, row.matches
+        "{target} {tool} {}: shadow to verified, on at least {} distinct inputs that matched the verified binding in each of: {}",
+        found.pin.mode,
+        row.matches,
+        row.evidence
+            .iter()
+            .map(|held| held.environment.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     kernel
         .audit(
@@ -678,7 +758,7 @@ handler!(
             "tried": tried,
             "was": "draft",
         });
-        rewrite(project_folder, &target, &found).await?;
+        rewrite(kernel, project_folder, &target, &found).await?;
         let detail = format!("{target} {tool} {mode}: draft to verified, on {}", evidence);
         kernel
             .audit(
@@ -698,12 +778,40 @@ handler!(
     }
 );
 
+/// The digest of each drafted operation's verified binding, and the
+/// environments shadow evidence must come from (decision 0251).
+fn drafted_evidence(
+    kernel: &Kernel,
+    project_folder: &Path,
+    target: &TargetName,
+) -> Result<(BTreeMap<OperationName, a2m_core::Digest>, Vec<Environment>), Failure> {
+    let set = kernel.providers().compiler_set();
+    let folder = target_folder(project_folder, target)?;
+    let sources =
+        a2m_files::load(&TargetRoot::new(folder.as_path()), set).map_err(Failure::from)?;
+    let compiled = a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
+        .map_err(Failure::from)?;
+    let plan = &compiled.plan;
+    let against = plan
+        .operations
+        .iter()
+        .filter_map(|operation| {
+            a2m_engine::verified_binding(plan, operation)
+                .map(|pin| (operation.name.clone(), pin.digest))
+        })
+        .collect();
+    Ok((against, a2m_engine::shadow_evidence_environments(plan)))
+}
+
 /// One binding's standing in shadow, with whether it may be promoted now:
-/// names and kinds of what differed, never a value (decision 0207).
+/// names, kinds, and counts, never a value or an input (decisions 0207 and
+/// 0251). `verified_now` says whether its counts are against the verified
+/// binding the drafts hold now.
 fn standing_json(
     standing: &a2m_ledger::ShadowStanding,
     promotable: &Promotable,
     threshold: u32,
+    verified_now: bool,
 ) -> Json {
     let differing = |list: &[a2m_ledger::DifferingOutput]| -> Vec<Json> {
         list.iter()
@@ -734,6 +842,42 @@ fn standing_json(
     if let Some(why) = why {
         shown["not_promotable"] = json!(why);
     }
+    let evidence: &[a2m_ledger::EnvironmentEvidence] = match promotable {
+        Promotable::Yes { evidence, .. }
+        | Promotable::No(
+            NotPromotable::TooFew { evidence, .. } | NotPromotable::MismatchSince { evidence, .. },
+        ) => evidence,
+        Promotable::No(_) => &[],
+    };
+    shown["distinct_inputs"] = json!(
+        evidence
+            .iter()
+            .map(|held| held.distinct_inputs)
+            .min()
+            .unwrap_or(0)
+    );
+    shown["evidence_from"] = json!(
+        evidence
+            .iter()
+            .map(|held| held.environment.as_str())
+            .collect::<Vec<_>>()
+    );
+    shown["requests"] = json!(standing.requests);
+    shown["against_verified_now"] = json!(verified_now);
+    shown["environments"] = json!(
+        standing
+            .environments
+            .iter()
+            .map(|held| json!({
+                "environment": held.environment.as_str(),
+                "reads": held.reads,
+                "requests": held.requests,
+                "matches_since_mismatch": held.matches_since,
+                "matches_against_verified_now": held.against_counted,
+                "distinct_inputs": held.distinct_inputs,
+            }))
+            .collect::<Vec<_>>()
+    );
     if let Some(last) = &standing.last_mismatch {
         shown["last_mismatch"] = json!({
             "at": last.at.as_unix_millis(),
@@ -747,6 +891,7 @@ fn standing_json(
             "at": promoted.promoted_at.as_unix_millis(),
             "matches": promoted.matches,
             "threshold": promoted.threshold,
+            "against": promoted.against.map(|digest| digest.to_string()),
         });
     }
     shown
@@ -761,13 +906,26 @@ handler!(
         let operation = call.text("tool").map(OperationName::new).transpose()?;
         let workspace = call.caller.principal.workspace;
         let threshold = threshold(kernel);
+        // What each operation's counts are against, and where its evidence
+        // must come from: the drafts', when the call names a project
+        // (decision 0251).
+        let (against, environments) = match call.project_folder() {
+            Ok(folder) => {
+                let (kernel, folder, target) =
+                    (kernel.clone(), folder.to_path_buf(), target.clone());
+                off_thread(move || drafted_evidence(&kernel, &folder, &target))
+                    .await
+                    .unwrap_or_default()
+            }
+            Err(_) => Default::default(),
+        };
         let (asked_target, asked) = (target.clone(), operation.clone());
         let standings = kernel
             .store()?
             .read(move |tx| {
-                let report = tx
-                    .shadow()
-                    .report(&workspace, &asked_target, asked.as_ref())?;
+                let report =
+                    tx.shadow()
+                        .report(&workspace, &asked_target, asked.as_ref(), &against)?;
                 let mut shown = Vec::with_capacity(report.len());
                 for standing in report {
                     // Only reads are compared: the ledger refuses the
@@ -778,13 +936,27 @@ handler!(
                         operation: standing.operation.clone(),
                         binding: standing.binding,
                         writes: false,
+                        against: standing.against,
+                        environments: environments.clone(),
                     };
-                    let promotable = tx.shadow().promotable(&subject, threshold)?;
-                    shown.push(standing_json(
+                    // Without the drafts, where the evidence must come from
+                    // is not known, and nothing is shown as promotable.
+                    let promotable = if environments.is_empty() {
+                        Promotable::No(NotPromotable::NothingCompared)
+                    } else {
+                        tx.shadow().promotable(&subject, threshold)?
+                    };
+                    let verified_now = against.get(&standing.operation) == Some(&standing.against);
+                    let mut entry = standing_json(
                         &standing,
                         &promotable,
                         threshold.for_operation(false),
-                    ));
+                        verified_now,
+                    );
+                    if environments.is_empty() {
+                        entry["not_promotable"] = json!("drafts_not_read");
+                    }
+                    shown.push(entry);
                 }
                 Ok(shown)
             })

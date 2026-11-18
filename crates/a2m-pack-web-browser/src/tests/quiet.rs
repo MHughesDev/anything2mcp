@@ -1,8 +1,10 @@
 //! What crosses from the browser into the engine's process while an acting
 //! tab signs in and writes (decision 0254, audit finding M7): the password
 //! a page is given, the cookies the application sets, and the page's own
-//! anti-forgery token are in no message the browser sends the engine,
-//! beyond the one reply that hands the session's state out on purpose.
+//! anti-forgery token are in no network event, because an acting tab hears
+//! none. Only the hold on the tab's origins still sees them, in the pause
+//! of each of the tab's own document requests, and the one reply that
+//! hands the session's state out on purpose.
 
 use example_app::forgery::TOKEN_PREFIX;
 use example_app::harness::{SESSION_COOKIE, USERNAME};
@@ -98,25 +100,36 @@ async fn an_acting_tab_hears_no_password_cookie_or_token_of_its_page() {
     }
     assert_eq!(app.stored_notes().await.unwrap().notes["A-100"], "Quiet");
 
-    // Nothing the browser told the engine holds the typed password, the
-    // session's cookie, or a token.
+    // No network event carried the typed password, a token, or the
+    // session's cookie: the tab hears none. What still carries them is the
+    // one event the hold on the tab's origins needs, the pause of each of
+    // its own document requests, which holds such a request's headers (its
+    // cookies) and a posted form's body; and the one reply that hands the
+    // session's state out, on purpose.
+    let hold = ["Fetch.requestPaused"];
+    let only = |needle: &str, allowed: &[&str]| {
+        let heard = witness::holding(needle);
+        let other: Vec<&String> = heard
+            .iter()
+            .filter(|method| !allowed.contains(&method.as_str()))
+            .collect();
+        assert!(other.is_empty(), "heard in {other:?}");
+        heard
+    };
+    // The form's post is a document request: the hold pauses it.
+    assert!(!only(TYPED, &hold).is_empty());
+    only(TOKEN_PREFIX, &hold);
     let cookie = must(browser.export_state(&origins, soon()).await)
         .cookies
         .into_iter()
         .find(|cookie| cookie.name == SESSION_COOKIE)
         .expect("the session cookie is held")
         .value;
-    let heard = [
-        witness::holding(TYPED),
-        witness::holding(TOKEN_PREFIX),
-        witness::holding(cookie.expose()),
-    ];
-    // The one reply that holds the cookie is the one that hands the
-    // session's state out, on purpose.
-    let quiet: [&[&str]; 3] = [&[], &[], &["reply"]];
+    let heard = only(cookie.expose(), &["Fetch.requestPaused", "reply"]);
     assert_eq!(
-        heard, quiet,
-        "the typed password, a token, and the session's cookie were heard"
+        heard.iter().filter(|method| *method == "reply").count(),
+        1,
+        "{heard:?}"
     );
     drop(armed);
     drop(tab);

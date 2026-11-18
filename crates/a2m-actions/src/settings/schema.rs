@@ -694,16 +694,19 @@ pub const SCHEMA: &[SettingDef] = &[
         ),
         Safer::Higher,
     ),
-    def(
-        "engine.shadow.time_limit_ms",
-        Kind::Int {
-            min: 100,
-            max: 60_000,
-        },
-        N(2_000),
-        U,
-        NextStart,
-        "How long a binding in shadow may read beside a live read before it is left uncompared.",
+    protected(
+        def(
+            "engine.shadow.time_limit_ms",
+            Kind::Int {
+                min: 100,
+                max: 60_000,
+            },
+            N(2_000),
+            U,
+            NextStart,
+            "The one budget of time all of a call's shadow bindings share, their reads and the keeping of their comparisons together.",
+        ),
+        Safer::Lower,
     ),
     not_built(
         def(

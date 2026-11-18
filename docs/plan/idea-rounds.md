@@ -112,3 +112,15 @@ An investigation traced both, and wrote down the evidence for each phase.
 **Verdict: taken up.** An error is to say two more things beside `retry_safe`: whether the same call with the same input could end differently with nothing else changed (true for `transient`, `busy`, and a session the keeper can renew; false for `policy`, `input`, `drift`, `unknown_variant`, and the rest), and, where the engine knows it, the earliest moment worth trying. Whether the command line also gets an exit code of its own for "try again later" is a change to a public face and is decided in the same package, with a record.
 
 **Next.** Joins the package for what a person and an agent meet at the command line, beside the refusals that carry their next step as data.
+
+## Round 19 (2026-11-18, 04:17 UTC)
+
+**Idea.** A command that only asks a question leaves nothing behind on a machine where the product has never been set up.
+
+**Test.** Ran ten commands with the built program, each against a home folder that did not exist, and counted the files and bytes each left and the time it took. One debug build from earlier in the day, Linux, no passphrase set, so no key was derived in any of them.
+
+**Result.** Help and the version leave nothing and take 25 to 100 milliseconds. Every other command that ran made the home: a store of 450 kilobytes with every migration applied, an empty log, and two lock files. That includes the two that read only what is compiled into the program, the built-in documentation page (`docs get settings`) and the search of the action list (`action search`), and it includes `engine stop` and `run list`, which then failed because there was nothing to stop or list. Each took about 300 milliseconds, twelve times the version command. Nothing unsafe was found: the folders are made private and nothing leaves the machine.
+
+**Verdict: taken up.** An action that needs nothing from the engine is to open nothing: the registry already marks which actions need no health at all, and a command for one of those can be answered from the program itself, without a store, a lock, or a home. The same holds for a command that finds no engine and no home: it says so and makes neither. This is the general form of what the cold-start investigation found for `engine status` and `engine stop`, which open a whole kernel to say that no engine is running.
+
+**Next.** Joins the package for what a person and an agent meet at the command line, with a test that runs each such command against a home that does not exist and asserts that it still does not exist afterwards.

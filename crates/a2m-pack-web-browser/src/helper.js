@@ -612,7 +612,14 @@
     });
   }
 
-  const page = () => ({ address: location.href, title: document.title });
+  // The status of the answer the document came in, as the page's own
+  // record of its load holds it; 0 when it does not say. An acting tab
+  // hears no network event, so this is where it learns the status.
+  const page = () => {
+    const entry = performance.getEntriesByType("navigation")[0];
+    const status = entry && Number.isInteger(entry.responseStatus) ? entry.responseStatus : 0;
+    return { address: location.href, title: document.title, status };
+  };
 
   const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, readFromPage, writeFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
