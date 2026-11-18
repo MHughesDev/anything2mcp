@@ -567,7 +567,9 @@ mod tests {
             assert!(refused.contains("files.allowed_roots"), "{refused}");
         }
         // A name that is neither the word nor a full path allows nothing.
+        // The installation's file is an administrator's: it may loosen.
         let named = Settings::load(&Sources {
+            installation_keeper: crate::settings::InstallationKeeper::Administrator,
             installation: Some(SourceFile::new(
                 "settings.toml",
                 "[files]\nallowed_roots = [\"work\"]\n",
@@ -580,6 +582,7 @@ mod tests {
         // inside it.
         let work = home.join("work");
         let one = Settings::load(&Sources {
+            installation_keeper: crate::settings::InstallationKeeper::Administrator,
             installation: Some(SourceFile::new(
                 "settings.toml",
                 format!(
