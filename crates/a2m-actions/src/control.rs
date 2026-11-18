@@ -635,6 +635,7 @@ impl Control for InProcessControl {
         Some(Arc::new(StoredOthers {
             store,
             workspace: self.run.workspace,
+            principal: self.run.principal,
             operation: operation.clone(),
             asking,
         }))
@@ -906,10 +907,23 @@ impl InProcessControl {
         // Everything leaving passes the redactor; the stored result is what
         // a later `run.get` returns.
         let redacted = self.kernel.redact().redact_values(values);
+        // A trial a fixture is recorded from keeps its result short: the
+        // values are the system's, unscrubbed (audit finding FX-6).
+        let recording = self
+            .kernel
+            .inner
+            .recordings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&self.run.input_hash);
         let blob = self
             .evidence(Evidence {
                 kind: BlobKind::Result,
-                class: RetentionClass::Long,
+                class: if recording {
+                    RetentionClass::Short
+                } else {
+                    RetentionClass::Long
+                },
                 bytes: encode_values(&redacted)?,
             })
             .await?;
@@ -957,12 +971,39 @@ pub(crate) const fn may_have_written(class: FailureClass) -> bool {
 /// as the ledger stored them, compared by [`a2m_provider::recorded_digest`].
 /// It names the record that holds the value and never hands a value out.
 /// Where any candidate's value under the name was masked by the redactor,
-/// or a stored value cannot be read, it cannot tell.
+/// or a stored value cannot be read, it cannot tell. Only the attempt of
+/// each record that may have landed counts (`Ledger::recorded_before_commit`,
+/// audit finding OR-1). A record of another person's run is never named to
+/// the driver: the contract's answer that names one is given only for the
+/// asking person's own runs, and for another's the answer is that it cannot
+/// tell, which a driver takes as "may be held", so that nothing shown to the
+/// caller names another person's run. At most [`OTHERS_MOST`] stored values
+/// are opened; beyond them it cannot tell.
 struct StoredOthers {
     store: a2m_ledger::Store,
     workspace: a2m_core::WorkspaceId,
+    /// The person whose run asks.
+    principal: a2m_core::PrincipalId,
     operation: a2m_core::OperationName,
     asking: RecordRef,
+}
+
+/// The most stored values one question opens.
+const OTHERS_MOST: usize = 4_096;
+
+/// What a driver is told of a record that holds the value: the record, when
+/// its run is the asking person's own; that it cannot tell, otherwise, so
+/// that no other person's run or record is named (audit finding OR-1).
+fn told(
+    asking: a2m_core::PrincipalId,
+    holder: a2m_core::PrincipalId,
+    record: RecordRef,
+) -> a2m_provider::RecordedElsewhere {
+    if asking == holder {
+        a2m_provider::RecordedElsewhere::Held(record)
+    } else {
+        a2m_provider::RecordedElsewhere::CannotTell
+    }
 }
 
 impl a2m_provider::OtherRecords for StoredOthers {
@@ -981,6 +1022,9 @@ impl a2m_provider::OtherRecords for StoredOthers {
             else {
                 return RecordedElsewhere::CannotTell;
             };
+            if rows.len() > OTHERS_MOST {
+                return RecordedElsewhere::CannotTell;
+            }
             let mut held = None;
             for (record, blob) in rows {
                 if record == self.asking {
@@ -1005,7 +1049,39 @@ impl a2m_provider::OtherRecords for StoredOthers {
                     held = Some(record);
                 }
             }
-            held.map_or(RecordedElsewhere::NotHeld, RecordedElsewhere::Held)
+            let Some(record) = held else {
+                return RecordedElsewhere::NotHeld;
+            };
+            let Ok(holder) = self.store.read(move |tx| tx.ledger().run(record.run)).await else {
+                return RecordedElsewhere::CannotTell;
+            };
+            told(self.principal, holder.principal, record)
         })
+    }
+}
+
+#[cfg(test)]
+mod told_tests {
+    use super::*;
+
+    #[test]
+    fn a_record_of_another_persons_run_is_never_named_to_a_driver() {
+        let (one, two) = (
+            a2m_core::PrincipalId::from_bytes([1; 16]),
+            a2m_core::PrincipalId::from_bytes([2; 16]),
+        );
+        let record = RecordRef {
+            run: a2m_core::RunId::from_bytes([3; 16]),
+            step_seq: 0,
+            record_seq: 0,
+        };
+        assert_eq!(
+            told(one, one, record),
+            a2m_provider::RecordedElsewhere::Held(record)
+        );
+        assert_eq!(
+            told(one, two, record),
+            a2m_provider::RecordedElsewhere::CannotTell
+        );
     }
 }

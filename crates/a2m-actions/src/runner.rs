@@ -65,6 +65,11 @@ pub(crate) struct CallerFacts {
     /// (decision 0176). `None` when the request stated none, or one whose
     /// path is not text and so cannot be kept.
     pub(crate) project: Option<std::path::PathBuf>,
+    /// For a trial: the binding of the operation it runs, by place, mode,
+    /// and digest ([`a2m_engine::BindingPin::to_json`]), so that every lease
+    /// runs that one, and the trial is evidence for it alone (audit finding
+    /// AC-6). `None` for a call, which the engine chooses for.
+    pub(crate) binding: Option<Json>,
 }
 
 impl CallerFacts {
@@ -76,7 +81,14 @@ impl CallerFacts {
             toolset: caller.toolset.clone(),
             decision,
             project: None,
+            binding: None,
         }
+    }
+
+    /// The same facts, with the binding a trial runs.
+    pub(crate) fn with_binding(mut self, binding: Option<&a2m_engine::BindingPin>) -> Self {
+        self.binding = binding.map(a2m_engine::BindingPin::to_json);
+        self
     }
 
     /// The same facts, with the request's checked project folder.
@@ -112,6 +124,7 @@ impl CallerFacts {
             "toolset": self.toolset.as_ref().map(ToolsetName::as_str),
             "decision": self.decision.to_string(),
             "project": self.project.as_deref().and_then(std::path::Path::to_str),
+            "binding": self.binding,
         })
     }
 
@@ -143,6 +156,7 @@ impl CallerFacts {
                 .and_then(|name| ToolsetName::new(name).ok()),
             decision: json["decision"].as_str()?.parse().ok()?,
             project: json["project"].as_str().map(std::path::PathBuf::from),
+            binding: Some(json["binding"].clone()).filter(|binding| !binding.is_null()),
         })
     }
 }
@@ -715,6 +729,16 @@ impl Kernel {
             None => None,
         };
         let (input, caller) = (decode_values(opened.expose())?, call.caller);
+        // A trial runs the binding it was made for, or nothing: a stored
+        // binding that cannot be read is never replaced by the engine's own
+        // choice (audit finding AC-6).
+        let binding = match &caller.binding {
+            Some(stored) => match a2m_engine::BindingPin::from_json(&row.tool_name, stored) {
+                Some(pin) => Some(pin),
+                None => return self.end_unreadable(fence).await,
+            },
+            None => None,
+        };
         // The run's project folder was checked at the request. It is checked
         // again at every lease, a resume's days later too: a folder that no
         // longer passes, or that now leads elsewhere, is not handed to the
@@ -788,6 +812,7 @@ impl Kernel {
                 ..Conditions::default()
             },
             pin: None,
+            binding,
             parallelism: Parallelism::default(),
             lease: clock.clone(),
             capture: if row.effect == a2m_core::EffectClass::Read {

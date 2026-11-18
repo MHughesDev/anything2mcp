@@ -206,3 +206,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0203 | [Two packs may each draft a file kind of one name, each for its own surfaces](0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md) | Accepted (design decision) |
 | 0204 | [One plain form of a path, a pipe that is waited for, and a socket path that fits](0204-one-plain-form-of-a-path-a-pipe-that-is-waited-for-and-a-socket-path-that-fits.md) | Accepted (design decision) |
 | 0201 | [A resume is never lost, the browser takes no proxy, and no product build speaks a stand's protocol](0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md) | Accepted (design decision) |
+| 0200 | [Evidence names its binding, and a recorded fixture says nothing of the original](0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md) | Accepted (design decision) |

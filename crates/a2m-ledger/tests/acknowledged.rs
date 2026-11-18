@@ -428,3 +428,100 @@ async fn a_record_holds_what_it_recorded_only_while_its_write_may_have_landed() 
     // In doubt with its intent; planned; failed with nothing sent, settled.
     assert_eq!(landed, [true, false, false], "{rows:?}");
 }
+
+/// Audit finding OR-1: only the attempt that may have landed holds what it
+/// recorded before its commit point. A record that took one value, was
+/// settled as not landed, and was written again with another holds the
+/// second value alone, so the first is not held for ever (decision 0197).
+#[tokio::test]
+async fn only_the_attempt_that_may_have_landed_holds_what_it_recorded() {
+    let store = memory().await;
+    let old = cleared(&store, EffectClass::Write, &["a"]).await;
+    let first = evidence(&store, "the first message").await;
+    let second = evidence(&store, "the second message").await;
+    let took = |fence: Fence, blob: BlobRef| {
+        let store = &store;
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().append_event(
+                        &fence,
+                        a2m_ledger::EventKind::Need,
+                        &serde_json::json!({"step": 0, "record": 0, "before_commit": true}),
+                        Some(blob),
+                    )
+                })
+                .await
+                .unwrap();
+        }
+    };
+    // The first attempt takes the first message, and its answer is lost.
+    lock(&store, old, 0).await.unwrap();
+    let token = intent(&store, old, 0, "a").await.unwrap();
+    took(old, first).await;
+    let _lost = store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger().mark_acted(token, Acted::default())
+        })
+        .await
+        .unwrap();
+    let held = |store: &Store| {
+        let store = store.clone();
+        async move {
+            store
+                .read(|tx| {
+                    tx.ledger().recorded_before_commit(
+                        &workspace(),
+                        &a2m_core::OperationName::new("example_order_update").unwrap(),
+                    )
+                })
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(_, blob)| blob)
+                .collect::<Vec<_>>()
+        }
+    };
+    // In doubt: what it took may have landed, and is held.
+    assert_eq!(held(&store).await, vec![first]);
+    // Settled as not landed, then written again with the second message.
+    let new = store
+        .write(Durability::Synced, move |tx| tx.ledger().new_epoch(old.run))
+        .await
+        .unwrap();
+    lock(&store, new, 0).await.unwrap();
+    let read = evidence(&store, "what the reconcile read").await;
+    let settled = store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger().settle(
+                &new,
+                record(&new, 0),
+                Reconciled::NotLanded { evidence: read },
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(settled, Settled::Planned);
+    assert!(held(&store).await.is_empty());
+    lock(&store, new, 0).await.unwrap();
+    let token = intent(&store, new, 0, "a").await.unwrap();
+    took(new, second).await;
+    let acted = store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger().mark_acted(token, Acted::default())
+        })
+        .await
+        .unwrap();
+    store
+        .store_verified(
+            &acted,
+            ReadBack {
+                digest: intended("a"),
+                after: None,
+                evidence: read,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(held(&store).await, vec![second]);
+}
