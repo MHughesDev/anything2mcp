@@ -133,6 +133,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- A web sign-in or step on a slow machine no longer stops with `unexpected_page` because the browser took over a quarter of a second to say what the page shows; the page is asked once and its answer is waited for within the step's own time ([decision 0288](docs/decisions/0288-whether-a-page-shows-a-sign-now-is-the-pages-own-answer-and-a-slow-answer-is-never-a-no.md)).
 - On macOS and Linux, a command that connects just as the engine stops is told `connection_lost`, and one that starts an engine on demand goes on looking for one; it was told `channel_unavailable`, as if this machine had refused the channel.
 - On Windows, a command started while the engine is still opening, or beside another command, waits for the engine's channel as long as its patience lasts instead of failing after a second, and a refusal of the system names the system's error by its number and words.
 - A data directory so deep that the engine's socket would be longer than macOS or Linux takes is refused at once, by name (`socket_path_too_long`), with the path, its length, the limit, and `A2M_HOME` as the way to a shorter one.

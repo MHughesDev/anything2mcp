@@ -96,10 +96,6 @@ const CODE_SETTINGS: &[&str] = &[CODE_SCREEN, CODE_FIELD, CODE_SUBMIT];
 /// for the sign-in page, and for a sign after each press.
 const PAGE_TIME: Duration = Duration::from_secs(30);
 
-/// How long the page is given to say a sign already holds, when it is
-/// asked once.
-const LOOK_ONCE: Duration = Duration::from_millis(250);
-
 /// The material's plain part that lists the cookies' names and rules.
 const COOKIES: &str = "cookies";
 
@@ -736,17 +732,17 @@ async fn wait_for(
     }
 }
 
+/// Whether a sign holds on the page now, on the page's own word. A page
+/// that gives no answer by the deadline is a failure, never "no": a slow
+/// machine is not read as a page that shows nothing.
 async fn holds_now(
     tab: &ActTab,
     condition: &Primitive,
     deadline: Deadline,
 ) -> Result<bool, Failure> {
-    let once = Deadline::after(LOOK_ONCE.min(deadline.remaining()));
-    match tab.wait(condition, once).await {
-        Ok(()) => Ok(true),
-        Err(BrowserError::Timeout { .. }) => Ok(false),
-        Err(error) => Err(page_lost(&error, "a look at the page")),
-    }
+    tab.holds(condition, deadline)
+        .await
+        .map_err(|error| page_lost(&error, "a look at the page"))
 }
 
 /// What the page must be, just before a value is set or the action is

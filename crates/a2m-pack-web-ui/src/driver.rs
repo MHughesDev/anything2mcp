@@ -64,11 +64,6 @@ const RESERVED_PROFILES: &[&str] = &[ANONYMOUS, "discovery"];
 /// until the step's own deadline; only the hearing is this often.
 const HEAR_EVERY: Duration = Duration::from_millis(500);
 
-/// How long the page is given to say that a condition already holds, when
-/// it is asked before a click. A condition that holds is answered at
-/// once; only one that does not hold takes this long.
-const LOOK_ONCE: Duration = Duration::from_millis(250);
-
 /// The driver of the `ui` mode.
 pub(crate) struct UiDriver {
     browsers: Browsers,
@@ -128,6 +123,13 @@ impl Tab<'_> {
         match self {
             Self::Act(tab) => tab.wait(until, deadline).await,
             Self::Observe(tab) => tab.wait(until, deadline).await,
+        }
+    }
+
+    async fn holds(&self, condition: &Primitive, deadline: Deadline) -> Result<bool, BrowserError> {
+        match self {
+            Self::Act(tab) => tab.holds(condition, deadline).await,
+            Self::Observe(tab) => tab.holds(condition, deadline).await,
         }
     }
 
@@ -776,21 +778,19 @@ impl Session {
         }
     }
 
-    /// Whether a condition holds on the page now: it is asked once, and
-    /// given [`LOOK_ONCE`] to answer. `true` only on the page's own word
-    /// that it holds; a page that has not said so within that time is
-    /// taken as not showing it.
+    /// Whether a condition holds on the page now, on the page's own word:
+    /// it is asked once and answers at once. A page that gives no answer
+    /// by the step's deadline is a failure, never "no": a slow machine is
+    /// not read as a page that does not show it.
     async fn holds_now(
         &self,
         condition: &Primitive,
         deadline: Deadline,
     ) -> Result<bool, StepFailure> {
-        let once = Deadline::after(LOOK_ONCE.min(deadline.remaining()));
-        match self.tab().wait(condition, once).await {
-            Ok(()) => Ok(true),
-            Err(BrowserError::Timeout { .. }) => Ok(false),
-            Err(error) => Err(browser_failure(&error, "the page's state")),
-        }
+        self.tab()
+            .holds(condition, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, "the page's state"))
     }
 
     /// The one element a list of locators finds, and which of them found
@@ -888,9 +888,8 @@ impl Session {
     /// validation message. The base redacts every text it reads, and the
     /// failure bounds it again. `None` when the variant's element is not
     /// one element, or has no text to read.
-    async fn said_by(&self, screen: &Screen, variant: &str) -> Option<String> {
+    async fn said_by(&self, screen: &Screen, variant: &str, deadline: Deadline) -> Option<String> {
         let variant = screen.variants.get(variant)?;
-        let deadline = Deadline::after(LOOK_ONCE);
         let element = self
             .tab()
             .locate(&variant.when.query(), deadline)
@@ -1307,7 +1306,7 @@ impl Session {
                 next,
             ));
             return Err(match handling {
-                Handling::Stop => match self.said_by(screen, shown_before).await {
+                Handling::Stop => match self.said_by(screen, shown_before, deadline).await {
                     Some(said) => refused.with_said(said),
                     None => refused,
                 },
@@ -1430,7 +1429,7 @@ impl Session {
                         "Correct the values and run the tool again; the application refused them.",
                     ));
                     // The page's own words, apart from the product's.
-                    match self.said_by(screen, variant).await {
+                    match self.said_by(screen, variant, deadline).await {
                         Some(said) => refused.with_said(said),
                         None => refused,
                     }

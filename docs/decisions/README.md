@@ -279,3 +279,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0285 | [Two watches of the same read for one person share a run, and ending one never cancels a run another rests on](0285-two-watches-of-the-same-read-for-one-person-share-a-run-and-ending-one-never-cancels-a-run-another-rests-on.md) | Accepted (design decision) |
 | 0286 | [The macOS walk lists a title bar's buttons and walks nothing under them](0286-the-macos-walk-lists-a-title-bars-buttons-and-walks-nothing-under-them.md) | Accepted (design decision) |
 | 0287 | [The last check under way on a run a check opened cancels it](0287-the-last-check-under-way-on-a-run-a-check-opened-cancels-it.md) | Accepted (design decision) |
+| 0288 | [Whether a page shows a sign now is the page's own answer, and a slow answer is never a no](0288-whether-a-page-shows-a-sign-now-is-the-pages-own-answer-and-a-slow-answer-is-never-a-no.md) | Accepted (design decision) |
