@@ -230,7 +230,10 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
             &mut found,
         );
-        assert!(found.is_empty(), "made with a class of their own: {found:?}");
+        assert!(
+            found.is_empty(),
+            "made with a class of their own: {found:?}"
+        );
         for row in codes::TABLE {
             let made = codes::failure(row, "A case.", row.next);
             assert_eq!((made.class(), made.code().as_str()), (row.class, row.code));

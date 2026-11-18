@@ -180,10 +180,7 @@ mod tests {
                     if name != "tests" {
                         walk(&path, found);
                     }
-                } else if name.ends_with(".rs")
-                    && name != "tests.rs"
-                    && name != "tool.rs"
-                {
+                } else if name.ends_with(".rs") && name != "tests.rs" && name != "tool.rs" {
                     let text = std::fs::read_to_string(&path).unwrap();
                     let text = text.split("#[cfg(test)]").next().unwrap();
                     for made in ["Failure::new(", "class: FailureClass::"] {

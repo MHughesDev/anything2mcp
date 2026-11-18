@@ -110,10 +110,14 @@ pub struct Failure { /* class, code, message, next_step; and `said`, what the sy
 // The table form (decision 0258). Each crate calls, once, in `pub mod codes`:
 //   failure_codes! { NAME = Class, "code", meaning "...", next "..."
 //                    [, passes by_itself | not_by_itself] [, then ("noun.verb", "what for")]; ... }
-// It writes the FailureCode constants (meaning and next step as their docs), ALL: &[(FailureClass, &str)],
-// and TABLE: &[CodeEntry]. An empty meaning or next step, a bad code or action, and a `busy` row with no
-// `passes` fail to compile.
+// It writes a module `row` with a CodeEntry constant per row, the FailureCode constants of the same names
+// (meaning and next step as their docs), ALL: &[(FailureClass, &str)], and TABLE: &[CodeEntry]. An empty
+// meaning or next step, a bad code or action, and a `busy` row with no `passes` fail to compile.
+// A failure of a code is made from its row, codes::row::NAME.failure(message, next), so the place that makes
+// it cannot give it another class; a step's from what its plan says it fails as. Decision 0289
 pub struct CodeEntry { pub declared_in, pub class, pub code, pub meaning, pub next, pub then: Option<ThenAction>, pub passes: Passes }
+impl CodeEntry { pub const fn failure_code(&self) -> FailureCode; pub fn failure(&self, message, next) -> Failure; }
+impl FailsAs { pub fn failure(&self, message, next) -> Failure; }   // and From<&CodeEntry> for FailsAs
 pub struct ThenAction { pub action: &'static str, pub when: &'static str }
 pub enum Passes { ByItself, NotByItself }                       // default_for(class): only `transient` passes by itself
 pub struct CodeBook;                                             // new(&[TABLE, ...]) refuses one code with two classes
@@ -465,6 +469,7 @@ It produces no other class. The codes are declared in this crate's own `failure_
 13. Done: `DeclaredProgram` and `SurfacePlan::programs`, the programs a surface's driver may start, in the plan's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
 14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.
 15. Done: the table form of failure codes, `failure_codes!`, with `CodeEntry`, `ThenAction`, `Passes`, and `CodeBook`; this crate's own codes in it; and `Failure`'s next action and wait as data ([decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md)). Nothing reads the two new parts yet.
+16. Done: the module `row` of each table, `CodeEntry::failure`, `FailsAs::failure`, and `FailsAs` from a row, so that a failure takes its class from its code's row ([decision 0289](../../decisions/0289-a-failure-is-made-from-its-codes-row.md)).
 
 ## Open points
 
