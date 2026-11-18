@@ -77,6 +77,82 @@ fn published() -> JsonSchema {
         .required("current", JsonSchema::bool())
 }
 
+/// The lists a bound cut in a reading of the machine's network, as
+/// `a2m_netstate::Cut` is shown.
+fn net_cuts() -> JsonSchema {
+    list_of(
+        JsonSchema::object()
+            .required("list", text())
+            .required("kept", JsonSchema::int())
+            .required("seen", JsonSchema::int())
+            .required("table_cut", JsonSchema::bool()),
+    )
+}
+
+/// Why a field of a network reading is left out: the words of
+/// `a2m_netstate::AbsentReason`.
+fn net_absent_reason() -> JsonSchema {
+    JsonSchema::words(&[
+        "not_stated",
+        "needs_location_permission",
+        "not_visible_to_this_user",
+        "not_read",
+        "may_hold_credentials",
+    ])
+}
+
+/// The fields a network reading leaves out, and why.
+fn net_absent() -> JsonSchema {
+    list_of(
+        JsonSchema::object()
+            .required("field", text())
+            .required("reason", net_absent_reason()),
+    )
+}
+
+/// A hardware address as a network reading shows it: its length and
+/// whether it is locally administered, never its octets (decision 0243).
+fn net_hardware() -> JsonSchema {
+    JsonSchema::object()
+        .required("length", JsonSchema::int())
+        .required("locally_administered", JsonSchema::bool())
+}
+
+fn net_family() -> JsonSchema {
+    JsonSchema::words(&["ipv4", "ipv6"])
+}
+
+fn net_kind() -> JsonSchema {
+    JsonSchema::words(&[
+        "loopback", "wired", "wireless", "virtual", "tunnel", "other",
+    ])
+}
+
+fn net_link() -> JsonSchema {
+    JsonSchema::words(&["up", "down"])
+}
+
+fn net_prefix() -> JsonSchema {
+    JsonSchema::int_between(0, 128)
+}
+
+fn net_route() -> JsonSchema {
+    JsonSchema::object()
+        .required("family", net_family())
+        .required("destination", text())
+        .required("prefix_length", net_prefix())
+        .optional("gateway", text())
+        .optional("interface_index", JsonSchema::int())
+        .optional("interface", text())
+        .optional("metric", JsonSchema::int())
+}
+
+/// What kind of place an address is: the words of `a2m_core::AddressScope`
+/// (decision 0240).
+fn net_scope() -> JsonSchema {
+    JsonSchema::words(a2m_core::AddressScope::NAMES)
+}
+
 /// One run of a listing: what a caller needs to decide what to do next.
 fn listed_run() -> JsonSchema {
     JsonSchema::object()

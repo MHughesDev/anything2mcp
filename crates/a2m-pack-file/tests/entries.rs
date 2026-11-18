@@ -734,26 +734,58 @@ async fn a_growing_file_replaced_cut_short_or_holding_bad_text_is_told_and_never
         .unwrap();
     let position = first.get("position").cloned().unwrap();
 
-    // A line that is not UTF-8: a named stop, and the position the caller
-    // holds stays good.
+    // A line that is not UTF-8, after ones that are (the first ends the
+    // seed's partial line): the lines before it are given, then the bad line is told by the outcome and passed, and the
+    // line after it is read.
     scene
         .stand
         .set_fault(Fault::ChangedByAnother {
             file: seed::ORDERS_LOG.to_owned(),
-            change: Change::Appended(b"ft \xff\xfe\n".to_vec()),
+            change: Change::Appended(b"fted\ngood\nft \xff\xfe\nafter\n".to_vec()),
             how: SaveStyle::InPlace,
         })
         .unwrap();
-    let failure = read(
+    let before = read(
         &scene,
         "example_orders_log_read",
         &log_read(Some(&position)),
     )
     .await
-    .unwrap_err();
+    .unwrap();
     assert_eq!(
-        code(&failure),
-        (FailureClass::UnknownVariant, "value_unreadable")
+        before.get("lines").and_then(Value::as_list).unwrap(),
+        [
+            text("2026-11-18T08:02:00 order A-101 drafted"),
+            text("good")
+        ]
+    );
+    assert_eq!(before.get("outcome"), Some(&text("read")));
+    assert_eq!(before.get("more"), Some(&Value::Bool(true)));
+    let bad = read(
+        &scene,
+        "example_orders_log_read",
+        &log_read(before.get("position")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bad.get("outcome"), Some(&text("unreadable")));
+    assert!(
+        bad.get("lines")
+            .and_then(Value::as_list)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(bad.get("more"), Some(&Value::Bool(true)));
+    let after = read(
+        &scene,
+        "example_orders_log_read",
+        &log_read(bad.get("position")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        after.get("lines").and_then(Value::as_list).unwrap(),
+        [text("after")]
     );
 
     // Cut short, in place: told as `truncated`, and nothing is read.

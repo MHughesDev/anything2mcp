@@ -13,6 +13,9 @@ a2m-core = { path = "../a2m-core" }
 a2m-engine = { path = "../a2m-engine" }
 a2m-files = { path = "../a2m-files" }
 a2m-ledger = { path = "../a2m-ledger" }
+# The machine's own network facts, served by the `net.*` actions (decision
+# 0260). It reads the operating system and sends nothing.
+a2m-netstate = { path = "../a2m-netstate" }
 a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-sched = { path = "../a2m-sched" }
