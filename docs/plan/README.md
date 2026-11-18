@@ -6,12 +6,13 @@ This folder holds five kinds of document. The [roadmap](roadmap.md) is the order
 | --- | --- | --- |
 | The order of the build | [roadmap.md](roadmap.md) | Every work package to version 1.0: what it builds, what it needs, what proves it, and its state |
 | Plans outside the build | [adoption.md](adoption.md) | How the product is to be found, tried, and trusted; its packages enter the roadmap when taken up |
-| | [network-awareness.md](network-awareness.md) | A design proposal for decision 0222, not in force |
+| | [network-awareness.md](network-awareness.md) | The design proposal for owner decision 0222, at its first round; not in force |
 | How work is done | [working-method.md](working-method.md) | The loop every slice follows, and the kinds of change to the design |
 | | [design-review-lenses.md](design-review-lenses.md) | How a design review round is run, and the lenses with their last use |
 | Standing descriptions | [test-application.md](test-application.md) | The test application's cases and the driver conformance suite, with what is built |
 | | [publishing-setup.md](publishing-setup.md) | Where each package name stands, and how releases authenticate |
+| | [open-questions-for-the-owner.md](open-questions-for-the-owner.md) | Every question waiting for the owner, with its state today, the recommendation, and its record |
 | Review results | [coverage-review-2026-11-18.md](coverage-review-2026-11-18.md) | One design review round, by lens 15, coverage |
-| | [breadth-review-2026-11-18.md](breadth-review-2026-11-18.md) | One design review round, by lens 16, breadth |
-| | [configurability-review-2026-11-18.md](configurability-review-2026-11-18.md) | One design review round, by lens 17, the person fitting it |
+| | [breadth-review-2026-11-18.md](breadth-review-2026-11-18.md) | One design review round, by lens 16, breadth: what "anything" still lacks beyond kinds of system |
+| | [configurability-review-2026-11-18.md](configurability-review-2026-11-18.md) | One design review round, by lens 17, the person fitting it: every setting's true state, the gaps by dimension, and the fixed frame |
 | | [coverage-map.md](coverage-map.md) | The map the coverage review drew: every way a program on a person's computer can reach other software, and where each falls in the design |
