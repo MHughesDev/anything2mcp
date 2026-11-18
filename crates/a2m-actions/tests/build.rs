@@ -2629,3 +2629,203 @@ async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     );
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// Two bindings of one read, both of the mode `stand`, in file order.
+const TWO_BINDINGS: &str = "operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: \"Order number shown in the application\"}
+outputs:
+  status: {type: order_status}
+  total: {type: amount}
+  note: {type: note}
+examples:
+  - {order_id: \"SO-1001\"}
+bindings:
+  - mode: stand
+    status: draft
+    call: order_get
+  - mode: stand
+    status: draft
+    call: order_lookup
+description: >
+  Reads the status, the total, and the note of one order.
+  Prefer example_order_sheet_enter to enter a whole sheet.
+";
+
+/// Audit finding AC-6: evidence is earned by one binding and names it. A
+/// test, a trial, and the scout run one binding, by its place and mode, and
+/// `binding.promote` takes only evidence of the binding it promotes, with
+/// the digest it has now; the publish gate asks a passing test of every
+/// binding that may act, and of a write one whose save went through it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn evidence_earned_by_one_binding_is_never_taken_for_another() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new()
+            .with("status", "draft")
+            .with("total", "125.00")
+            .with("note", "Call before delivery"),
+        ..a2m_provider::Observed::default()
+    });
+    let write = |file: &'static str, content: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let written = world
+                .call(
+                    &agent,
+                    "draft.write",
+                    json!({"target": "example", "file": file, "content": content}),
+                )
+                .await;
+            assert_eq!(written.result.unwrap()["written"], true, "{file}");
+        }
+    };
+    write(
+        "calls/lookup.yaml",
+        "call: order_lookup\npath: \"/orders/{order_id}\"\neffect: read\n---\ncall: line_item_put_other\npath: \"/orders/{order_id}/items/{item_code}\"\neffect: write\n".to_owned(),
+    )
+    .await;
+    write("operations/order_get.yaml", TWO_BINDINGS.to_owned()).await;
+    let try_binding = |position: Option<u64>| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let mut input = json!({"target": "example", "tool": "example_order_get", "input": {"order_id": "SO-1001"}});
+            if let Some(position) = position {
+                input["mode"] = json!("stand");
+                input["position"] = json!(position);
+            }
+            let tried = world.call(&agent, "draft.try", input).await.result.unwrap();
+            assert_eq!(tried["status"], "completed", "{tried}");
+            tried["run_id"].as_str().unwrap().to_owned()
+        }
+    };
+    let promote = |run: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            world
+                .call(
+                    &agent,
+                    "binding.promote",
+                    json!({"target": "example", "tool": "example_order_get", "mode": "stand", "position": 2, "run_id": run}),
+                )
+                .await
+        }
+    };
+
+    // The test that names no binding ran the first, and a trial of the
+    // first: neither is evidence for the second.
+    let first_run = try_binding(None).await;
+    let refused = promote(first_run.clone()).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven", "{}", refused.message);
+    let test_file = target_dir.join("tests").join("order_get.yaml");
+    let test = std::fs::read_to_string(&test_file).unwrap();
+    write(
+        "tests/order_get.yaml",
+        test.replace("kind: offline\n", "kind: offline\nbinding: {mode: stand, position: 1}\n"),
+    )
+    .await;
+    let refused = promote(first_run.clone()).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven");
+    assert!(
+        refused.message.contains("ran its binding 2"),
+        "{}",
+        refused.message
+    );
+    // A test of the second binding, against its own fixture.
+    let fixture = target_dir.join("fixtures").join("order_lookup");
+    std::fs::create_dir_all(&fixture).unwrap();
+    std::fs::write(fixture.join("fixture.yaml"), "scrubbed: true\n").unwrap();
+    std::fs::write(
+        fixture.join("order_lookup.json"),
+        r#"{"status":"draft","total":"125.00","note":"Call before delivery"}"#,
+    )
+    .unwrap();
+    write(
+        "tests/order_lookup.yaml",
+        "test: example_order_get\nkind: offline\nbinding: {mode: stand, position: 2}\nfixture: order_lookup\ninputs: {order_id: \"SO-1001\"}\nexpect: {status: draft, total: \"125.00\", note: \"Call before delivery\"}\n".to_owned(),
+    )
+    .await;
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let ran: Vec<(String, Json)> = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|test| test["tool"] == "example_order_get")
+        .map(|test| (test["test"].as_str().unwrap().to_owned(), test["binding"]["position"].clone()))
+        .collect();
+    assert!(ran.contains(&("order_get".to_owned(), json!(1))), "{tested}");
+    assert!(ran.contains(&("order_lookup".to_owned(), json!(2))), "{tested}");
+    // The trial of the first binding is still no trial of the second.
+    let refused = promote(first_run).await.error.unwrap();
+    assert_eq!(refused.code, "promotion_unproven");
+    assert!(refused.message.contains("trial"), "{}", refused.message);
+    // A trial of the second, by its place: promoted, and its evidence names
+    // it.
+    let second_run = try_binding(Some(2)).await;
+    let promoted = promote(second_run).await;
+    assert!(promoted.ok, "{:?}", promoted.error);
+    let promoted = promoted.result.unwrap();
+    assert_eq!(promoted["evidence"]["binding"]["position"], 2, "{promoted}");
+    assert_eq!(promoted["evidence"]["tried"]["binding"]["position"], 2);
+    let operation = std::fs::read_to_string(target_dir.join("operations/order_get.yaml")).unwrap();
+    assert!(
+        operation.contains("    status: draft\n    call: order_get")
+            && operation.contains("    status: \"verified\"\n    call: order_lookup"),
+        "{operation}"
+    );
+    // The gate asks a test of the binding that may act now.
+    std::fs::remove_file(target_dir.join("tests").join("order_lookup.yaml")).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let lack = tested["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|lack| lack["tool"] == "example_order_get")
+        .unwrap_or_else(|| panic!("{tested}"));
+    assert_eq!(lack["state"], "binding_untested", "{tested}");
+    assert_eq!(lack["binding"]["position"], 2);
+
+    // A write whose verified binding comes second: its test, naming no
+    // binding, runs that one, and a fixture of the first binding's save
+    // does not pass it.
+    let upsert = target_dir.join("operations").join("line_item_upsert.yaml");
+    let one = std::fs::read_to_string(&upsert).unwrap();
+    let two = one.replace(
+        "bindings:\n  - mode: stand\n    verb: upsert\n    status: shadow\n    call: line_item_put\n",
+        "bindings:\n  - mode: stand\n    verb: upsert\n    status: draft\n    call: line_item_put\n    args: {length: input.length}\n    read_back: {call: line_item_get}\n  - mode: stand\n    verb: upsert\n    status: verified\n    call: line_item_put_other\n",
+    );
+    assert_ne!(one, two);
+    write("operations/line_item_upsert.yaml", two).await;
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let upsert_test = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["test"] == "line_item_upsert")
+        .unwrap();
+    assert_eq!(upsert_test["binding"]["position"], 2, "{upsert_test}");
+    assert_ne!(upsert_test["state"], "passed", "{upsert_test}");
+    world.kernel.close(CloseReason::Asked).await;
+}
