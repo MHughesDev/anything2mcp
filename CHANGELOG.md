@@ -119,6 +119,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - A web application that signs in through its own sign-in page can now be used: `form_login` fills the page with the username and password you stored, asks you for a one-time code when the page asks, tries a refused password only once, and signs in again by itself when the session expires. The browser keeps the session's cookies in memory only; they are sealed for you in the vault. Signing in yourself in a visible window, and single sign-on through an identity provider's pages, are not built (decision 0245).
 - The MCP pack starts a local MCP server program on Windows as well as on macOS and Linux (written for Windows, and not yet run there).
 - The compiler accepts a write of one fixed place, such as a settings value, with no key input. A draft may declare a sign-in before the read that checks it exists. The review summary of a publish carries what each tool starts, sets, and reaches, and where each sign-in sends a credential; the packs do not fill it yet, and the publish page does not show it yet (decision 0252).
+- The file pack discovers a surface's folder, its INI files and property lists, and its growing logs, and drafts reads for each: a folder's list and a read by name, one read for each settings section, and a log read from a position. A value whose key names a secret is never recorded or drafted. Nothing that writes is drafted (decision 0255).
 
 ### Changed
 
