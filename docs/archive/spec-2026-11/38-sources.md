@@ -1,6 +1,6 @@
 # 38. Sources
 
-> Archived on 2026-11-17. This is section 38 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [sources.md](../../references/sources.md).
+> Archived on 2026-11-17. This is section 38 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [sources.md](../../reference/sources.md).
 
 Pages opened during the research rounds for this spec.
 

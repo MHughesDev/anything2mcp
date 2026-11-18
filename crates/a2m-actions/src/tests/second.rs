@@ -781,8 +781,15 @@ async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
     ] {
         let response = lint(Some(ProjectFolder::new(&folder))).await;
         assert_eq!(error_of(&response), refused, "{folder:?}");
-        let message = response.error.unwrap().message;
+        let error = response.error.unwrap();
+        let message = error.message;
         assert!(message.contains(why), "{folder:?}: {message}");
+        // The engine's home and a project are kept apart, and the refusal
+        // says why and how (decision 0219).
+        if why == "engine's own" {
+            assert!(message.contains("kept apart"), "{message}");
+            assert!(error.fix.contains("A2M_HOME"), "{}", error.fix);
+        }
     }
     // The same for a source file: the store is not read through a project.
     let source = world

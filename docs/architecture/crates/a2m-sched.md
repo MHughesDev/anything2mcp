@@ -10,7 +10,7 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 | Layer | 6, Engine |
 | May depend on | Layers 1 to 5. Never `a2m-engine` |
 | Depends on | `a2m-core`; `a2m-ledger` for the store, its transactions, the run rows, and its lock calls; `a2m-telemetry` for the clock trait and metrics. Outside: `tokio`, `serde`, `serde_json` |
-| Built in | Phase 3 (admission, dedupe, leases, lock waiting, and quarantine with slice 3.7); Phase 7 (slices 7.1 and 7.2, the runner link and lost leases); slice 9.4 (the cluster profile) |
+| Roadmap packages | Phase 3 (admission, dedupe, leases, lock waiting, and quarantine with slice 3.7); Phase 7 (slices 7.1 and 7.2, the runner link and lost leases); slice 9.4 (the cluster profile) |
 | Carries out | Spec sections [211](../../spec/2-kernel/211-concurrency.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for rule 6 and waiting for locks, [223](../../spec/2-kernel/223-the-runner-protocol.md) for leases, matching, and rate budgets, [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) for bounded queues, [225](../../spec/2-kernel/225-performance.md) for the scheduling budget; the [ledger schema](../../reference/ledger-schema.md) |
 
 ## Owns

@@ -10,7 +10,7 @@ The desktop pack: the `desktop` driver, which reaches a desktop application thro
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (registration), `a2m-auth` (`SessionLease`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext`, `Registrar`), `a2m-telemetry` (the clock of findings). Outside, on Linux only: the workspace's `zbus` (Tokio, proxy calls), `futures-core` (the signal stream), and `sha2` (a program's digest), with AT-SPI calls of the pack's own (decision 0198). On Windows only: the workspace's `windows` with the UI Automation, COM, security, threading, and window features, and `sha2` (decision 0209). When built: on macOS `objc2-application-services` and `objc2-core-foundation` (decision 0120). None of them compiles C. Its stand is `targets/example-desk`, a test dependency only |
-| Built in | Slice 8.1, the spike (done); then package 8.3: its first slice, reads on Linux, is built (decision 0198) |
+| Roadmap packages | Slice 8.1, the spike (done); then package 8.3: its first slice, reads on Linux, is built (decision 0198) |
 | Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`desktop`, interface), [204](../../spec/2-kernel/204-supervising-subsystems.md) (one request at a time, starting and attaching), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (changing what is on a person's screen; attaching to a process), [305](../../spec/3-packs/305-the-desktop-pack.md), [106](../../spec/1-product/106-what-it-latches-onto.md) (the desktop row) |
 
 ## What is settled, and what is not
@@ -191,7 +191,7 @@ As built it starts nothing and uses no supervisor: it reads the process table to
 4. Done, but for starting a program and `desktop_probe`: the Linux back end, reads only: find the declared application already running, prove its process against the bus daemon's answer, find its window by an event-ended wait, `read`; `desktop_snapshot` and its drafting rules.
 5. Done for Linux: writes with read-back, `update` and `upsert`, and the fault cases (Save that stores nothing, the application exiting after Save, a late confirmation, a read-only field, a value the field changes, a refusal, a second window, another record, a password field, two writes at once), with the stand learning to be written (decision 0218). On Windows and macOS a write stops as `writes_not_built`. Not built: the value interface, `create`, a variant for a record that is not there.
 6. The Windows back end, steps 4 and 5 again, with a native-controls window beside case 28; CI on the hosted Windows machine. Done for step 4, reads, and type-checked only: `backend/windows.rs` and the stand's window of plain Win32 controls in `targets/example-desk` behind `cfg(windows)`, with the same tests as Linux through one harness, a back-end test against the stand that prints its walk, and the CI job written for the lead (decision 0209). Unproven until that job runs. Writes are step 5's.
-7. The macOS back end, steps 4 and 5 again, proven on a machine where a person grants the permission; the CI gap written in the journal.
+7. Not built: the macOS back end, steps 4 and 5 again, proven on a machine where a person grants the permission; the CI gap written in the journal.
 
 ## Open points
 

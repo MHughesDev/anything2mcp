@@ -691,16 +691,30 @@ impl Kernel {
         let health = self.health();
         let effect = self.effect_of(&def, &input).await;
         let effect_class = effect.as_ref().map_or(EffectClass::Read, |found| found.0);
-        if !health.allows(def.needs, effect_class) {
+        // A vault that was never attached leaves a store that nothing can
+        // use, so every action that needs the store is refused, a read
+        // too: it would fail later, at the store, by a name that does not
+        // say why (decision 0220).
+        let unattached = if self.inner.vault.is_none() && def.needs != HealthNeed::Nothing {
+            health
+                .reasons
+                .iter()
+                .find(|reason| reason.part == crate::health::Part::Vault)
+        } else {
+            None
+        };
+        if unattached.is_some() || !health.allows(def.needs, effect_class) {
             // The refusal carries its cause's own fix (decision 0220). A
             // cause that is something the person gives and did not, such
             // as the vault's passphrase, is the refusal itself: it is
             // named by its own code, and running `doctor.run` would not
             // help.
-            let cause = health
-                .reasons
-                .iter()
-                .find(|reason| reason.part.when_impaired() == health.state);
+            let cause = unattached.or_else(|| {
+                health
+                    .reasons
+                    .iter()
+                    .find(|reason| reason.part.when_impaired() == health.state)
+            });
             let refusal = match cause {
                 Some(cause) if cause.failure.class() == a2m_core::FailureClass::Input => {
                     cause.failure.clone()
@@ -870,8 +884,20 @@ impl Kernel {
             )
         })
         .await
-        .unwrap_or(Err("it could not be looked at"))
-        .map_err(refuse)
+        .unwrap_or_else(|_| {
+            Err(crate::project::ProjectRefused {
+                why: "it could not be looked at".to_owned(),
+                fix: None,
+            })
+        })
+        .map_err(|refused| match refused.fix {
+            Some(fix) => codes::input(
+                codes::PATH_NOT_ALLOWED,
+                format!("The project folder of this call is not used: {}.", refused.why),
+                fix,
+            ),
+            None => refuse(&refused.why),
+        })
     }
 
     /// Asks the role's person surface for proof that a person is present.

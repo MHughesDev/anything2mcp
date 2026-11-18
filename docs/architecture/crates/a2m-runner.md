@@ -1,6 +1,6 @@
 # `a2m-runner`
 
-The runner role, for a runner on another machine than the control plane. A runner opens the connection outward, says what it can serve, claims a job under a lease, and calls the same engine as a single process does, with a `Control` whose every answer comes over the link. It keeps a local journal so that a runner cut off mid-write can still account for what it did. This crate also holds the control plane's end of the link.
+The runner role, for a runner on another machine than the control plane. A runner opens the connection outward, says what it can serve, claims a job under a lease, and calls the same engine as a single process does, with a `Control` whose every answer comes over the link. It keeps a local journal so that a runner cut off mid-write can still account for what it did. This crate also holds the control plane's end of the link. Nothing of it is built yet: the crate is an empty library, and every step of its build order is open.
 
 ## Facts
 
@@ -10,7 +10,7 @@ The runner role, for a runner on another machine than the control plane. A runne
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
 | Depends on | `a2m-core`, `a2m-vault` (the runner's key and unwrapping session material), `a2m-telemetry`, `a2m-auth` (the keeper's work half), `a2m-provider` (the registry the product crate fills), `a2m-engine`, `a2m-sched` (the job and lease types), `a2m-actions` (`Paths`, settings, and, on the control plane's end, the `Kernel`). Outside: Tokio, Hyper with rustls, to be verified |
-| Built in | Roadmap packages 7.1 (the link), 7.2 (enrollment, lost leases, reconcile after a lost runner), 7.3 (user-device runners) |
+| Roadmap packages | Roadmap packages 7.1 (the link), 7.2 (enrollment, lost leases, reconcile after a lost runner), 7.3 (user-device runners) |
 | Carries out | Spec section [223](../../spec/2-kernel/223-the-runner-protocol.md); the runner half of [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [runner protocol](../../reference/technical-reference.md#runner-protocol) of the technical reference |
 
 ## Owns
@@ -170,12 +170,12 @@ A server runner may be given jobs for its enrolled targets as a service account 
 
 ## Build order
 
-1. `LinkService` and `LinkControl` over an in-memory carrier, passing the same suite as the in-process `Control`. This makes hypothesis H-21 measurable from the other side.
-2. `hello`, `claim`, `heartbeat`, `result` over HTTPS with a fixed test certificate; one read job. Package 7.1.
-3. `events` with intent acknowledgements, and the journal.
-4. Lost leases, quarantine, late evidence, `cancel` and `drain`. Package 7.2.
-5. Enrollment and certificate renewal; session material wrapped to the runner's key.
-6. User-device runners. Package 7.3.
+1. Not built: `LinkService` and `LinkControl` over an in-memory carrier, passing the same suite as the in-process `Control`. This makes hypothesis H-21 measurable from the other side.
+2. Not built: `hello`, `claim`, `heartbeat`, `result` over HTTPS with a fixed test certificate; one read job. Package 7.1.
+3. Not built: `events` with intent acknowledgements, and the journal.
+4. Not built: lost leases, quarantine, late evidence, `cancel` and `drain`. Package 7.2.
+5. Not built: enrollment and certificate renewal; session material wrapped to the runner's key.
+6. Not built: user-device runners. Package 7.3.
 
 ## Open points
 

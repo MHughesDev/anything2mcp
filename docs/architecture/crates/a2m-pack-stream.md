@@ -10,7 +10,7 @@ The stream pack: the `stream` driver over queues, topics, and logs. Every read e
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (the plan, steps, values, findings), `a2m-files` (file kinds, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, `CredentialSink`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock that stamps a finding). Outside: `tokio` and `serde`. No broker client crate: both wire clients are the pack's own |
-| Built in | Packages J2, J3 of the [roadmap](../../plan/roadmap.md) |
+| Roadmap packages | Packages J2, J3 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [309](../../spec/3-packs/309-the-stream-pack.md); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md); section [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes a destination) |
 
 ## Owns

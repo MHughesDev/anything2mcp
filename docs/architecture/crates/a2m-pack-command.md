@@ -10,7 +10,7 @@ The command pack: the `cli` driver over declared programs. A program is started 
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (`Plan`, `Step`, `Value`, `Finding`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature, and its code `needs_login`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `ScopedSupervisor`, `Roots`), `a2m-telemetry` (the clock a finding is dated with). Outside: `regex`, `serde`, `sha2`, `tokio`; on Linux and macOS `rustix`, for the engine's own user identifier ([decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md)); on Windows `windows-sys`, for owners and access lists, with the features `a2m-local` already uses ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)) |
-| Built in | Packages D3 and D5 of the [roadmap](../../plan/roadmap.md) |
+| Roadmap packages | Packages D3 and D5 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [306](../../spec/3-packs/306-the-command-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the command archetype); [204](../../spec/2-kernel/204-supervising-subsystems.md) (every start goes through the supervisor); [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes what runs) |
 
 ## Owns

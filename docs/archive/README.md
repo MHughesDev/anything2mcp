@@ -47,7 +47,7 @@ The product was first designed as a tool for wrapping web applications. Its spec
 | 35 | [701, Prior art](../spec/7-project/701-prior-art.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 36 | [roadmap.md](../plan/roadmap.md) | Retired; its content lives outside the specification | [Build plan](spec-2026-11/36-build-plan.md) |
 | 37 | [703, Decisions and open questions](../spec/7-project/703-open-questions.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
-| 38 | [sources.md](../references/sources.md) | Retired; its content lives outside the specification | [Sources](spec-2026-11/38-sources.md) |
+| 38 | [sources.md](../reference/sources.md) | Retired; its content lives outside the specification | [Sources](spec-2026-11/38-sources.md) |
 | 39 | [222, Front doors and the local engine](../spec/2-kernel/222-front-doors-and-the-local-engine.md) | Consolidated | [The local engine and its clients](spec-2026-11/39-local-engine-and-clients.md) |
 | 40 | [220, Actions and the authoring interface](../spec/2-kernel/220-actions-and-the-authoring-interface.md) | Consolidated | [The authoring interface](spec-2026-11/40-authoring-interface.md) |
 | 41 | [605, Packaging and release](../spec/6-running-it/605-packaging-and-release.md) | Consolidated | [Packaging and release](spec-2026-11/41-packaging-and-release.md) |

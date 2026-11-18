@@ -44,4 +44,4 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 
 These rest on design judgment and should be treated as proposals until their research brief is run: safety and approvals, the security model, access control and toolsets, testing and publish gates, the per-OS vault, the components added by the gap review, and the local engine and its approval rules.
 
-Every URL cited anywhere in these docs is listed in [references/sources.md](../references/sources.md).
+Every URL cited anywhere in these docs is listed in [reference/sources.md](../reference/sources.md).

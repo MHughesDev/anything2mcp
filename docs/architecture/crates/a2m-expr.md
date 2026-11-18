@@ -10,7 +10,7 @@ Expressions: an expression in CEL's syntax is checked and compiled once, when a 
 | Layer | 2, Foundations |
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside: `unicode-normalization`, for form C ([decision 0073](../../decisions/0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md)). No interpreter crate, and no decimal crate of its own: a decimal is `a2m-core`'s |
-| Built in | Phase 1: slice 1.3 builds compiling and type-checking for the read files; slice 3.4 builds the normalizers; slice 3.9 builds the mapping functions for sources |
+| Roadmap packages | Phase 1: slice 1.3 builds compiling and type-checking for the read files; slice 3.4 builds the normalizers; slice 3.9 builds the mapping functions for sources |
 | Carries out | Spec sections [205](../../spec/2-kernel/205-target-files.md) (expressions), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (normalization), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (stage 4); the [expressions](../../reference/file-formats.md#expressions) and field types of the file formats; [decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md) |
 
 ## Owns

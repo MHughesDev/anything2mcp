@@ -10,7 +10,7 @@ The REST face of the kernel, and the server's network listener. It serves `/api/
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
 | Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: Tokio, Axum, Hyper with rustls, as spec section 605 lists them, to be verified; an HTTP client for webhooks, to be verified |
-| Built in | Roadmap package 1.4 (the router on the local channel, the action route); 6.4 (the full interface, OpenAPI, events, webhooks); 6.5 (the approval and sign-in pages and the console on a server); 7.3 (the hosted sign-in page) |
+| Roadmap packages | Roadmap package 1.4 (the router on the local channel, the action route); 6.4 (the full interface, OpenAPI, events, webhooks); 6.5 (the approval and sign-in pages and the console on a server); 7.3 (the hosted sign-in page) |
 | Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for REST, [601](../../spec/6-running-it/601-deployment-configurations.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on a server; the [REST endpoints](../../reference/technical-reference.md#rest-endpoints) of the technical reference |
 
 ## Owns

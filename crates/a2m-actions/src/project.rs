@@ -125,8 +125,76 @@ fn hidden(part: &std::ffi::OsStr) -> bool {
 ///
 /// # Errors
 ///
-/// The reason the folder is not used, as the end of a sentence.
+/// The reason the folder is not used, as the end of a sentence, and the
+/// fix where it is not the general one.
 pub(crate) fn check(
+    stated: &Path,
+    paths: &Paths,
+    settings: &Settings,
+    places: &Places,
+) -> Result<PathBuf, ProjectRefused> {
+    // The engine's own folders and the project are kept apart, and the
+    // refusal says why, with the paths (decision 0219).
+    if let Some(folder) = std::fs::canonicalize(stated).ok().filter(|folder| folder.is_dir()) {
+        for own in [
+            &paths.installation_config,
+            &paths.config,
+            &paths.data,
+            &paths.runtime,
+            &paths.cache,
+        ] {
+            let own = real(own);
+            let apart = "A project folder is read by agents and by the tools built in it, and the engine's home holds its vault, its store, and its socket, so the two are kept apart";
+            let fix = || {
+                Some(format!(
+                    "Set `{}` to a folder outside the project, such as one beside it, or leave it unset to use the system's own directories.",
+                    crate::paths::HOME_VARIABLE
+                ))
+            };
+            let why = if own == folder {
+                format!(
+                    "the project folder `{}` is one of the engine's own folders",
+                    folder.display()
+                )
+            } else if own.starts_with(&folder) {
+                format!(
+                    "the engine's own folder `{}` is inside the project folder `{}`",
+                    own.display(),
+                    folder.display()
+                )
+            } else if folder.starts_with(&own) {
+                format!(
+                    "the project folder `{}` is inside the engine's own folder `{}`",
+                    folder.display(),
+                    own.display()
+                )
+            } else {
+                continue;
+            };
+            return Err(ProjectRefused {
+                why: format!("{why}. {apart}"),
+                fix: fix(),
+            });
+        }
+    }
+    check_plain(stated, paths, settings, places).map_err(|why| ProjectRefused {
+        why: why.to_owned(),
+        fix: None,
+    })
+}
+
+/// Why a stated project folder is not used, and the fix where the
+/// general one does not fit.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectRefused {
+    /// The end of a sentence.
+    pub(crate) why: String,
+    /// The fix, when it is not the general one.
+    pub(crate) fix: Option<String>,
+}
+
+/// [`check`], with every reason a fixed sentence.
+fn check_plain(
     stated: &Path,
     paths: &Paths,
     settings: &Settings,
@@ -374,13 +442,13 @@ mod tests {
         // The same folder without its project file is not a project.
         let bare = home.join("work").join("notes");
         std::fs::create_dir_all(&bare).unwrap();
-        assert!(look(&bare).unwrap_err().contains("no project file"));
+        assert!(look(&bare).unwrap_err().why.contains("no project file"));
         // A project file that is not a settings file does not make one.
         let odd = home_of(&["work", "odd"]);
         std::fs::write(odd.join("anything2mcp.toml"), "[no_such_group]\nkey = 1\n").unwrap();
-        assert!(look(&odd).unwrap_err().contains("not a settings file"));
+        assert!(look(&odd).unwrap_err().why.contains("not a settings file"));
         std::fs::write(odd.join("anything2mcp.toml"), "not toml [").unwrap();
-        assert!(look(&odd).unwrap_err().contains("not a settings file"));
+        assert!(look(&odd).unwrap_err().why.contains("not a settings file"));
 
         // A key folder, a browser's profile, a program's settings: hidden
         // folders of the home folder, and the folder the environment gives
@@ -392,18 +460,18 @@ mod tests {
             (&[".local", "share", "program"][..], "hidden folder"),
         ] {
             let folder = home_of(below);
-            assert!(look(&folder).unwrap_err().contains(why), "{folder:?}");
+            assert!(look(&folder).unwrap_err().why.contains(why), "{folder:?}");
         }
         let program = root.project(&["moved-data", "program"]);
-        assert!(look(&program).unwrap_err().contains("other programs"));
+        assert!(look(&program).unwrap_err().why.contains("other programs"));
         // The home folder, and a folder above it, hold all of those.
         std::fs::write(home.join("anything2mcp.toml"), "").unwrap();
-        assert!(look(&home).unwrap_err().contains("home folder"));
+        assert!(look(&home).unwrap_err().why.contains("home folder"));
         std::fs::write(root.0.join("anything2mcp.toml"), "").unwrap();
-        assert!(look(&root.0).unwrap_err().contains("engine's own"));
+        assert!(look(&root.0).unwrap_err().why.contains("engine's own"));
         let above = root.0.join("home");
         std::fs::write(above.join("anything2mcp.toml"), "").unwrap();
-        assert!(look(&above).unwrap_err().contains("home folder"));
+        assert!(look(&above).unwrap_err().why.contains("home folder"));
         // A hidden folder deeper down is the person's own business.
         let deeper = home_of(&["work", ".drafts"]);
         assert_eq!(look(&deeper).unwrap(), deeper);
@@ -413,7 +481,7 @@ mod tests {
         {
             let link = home.join("work").join("innocent");
             std::os::unix::fs::symlink(home.join(".keys"), &link).unwrap();
-            assert!(look(&link).unwrap_err().contains("hidden folder"));
+            assert!(look(&link).unwrap_err().why.contains("hidden folder"));
         }
     }
 
@@ -437,11 +505,11 @@ mod tests {
         assert_eq!(look(&work).unwrap(), work);
         // A project file every account may write.
         mode(&work.join("anything2mcp.toml"), 0o666);
-        assert!(look(&work).unwrap_err().contains("every account"));
+        assert!(look(&work).unwrap_err().why.contains("every account"));
         mode(&work.join("anything2mcp.toml"), 0o644);
         // A folder every account may write.
         mode(&work, 0o777);
-        assert!(look(&work).unwrap_err().contains("every account"));
+        assert!(look(&work).unwrap_err().why.contains("every account"));
         mode(&work, 0o755);
         assert_eq!(look(&work).unwrap(), work);
 
@@ -453,7 +521,7 @@ mod tests {
         );
         let shared = root.project(&["shared", "work"]);
         mode(&root.0.join("shared"), 0o777);
-        let refused = check(&shared, &paths, &settings, &excused).unwrap_err();
+        let refused = check(&shared, &paths, &settings, &excused).unwrap_err().why;
         assert!(refused.contains("every account"), "{refused}");
         mode(&root.0.join("shared"), 0o755);
         assert_eq!(check(&shared, &paths, &settings, &excused).unwrap(), shared);
@@ -487,7 +555,7 @@ mod tests {
         // The setting tightened to nothing: no folder is a project.
         let none = with("[]");
         for folder in [&inside, &outside] {
-            let refused = check(folder, &paths, &none, &places).unwrap_err();
+            let refused = check(folder, &paths, &none, &places).unwrap_err().why;
             assert!(refused.contains("files.allowed_roots"), "{refused}");
         }
         // A name that is neither the word nor a full path allows nothing.

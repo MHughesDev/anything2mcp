@@ -198,14 +198,14 @@ Each design has the same parts, in this order.
 | Part | What it says |
 | --- | --- |
 | Purpose | One or two sentences |
-| Facts | Side, layer, what it may depend on, what it does depend on, the stage or phase that builds it, the spec sections it carries out |
+| Facts | Side, layer, what it may depend on, what it does depend on, the roadmap packages that build it (row "Roadmap packages", whether or not they are done), the spec sections it carries out |
 | Owns | What this crate is responsible for, and what it must never do |
 | Interface | The public types, traits, and functions, as a Rust sketch, each with one line on its contract |
 | Used by, and uses | Which crates call which of those, and what this crate calls |
 | State | Tables, files, and memory it owns |
 | Failures | The failure classes and codes it can produce |
 | Invariants | What must always hold, and the test that proves each |
-| Build order | The smallest first step, then the next, each provable alone |
+| Build order | The smallest first step, then the next, each provable alone. Each step is marked Done, Done in part, or Not built: this is where a design says what of its crate exists |
 | Open points | What the building slice must settle |
 
 ## The parts that are not crates

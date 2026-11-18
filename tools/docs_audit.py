@@ -4,7 +4,7 @@
 Usage, from the repository root:
 
     python3 tools/docs_audit.py                 # check; exit 1 on any finding
-    python3 tools/docs_audit.py --write-sources # also regenerate docs/references/sources.md
+    python3 tools/docs_audit.py --write-sources # also regenerate docs/reference/sources.md
     python3 tools/docs_audit.py --root DIR      # check another copy of the repository
 
 Standard library only; Python 3.11 or newer. Run it after any change under docs/, AGENTS.md,
@@ -49,7 +49,7 @@ def internal_dependencies(manifest, kinds=("dependencies", "dev-dependencies", "
 def write_sources(md):
     by_file, urls = {}, set()
     for k, v in md.items():
-        if k.startswith("docs/references/"):
+        if k == "docs/reference/sources.md":
             continue
         seen = []
         for label, target in links(v):
@@ -67,8 +67,7 @@ def write_sources(md):
         out += [f"## {k}", ""]
         out += [f"- [{label}](<{t}>)" if "(" in t else f"- [{label}]({t})" for label, t in items]
         out.append("")
-    (docs / "references").mkdir(exist_ok=True)
-    (docs / "references" / "sources.md").write_text("\n".join(out), encoding="utf-8")
+    (docs / "reference" / "sources.md").write_text("\n".join(out), encoding="utf-8")
     print(f"sources.md: {len(urls)} URLs from {len(by_file)} documents")
 
 
@@ -357,7 +356,7 @@ def main():
     earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")
     history = ("docs/decisions/", "docs/journal/", "docs/archive/", "docs/plan/publishing-setup.md",
                "docs/research/10-", "docs/research/12-",
-               "docs/references/sources.md",
+               "docs/reference/sources.md",
                "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
     kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}
     skipped = {".git", "target", "__pycache__", "dist", ".venv", "venv", "node_modules", "site-packages"}

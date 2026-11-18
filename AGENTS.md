@@ -141,10 +141,9 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `bindings/` | The pip and npm packages |
 | `docs/architecture/` | How the code is put together: who defines, implements, and joins each interface, and one design per crate |
 | `docs/spec/` | The specification, in seven parts, one section per file |
-| `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, settings examples |
+| `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, the walkthrough, and the generated list of every source URL cited |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
-| `docs/references/` | Every source URL cited |
 | `docs/plan/` | The roadmap, the working method, the design review lenses, the test application plan, publishing setup |
 | `docs/archive/` | The first design's consolidated sections and its plans, kept as history, with the key from old section numbers to new |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
