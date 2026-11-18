@@ -30,7 +30,7 @@ Every "does not" carries its kind:
 | | Applications' own scripting interfaces (Apple events, COM, D-Bus); mobile devices | Not yet |
 | | Get past a sign-in, a bot defence, a licence check, or a device's protection | Rule 5 |
 
-The full catalog, kind by kind, is the [coverage map](docs/plan/coverage-map.md).
+The full catalog, kind by kind, is the [coverage map](docs/reviews/coverage-map.md).
 
 ## What happens when a tool runs
 

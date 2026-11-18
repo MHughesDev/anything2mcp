@@ -14,7 +14,7 @@ The rules bear in two ways. Rule one: nothing in a run may call a model; reading
 
 ## What it costs
 
-Little, measured by the [coverage map](../plan/coverage-map.md): most applications that look pixel-only to an agent have another surface (an accessibility tree, files, a local database, a command-line tool, a scripting interface). What stays unreachable is a remote desktop session, a program with no accessibility data and no other surface, and a console of a machine that is not running.
+Little, measured by the [coverage map](../reviews/coverage-map.md): most applications that look pixel-only to an agent have another surface (an accessibility tree, files, a local database, a command-line tool, a scripting interface). What stays unreachable is a remote desktop session, a program with no accessibility data and no other surface, and a console of a machine that is not running.
 
 ## The safest way through that stays inside the rules
 

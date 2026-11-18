@@ -128,7 +128,7 @@ An application built on a browser runtime is a web surface.
 ## What the catalog shows
 
 - Most kinds need no pack of their own. Hosted services, cloud platforms, containers, object storage, search indexes, operating-system services, and devices with a management protocol are reached through the request and command packs.
-- Every mechanism by which a program on a personal computer can read or change another, with its place in this design today, is in the [coverage map](../../plan/coverage-map.md).
+- Every mechanism by which a program on a personal computer can read or change another, with its place in this design today, is in the [coverage map](../../reviews/coverage-map.md).
 - Five packs beyond the first four cover much of the rest: command, data, file, stream, and device. The map shows what they do not: above all the operating systems' scripting interfaces, answers that are not JSON, and files that are not tables. All five are designed ([record 0064](../../decisions/0064-five-further-packs-are-designed-before-they-are-built.md)); bridge, mobile, and terminal follow where there is demand.
 - The command pack was chosen as the second pack to build. It is as unlike a web page as possible, it is small, and many other kinds can be reached through it. Its job is to show that the kernel stays neutral once a second kind of system exists; the kernel changes it forced are counted in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md), and the result file of hypothesis H-26 (package D4) is not yet written.
 

@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Changes:** the scopes part of [section 226](../spec/2-kernel/226-configuration.md); the settings loader and the reading of the project file in `a2m-actions`; the engine's start in `anything2mcp`. Takes up findings 2 and 3 of the [configurability review](../plan/configurability-review-2026-11-18.md).
+**Changes:** the scopes part of [section 226](../spec/2-kernel/226-configuration.md); the settings loader and the reading of the project file in `a2m-actions`; the engine's start in `anything2mcp`. Takes up findings 2 and 3 of the [configurability review](../reviews/configurability-review-2026-11-18.md).
 
 ## Context
 
@@ -26,7 +26,7 @@ A person who wants something to hold for one scope has three means: a setting, a
 
 Where two means can say the same thing, the stricter holds: an environment's `approve_writes` and the installation's; a published policy set's settings and the installation's (`Settings::tighter`); a pack's ceiling and a target's value.
 
-**2. What no means says.** A setting never names a surface, an endpoint, a field, or a locator (rule 8). A target's files never loosen a setting. A policy set never loosens a policy setting or reaches a guardrail. None of the three tells one client from another by the make it claims (decision [0058](0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). A connection the person names, with its own toolset and effect ceiling, is not barred by that decision; it is not built, and the [breadth review](../plan/breadth-review-2026-11-18.md) proposes it. A network and a time of day are not scopes yet: the first arrives with network awareness as a policy input and a reach per network ([decision 0222](0222-the-product-is-aware-of-the-network-its-machine-is-on.md)), the second as a policy condition on the engine's clock.
+**2. What no means says.** A setting never names a surface, an endpoint, a field, or a locator (rule 8). A target's files never loosen a setting. A policy set never loosens a policy setting or reaches a guardrail. None of the three tells one client from another by the make it claims (decision [0058](0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). A connection the person names, with its own toolset and effect ceiling, is not barred by that decision; it is not built, and the [breadth review](../reviews/breadth-review-2026-11-18.md) proposes it. A network and a time of day are not scopes yet: the first arrives with network awareness as a policy input and a reach per network ([decision 0222](0222-the-product-is-aware-of-the-network-its-machine-is-on.md)), the second as a policy condition on the engine's clock.
 
 **3. A project's file applies to that project's requests.** The engine keeps the layers 1 to 5 and 7 to 8 it started with. For each request that names a checked project folder, it loads that folder's `anything2mcp.toml` as layer 6, under the same rules (scope P keys only; a protected key only tightened; a locked key refused), and the request, and the run it starts, use the result. The settings a run used are recorded with the run, by digest. A request that names no project uses no project layer, whichever project started the engine. A setting that takes effect only at a start (the store, the vault, the network, the providers) is refused in a project file, as an installation key is today.
 

@@ -1,6 +1,6 @@
 # 0238. Whether a person's own code may take part in proving a write
 
-**Status:** Proposed. Owner decision: it bears on rule three, how a write is proven, and on rule six and [decision 0002](0002-rust-first-other-languages-where-they-fit.md), what language is on the path of a run. Written by the [configurability review](../plan/configurability-review-2026-11-18.md) of 2026-11-18; the owner has not read it. Nothing here is in force.
+**Status:** Proposed. Owner decision: it bears on rule three, how a write is proven, and on rule six and [decision 0002](0002-rust-first-other-languages-where-they-fit.md), what language is on the path of a run. Written by the [configurability review](../reviews/configurability-review-2026-11-18.md) of 2026-11-18; the owner has not read it. Nothing here is in force.
 
 **Date:** 2026-11-18
 

@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Changes:** the endpoint catalog of [`a2m-pack-http`](../architecture/crates/a2m-pack-http.md) (a new key `answer`), its driver's `validate` and `extract` steps, one failure code, and the test application's routes under `/views/`; sentences of spec sections [303](../spec/3-packs/303-the-http-pack.md) and [106](../spec/1-product/106-what-it-latches-onto.md), the [file formats](../reference/file-formats.md#endpointsyaml), and the [coverage map](../plan/coverage-map.md). Answers finding 3 of the [coverage review of 2026-11-18](../plan/coverage-review-2026-11-18.md).
+**Changes:** the endpoint catalog of [`a2m-pack-http`](../architecture/crates/a2m-pack-http.md) (a new key `answer`), its driver's `validate` and `extract` steps, one failure code, and the test application's routes under `/views/`; sentences of spec sections [303](../spec/3-packs/303-the-http-pack.md) and [106](../spec/1-product/106-what-it-latches-onto.md), the [file formats](../reference/file-formats.md#endpointsyaml), and the [coverage map](../reviews/coverage-map.md). Answers finding 3 of the [coverage review of 2026-11-18](../reviews/coverage-review-2026-11-18.md).
 
 ## Decision
 

@@ -8,7 +8,7 @@
 
 ## Context
 
-The coverage review ([findings 2 and 4](../plan/coverage-review-2026-11-18.md)) found a safety gap and two limits. On Windows the check of who can replace a program resolved the path and refused nothing, so the refusal section 306 states did not hold there. On every Unix system a folder a group can write was refused whatever the group, which on macOS is believed to refuse every program inside the folder of installed applications. And the fixed pair of an interpreter and a script, the cheapest route to the operating systems' scripting interfaces and to PowerShell, was designed in one sentence and not built.
+The coverage review ([findings 2 and 4](../reviews/coverage-review-2026-11-18.md)) found a safety gap and two limits. On Windows the check of who can replace a program resolved the path and refused nothing, so the refusal section 306 states did not hold there. On every Unix system a folder a group can write was refused whatever the group, which on macOS is believed to refuse every program inside the folder of installed applications. And the fixed pair of an interpreter and a script, the cheapest route to the operating systems' scripting interfaces and to PowerShell, was designed in one sentence and not built.
 
 ## Decision
 

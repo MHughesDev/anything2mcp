@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Answers:** the first finding of the [breadth review](../plan/breadth-review-2026-11-18.md): every tool is asked and none tells. Takes up part of what [section 704](../spec/7-project/704-readiness.md) leaves undesigned ("triggers, and runs started by an event"): the reading half. Starting a run because something changed stays undesigned.
+**Answers:** the first finding of the [breadth review](../reviews/breadth-review-2026-11-18.md): every tool is asked and none tells. Takes up part of what [section 704](../spec/7-project/704-readiness.md) leaves undesigned ("triggers, and runs started by an event"): the reading half. Starting a run because something changed stays undesigned.
 
 **Would change, when built:** the [action catalog](../reference/action-catalog.md) (new actions); spec sections [221](../spec/2-kernel/221-the-tool-surface-agents-see.md) (a watch's face), [222](../spec/2-kernel/222-front-doors-and-the-local-engine.md) (an engine with a watch is not idle), [401](../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (canaries may be built as watches), and 704; the crate designs of `a2m-actions`, `a2m-ledger`, `a2m-sched`, `a2m-mcp`, and `a2m-api`; the [glossary](../reference/glossary.md) (watch, change); SCOPE.md.
 

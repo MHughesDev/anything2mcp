@@ -691,15 +691,17 @@ impl Kernel {
         let health = self.health();
         let effect = self.effect_of(&def, &input).await;
         let effect_class = effect.as_ref().map_or(EffectClass::Read, |found| found.0);
-        // A vault that was never attached leaves a store that nothing can
-        // use, so every action that needs the store is refused, a read
-        // too: it would fail later, at the store, by a name that does not
-        // say why (decision 0220).
+        // A vault that was never attached because the person did not give
+        // what it needs, its passphrase, refuses every action that needs
+        // the store, a read too, by that failure's own name: a read that
+        // starts a run would fail later, at the store, by a name that
+        // does not say why (decision 0220). A key store that does not
+        // answer leaves the reads that need no secret running, as before.
         let unattached = if self.inner.vault.is_none() && def.needs != HealthNeed::Nothing {
-            health
-                .reasons
-                .iter()
-                .find(|reason| reason.part == crate::health::Part::Vault)
+            health.reasons.iter().find(|reason| {
+                reason.part == crate::health::Part::Vault
+                    && reason.failure.class() == a2m_core::FailureClass::Input
+            })
         } else {
             None
         };

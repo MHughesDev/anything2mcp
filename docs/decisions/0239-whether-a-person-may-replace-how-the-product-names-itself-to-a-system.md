@@ -1,6 +1,6 @@
 # 0239. Whether a person may replace how the product names itself to a system
 
-**Status:** Proposed. Owner decision: it bears on rule five, operating openly, which forbids imitating another application's client and hiding that the engine is automation. Written by the [configurability review](../plan/configurability-review-2026-11-18.md) of 2026-11-18; the owner has not read it. Nothing here is in force.
+**Status:** Proposed. Owner decision: it bears on rule five, operating openly, which forbids imitating another application's client and hiding that the engine is automation. Written by the [configurability review](../reviews/configurability-review-2026-11-18.md) of 2026-11-18; the owner has not read it. Nothing here is in force.
 
 **Date:** 2026-11-18
 

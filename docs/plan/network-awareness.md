@@ -258,4 +258,4 @@ No section is edited in this wave. These would change:
 - **[Section 402](../spec/4-building-tools/402-the-scout-and-who-does-what.md)**: the survey stage; naming a network as a person's authority act.
 - **[Section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)**: the reference-not-text address rule for net tools; reach cannot be widened by an agent.
 - **[Section 603](../spec/6-running-it/603-networking.md)**: place and reach on the egress rules.
-- The **[action catalog](../reference/action-catalog.md)**: the `net.*` tools; the **[technical reference](../reference/technical-reference.md)**: the place/reach types and the changed `Destinations`; the **[coverage map](coverage-map.md)**: the network rows move from "Decision 0214 / N" to this design.
+- The **[action catalog](../reference/action-catalog.md)**: the `net.*` tools; the **[technical reference](../reference/technical-reference.md)**: the place/reach types and the changed `Destinations`; the **[coverage map](../reviews/coverage-map.md)**: the network rows move from "Decision 0214 / N" to this design.
