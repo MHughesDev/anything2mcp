@@ -131,7 +131,15 @@ struct More {
     flaky: std::sync::atomic::AtomicU32,
     /// The key each read by key was asked for.
     keys: Mutex<Vec<String>>,
+    /// The spare read of an order gives another note than the stand holds.
+    spare_differs: std::sync::atomic::AtomicBool,
+    /// How many times the spare read of an order was made.
+    spare: std::sync::atomic::AtomicU32,
 }
+
+/// The note the spare read gives when it differs: a value no report may
+/// show.
+const SPARE_NOTE: &str = "A note of the spare read alone";
 
 /// The stand's driver, with the posture each preparation was handed kept.
 struct Postured {
@@ -225,6 +233,20 @@ impl a2m_provider::Driver for Postured {
                         )));
                     }
                     seen(a2m_core::Values::new().with("note", "Kept, this time"))
+                })
+            }
+            // A second way to read an order: what the stand answers, with
+            // another note when the test says it differs.
+            Some("order_get_spare") => {
+                self.more.spare.fetch_add(1, Ordering::SeqCst);
+                let differs = self.more.spare_differs.load(Ordering::SeqCst);
+                let answered = self.inner.act(prepared, step, input);
+                Box::pin(async move {
+                    let mut outcome = answered.await?;
+                    if differs && let a2m_provider::StepOutcome::Done(observed) = &mut outcome {
+                        observed.values.insert("note", SPARE_NOTE);
+                    }
+                    Ok(outcome)
                 })
             }
             _ => self.inner.act(prepared, step, input),
@@ -2318,10 +2340,11 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
     let again = promote("example_order_get", "stand", Some(run)).await;
     assert_eq!(again.result.unwrap()["promoted"], false);
 
-    // A shadow binding is promoted on its comparison, which is not built;
-    // a drafted write is a person's act, shown on the person's page.
+    // A shadow binding is promoted by a person on its comparisons, never by
+    // an agent; a drafted write is a person's act, shown on the person's
+    // page.
     let shadow = promote("example_line_item_upsert", "stand", None).await;
-    assert_eq!(shadow.error.unwrap().code, "action_not_built");
+    assert_eq!(shadow.error.unwrap().code, "person_required");
     *world.surface.pages.lock().unwrap() = true;
     let upsert = target_dir.join("operations").join("line_item_upsert.yaml");
     let shadowed = std::fs::read_to_string(&upsert).unwrap();
@@ -2952,5 +2975,181 @@ async fn a_binding_is_never_written_verified_by_hand() {
         assert_eq!(written.code, "path_not_allowed");
         assert!(!real.join("more.yaml").exists());
     }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Shadow bindings in the product (decision 0207, decision 0219): a live
+/// read of a tool with a verified binding and one in shadow is compared on
+/// every call, `shadow.report` counts the matches by the shadow binding's
+/// digest, a mismatch starts the count again and is named by output alone,
+/// and `binding.promote` of the shadow binding is a person's act on the
+/// threshold's run of exact matches.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_promoted_by_a_person()
+{
+    use std::sync::atomic::Ordering;
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new()
+            .with("status", "draft")
+            .with("total", "125.00")
+            .with("note", "Call before delivery"),
+        ..a2m_provider::Observed::default()
+    });
+    // The read of an order gets a second binding, in shadow, through a
+    // second call.
+    let calls = target_dir.join("calls").join("orders.yaml");
+    let mut text = std::fs::read_to_string(&calls).unwrap();
+    text.push_str("---\ncall: order_get_spare\npath: \"/spare/orders/{order_id}\"\neffect: read\n");
+    std::fs::write(&calls, text).unwrap();
+    let operation = target_dir.join("operations").join("order_get.yaml");
+    let verified = std::fs::read_to_string(&operation).unwrap();
+    let with_shadow = verified.replace(
+        "    call: order_get\n",
+        "    call: order_get\n  - mode: stand\n    status: shadow\n    call: order_get_spare\n",
+    );
+    assert_ne!(with_shadow, verified);
+    std::fs::write(&operation, &with_shadow).unwrap();
+
+    // The assumption the promotion rests on: the shadow binding's digest is
+    // the same in the drafts and in the plan published from them.
+    let set = testing::stand_set().unwrap();
+    let root = a2m_files::TargetRoot::new(&target_dir);
+    let sources = a2m_files::load(&root, &set).unwrap();
+    let digest_in = |mode: a2m_files::CompileMode, version: a2m_core::Version| {
+        let compiled = a2m_files::compile(&sources, &set, mode, version).unwrap();
+        let plan = compiled.plan;
+        let operation = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_get")
+            .unwrap()
+            .clone();
+        a2m_engine::BindingPin::of(&plan, &operation, 1).unwrap().digest
+    };
+    let drafted = digest_in(a2m_files::CompileMode::Draft, a2m_files::DRAFT_VERSION);
+
+    let published = world
+        .call(&world.person, "version.publish", json!({"target": "example"}))
+        .await;
+    assert!(published.ok, "{:?}", published.error);
+    let published = published.result.unwrap();
+    assert_eq!(
+        digest_in(
+            a2m_files::CompileMode::Publish,
+            published["version"].as_str().unwrap().parse::<a2m_core::Version>().unwrap()
+        ),
+        drafted,
+        "a binding whose files did not change has one digest in the drafts and the plan"
+    );
+
+    let read = || {
+        let world = &world;
+        async move {
+            let called = world
+                .call(
+                    &world.person,
+                    "tool.call",
+                    json!({"tool": "example_order_get", "input": {"order_id": "SO-1001"}}),
+                )
+                .await;
+            let called = called.result.unwrap();
+            assert_eq!(called["status"], "completed", "{called}");
+            // The caller is given the verified binding's result, whatever
+            // the shadow read gave.
+            assert_eq!(called["result"]["note"], "Call before delivery", "{called}");
+        }
+    };
+    let report = || {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let reported = world
+                .call(
+                    &agent,
+                    "shadow.report",
+                    json!({"target": "example", "tool": "example_order_get"}),
+                )
+                .await;
+            assert!(reported.ok, "{:?}", reported.error);
+            reported.result.unwrap()
+        }
+    };
+    let promote = |caller: Caller| {
+        let world = &world;
+        async move {
+            world
+                .call(
+                    &caller,
+                    "binding.promote",
+                    json!({"target": "example", "tool": "example_order_get", "mode": "stand", "position": 2}),
+                )
+                .await
+        }
+    };
+
+    // Five reads: five matches by the shadow binding's digest.
+    for _ in 0..5 {
+        read().await;
+    }
+    assert_eq!(world.more.spare.load(Ordering::SeqCst), 5);
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!(reported["bindings"].as_array().unwrap().len(), 1, "{reported}");
+    assert_eq!(standing["binding"], drafted.to_string(), "{reported}");
+    assert_eq!(
+        (&standing["matches"], &standing["in_a_row"], &standing["threshold"]),
+        (&json!(5), &json!(5), &json!(5)),
+        "{reported}"
+    );
+    assert_eq!(standing["promotable"], true, "{reported}");
+
+    // One mismatch: the count starts again, and the report names the
+    // output and how it differed, never a value.
+    world.more.spare_differs.store(true, Ordering::SeqCst);
+    read().await;
+    world.more.spare_differs.store(false, Ordering::SeqCst);
+    let reported = report().await;
+    let standing = &reported["bindings"][0];
+    assert_eq!((&standing["in_a_row"], &standing["mismatches"]), (&json!(0), &json!(1)));
+    assert_eq!(standing["promotable"], false);
+    assert_eq!(standing["not_promotable"], "mismatch_since");
+    assert_eq!(
+        standing["last_mismatch"]["differing"],
+        json!([{"name": "note", "how": "differs"}]),
+        "{reported}"
+    );
+    let shown = reported.to_string();
+    for value in [SPARE_NOTE, "Call before delivery", "125.00"] {
+        assert!(!shown.contains(value), "the report shows a value: {shown}");
+    }
+    let early = promote(world.person.clone()).await.error.unwrap();
+    assert_eq!(early.code, "shadow_not_promotable", "{}", early.message);
+    assert!(std::fs::read_to_string(&operation).unwrap().contains("status: shadow"));
+
+    // Five matches in a row again: an agent is refused, a person promotes.
+    for _ in 0..5 {
+        read().await;
+    }
+    assert_eq!(report().await["bindings"][0]["promotable"], true);
+    let refused = promote(agent.clone()).await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
+    assert_eq!(std::fs::read_to_string(&operation).unwrap(), with_shadow);
+    let promoted = promote(world.person.clone()).await;
+    assert!(promoted.ok, "{:?}", promoted.error);
+    let promoted = promoted.result.unwrap();
+    assert_eq!(promoted["promoted"], true, "{promoted}");
+    assert_eq!(promoted["evidence"]["shadow"]["matches_in_a_row"], 5);
+    assert_eq!(
+        std::fs::read_to_string(&operation).unwrap(),
+        with_shadow.replace("    status: shadow\n", "    status: \"verified\"\n")
+    );
+    let reported = report().await;
+    assert_eq!(reported["bindings"][0]["not_promotable"], "promoted");
+    assert!(reported["bindings"][0]["promoted"]["by"].is_string());
     world.kernel.close(CloseReason::Asked).await;
 }

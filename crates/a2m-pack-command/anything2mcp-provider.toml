@@ -132,6 +132,8 @@ code = "ambiguous_match"
 plan_programs = true
 # One fresh folder for each run is made under this root and removed after.
 write_roots = ["command_runs"]
+# A script a target keeps is read from the target's folder in the project.
+read_roots = ["project"]
 network = "none"
 
 [[settings]]

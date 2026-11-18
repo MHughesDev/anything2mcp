@@ -78,7 +78,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
 | `version.publish` | Publish a reviewed version; a person, never an agent | Publisher | No | 5 |
-| `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial; for a write, a person | Publisher | No | 4 |
+| `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial, or a shadow binding on its run of exact matches; for a write or a shadow binding, a person | Publisher | No | 4 |
 | `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6 |
 | `version.rollback` | Make an earlier version current | Publisher | No | 5 |
 | `version.bundle` | Pack a version into a signed file | Publisher | No | 6 |

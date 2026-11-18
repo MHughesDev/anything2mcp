@@ -19,6 +19,8 @@ use a2m_files::{
 };
 use serde_json::{Value as Json, json};
 
+use a2m_ledger::{Durability, NotPromotable, Promotable};
+
 use super::build::{off_thread, target_folder};
 use super::handler;
 use crate::codes;
@@ -451,6 +453,148 @@ async fn trial_evidence(
         })
 }
 
+/// The same checked write as `draft.write`: through the checked path of the
+/// project, a new file renamed over the name, never through a link, and
+/// refused where the file changed since the binding was found.
+async fn rewrite(project_folder: PathBuf, target: &TargetName, found: &Found) -> Result<(), Failure> {
+    let (target, path, edited, original) = (
+        target.clone(),
+        found.file.clone(),
+        found.edited.clone(),
+        found.original.clone(),
+    );
+    off_thread(move || {
+        let folder = target_folder(&project_folder, &target)?;
+        let file = folder.join(path.as_str())?;
+        if !matches!(file.entry_kind()?, a2m_provider::EntryKind::File) {
+            return Err(not_promotable(
+                format!("`{path}` is no longer a file of the target."),
+                "Call `draft.lint`, then promote again.",
+            ));
+        }
+        // An edit made since the binding was found is never lost.
+        if file.read(a2m_files::LARGEST_TARGET_FILE as u64)? != original.as_bytes() {
+            return Err(codes::stale(
+                codes::DRAFTS_CHANGED,
+                format!("`{path}` changed while the binding was promoted, so nothing was written."),
+                "Promote again.",
+            ));
+        }
+        file.write(edited.as_bytes())
+    })
+    .await
+}
+
+/// The threshold of exact matches in a row the settings set, with the
+/// defaults of section 226 where they set none.
+fn threshold(kernel: &Kernel) -> a2m_ledger::ShadowThreshold {
+    let settings = kernel.settings();
+    let count = |key: &str, default: u32| {
+        settings
+            .int(key)
+            .and_then(|count| u32::try_from(count).ok())
+            .unwrap_or(default)
+    };
+    a2m_ledger::ShadowThreshold {
+        read: count("engine.shadow.matches_to_promote.read", 5),
+        write: count("engine.shadow.matches_to_promote.write", 20),
+    }
+}
+
+/// `binding.promote` of a binding in shadow (decision 0207): a person's
+/// act, on the run of exact matches the ledger counted for the binding's
+/// digest as the drafts compile it. The ledger records the promotion
+/// first, in a transaction that asks again whether it may; the file is
+/// rewritten after. A promotion the ledger holds whose rewrite did not
+/// happen (the file changed in between) is finished by the next call.
+async fn promote_from_shadow(
+    kernel: &Kernel,
+    call: &Call,
+    project_folder: PathBuf,
+    target: &TargetName,
+    found: Found,
+) -> Result<Output, Failure> {
+    let tool = found.pin.operation.clone();
+    let person = match call.caller.principal.person() {
+        Some(person) if !call.caller.is_agent => person,
+        _ => {
+            return Err(codes::policy(
+                codes::PERSON_REQUIRED,
+                format!(
+                    "Promoting the binding of `{}` of `{tool}` from shadow is a person's act, never an agent's: it lets that binding act on its own.",
+                    found.pin.mode
+                ),
+                format!(
+                    "Ask the person to run `anything2mcp binding promote {target} --tool {tool} --mode {}` at a terminal; `shadow.report` shows how it compared.",
+                    found.pin.mode
+                ),
+            ));
+        }
+    };
+    let promotion = a2m_ledger::ShadowPromotion {
+        subject: a2m_ledger::ShadowSubject {
+            workspace: call.caller.principal.workspace,
+            target: target.clone(),
+            operation: tool.clone(),
+            binding: found.pin.digest,
+            writes: found.effect != EffectClass::Read,
+        },
+        mode: found.pin.mode.clone(),
+        promoted_by: person,
+        threshold: threshold(kernel),
+    };
+    let (row, recorded) = kernel
+        .store()?
+        .write(Durability::Synced, move |tx| {
+            match tx
+                .shadow()
+                .promotable(&promotion.subject, promotion.threshold)?
+            {
+                Promotable::No(NotPromotable::Promoted(row)) => Ok((row, false)),
+                _ => tx.shadow().promote(&promotion).map(|row| (row, true)),
+            }
+        })
+        .await?;
+    rewrite(project_folder, target, &found).await?;
+    let evidence = json!({
+        "binding": found.pin.to_json(),
+        "shadow": {
+            "matches_in_a_row": row.matches,
+            "threshold": row.threshold,
+            "through_seq": row.through_seq,
+            "recorded_now": recorded,
+        },
+        "was": "shadow",
+    });
+    let detail = format!(
+        "{target} {tool} {}: shadow to verified, on {} exact matches in a row",
+        found.pin.mode, row.matches
+    );
+    kernel
+        .audit(
+            &call.caller.principal.principal.id.to_string(),
+            "binding.promote",
+            &format!("{target}/{tool}"),
+            &detail,
+        )
+        .await?;
+    Ok(Output::ok(json!({
+        "target": target.as_str(),
+        "tool": tool.as_str(),
+        "mode": found.pin.mode.as_str(),
+        "position": found.pin.position + 1,
+        "file": found.file.as_str(),
+        "promoted": true,
+        "status": "verified",
+        "evidence": evidence,
+    }))
+    .then(Next::new(
+        "publish.request",
+        json!({"target": target.as_str()}),
+        "to have a person publish the version in which the promoted binding acts",
+    )))
+}
+
 handler!(
     /// `binding.promote`: the first binding of a drafted operation made
     /// verified, on its evidence, through the checked write `draft.write`
@@ -491,6 +635,9 @@ handler!(
             return Ok(Output::ok(shown(false, "verified", json!({})))
                 .warn("The binding is verified already; nothing was changed."));
         }
+        if found.status == BindingStatus::Shadow {
+            return promote_from_shadow(kernel, &call, project_folder, &target, found).await;
+        }
         // An operation that writes: the promote is a person's act. An agent
         // is handed to the person's page; a caller at a terminal is asked
         // for presence; the person's press runs this again with the proof.
@@ -527,38 +674,7 @@ handler!(
             "tried": tried,
             "was": "draft",
         });
-        // The same checked write as `draft.write`: through the checked path
-        // of the project, a new file renamed over the name, never through a
-        // link.
-        {
-            let (folder, target, path, edited, original) = (
-                project_folder.clone(),
-                target.clone(),
-                found.file.clone(),
-                found.edited.clone(),
-                found.original.clone(),
-            );
-            off_thread(move || {
-                let folder = target_folder(&folder, &target)?;
-                let file = folder.join(path.as_str())?;
-                if !matches!(file.entry_kind()?, a2m_provider::EntryKind::File) {
-                    return Err(not_promotable(
-                        format!("`{path}` is no longer a file of the target."),
-                        "Call `draft.lint`, then promote again.",
-                    ));
-                }
-                // An edit made since the binding was found is never lost.
-                if file.read(a2m_files::LARGEST_TARGET_FILE as u64)? != original.as_bytes() {
-                    return Err(codes::stale(
-                        codes::DRAFTS_CHANGED,
-                        format!("`{path}` changed while the binding was promoted, so nothing was written."),
-                        "Promote again.",
-                    ));
-                }
-                file.write(edited.as_bytes())
-            })
-            .await?;
-        }
+        rewrite(project_folder, &target, &found).await?;
         let detail = format!("{target} {tool} {mode}: draft to verified, on {}", evidence);
         kernel
             .audit(
@@ -575,5 +691,121 @@ handler!(
                 "to have a person publish the version in which the binding first acts",
             )),
         )
+    }
+);
+
+/// One binding's standing in shadow, with whether it may be promoted now:
+/// names and kinds of what differed, never a value (decision 0207).
+fn standing_json(
+    standing: &a2m_ledger::ShadowStanding,
+    promotable: &Promotable,
+    threshold: u32,
+) -> Json {
+    let differing = |list: &[a2m_ledger::DifferingOutput]| -> Vec<Json> {
+        list.iter()
+            .map(|output| json!({"name": output.name, "how": output.how.as_str()}))
+            .collect()
+    };
+    let (may, why) = match promotable {
+        Promotable::Yes { .. } => (true, None),
+        Promotable::No(NotPromotable::WritesNotBuilt) => (false, Some("writes_not_built")),
+        Promotable::No(NotPromotable::NothingCompared) => (false, Some("nothing_compared")),
+        Promotable::No(NotPromotable::TooFew { .. }) => (false, Some("too_few")),
+        Promotable::No(NotPromotable::MismatchSince { .. }) => (false, Some("mismatch_since")),
+        Promotable::No(NotPromotable::Promoted(_)) => (false, Some("promoted")),
+    };
+    let mut shown = json!({
+        "operation": standing.operation.as_str(),
+        "mode": standing.mode.as_str(),
+        "binding": standing.binding.to_string(),
+        "matches": standing.matches,
+        "mismatches": standing.mismatches,
+        "not_compared": standing.not_compared,
+        "in_a_row": standing.in_a_row,
+        "threshold": threshold,
+        "promotable": may,
+        "first_at": standing.first_at.as_unix_millis(),
+        "last_at": standing.last_at.as_unix_millis(),
+    });
+    if let Some(why) = why {
+        shown["not_promotable"] = json!(why);
+    }
+    if let Some(last) = &standing.last_mismatch {
+        shown["last_mismatch"] = json!({
+            "at": last.at.as_unix_millis(),
+            "run_id": last.run.to_string(),
+            "differing": differing(&last.differing),
+        });
+    }
+    if let Some(promoted) = &standing.promoted {
+        shown["promoted"] = json!({
+            "by": promoted.promoted_by.to_string(),
+            "at": promoted.promoted_at.as_unix_millis(),
+            "matches": promoted.matches,
+            "threshold": promoted.threshold,
+        });
+    }
+    shown
+}
+
+handler!(
+    /// `shadow.report`: how each binding of a target compared in shadow, by
+    /// its digest, and whether a person may promote it now.
+    shadow_report,
+    |kernel, call| {
+        let target = TargetName::new(call.required("target")?)?;
+        let operation = call.text("tool").map(OperationName::new).transpose()?;
+        let workspace = call.caller.principal.workspace;
+        let threshold = threshold(kernel);
+        let (asked_target, asked) = (target.clone(), operation.clone());
+        let standings = kernel
+            .store()?
+            .read(move |tx| {
+                let report =
+                    tx.shadow()
+                        .report(&workspace, &asked_target, asked.as_ref())?;
+                let mut shown = Vec::with_capacity(report.len());
+                for standing in report {
+                    // Only reads are compared: the ledger refuses the
+                    // comparison of a write.
+                    let subject = a2m_ledger::ShadowSubject {
+                        workspace,
+                        target: asked_target.clone(),
+                        operation: standing.operation.clone(),
+                        binding: standing.binding,
+                        writes: false,
+                    };
+                    let promotable = tx.shadow().promotable(&subject, threshold)?;
+                    shown.push(standing_json(
+                        &standing,
+                        &promotable,
+                        threshold.for_operation(false),
+                    ));
+                }
+                Ok(shown)
+            })
+            .await?;
+        let next = standings
+            .iter()
+            .find(|standing| standing["promotable"] == true)
+            .map(|ready| {
+                Next::new(
+                    "binding.promote",
+                    json!({
+                        "target": target.as_str(),
+                        "tool": ready["operation"].clone(),
+                        "mode": ready["mode"].clone(),
+                    }),
+                    "for a person to promote the binding that earned it",
+                )
+            });
+        let mut output = Output::ok(json!({
+            "target": target.as_str(),
+            "bindings": standings,
+        }));
+        if let Some(next) = next {
+            output = output.then(next);
+        }
+        Ok(output)
     }
 );

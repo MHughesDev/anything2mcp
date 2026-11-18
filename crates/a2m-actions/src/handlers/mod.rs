@@ -69,6 +69,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "draft.write" => drafts::draft_write,
         "draft.delete" => drafts::draft_delete,
         "binding.promote" => promote::binding_promote,
+        "shadow.report" => promote::shadow_report,
         "test.run" => drafts::test_run,
         "fixture.record" => crate::fixture::fixture_record,
         "draft.lint" => build::draft_lint,

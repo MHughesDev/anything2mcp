@@ -400,3 +400,261 @@ pub fn every_file(root: &Path) -> Vec<(PathBuf, String)> {
     }
     out
 }
+
+// ---- a write: arguments, a real store, real intent tokens ----
+
+/// The arguments of a step, as the engine would evaluate them. Every
+/// expression of the fixtures is `input.<name>`.
+pub fn args(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+    let mut args = Values::new();
+    for arg in &step.args {
+        let source = &plan.expression(arg.value).unwrap().source;
+        let name = source
+            .strip_prefix("input.")
+            .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));
+        if let Some(value) = inputs.get(name) {
+            args.insert(arg.name.clone(), value.clone());
+        }
+    }
+    args
+}
+
+/// Carries out steps in order through the handle, as the engine would:
+/// each with its arguments evaluated, and, for a write, the committing
+/// step with the ledger's token for the record.
+pub async fn run_with(
+    plan: &Plan,
+    handle: &DriverHandle,
+    prepared: &mut Prepared,
+    steps: &[Step],
+    inputs: &Values,
+    write: Option<&Write>,
+    within: Duration,
+) -> Result<Values, StepFailure> {
+    let mut values = Values::new();
+    for step in steps {
+        let args = args(plan, step, inputs);
+        let input = StepInput::new(&args, Deadline::after(within));
+        let input = match write {
+            Some(write) => input.for_record(write.record(), Some(&write.key), None),
+            None => input,
+        };
+        let authority = match write {
+            Some(write) if step.commits => Authority::Write(&write.token),
+            _ => Authority::Read,
+        };
+        let outcome = handle.act(prepared, step, &input, authority).await?;
+        let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+        for (name, value) in observed.values {
+            values.insert(name, value);
+        }
+    }
+    Ok(values)
+}
+
+impl Scene {
+    /// Prepares the driver for the write's run and lease number, in a
+    /// posture.
+    pub async fn prepare_for(
+        &self,
+        write: Option<&Write>,
+        posture: a2m_provider::Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle();
+        let supervisor = handle.supervisor(Vec::new());
+        let destinations = Destinations::new([self.surface.surface.address.clone()]);
+        let (run, epoch) = write.map_or((RunId::from_bytes([7; 16]), Epoch::new(1)), |write| {
+            (write.fence.run, write.fence.epoch)
+        });
+        let cx = PrepareContext {
+            run,
+            epoch,
+            surface: &self.surface,
+            plan: &self.plan,
+            posture,
+            deadline: Deadline::after(Duration::from_secs(20)),
+            redact: &NoSecrets,
+            destinations: &destinations,
+            paths: &CheckedPaths::none(),
+            supervisor: &supervisor,
+        };
+        let prepared = handle.prepare(&cx, None).await?;
+        Ok((handle, prepared))
+    }
+
+    /// Runs one list of a binding's steps, prepared afresh and released
+    /// after, as the engine runs the act of a write or its read-back.
+    pub async fn steps(
+        &self,
+        steps: &[Step],
+        inputs: &Values,
+        write: Option<&Write>,
+        posture: a2m_provider::Posture,
+        within: Duration,
+    ) -> Result<Values, StepFailure> {
+        let (handle, mut prepared) = self.prepare_for(write, posture).await?;
+        let result = run_with(
+            &self.plan,
+            &handle,
+            &mut prepared,
+            steps,
+            inputs,
+            write,
+            within,
+        )
+        .await;
+        handle.release(prepared, result.is_err()).await;
+        result
+    }
+}
+
+struct Counted(AtomicU64);
+
+impl a2m_vault::RandomSource for Counted {
+    fn fill(&self, out: &mut [u8]) -> Result<(), a2m_core::Failure> {
+        for chunk in out.chunks_mut(a2m_core::Digest::LENGTH) {
+            let number = self.0.fetch_add(1, Ordering::SeqCst);
+            let block = a2m_core::Digest::of(&number.to_le_bytes());
+            chunk.copy_from_slice(&block.as_bytes()[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
+fn counted() -> Arc<Counted> {
+    Arc::new(Counted(AtomicU64::new(0)))
+}
+
+async fn store() -> a2m_ledger::Store {
+    let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+        a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
+    ));
+    let config = a2m_ledger::StoreConfig::in_memory()
+        .with_clock(clock)
+        .with_random(counted());
+    let store = a2m_ledger::Store::open(config).await.unwrap();
+    let vault = Arc::new(a2m_vault::Vault::with_random(
+        Arc::new(a2m_vault::MemoryKeyStore::with_random(counted())),
+        Arc::new(store.key_records()),
+        counted(),
+    ));
+    store.attach(vault).await.unwrap();
+    store
+}
+
+/// A write run for one record, approved, with its intent stored: what the
+/// engine holds when it reaches the commit point. The approval is the
+/// ledger's test stand-in for the policy engine's, used once.
+pub struct Write {
+    pub fence: a2m_ledger::Fence,
+    pub key: a2m_core::RecordKey,
+    pub token: a2m_ledger::IntentToken,
+}
+
+impl Write {
+    pub async fn new(operation: &str, key: &str) -> Self {
+        use a2m_core::{Digest, EffectClass, OperationName, PrincipalId, RunState, TargetName};
+        use a2m_ledger::{Durability, NewRun, Opened, PlannedRecord, RecordIntent, RetentionClass};
+
+        let store = store().await;
+        let key = a2m_core::RecordKey::new(vec![a2m_core::Value::from(key)]).unwrap();
+        let intended = Digest::of(&key.canonical_bytes());
+        let operation = OperationName::new(operation).unwrap();
+        let planned = key.clone();
+        let fence = store
+            .write(Durability::Synced, move |tx| {
+                let fence = {
+                    let mut ledger = tx.ledger();
+                    let Opened::New(opened) = ledger.open_run(NewRun {
+                        workspace: a2m_core::WorkspaceId::from_bytes([1; 16]),
+                        principal: PrincipalId::from_bytes([1; 16]),
+                        client_label: "test".to_owned(),
+                        tool_name: operation.clone(),
+                        tool_kind: a2m_ledger::ToolKind::Operation,
+                        target: TargetName::new("example").unwrap(),
+                        target_version: Digest::of(b"plan"),
+                        environment: Environment::new("test").unwrap(),
+                        identity: None,
+                        effect: EffectClass::Write,
+                        input_hash: intended,
+                        input: None,
+                        retention: RetentionClass::Long,
+                    })?
+                    else {
+                        panic!("the run exists already");
+                    };
+                    let fence = ledger.new_epoch(opened.run)?;
+                    ledger.set_state(&fence, RunState::Validating, None)?;
+                    ledger.plan_records(
+                        &fence,
+                        &[PlannedRecord {
+                            step_seq: 0,
+                            record_seq: 0,
+                            key: planned,
+                            operation,
+                            intended,
+                            intended_values: None,
+                            before: None,
+                            unchanged: false,
+                        }],
+                    )?;
+                    ledger.store_diff(&fence, Digest::of(b"diff"), None)?;
+                    ledger.set_state(&fence, RunState::NeedsApproval, None)?;
+                    fence
+                };
+                let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+                tx.ledger().begin_writes(&fence, clearance)?;
+                Ok(fence)
+            })
+            .await
+            .unwrap();
+        let record = a2m_ledger::RecordRef {
+            run: fence.run,
+            step_seq: 0,
+            record_seq: 0,
+        };
+        store
+            .write(Durability::Synced, move |tx| {
+                tx.ledger().take_lock(&fence, record).map(|_| ())
+            })
+            .await
+            .unwrap();
+        let token = store
+            .store_intents(
+                &fence,
+                vec![RecordIntent {
+                    record,
+                    intended,
+                    mode: None,
+                }],
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        Self { fence, key, token }
+    }
+
+    pub fn record(&self) -> a2m_ledger::RecordRef {
+        a2m_ledger::RecordRef {
+            run: self.fence.run,
+            step_seq: 0,
+            record_seq: 0,
+        }
+    }
+}
+
+/// The field type's own rule for an output, as the engine loads it.
+pub fn normalizer(plan: &Plan, operation: &str, output: &str) -> a2m_expr::Normalizer {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|known| known.name.as_str() == operation)
+        .unwrap();
+    let output = operation
+        .outputs
+        .iter()
+        .find(|known| known.name == output)
+        .unwrap();
+    let field_type = &plan.field_types[output.field_type.unwrap().get()];
+    a2m_expr::Normalizer::load(plan.expression(field_type.normalizer.unwrap()).unwrap()).unwrap()
+}

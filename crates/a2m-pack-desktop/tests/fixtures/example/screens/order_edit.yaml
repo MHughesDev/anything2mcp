@@ -1,0 +1,23 @@
+# The same window, where the order is changed: its edit fields, and Save,
+# which stores what they hold. The record's key is the order number the
+# window shows. What is stored is read back through the screen `order`,
+# never from the fields the values were typed into.
+screen: order_edit
+surface: desk
+reach: {window: {role: frame, title: "Example order"}}
+ready: {visible: {role: push_button, name: "Save"}}
+fields:
+  order_number: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: "Order number"}]}
+  customer: {type: text, control: desktop_text, locate: [{role: entry, name: "New customer"}]}
+  status: {type: text, control: desktop_text, locate: [{role: entry, name: "New status"}]}
+  access_code: {type: text, control: desktop_text, locate: [{role: password_text, name: "Access code"}]}
+actions:
+  save:
+    locate: [{role: push_button, name: "Save"}]
+    perform: click
+    confirm: {text: {locate: {role: entry, name: "Message"}, equals: "Saved."}}
+    commits: true
+variants:
+  refused:
+    when: {visible: {role: entry, name: "Problem"}}
+    handling: stop

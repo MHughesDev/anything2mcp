@@ -168,7 +168,8 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the s
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `request_schema`, `response_schema` (response required for a JSON answer) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `answer` | The form of the answer, below. Left out, the answer is JSON, checked against `response_schema` |
 | `responses` | The answers the endpoint declares. `ok`: accepted statuses, 200 unless given. `absent`: statuses that mean the record does not exist, on a lookup. `refused`, `conflict`, `unavailable`: lists of a `status` with an optional `when`, a map from a top-level field of the body to the text it must hold; a `conflict` may name the field that holds the record's version now, as `current`. An answer that matches nothing declared stops the step |
 | `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
 | `max_response_bytes` | The most bytes of an answer that are read |
@@ -176,6 +177,34 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the s
 | `idempotency_header` | Header that carries the record's idempotency token, if the application accepts one |
 | `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}`. A binding on an endpoint that sends a version names a `read_back` endpoint that reads one |
 | `volatile` | Request fields to ignore when comparing with a shadow |
+
+**The answer's form** ([decision 0217](../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md)). `answer.form` is `json`, `xml`, `text`, or `bytes`; `answer.content_type` lists the media types the answer's `Content-Type` must be one of, `application/*+xml` standing for a family. Unless listed: `xml` takes `application/xml`, `text/xml`, and `application/*+xml`; `text` takes `text/plain`; `bytes` takes `application/octet-stream`; `json` is not checked. An answer that is not JSON has no `response_schema`: the values it declares are its record, which a binding's `extract` names as it names a JSON body's properties.
+
+| Form | Fields | The record |
+| --- | --- | --- |
+| `xml` | `namespaces`: prefix to URI, the only prefixes a path may use; `fields`: a map of fields by name, each `path` or `each`; `max_depth` (64 unless set) and `max_elements` (100,000) | A `path` is steps from the root element joined by `/`, each a name or `prefix:name`, the last may be `@name` for an attribute; otherwise the element's text, its two ends' white space removed. `type` is `string` (the default), `integer`, `number`, or `boolean`; `required: false` lets the path match nothing. `each` is a path to a repeated element and gives a list: with `fields`, of records whose paths start at that element; without, of the elements' text. A path that matches nothing where required, or more than one place, stops the read. No function, predicate, axis, wildcard, or nested `each` |
+| `text` | `charset`: `utf-8` (the default), `us-ascii`, or `iso-8859-1`; `pattern`: a regular expression the whole text must match; `fields`: the `type` and `required` of its named groups | `text`, the whole body; and one field for each named group of the pattern |
+| `bytes` | None | `length`, a whole number, and `digest`, the SHA-256 of the body as 64 hexadecimal characters |
+
+```yaml
+endpoint: order_xml_get
+surface: api
+method: GET
+path: "/views/xml/orders/{order_id}"
+effect: read
+responses: {absent: [404]}
+answer:
+  form: xml
+  namespaces: {o: "urn:example:orders"}
+  fields:
+    status: {path: "o:order/@status"}
+    customer: {path: "o:order/o:customer"}
+    items:
+      each: "o:order/o:items/o:item"
+      fields:
+        item_code: {path: "@code"}
+        quantity: {path: "o:quantity", type: integer}
+```
 
 ## Kinds the other packs bring
 

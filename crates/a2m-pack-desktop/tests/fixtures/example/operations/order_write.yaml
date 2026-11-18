@@ -1,0 +1,46 @@
+operation: example_order_update
+title: Change the customer and the status of the order shown
+effect: write
+key: [order_number]
+commit_points: 1
+inputs:
+  order_number: {type: identifier, description: "The order number the window shows"}
+  customer: {type: text, description: "Who the order is for"}
+  status: {type: text, description: "open, held, or closed"}
+outputs:
+  customer: {type: untrusted_text}
+  status: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: update
+    screen: order_edit
+    fields:
+      customer: input.customer
+      status: input.status
+    action: save
+    read_back: {screen: order}
+description: >
+  Types the new customer and status into the order window's edit fields,
+  presses Save, and reads back what the window shows is stored.
+---
+operation: example_order_upsert
+title: Set the customer of the order shown
+effect: write
+key: [order_number]
+commit_points: 1
+inputs:
+  order_number: {type: identifier, description: "The order number the window shows"}
+  customer: {type: text, description: "Who the order is for"}
+outputs:
+  customer: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: upsert
+    screen: order_edit
+    fields:
+      customer: input.customer
+    action: save
+    read_back: {screen: order}
+description: >
+  Sets the customer of the order the window shows. The window shows one
+  record, so an upsert changes it as an update does.

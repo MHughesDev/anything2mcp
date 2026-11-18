@@ -16,12 +16,14 @@ The command pack lets a target be a program: something started with arguments, w
 | A shell, a command interpreter, or any route through one, including the Windows command interpreter behind batch and command-script files | It reads a line as code; nothing typed can survive that |
 | A program whose argument is evaluated as code: an interpreter given inline code, a tool's "execute this" or "run this expression" flag, a template the program expands | A tool that accepts free text and runs it cannot be verified |
 | Finding the program on the search path, or a path that comes from an input | Rule seven, and section 502: no input changes what runs |
-| A program, a directory on the way to it, or a link on the way, that a user other than the engine's can write to or replace. A file or directory a group can write is refused whatever the group | Anyone who can replace the file, or change where its path leads, can choose what runs |
+| A program, a directory on the way to it, or a link on the way, that a user other than the engine's can write to or replace. A file or directory a group can write is refused unless the group is the system's own: on macOS the administrators' group, 80; on Linux none, unless the person names its numeric id in the protected setting `packs.command.admin_groups`. On Windows the owner and access list of each are read, and only the engine's user, the local system account, the Administrators group, and the trusted installer service may hold a right that changes what the path names; a link on the way is refused there ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)) | Anyone who can replace the file, or change where its path leads, can choose what runs |
 | A program whose work is to start the program its arguments name: one that sets a priority, a time limit, a root, or another user for it | Its argument is a program, so a value in it chooses what runs |
 | A terminal. The program never gets one | A screen of text belongs to the terminal kind of [section 106](../1-product/106-what-it-latches-onto.md), not here |
 | Attaching to a program already running, or reading its memory | Section 106 refuses both |
 
-A script that the system ships is allowed only as a fixed pair: the interpreter and the script file, both named by path and both checked by digest, with no input in any position the interpreter reads as code.
+A script is allowed only as a fixed pair: the interpreter, named by path and checked like any program, and a script file the target keeps, named by its path inside the target's folder and checked by digest at every start, with no input in any position the interpreter reads as code ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)). The interpreter is given the fixed arguments its file declares, then the path of a checked copy of the script in the run's own folder, then the command's typed elements. The pack ships no list of interpreters that take arguments as data: the declaration states the fixed arguments, such as `-File` for PowerShell, and a test per interpreter proves that a value reaches the script as the same bytes.
+
+The digest pins the script: the bytes reviewed at publish are the bytes started. It does not make the script safe. A script is the developer's code on the person's machine, its effect is the developer's declaration as a command's is, and a person reviews it at publish.
 
 ## What the pack brings
 
@@ -123,8 +125,9 @@ commands:
 | `limits` | A time limit and a byte ceiling for each stream. A grace before a forced stop, and more than one start at a time on a surface, are designed and not yet taken: the supervisor has neither ([decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md)) |
 | `prompts` | Patterns that mean the program is asking a person something |
 | `exits` | What each exit status means, shared by every command: `ok`, `absent`, or a failure class. A command may add to it, never change it |
+| `interpreter` | `args`: the fixed arguments that make the program read a script file. The program is then the interpreter of fixed pairs: every command names a `script`, and no help form is declared |
 
-**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`; a text param states its own anchored `pattern`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`.
+**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`; a text param states its own anchored `pattern`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`, and, on an interpreter, `script` (required there: `path` inside the target's folder and `digest`).
 
 **Argument elements.** `args` is the argument list, element by element. Each entry becomes exactly the elements shown, and no element is ever split, joined to another, or read by anything but the program.
 
@@ -174,7 +177,7 @@ The pack adds the four step kinds that section 201 lists for the command archety
 
 ## The driver
 
-**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
+**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. On Windows the owner and access list of the file and of each folder are read instead of a mode, and the folder that holds the program is closed also to another identity adding a file beside it, because a program loads its libraries from there. An access list that cannot be read is a refusal. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
 
 **Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the plan's declared programs and owns the process from then on. A command that writes is started only by the step the plan marks as its commit point, for a record the ledger holds an intent for; the driver checks this itself and does not rely on the compiler.
 
@@ -348,5 +351,4 @@ Steps 2, 3, 6, and 7 are built in `a2m-pack-command`, except what the [crate's d
 - How a person signs a program in when it keeps its own sign-in and asks for it interactively.
 - Whether the terminal kind becomes an interface mode of this pack, as section 106 asks.
 - Confinement: which operating-system mechanism could make a command's file and network reach `confined` rather than `declared`.
-- Whether "a script that the system ships" includes a script the developer keeps in the target, run by a fixed interpreter: the cheapest route to the operating systems' scripting interfaces and to PowerShell ([decision 0214](../../decisions/0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md), Proposed). Until it is decided, it does not.
-- Which folders a group can write on an ordinary installation of each system, and so what the refusal above costs: on macOS the folder of installed applications is believed to be writable by the administrators' group, which would refuse every program inside an application bundle (research brief 35).
+- Which folders a group can write on an ordinary installation of each system, and so what the refusal above still costs: the administrators' group of macOS now counts as the system's own, and a file in an application bundle owned by an administrator who is not the engine's user is still refused (research brief 35).

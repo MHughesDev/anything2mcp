@@ -217,3 +217,6 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0214 | [Ways through the refusals that keep a person from their own machine](0214-ways-through-the-refusals-that-keep-a-person-from-their-own-machine.md) | Proposed (design decision) |
 | 0215 | [Whether a person may pre-approve an action that leaves nothing to read back](0215-whether-a-person-may-pre-approve-an-action-that-leaves-nothing-to-read-back.md) | Proposed (owner decision) |
 | 0209 | [The desktop pack reads Windows applications through UI Automation, on a thread of its own](0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md) | Accepted (design decision) |
+| 0216 | [The command pack on three systems: the check on Windows, the administrators' group, and a script the target keeps](0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md) | Accepted (design decision) |
+| 0217 | [The HTTP pack reads answers that are not JSON](0217-the-http-pack-reads-answers-that-are-not-json.md) | Accepted (design decision) |
+| 0222 | [The product is aware of the network its machine is on](0222-the-product-is-aware-of-the-network-its-machine-is-on.md) | Accepted (owner decision) |

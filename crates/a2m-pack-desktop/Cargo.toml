@@ -34,6 +34,11 @@ sha2.workspace = true
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Com", "Win32_System_Ole", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
+# For a write's tests: the field type's own comparison, and real intent
+# tokens from a real store, as the engine holds them at a commit point.
+a2m-expr = { path = "../a2m-expr" }
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
+a2m-vault = { path = "../a2m-vault" }
 example-desk = { path = "../../targets/example-desk" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
