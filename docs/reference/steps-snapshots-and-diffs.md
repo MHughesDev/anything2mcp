@@ -1,6 +1,6 @@
 # Steps, snapshots, and diffs
 
-Three internal formats that several parts of the system share: the steps a compiled plan is made of, the snapshot an agent sees of a screen, and the diff a person approves. Design drafts, fixed in the phase noted for each.
+Three internal formats that several parts of the system share: the steps a compiled plan is made of, the snapshot an agent sees of a screen, and the diff a person approves. All three are built: the steps as the plan's types in `a2m-core`, the snapshot in the browser engine, and the diff with its hash in the engine and the ledger (package 3.5). Where this page and the code differ, the code is right and this page is to be corrected.
 
 ## Steps
 

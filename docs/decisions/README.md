@@ -228,3 +228,8 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0224 | [Whether many-host or many-port looking exists in the first design](0224-whether-many-host-or-many-port-looking-exists-in-the-first-design.md) | Proposed (owner decision) |
 | 0225 | [Whether anything is ever sent on a network the person has not named](0225-whether-anything-is-ever-sent-on-a-network-the-person-has-not-named.md) | Proposed (owner decision) |
 | 0226 | [Whether and how long findings about a network are kept](0226-whether-and-how-long-findings-about-a-network-are-kept.md) | Proposed (owner decision) |
+| 0232 | [Whether a credential the machine holds for the person may be used through its holder](0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Proposed (owner decision) |
+| 0233 | [Whether being told by another machine is serving it](0233-whether-being-told-by-another-machine-is-serving-it.md) | Proposed (owner decision) |
+| 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Proposed (design decision) |
+| 0236 | [A declared setting whose feature is not built is refused by name](0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) | Accepted (design decision) |
+| 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |

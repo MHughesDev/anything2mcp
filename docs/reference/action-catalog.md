@@ -1,6 +1,6 @@
 # Action catalog
 
-The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 220](../spec/2-kernel/220-actions-and-the-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
+The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 220](../spec/2-kernel/220-actions-and-the-authoring-interface.md)). Every action listed is defined in the registry; one that has a handler is served, and one that has none answers `action_not_built`. Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
 
 | Face | Form | For `target.probe` |
 | --- | --- | --- |
@@ -113,7 +113,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `doctor.run` | Check browser, key store, network, sessions, clock; print fixes | Local user | No | 2 |
 | `browser.install` | Fetch a pinned browser | Local user | No | 1 |
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8 |
-| `client.connect` | Write the configuration for an MCP client | Local user | No | 5 |
+| `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
 | `trace.show`, `trace.export` | View or export a run's evidence | Auditor | No | 1 |
 | `action.search`, `action.describe`, `action.run` | Reach any action without listing it | Any | use and build | 5 |
 | `docs.get` | Built-in reference pages | Any | No | 5 |

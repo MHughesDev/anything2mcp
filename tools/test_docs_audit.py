@@ -155,6 +155,30 @@ class AuditCatches(unittest.TestCase):
         project.write_text(changed, encoding="utf-8")
         self.assert_finding("release", "every package carries the same version")
 
+    def test_an_npm_launcher_on_another_version_is_refused(self):
+        launcher = self.root / "bindings" / "npm" / "anything2mcp" / "package.json"
+        text = launcher.read_text(encoding="utf-8")
+        changed = text.replace('"version": "', '"version": "9.', 1)
+        self.assertNotEqual(text, changed)
+        launcher.write_text(changed, encoding="utf-8")
+        self.assert_finding("release", "the npm launcher is 9.", "every package carries the same version")
+
+    def test_an_npm_platform_package_on_another_version_is_refused(self):
+        launcher = self.root / "bindings" / "npm" / "anything2mcp" / "package.json"
+        text = launcher.read_text(encoding="utf-8")
+        changed = text.replace('"@anything2mcp/linux-x64": "', '"@anything2mcp/linux-x64": "9.', 1)
+        self.assertNotEqual(text, changed)
+        launcher.write_text(changed, encoding="utf-8")
+        self.assert_finding("release", "its optional dependency @anything2mcp/linux-x64 is 9.")
+
+    def test_a_wrong_count_of_journal_entries_is_refused(self):
+        index = self.root / "docs" / "README.md"
+        text = index.read_text(encoding="utf-8")
+        changed = text.replace(" entries |", "0 entries |", 1)
+        self.assertNotEqual(text, changed)
+        index.write_text(changed, encoding="utf-8")
+        self.assert_finding("counts", "for journal entries")
+
     def test_a_changed_copy_of_the_licence_is_refused(self):
         copy = self.root / "bindings" / "python" / "LICENSE"
         copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")

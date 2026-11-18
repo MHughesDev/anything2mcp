@@ -10,6 +10,7 @@ Usage, from the repository root:
 Standard library only; Python 3.11 or newer. Run it after any change under docs/, AGENTS.md,
 README.md, or any crate's Cargo.toml. tools/test_docs_audit.py proves it fails when it should.
 """
+import json
 import re
 import sys
 import tomllib
@@ -221,6 +222,13 @@ def main():
         m = re.search(pat, dr)
         if not m or int(m.group(1)) != n:
             note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
+    n_journal = len([k for k in md if re.match(r"docs/journal/\d{4}-", k)])
+    n_designs = len([k for k in md if re.match(r"docs/architecture/crates/[a-z0-9-]+\.md$", k)])
+    for label, n, pat in (("journal entries", n_journal, r"\| (\d+) entries \|"),
+                          ("crate designs", n_designs, r"\| (\d+) designs and")):
+        m = re.search(pat, dr)
+        if not m or int(m.group(1)) != n:
+            note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
     m = re.search(r"\| (\d+) research briefs still to run", md["docs/research/README.md"])
     if not m or int(m.group(1)) != len(briefs):
         note("counts", f"docs/research/README.md gives {m.group(1) if m else 'no number'} briefs; there are {len(briefs)}")
@@ -348,6 +356,20 @@ def main():
                                 "every package carries the same version")
         except (tomllib.TOMLDecodeError, KeyError) as e:
             note("release", f"cannot read a version from Cargo.toml or bindings/python/pyproject.toml: {e!r}")
+            crate_version = None
+        launcher = repo / "bindings" / "npm" / "anything2mcp" / "package.json"
+        if crate_version and launcher.is_file():
+            try:
+                package = json.loads(launcher.read_text(encoding="utf-8"))
+                carried = {"the npm launcher": package["version"]}
+                carried.update({f"its optional dependency {name}": version
+                                for name, version in package.get("optionalDependencies", {}).items()})
+                for what, version in carried.items():
+                    if version != crate_version:
+                        note("release", f"the workspace is version {crate_version} and {what} is {version}; "
+                                        "every package carries the same version")
+            except (json.JSONDecodeError, KeyError) as e:
+                note("release", f"cannot read a version from bindings/npm/anything2mcp/package.json: {e!r}")
         licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
         if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
             note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")

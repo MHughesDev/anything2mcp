@@ -85,6 +85,12 @@ pub const FIXTURE_READ_FAILED: FailureCode = FailureCode::fixed("fixture_read_fa
 /// Class `input`.
 pub const FIXTURE_NOT_REPLAYED: FailureCode = FailureCode::fixed("fixture_not_replayed");
 
+/// `client.connect` cannot set a client's configuration: its profile does
+/// not read, names no file for this system, or the client's file does not
+/// read as a JSON object (decision 0219). Nothing is written. Class
+/// `input`.
+pub const CLIENT_CONFIG_REFUSED: FailureCode = FailureCode::fixed("client_config_refused");
+
 /// A binding `binding.promote` may not make verified: not a drafted first
 /// binding of its operation, or one whose file cannot be rewritten by rule
 /// (decision 0189). Class `input`.

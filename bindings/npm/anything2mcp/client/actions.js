@@ -147,8 +147,9 @@ class Actions {
 
   /**
    * Make the first binding of a drafted operation verified, on the evidence of its
-   * offline tests and a trial. For an operation that writes, a person's act. The engine
-   * action is `binding.promote`.
+   * offline tests and a trial, or a binding in shadow verified, on its run of exact
+   * matches. For an operation that writes, and for a binding in shadow, a person's act.
+   * The engine action is `binding.promote`.
    */
   bindingPromote(input, options = {}) {
     return this.call("binding.promote", input, options);
@@ -178,10 +179,11 @@ class Actions {
   }
 
   /**
-   * Write the configuration an MCP client needs to reach this engine. The engine action
-   * is `client.connect`.
+   * Give the configuration an MCP client needs to start the bridge for this project:
+   * printed for the `generic` profile, or set in the file a client profile names, shown
+   * first and written by a local person. The engine action is `client.connect`.
    */
-  clientConnect(input, options = {}) {
+  clientConnect(input = {}, options = {}) {
     return this.call("client.connect", input, options);
   }
 
@@ -256,8 +258,9 @@ class Actions {
   }
 
   /**
-   * Remove one draft file of a target from the project; a published version keeps its
-   * own copy. The engine action is `draft.delete`.
+   * Remove draft files of a target from the project, one by `file` or several by
+   * `files`, all or none; a published version keeps its own copy. The engine action is
+   * `draft.delete`.
    */
   draftDelete(input, options = {}) {
     return this.call("draft.delete", input, options);
@@ -611,8 +614,10 @@ class Actions {
   }
 
   /**
-   * Ask the caller's person to sign in to one surface of a target. Returns a link for
-   * the person; the agent never sees a credential. The engine action is
+   * Ask the caller's person to sign in to one surface of a target. A credential is
+   * never an input: where one is not stored, the person types it on the engine's own
+   * page, and carries the sign-in out there. Returns that a session exists, for whom,
+   * where, until when, and at which level; never its contents. The engine action is
    * `session.login`.
    */
   sessionLogin(input, options = {}) {

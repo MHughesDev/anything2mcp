@@ -235,8 +235,9 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Make the first binding of a drafted operation verified, on the evidence
-        of its offline tests and a trial. For an operation that writes, a
-        person's act.
+        of its offline tests and a trial, or a binding in shadow verified, on
+        its run of exact matches. For an operation that writes, and for a
+        binding in shadow, a person's act.
 
         The engine action is ``binding.promote``.
         """
@@ -295,14 +296,30 @@ class Actions:
     def client_connect(
         self,
         *,
-        client: str,
+        client: Optional[str] = None,
+        name: Optional[str] = None,
+        print: Optional[bool] = None,
+        toolset: Optional[Literal["use", "build"]] = None,
+        yes: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Write the configuration an MCP client needs to reach this engine.
+        """Give the configuration an MCP client needs to start the bridge for this
+        project: printed for the `generic` profile, or set in the file a client
+        profile names, shown first and written by a local person.
 
         The engine action is ``client.connect``.
         """
-        return self._action("client.connect", {"client": client}, idempotency_key)
+        return self._action(
+            "client.connect",
+            {
+                "client": client,
+                "name": name,
+                "print": print,
+                "toolset": toolset,
+                "yes": yes,
+            },
+            idempotency_key,
+        )
 
     def component_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
         """The outside programs providers need: found or not, with path and digest.
@@ -423,20 +440,22 @@ class Actions:
     def draft_delete(
         self,
         *,
-        file: str,
         target: str,
+        file: Optional[str] = None,
+        files: Optional[List[str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Remove one draft file of a target from the project; a published version
-        keeps its own copy.
+        """Remove draft files of a target from the project, one by `file` or
+        several by `files`, all or none; a published version keeps its own copy.
 
         The engine action is ``draft.delete``.
         """
         return self._action(
             "draft.delete",
             {
-                "file": file,
                 "target": target,
+                "file": file,
+                "files": files,
             },
             idempotency_key,
         )
@@ -1115,12 +1134,17 @@ class Actions:
         """
         return self._action("session.end", {"session_id": session_id}, idempotency_key)
 
-    def session_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
+    def session_list(
+        self,
+        *,
+        target: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
         """The sessions of a workspace, without their contents.
 
         The engine action is ``session.list``.
         """
-        return self._action("session.list", {}, idempotency_key)
+        return self._action("session.list", {"target": target}, idempotency_key)
 
     def session_login(
         self,
@@ -1130,8 +1154,11 @@ class Actions:
         surface: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Ask the caller's person to sign in to one surface of a target. Returns a
-        link for the person; the agent never sees a credential.
+        """Ask the caller's person to sign in to one surface of a target. A
+        credential is never an input: where one is not stored, the person types
+        it on the engine's own page, and carries the sign-in out there. Returns
+        that a session exists, for whom, where, until when, and at which level;
+        never its contents.
 
         The engine action is ``session.login``.
         """

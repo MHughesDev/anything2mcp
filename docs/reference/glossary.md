@@ -1,6 +1,6 @@
 # Glossary
 
-One meaning per word. Code, files, messages, and documents use these terms and no synonyms.
+One meaning per word. Code, files, messages, and documents use these terms and no synonyms. A word here names a thing whether or not that thing is built yet.
 
 | Term | Meaning |
 | --- | --- |

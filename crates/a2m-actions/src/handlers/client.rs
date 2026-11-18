@@ -296,10 +296,10 @@ handler!(
         }));
         if !written && change != "same" {
             let mut input = call.input.clone();
-            input["yes"] = json!(true);
+            input.insert("yes".to_owned(), json!(true));
             output = output.then(Next::new(
                 "client.connect",
-                input,
+                Json::Object(input),
                 "to write the change shown, once the person has read it",
             ));
         }

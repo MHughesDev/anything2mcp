@@ -3223,3 +3223,75 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     assert!(reported["bindings"][0]["promoted"]["by"].is_string());
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// `client.connect` (decision 0219): the `generic` profile prints the block
+/// and writes nothing; a profile is data the local user keeps; writing a
+/// client's file is a person's act, shown first, keeps every other entry,
+/// and refuses a file it cannot read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kept() {
+    let world = World::open().await;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // The generic block, which anyone may print.
+    let printed = world.call(&agent, "client.connect", json!({})).await;
+    assert!(printed.ok, "{:?}", printed.error);
+    let printed = printed.result.unwrap();
+    assert_eq!(printed["written"], false);
+    let args = printed["block"]["anything2mcp"]["args"].as_array().unwrap();
+    assert_eq!(args[0], "--project");
+    assert_eq!(args[1], world.project.path().display().to_string());
+    assert_eq!(args[2], "bridge");
+    assert!(printed["block"]["anything2mcp"]["command"].is_string());
+
+    // The imaginary `example` client keeps its servers under `servers`.
+    let clients = world.kernel.paths().config.join("clients");
+    std::fs::create_dir_all(&clients).unwrap();
+    let file = world.project.path().join("example-client.json");
+    let shown = file.display().to_string().replace('\\', "/");
+    std::fs::write(
+        clients.join("example.toml"),
+        format!("format = \"json\"\nkey = \"servers\"\n[path]\nlinux = \"{shown}\"\nmacos = \"{shown}\"\nwindows = \"{shown}\"\n"),
+    )
+    .unwrap();
+    let before = "{\"theme\": \"dark\", \"servers\": {\"other\": {\"command\": \"other-program\"}}}";
+    std::fs::write(&file, before).unwrap();
+    let connect = |caller: &Caller, yes: bool| {
+        let world = &world;
+        let caller = caller.clone();
+        async move {
+            world
+                .call(&caller, "client.connect", json!({"client": "example", "yes": yes}))
+                .await
+        }
+    };
+    // An agent does not set a client's file.
+    let refused = connect(&agent, true).await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
+    // The person is shown the change, and nothing is written yet.
+    let asked = connect(&world.person, false).await;
+    let asked_result = asked.result.unwrap();
+    assert_eq!(asked_result["change"], "add", "{asked_result}");
+    assert_eq!(asked_result["written"], false);
+    assert_eq!(asked.next.unwrap().args["yes"], true);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    // Written: the entry is set, and every other entry is kept.
+    let written = connect(&world.person, true).await.result.unwrap();
+    assert_eq!(written["written"], true, "{written}");
+    let now: Json = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(now["theme"], "dark");
+    assert_eq!(now["servers"]["other"]["command"], "other-program");
+    assert_eq!(now["servers"]["anything2mcp"], written["entry"]);
+    assert_eq!(connect(&world.person, true).await.result.unwrap()["change"], "same");
+    // A file that does not read is refused, and left as it is.
+    std::fs::write(&file, "not json").unwrap();
+    let unread = connect(&world.person, true).await;
+    assert_eq!(unread.error.unwrap().code, "client_config_refused");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
+    // A profile is named by a plain word only.
+    let odd = world
+        .call(&world.person, "client.connect", json!({"client": "../example"}))
+        .await;
+    assert_eq!(odd.error.unwrap().code, "schema_invalid");
+    world.kernel.close(CloseReason::Asked).await;
+}

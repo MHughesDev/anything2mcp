@@ -40,7 +40,7 @@ What the protocol's revisions contain is taken from research note 18, which read
 | **Work across two systems that must both succeed.** A pipeline names operations of its own target's plan only (`a2m-engine` `run.rs` finds a step's operation by its index in one plan), so two systems are joined today only by declaring both as surfaces of one target. Section 106 says systems of systems are "a pipeline over several targets": that is not true today. Compensation (undo the first when the second fails) is not designed; `run.undo` is designed for Phase 9 and not built; the device pack chooses a declared safe state a person invokes over any automatic undo | Not yet for several targets; Choice for no automatic compensation (rule 2 favours it: a compensating write is a write the person did not see) | M; L for compensation | Kernel: a pipeline that names another target's published operation by name and version; compensation, if ever, as declared reverse operations shown in the same diff and approved with it |
 | **Large or binary things in and out.** A tool cannot hand back a file (no resource links, no `resources/read`, no download verb outside the MCP pack) or take one in except a pipeline's source, a path inside an allowed root | Not yet | S to M kernel, S each pack | Kernel: an output folder of the project and a result field of type `file` that names a path and a digest; resource links for kept blobs. Packs: `upload` and `download` in the HTTP and web packs; the command pack's `collect` step (designed) |
 | **Interactive sessions with state**: a wizard, a prompt-and-answer program, a terminal screen, a debugger | Not yet for the first three (coverage map: left out, L); Rule for a debugger (attaching to a running program, rule 5) | L | A pack: an interface mode over a pseudo-terminal, every prompt declared, any undeclared prompt a stop (rule 7) |
-| **Asking the person a question in the middle of a run.** `needs_input` exists as a state; nothing in the MCP door carries the question | Not yet | S | The MCP door: the stateless revision's round trip for input (`input_required`) carries a caller's input. An approval never travels that way (see section 2) |
+| **Asking the person a question in the middle of a run.** `needs_input` exists as a state; nothing in the MCP door carries the question | Not yet | S | The MCP door: the stateless revision's round trip for input (`input_required`) carries a caller's input. An approval never travels that way (see part 2) |
 
 ## 2. What the product offers through MCP, beyond tools
 
@@ -106,21 +106,21 @@ The first release is one person's machine ([decisions 0169](../decisions/0169-th
 | **A machine with no person at it** (a build server, a scheduled job) | The in-process mode runs the engine inside one command for CI ([section 222](../spec/2-kernel/222-front-doors-and-the-local-engine.md), decision 0165). Reads run. A write waits at `needs_approval` with nobody to approve: over SSH, in a container, or on a headless machine nothing can approve ([section 503](../spec/5-security/503-approval-and-sign-in-surfaces.md)). The policy engine evaluates pre-approval rules, but nothing gives the running product one: no file and no action loads them (`PreApproval` is used only inside `a2m-policy`; `policy.publish` has no handler). On Linux the vault takes a passphrase (decision 0123), which a client hands the engine on a pipe, so an unattended engine there holds no stored session. A solo engine stops when idle, so nothing happens between calls | **The statement is missing**: what can and cannot happen with no person is said nowhere in one place (Not yet, S, documents). Pre-approval rules a person can give the running product: Not yet, S to M. An engine that stays running while something is due: Not yet, S (part of 0234) |
 | **Several users of one machine** | Built: each user's own engine and channel; a different user is refused (roadmap 1.4) | Nothing |
 | **A machine inside a boundary** (a container, the Linux subsystem on Windows) | The engine runs there; nothing there can approve, by design (section 503); the desktop pack cannot reach the host's windows from inside | Reaching the host's applications from inside the subsystem: Not yet, not designed; probably a non-goal |
-| **A phone** | As a client: refused, it is another machine (0208). As a target: a device by cable is cataloged (coverage map, L). As the place a person approves from: see section 11 below | — |
+| **A phone** | As a client: refused, it is another machine (0208). As a target: a device by cable is cataloged (coverage map, L). As the place a person approves from: see part 11 below | — |
 
 ## 6. The shapes of data
 
 | Missing | Kind | Size | Where |
 | --- | --- | --- | --- |
 | **Named time zones.** A time's zone is `UTC` or a fixed offset such as `+02:00` (`a2m-files/src/types.rs`, `utc_offset_minutes`; the file-format reference's `environment.timezone`). A zone with daylight saving cannot be stated, so a local time in most of the world's business systems is either refused or wrong for half the year. With named zones, a wall time that occurs twice or never on a change of the clock must stop by name (rule 7) | Not yet | S to M, with a time-zone database dependency to verify | Kernel: `a2m-expr` and `a2m-files` |
-| **Files as results and as inputs** | Not yet | See section 1 | Kernel and packs |
+| **Files as results and as inputs** | Not yet | See part 1 | Kernel and packs |
 | **Very large results.** The data pack fetches at most `max_rows` and says that more exist; the HTTP pack designs a pager per style. Section 221 promises results "paginated by cursor, size-capped with a note"; this round found no cursor for a target's results in `a2m-actions` (only for tool lists and the MCP client) and did not verify the cap. No result is streamed | Not yet | M | Kernel: a cursor over a kept result; the packs' pagers |
 | **Request bodies that are not JSON or a form; binary protocols other than the device pack's frames** | Not yet | Covered by the coverage map | Packs |
 | **Character sets.** Source files are read as UTF-8 only, and anything else is refused by name (`a2m-sources/src/csv.rs`). Honest; a file from an older system in another encoding cannot be read | Not yet | S | Kernel: a declared encoding in a source |
 | **Units.** The expression library knows lengths and masses. Temperatures (a conversion with an offset), volumes, and durations are not there | Not yet | S each | Kernel: `a2m-expr` |
 | **Money across currencies.** A field fixes one currency; another currency's code stops. Conversion needs a rate, which is a business fact and not a unit | Choice (section 210): rightly a business step, an operation, not a field type | — | — |
 | **Structured refusals from systems.** A refusal is `rejected` with the system's message as untrusted text and the record key. An agent cannot branch on the system's own reason (a duplicate, out of stock) without reading that text | Not yet | S | Kernel: an endpoint or command may declare refusals by status and a path to the system's code, each a checked name in the result |
-| Locales | A decimal mark per field and one locale per target environment. Enough for one system; see section 12 for a person's language | — | — |
+| Locales | A decimal mark per field and one locale per target environment. Enough for one system; see part 12 for a person's language | — | — |
 
 ## 7. The operating system itself as a system
 
@@ -148,11 +148,11 @@ The coverage map has rows for folders, processes, services, scheduled tasks, set
 
 ## 9. Dimensions the lead's list did not have
 
-Four more, each tested below as sections 10 to 13. Three others were considered and dropped: undo (folded into section 1, work across two systems); the product's own accessibility for people with disabilities (real, but a quality of the approval page rather than a dimension of "anything"); and freshness of a result (a run already carries its time).
+Four more, each tested below as parts 10 to 13. Three others were considered and dropped: undo (folded into part 1, work across two systems); the product's own accessibility for people with disabilities (real, but a quality of the approval page rather than a dimension of "anything"); and freshness of a result (a run already carries its time).
 
 ## 10. Which agent is calling, among several on one machine
 
-A person may run a coding agent, a chat client, and a scheduled script against one engine. On one machine the person holds every role (action catalog); a client's label is kept for the audit and for fair queuing only; `policy.agent_effect_ceiling` is one setting for every caller. So a person cannot say "this agent may only read, that one may write". **Missing: a connection the person names (the configuration `client.connect` writes) that carries its own toolset and effect ceiling.** Kind: Choice ("no client is special" forbids branching on a client's make, not on a connection the person named; the evidence favours it). Size S to M; kernel (`a2m-policy`, the doors).
+A person may run a coding agent, a chat client, and a scheduled script against one engine. On one machine the person holds every role (action catalog); a client's label is kept for the audit and for fair queuing only; `policy.agent_effect_ceiling` is one setting for every caller. So a person cannot say "this agent may only read, that one may write". **Missing: a connection the person names (the configuration `client.connect` writes) that carries its own toolset and effect ceiling.** Size S to M; kernel (`a2m-policy`, the doors). Kind: the configurability review of the same day reads it as a Rule, resting on owner decision [0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and the convention that no client is special, and asks the owner in its record 0238. This round would have read it as a choice, since the convention forbids branching on the make a client claims and not on a name the person gives a connection; the two readings differ, and the owner's answer to 0238 settles both. No second record is written here.
 
 ## 11. Where the person is
 
@@ -181,7 +181,7 @@ Ranked by how much each widens what the product can truthfully claim, and ordere
 | 7 | **Writes drafted from stated contracts**, the judgment left as open questions | Choice (section 402) | M kernel, S each pack | Halves the hand work of a target with a description, without guessing. Independent; better after 3 for upload and download writes |
 | 8 | **Named time zones** | Not yet | S to M, kernel | Small, and a newcomer's first wrong answer otherwise |
 | 9 | **The machine itself as a target**: a pack for the systems' own facilities, a folder mode in the file pack, services and settings as state writes | Not yet | M | Makes "anything on your machine" literal. To be one design with network awareness's rung 0 |
-| 10 | **Per-connection limits for several agents on one machine** | Choice | S to M, kernel | Small, and needed as soon as 1 and 5 let things act while the person is away |
+| 10 | **Per-connection limits for several agents on one machine** | Rule as the configurability review reads decision 0058 (its question 0238); a choice as this round reads it | S to M, kernel | Small, and needed as soon as 1 and 5 let things act while the person is away |
 
 Left out of the ten, in order of what they would add next: capture and `learn` in the web pack (L); pipelines across targets, then compensation (M, then L); the toolset exported as OpenAPI for callers that do not speak MCP (S, designed); structured refusals (S); prompts and completions (S each); interactive programs over a pseudo-terminal (L); the product's words in other languages (M).
 
@@ -217,44 +217,43 @@ Left out of the ten, in order of what they would add next: capture and `learn` i
 | [0232](../decisions/0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) | Whether a credential the machine already holds for the person may be used through its holder without being read: (1) the system's integrated sign-in with the current logon; (2) a smart card or passkey that signs with the person present; (3) an SSH or GPG agent; (4) another program's stored credentials | Yes to 1 and 2; no to 3 for the first release, with SSH by a key the engine's own vault holds; no to 4 |
 | [0233](../decisions/0233-whether-being-told-by-another-machine-is-serving-it.md) | Whether "nothing listens for another machine" (0208) covers (1) receiving an outside service's signed deliveries, and (2) the engine on the person's own second machine | Yes to both, for the first release: keep 0208 as it reads, and let watches and outbound relays carry what is told |
 
-The machine itself as a target (section 7) is read here as inside rule 9 and is not asked. If the owner reads rule 9 as forbidding product code that knows the systems' own programs, item 9 of the ranking changes.
+The machine itself as a target (part 7) is read here as inside rule 9 and is not asked. If the owner reads rule 9 as forbidding product code that knows the systems' own programs, item 9 of the ranking changes.
 
 ## Lines for SCOPE.md
 
-For the lead to apply; this round did not edit SCOPE.md. Each is a row of its table, in the form "It does | It does not, today | Kind".
+For the lead to apply; this round did not edit SCOPE.md. Each is a row of its table, in the form "It does | It does not, today | Kind". Links are left out so the rows can be pasted; each named record or section is to be linked as SCOPE.md links its others. The row for telling one client connection from another is the configurability review's (its record 0238) and is not repeated here.
 
 **What happens when a tool runs:**
 
-- Add: `| Answers when it is asked: a call, its progress, and a run's events as a stream | Tell an agent when something in a system changed, or watch a value until it holds. Designed in [decision 0234](docs/decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Not yet |`
-- Add: `| Runs a call when it is made | Run at a set time, or start a run because something happened | Not yet ([section 704](docs/spec/7-project/704-readiness.md)) |`
-- Add: `| Runs a pipeline over many records of one target, with a checkpoint per record | Join operations of two targets in one pipeline; undo the first when the second fails; carry on past a record the system refused | Not yet for the first; choice for the second and third ([section 207](docs/spec/2-kernel/207-the-engine-loop.md), safe first) |`
+- Add: `| Answers when it is asked: a call, its progress, and a run's events as a stream | Tell an agent when something in a system changed, or watch a value until it holds. Designed in decision 0234 | Not yet |`
+- Add: `| Runs a call when it is made | Run at a set time, or start a run because something happened | Not yet (section 704) |`
+- Add: `| Runs a pipeline over many records of one target, with a checkpoint per record | Join operations of two targets in one pipeline; undo the first when the second fails; carry on past a record the system refused | Not yet for the first; choice for the second and third (section 207, safe first) |`
 - Add: `| Takes a file a pipeline reads, from a folder the person allows | Hand a file back as a result, or send one to a system (upload and download) | Not yet |`
 - Add: `| Takes and gives times in UTC or a fixed offset | Take a named time zone with daylight saving | Not yet |`
 
 **People and agents:**
 
 - Add: `| Serves tools through MCP (tools, progress, cancellation, discovery), REST, the command line, and the Python and Node clients | MCP resources, subscriptions, prompts, tasks, completions, or elicitation | Not yet |`
-- Add: `| | Ask the client's model to generate anything (sampling) | Rule 1 in a run; a choice at build time ([section 103](docs/spec/1-product/103-design-principles.md), principle 4) |`
-- Add: `| | Let a person give one agent less than another on the same machine | Choice: on one machine the person holds every role |`
+- Add: `| | Ask the client's model to generate anything (sampling) | Rule 1 in a run; a choice at build time (section 103, principle 4) |`
 - Add: `| Shows approvals and sign-ins on the machine itself | Let a person approve from another device | Owner decision 0208 |`
 - Add: `| | Speak any language but English in its own words | Not yet |`
 
 **Secrets and sign-in:** replace the row "Sign in through a web form with a second factor (the provider is not built)" with:
 
 - `| | Sign in through a web application's own pages, by form or by single sign-on, with or without a second factor | Not yet: the web pack's sign-in providers are not built |`
-- Add: `| | Use the system's integrated sign-in with the current logon, a smart card, a passkey, or an SSH agent | Rule 5. Question open for the owner: [0232](docs/decisions/0232-whether-a-credential-the-machine-holds-for-the-person-may-be-used-through-its-holder.md) |`
+- Add: `| | Use the system's integrated sign-in with the current logon, a smart card, a passkey, or an SSH agent | Rule 5. Question open for the owner: 0232 |`
 - Add: `| | Use another program's stored credentials: a cloud tool's credential file, a credential helper, a password manager | Rule 5 |`
 - Add: `| | Sign each request as cloud providers ask | Not yet |`
 
 **The machine and the network:**
 
 - Add: `| Runs inside one command for a build server or a scheduled job (the in-process mode) | Approve a write where no person is present, or keep a Linux engine's sessions without a person giving the passphrase | By design for the first; not yet for the second |`
-- Add: `| Reaches another machine through what it already serves | Receive an outside service's webhook; reach the engine on the person's other machine | Owner decision 0208. Question open for the owner: [0233](docs/decisions/0233-whether-being-told-by-another-machine-is-serving-it.md) |`
+- Add: `| Reaches another machine through what it already serves | Receive an outside service's webhook; reach the engine on the person's other machine | Owner decision 0208. Question open for the owner: 0233 |`
 - Add: `| Reaches the system's own programs one declared command at a time | Treat the machine itself as a target the scout starts from; list, move, or copy a folder's files | Not yet |`
 
 **Building tools:**
 
-- Change the row "Draft writes. A write is the developer's judgment and is written by hand" to keep its kind and add after it: "Where a system states a write's endpoint, key, and read-back, drafting its mechanics with the judgment left as open questions is open ([breadth review](docs/plan/breadth-review-2026-11-18.md))".
+- Change the row "Draft writes. A write is the developer's judgment and is written by hand" to keep its kind and add after it: "Where a system states a write's endpoint, key, and read-back, drafting its mechanics with the judgment left as open questions is open (breadth review)".
 - Add: `| | Learn a tool from a person doing the task once (capture and learn) | Not yet |`
 - Add: `| Publishes a version | Tell the person a tool drifted before it is called; compare, roll back, move, or retire a version | Not yet |`
 
@@ -267,8 +266,8 @@ Not fixed here, because this round's edits were confined to its own files:
 3. SCOPE.md says the web form sign-in "with a second factor" is not built. No web sign-in provider is built.
 4. Section 221 says results are "paginated by cursor, size-capped with a note when truncated". This round found no cursor over a target's result; the lead should check before SCOPE.md repeats it.
 5. The action catalog has no way to retire a published tool or to remove a target.
-6. A hypothesis for the register, from decision 0234: **H-47**, a per-record digest of normalized values, compared across repeated reads, reports every change a person cares about and no change across quiet checks; refuted if a read's normalized values move on every read (a time of last view, a counter), which would need a declared list of outputs a watch ignores.
-7. The [documentation index](../README.md) gives 8 for the plan folder; with this review it holds 10 files.
+6. A hypothesis for the register, from decision 0234, under the next free number: a per-record digest of normalized values, compared across repeated reads, reports every change a person cares about and no change across quiet checks; refuted if a read's normalized values move on every read (a time of last view, a counter), which would need a declared list of outputs a watch ignores.
+7. The [documentation index](../README.md) gives 8 for the plan folder. With this review and the configurability review it holds 11 files besides its README, and the index's line for the folder names neither review. Records 0232, 0233, and 0234 are to be listed in the decisions index, and the decision count raised by three for them.
 
 ## Honest return
 

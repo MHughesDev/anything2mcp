@@ -1,6 +1,6 @@
 # Target file formats
 
-Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the JSON Schemas are written from in Phase 0, task B3.
+Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the schemas in the code were written from: the kernel's file kinds in `a2m-files` (package B4), and each pack's own kinds in its crate. Where this page and the schemas in the code differ, the code is what loads, and one of the two is to be corrected.
 
 This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
 

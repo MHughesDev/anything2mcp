@@ -3,6 +3,7 @@
 
 mod admin;
 pub(crate) mod build;
+mod client;
 mod drafts;
 mod machine;
 mod meta;
@@ -70,6 +71,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "draft.delete" => drafts::draft_delete,
         "binding.promote" => promote::binding_promote,
         "shadow.report" => promote::shadow_report,
+        "client.connect" => client::client_connect,
         "test.run" => drafts::test_run,
         "fixture.record" => crate::fixture::fixture_record,
         "draft.lint" => build::draft_lint,

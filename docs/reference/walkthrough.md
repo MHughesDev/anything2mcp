@@ -1,6 +1,6 @@
 # Walkthrough: from nothing to a working tool
 
-What using Anything2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change as the commands are built. It doubles as the acceptance test for Phase 5, which runs these steps and checks each result.
+What using Anything2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change as the commands are built. It is not run as a test. The exit test of Phase 5 (package 5.6) is `crates/anything2mcp/tests/first_hour.rs`, which follows a shorter path, from an empty folder to a published read an agent calls.
 
 Commands a coding agent runs are shown as the agent sees them, with one JSON object returned per command.
 

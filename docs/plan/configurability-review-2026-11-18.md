@@ -1,10 +1,10 @@
 # Configurability review, 2026-11-18
 
-One design review round, by a new lens, [lens 16](design-review-lenses.md), the person fitting it, which the owner asked for through the lead. The question, in this review's words: along which whole dimensions would a person, a developer, or an organization expect to shape the product and find they cannot? Not one more setting: the axes. And, as plainly, the other side: what is deliberately not configurable, and of what kind each such line is, so that the fixed frame and the free space inside it can be seen on one page.
+One design review round, by a new lens, [lens 17](design-review-lenses.md), the person fitting it, which the owner asked for through the lead. The question, in this review's words: along which whole dimensions would a person, a developer, or an organization expect to shape the product and find they cannot? Not one more setting: the axes. And, as plainly, the other side: what is deliberately not configurable, and of what kind each such line is, so that the fixed frame and the free space inside it can be seen on one page.
 
 The round wrote documents only. It read the settings schema and loader in `a2m-actions`, every reader of a setting in the crates, the packs' manifests, the policy engine's sets and guardrails, the target file formats, and [section 226](../spec/2-kernel/226-configuration.md), and it ran `anything2mcp config --help` and the help of its two commands. It started no engine and wrote no settings.
 
-Its records are [0236](../decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) (a declared key nothing reads), [0237](../decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) (the scoping model), and two questions for the owner, [0238](../decisions/0238-whether-a-person-may-configure-one-client-connection-apart-from-another.md) and [0239](../decisions/0239-whether-a-persons-own-code-may-run-on-the-path-of-a-run.md).
+Its records are [0236](../decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) (a declared key nothing reads), [0237](../decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) (the scoping model), and two questions for the owner, [0238](../decisions/0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) (a person's own code in the proof of a write) and [0239](../decisions/0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) (how the product names itself). It was run beside the [breadth review](breadth-review-2026-11-18.md) of the same day, which asks what kinds of interaction are missing; where the two meet (which agent is calling, a machine with no person at it, being told), this review takes the breadth review's findings and does not repeat them.
 
 ## The findings that matter most
 
@@ -160,7 +160,7 @@ Each gap is given a kind as SCOPE.md uses them (Rule, Choice, Not yet) and a siz
 - **The project scope that section 226 promises** (Not yet, M). A project's file applies only when that project started the engine (finding 2). Record 0237 makes it apply to that project's requests.
 - **Any policy scope at all on one machine** (Not yet, L). The policy engine evaluates every condition above; nothing on one machine writes a set (finding 5).
 - **One operation, one environment, by a setting** (Choice). Settings do not name surfaces or operations, by rule 8; a person who wants "stricter in production" has three means (an environment's `approve_writes`, a policy condition on `environment`, and `policy.writes_outside_tests`) and can reach only the first and the last. Record 0237 states which means holds which.
-- **One calling client** (Rule, decision [0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and the convention that no client is special; question 0238). The policy context has no client or connection, and the make a client claims is not trustworthy. Toolsets would give one connection its own list on a server; on one machine there is one list.
+- **One calling client** (Choice, S to M). The policy context has no client or connection; `policy.agent_effect_ceiling` is one value for every agent; the label a client gives itself is kept for the audit and fair queuing only. [Decision 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) bars the kernel from knowing a client's make; it does not bar a connection the person names, with its own toolset and effect ceiling. The [breadth review](breadth-review-2026-11-18.md), part 10, reaches the same reading and owns the proposal.
 - **One network** (Not yet, designed in the [network awareness plan](network-awareness.md), M to L). Reach per recognized network, and a policy input naming the network, are designed; nothing is built.
 - **One time of day** (Not yet, S once policy authoring exists). No condition name gives the time; the engine has a clock, and a condition over it is deterministic, so rule 1 does not stand in the way.
 - **Told in one place** (Not yet). Section 226's scope table lists workspace, toolset, and caller scopes that no one on one machine can set, without saying so. Record 0237 is the one statement.
@@ -201,7 +201,7 @@ Each gap is given a kind as SCOPE.md uses them (Rule, Choice, Not yet) and a siz
 
 - **A proxy the person names** (Not yet, M), owed by [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md) and refused by name today. The network awareness plan reframes it as a place reached through a gateway.
 - **Name resolution of the person's own** (Not yet, M): no resolver, no fixed name-to-address entries. The plan's place model is where it belongs.
-- **What the product says of itself** (Rule 5 bounds it; question in "Questions for the owner"). The HTTP pack sends `anything2mcp/<version>` and nothing a person can add, such as a contact address an organization's gateway asks for. Adding is consistent with operating openly; replacing is the owner's to rule on.
+- **What the product says of itself** (adding: Not yet, S; replacing: Rule 5, question [0239](../decisions/0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md)). The HTTP pack sends `anything2mcp/<version>` and nothing a person can add, such as a contact address an organization's gateway asks for. Adding keeps the product's own name in front and is operating openly; replacing it is the owner's to rule on.
 - **The browser's window, size, and whether it shows** (Not yet, S). Section 226's web group does not exist; whether a window shows is decided per launch, not by the person.
 - **Connections kept to a database, time to find a desktop window** (Not yet, S each): section 226 lists them as what the packs would configure; none is declared.
 
@@ -226,11 +226,11 @@ Each gap is given a kind as SCOPE.md uses them (Rule, Choice, Not yet) and a siz
 | A pack of one's own, compiled in | Built: the contract is the same for every first-party pack |
 | A plug-in pack in another process | Designed ([section 202](../spec/2-kernel/202-kernel-and-packs.md)); `plugin.install` not built; roadmap F3 held. Not yet, L |
 | A field type of one's own | Built, as data: a target extends a built-in type in `types.yaml` |
-| A normalizer of one's own, as code | Absent: the contract has no field-type registration. Not yet; any such code on the path of a run meets rule 6 (question 0239) |
+| A normalizer or comparison of one's own, as code | Absent: the contract has no field-type registration. A normalizer decides whether a read-back matches, so it is part of proving a write: question 0238 |
 | A sign-in provider, a source reader | Built in the contract; reached only through a compiled-in pack until plug-ins exist |
 | An organization's lint rules | Built in the contract (`lint_rule`); only through a pack |
 | An organization's publish gates | Absent: a gate is not a registration. Not yet, M |
-| Hooks before and after a run | Absent and undesigned. Code of a person's own on the path of a run meets rules 1 and 6: question 0239 |
+| Hooks before and after a run | Absent and undesigned. Not yet, M. A hook before a run is a declared step pinned by digest, as a kept script is, and part of the compiled plan; a hook after a run is an effect, `sends_outside` if it leaves the machine. Neither ever decides whether a run may go ahead: that is the policy engine's alone (AGENTS.md, one decider) |
 | Templates for a new project | Absent: `init` makes one fixed project. Not yet, S |
 
 ### 7. Where things live
@@ -327,9 +327,9 @@ Before any of them: make every declared key honest (record 0236). An addition bu
 
 ## Questions for the owner
 
-- **Record [0238](../decisions/0238-whether-a-person-may-configure-one-client-connection-apart-from-another.md).** May a person's settings or policy tell one client connection from another, by a name the person gives each connection, never by the make a client claims? Decision 0058 and the convention that no client is special stand in the way.
-- **Record [0239](../decisions/0239-whether-a-persons-own-code-may-run-on-the-path-of-a-run.md).** May a person's own code run on the path of a run, as a hook or a normalizer, and in which language? Rules 1 and 6 stand in the way.
-- **Without a record yet, for the lead to number if wanted.** May a person add to how the product identifies itself to a system (a contact address beside `anything2mcp/<version>`), and may they ever replace it with their own organization's registered name? Adding looks consistent with rule 5's "operate openly"; replacing touches its ban on imitating another application's client, and is the owner's.
+- **Record [0238](../decisions/0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md).** May a person's own code take part in proving a write, as the normalizer or the comparison of a field type, in a plug-in's process and language? Rules 3 and 6 stand in the way: the proof of a write is the product's, and the path of a run is Rust.
+- **Record [0239](../decisions/0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md).** May a person replace, not only add to, how the product names itself to a system, with their own organization's registered name for this use of it? Rule 5's ban on imitating another application's client, and on hiding that the engine is automation, stands near it.
+- **Not a question for the owner.** Telling one client connection from another, by a connection the person names, is a design choice: decision 0058 bars knowing a client's make, not a person's own connection. The breadth review proposes it.
 - **Already open, not decided here.** [0215](../decisions/0215-whether-a-person-may-pre-approve-an-action-that-leaves-nothing-to-read-back.md), standing approval of an action that leaves nothing to read back.
 
 ## Lines for SCOPE.md
@@ -343,12 +343,14 @@ Not edited; for the lead. Add a section after "Building tools":
 | --- | --- | --- |
 | Takes settings from eight layers, refuses an unknown or misspelt key by name, and shows every value and the layer that set it (`config show`) | Act on every key it declares: 55 of the 95 kernel keys are read by nothing, and a value for one is accepted without effect, except `network.proxy`, which is refused ([decision 0236](docs/decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md)) | Not yet |
 | Applies the project file of the folder the engine started in | Apply each project's own file to that project's requests ([decision 0237](docs/decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md)) | Not yet |
-| Lets a preset, the user's file, the project's file, a variable, or a flag tighten a protected setting | Let any of them loosen one, or reach a guardrail | Rule 2, and section 226 |
+| Lets a preset, the user's file, the project's file, a variable, or a flag tighten a protected setting | Let any of them loosen one, or reach a guardrail. Today an installation file under `A2M_HOME` is the person's own and can loosen ([decision 0237](docs/decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md)) | Choice in the design, resting on rule 2 |
 | Evaluates policy rules by tool, module, target, environment, toolset, records, effect, hazard, and whether the caller is an agent | Let a person on one machine write a policy set: there is no pre-approval rule, quota, or grant of their own | Not yet |
 | Keeps traces, captures, runs, and the audit on the machine | Delete any of them after their retention | Not yet |
 | Changes a setting at the next start of the engine | Change one while it runs, or change one through `config set` | Not yet |
-| | Tell one client connection from another in settings or policy | Rule: decision 0058. Question open for the owner: [0238](docs/decisions/0238-whether-a-person-may-configure-one-client-connection-apart-from-another.md) |
-| | Run a person's own code on the path of a run, as a hook or a normalizer | Rules 1 and 6. Question open for the owner: [0239](docs/decisions/0239-whether-a-persons-own-code-may-run-on-the-path-of-a-run.md) |
+| | Tell one client connection from another in settings or policy: one effect ceiling holds for every agent | Not yet. Knowing a client's make is barred by decision 0058; a connection the person names is not |
+| | Run a hook of the person's own before or after a run | Not yet |
+| | Let a person's own code take part in proving a write, as a field type's normalizer or comparison | Rules 3 and 6. Question open for the owner: [0238](docs/decisions/0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) |
+| Names itself in what it sends, as `anything2mcp` and its version | Let a person add to that name, or replace it | Not yet, for adding. Rule 5 for replacing; question open for the owner: [0239](docs/decisions/0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) |
 ```
 
 And add one row to "People and agents", directly after the row that begins "Holds a write until a person at the machine approves it":
