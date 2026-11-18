@@ -361,8 +361,12 @@ impl Lowering for CliLowering {
         };
         let commands: Vec<&Command> = [
             binding.field("command"),
-            binding.field("read_back").and_then(|other| other.get("command")),
-            binding.field("lookup").and_then(|other| other.get("command")),
+            binding
+                .field("read_back")
+                .and_then(|other| other.get("command")),
+            binding
+                .field("lookup")
+                .and_then(|other| other.get("command")),
         ]
         .into_iter()
         .flatten()

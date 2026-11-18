@@ -9,8 +9,7 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema,
     Level, LintRule, Located, LowerContext, Lowered, Lowering, Place, Possible, ProgramRun,
-    ResolvedBinding, ResolvedView, Sends, Stage, Statement, StepCommits, TargetView,
-    VariableValue,
+    ResolvedBinding, ResolvedView, Sends, Stage, Statement, StepCommits, TargetView, VariableValue,
 };
 
 use crate::codes;

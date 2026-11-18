@@ -408,7 +408,8 @@ fn the_review_states_what_the_mcp_pack_runs_and_where_it_sends() {
     let folder = Folder::new("review");
     let registry = registry(&folder);
     let root = folder.path().join("target");
-    write_target(&root, &|path, text| match path {
+    write_target(&root, &|path, text| {
+        match path {
         "operations/order_get.yaml" => text.replace(
             "    tool: orders_get\n",
             "    tool: orders_get\n    surface: orders_local\n",
@@ -418,6 +419,7 @@ fn the_review_states_what_the_mcp_pack_runs_and_where_it_sends() {
             "    environment: {EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}\n    pass_environment: [EXAMPLE_LANG]\n",
         ),
         _ => text,
+    }
     });
     let compiled = compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)));

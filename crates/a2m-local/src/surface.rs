@@ -778,6 +778,347 @@ pub(crate) mod version_shown {
     }
 }
 
+/// What the page a person publishes from says of each sign-in and each
+/// tool of the version, from the typed review summary the action registry
+/// hands it (`PersonActAsk::review`; decisions 0252 and 0264). Sign-ins
+/// come first: a credential sent to an address puts every tool of the
+/// surfaces it covers at risk. Then the tools, in the summary's own order,
+/// the most dangerous first. Every text came from a target file or a
+/// provider and passed the redactor; each is shown with the characters
+/// that reorder or hide text written as their escapes, and then escaped.
+/// The only sentences are the page's own and the summary's constants. A
+/// secret variable's value is never in the summary, and the page says so.
+pub(crate) mod review_shown {
+    use std::fmt::Write as _;
+
+    use a2m_core::AddressScope;
+    use a2m_files::{
+        BindingStates, ProbeReview, ProgramRun, Reach, ReachGroup, ReviewItem, ReviewSummary,
+        SentTo, SignInReview, VariableValue,
+    };
+
+    use super::escape;
+
+    fn shown(text: &str) -> String {
+        escape(&a2m_core::said_neutral(text))
+    }
+
+    fn code(text: &str) -> String {
+        format!("<code>{}</code>", shown(text))
+    }
+
+    fn codes<T: ToString>(items: &[T]) -> String {
+        if items.is_empty() {
+            return "none".to_owned();
+        }
+        items
+            .iter()
+            .map(|item| code(&item.to_string()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// What a kind of place is, in words a person reads.
+    fn scope_words(scope: AddressScope) -> &'static str {
+        match scope {
+            AddressScope::Unreadable => "an address that cannot be read as any kind of place",
+            AddressScope::Public => "public addresses, which anyone can reach",
+            AddressScope::Name => "names, which may lead to any address",
+            AddressScope::Unspecified => "the unspecified address",
+            AddressScope::Multicast => "multicast addresses",
+            AddressScope::CarrierGradeNat => "addresses of a carrier's shared range",
+            AddressScope::PrivateUse => "addresses of a private network",
+            AddressScope::UniqueLocal => "unique local addresses",
+            AddressScope::LinkLocal => "link-local addresses",
+            AddressScope::Reserved => "reserved addresses",
+            AddressScope::Documentation => "addresses kept for documentation",
+            AddressScope::ThisMachine => "this machine",
+        }
+    }
+
+    fn groups_html(groups: &[ReachGroup]) -> String {
+        let mut out = String::from("<ul>");
+        for group in groups {
+            let _ = write!(
+                out,
+                "<li>{} (<code>{}</code>): {}</li>",
+                escape(scope_words(group.scope)),
+                group.scope,
+                codes(&group.addresses),
+            );
+        }
+        out.push_str("</ul>");
+        out
+    }
+
+    fn sign_in_html(sign_in: &SignInReview) -> String {
+        let mut out = String::from("<li>");
+        if let ProbeReview::Pending { name, says } = &sign_in.probe {
+            let _ = write!(
+                out,
+                "<p><strong>Not confirmed: {}</strong> (the read {})</p>",
+                escape(says),
+                code(name),
+            );
+        }
+        let _ = write!(
+            out,
+            "<p>Signs in to {} through the provider {}, {}. ",
+            codes(&sign_in.surfaces),
+            code(sign_in.provider.as_str()),
+            code(sign_in.mode.as_str()),
+        );
+        if sign_in.credentials.is_empty() {
+            out.push_str("It uses no stored credential.");
+        } else {
+            let credentials: Vec<String> = sign_in
+                .credentials
+                .iter()
+                .map(|credential| {
+                    format!(
+                        "{} kept at {}",
+                        code(&credential.role),
+                        code(&credential.reference.to_string())
+                    )
+                })
+                .collect();
+            let _ = write!(
+                out,
+                "Its credentials, by name, never by value: {}.",
+                credentials.join("; ")
+            );
+        }
+        if let ProbeReview::Declared { name } = &sign_in.probe {
+            let _ = write!(out, " The read {} checks the session.", code(name));
+        }
+        out.push_str("</p><ul>");
+        for sent in &sign_in.sent_to {
+            let _ = write!(
+                out,
+                "<li>In the environment {}, a credential or a token of it is sent to: ",
+                code(sent.environment.as_str())
+            );
+            match &sent.sent_to {
+                SentTo::NotStated { says } | SentTo::ProviderNotHeld { says } => {
+                    let _ = write!(out, "<strong>{}</strong>.", escape(says));
+                }
+                SentTo::Addresses {
+                    groups,
+                    leaves_this_machine,
+                } => {
+                    if *leaves_this_machine {
+                        out.push_str("<strong>it may leave this machine</strong>.");
+                    } else {
+                        out.push_str("this machine only.");
+                    }
+                    out.push_str("<ul>");
+                    for group in groups {
+                        let addresses: Vec<String> = group
+                            .addresses
+                            .iter()
+                            .map(|sent| format!("{}, {}", code(&sent.address), shown(&sent.what)))
+                            .collect();
+                        let _ = write!(
+                            out,
+                            "<li>{} (<code>{}</code>): {}</li>",
+                            escape(scope_words(group.scope)),
+                            group.scope,
+                            addresses.join("; "),
+                        );
+                    }
+                    out.push_str("</ul>It is sent to no other address.");
+                }
+            }
+            out.push_str("</li>");
+        }
+        out.push_str("</ul></li>");
+        out
+    }
+
+    fn run_html(run: &ProgramRun, notice: Option<&str>) -> String {
+        let digests = |digests: &[a2m_core::Digest]| {
+            if digests.is_empty() {
+                "pinned to no digest".to_owned()
+            } else {
+                format!("pinned to the digest {}", codes(digests))
+            }
+        };
+        let mut out = match run {
+            ProgramRun::Program {
+                path,
+                digests: pins,
+            } => {
+                format!("Starts the program {}, {}.", code(path), digests(pins))
+            }
+            ProgramRun::Script {
+                interpreter,
+                interpreter_digests,
+                arguments,
+                script,
+                script_digest,
+            } => format!(
+                "Starts the interpreter {}, {}, with the fixed arguments {}, on the script {} the target keeps, pinned to the digest {}.",
+                code(interpreter),
+                digests(interpreter_digests),
+                codes(arguments),
+                code(script),
+                code(&script_digest.to_string()),
+            ),
+        };
+        if let Some(notice) = notice {
+            let _ = write!(out, " <strong>{}</strong>.", escape(notice));
+        }
+        out
+    }
+
+    fn tool_html(item: &ReviewItem) -> String {
+        let mut out = String::new();
+        let _ = write!(
+            out,
+            "<li><p><strong>{}</strong>: effect {}, hazard {}, {} commit points; surfaces {}.</p>",
+            code(item.tool.as_str()),
+            code(item.effect.as_str()),
+            code(item.hazard.as_str()),
+            item.commit_points,
+            codes(&item.surfaces),
+        );
+        // Where it sends, first.
+        match &item.reach {
+            Reach::Partly { known, says } => {
+                let _ = write!(out, "<p><strong>{}</strong>.", escape(says));
+                if known.is_empty() {
+                    out.push_str(" No address is known.</p>");
+                } else {
+                    out.push_str(" Known:</p>");
+                    out.push_str(&groups_html(known));
+                }
+            }
+            Reach::Stated {
+                groups,
+                leaves_this_machine,
+            } => {
+                if groups.is_empty() {
+                    out.push_str("<p>It sends no request to any address.</p>");
+                } else {
+                    if *leaves_this_machine {
+                        out.push_str("<p><strong>It may send to an address off this machine.</strong> It sends to these, and to no other address:</p>");
+                    } else {
+                        out.push_str(
+                            "<p>It sends to these, all on this machine, and to no other address:</p>",
+                        );
+                    }
+                    out.push_str(&groups_html(groups));
+                }
+            }
+        }
+        if !item.uploads.is_empty() {
+            let _ = write!(
+                out,
+                "<p>It may send the files {}.</p>",
+                codes(&item.uploads)
+            );
+        }
+        if !item.downloads.is_empty() {
+            let _ = write!(
+                out,
+                "<p>It may receive the files {}.</p>",
+                codes(&item.downloads)
+            );
+        }
+        // What it starts and sets, binding by binding.
+        if !item.bindings.is_empty() {
+            out.push_str("<ul>");
+        }
+        for binding in &item.bindings {
+            let _ = write!(
+                out,
+                "<li>Through the mode {} on the surface {}, for {}: ",
+                code(binding.mode.as_str()),
+                code(binding.surface.as_str()),
+                code(binding.operation.as_str()),
+            );
+            match &binding.states {
+                BindingStates::NotStated { says } => {
+                    let _ = write!(out, "<strong>{}</strong>.", escape(says));
+                }
+                BindingStates::Stated { runs, environment } => {
+                    if runs.is_empty() {
+                        out.push_str("it starts no program.");
+                    }
+                    for run in runs {
+                        out.push(' ');
+                        out.push_str(&run_html(&run.run, run.notice));
+                    }
+                    if environment.is_empty() {
+                        out.push_str(" It sets no variable.");
+                    } else {
+                        out.push_str(" Its variables:<ul>");
+                        for variable in environment {
+                            let value = match &variable.value {
+                                VariableValue::Set(value) => format!("set to {}", code(value)),
+                                VariableValue::Secret => "secret, not shown".to_owned(),
+                                VariableValue::Passed => {
+                                    "passed from the engine's own environment when it is set there"
+                                        .to_owned()
+                                }
+                            };
+                            let _ = write!(out, "<li>{}: {value}</li>", code(&variable.name));
+                        }
+                        out.push_str("</ul>");
+                    }
+                }
+            }
+            if !binding.surface_programs.is_empty() {
+                let programs: Vec<String> = binding
+                    .surface_programs
+                    .iter()
+                    .map(|program| code(&program.path))
+                    .collect();
+                let _ = write!(
+                    out,
+                    " The surface declares the programs {}.",
+                    programs.join(", ")
+                );
+            }
+            out.push_str("</li>");
+        }
+        if !item.bindings.is_empty() {
+            out.push_str("</ul>");
+        }
+        if let Some(place) = &item.place {
+            let _ = write!(
+                out,
+                "<p>Its record is one fixed place: {}, of the kind {}, on the surface {}.</p>",
+                code(&place.name),
+                code(place.kind.as_str()),
+                code(place.surface.as_str()),
+            );
+        }
+        out.push_str("</li>");
+        out
+    }
+
+    /// The sign-ins of a version, then its tools.
+    pub(crate) fn review_html(review: &ReviewSummary) -> String {
+        let mut out = String::new();
+        if !review.sign_ins.is_empty() {
+            out.push_str("<h2>How it signs in</h2><p>Read these first: a credential sent to an address puts every tool of the surfaces it covers at risk.</p><ul>");
+            for sign_in in &review.sign_ins {
+                out.push_str(&sign_in_html(sign_in));
+            }
+            out.push_str("</ul>");
+        }
+        if !review.items.is_empty() {
+            out.push_str("<h2>What each tool may do</h2><p>The most dangerous first.</p><ul>");
+            for item in &review.items {
+                out.push_str(&tool_html(item));
+            }
+            out.push_str("</ul>");
+        }
+        out
+    }
+}
+
 /// What the page says about the presence prompt of this machine.
 fn presence_html(presence: &Availability) -> String {
     if presence.proves_presence() {
@@ -1163,15 +1504,35 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
         );
     }
     input.push_str("</tbody></table>");
-    let mut details = String::new();
-    if !ask.details.is_empty() {
-        details.push_str("<h2>What it may do</h2><p>The most dangerous first.</p><ul>");
-        for line in &ask.details {
-            let _ = write!(details, "<li>{}</li>", escape(line));
+    let lines = |heading: &str| {
+        let mut out = String::new();
+        if !ask.details.is_empty() {
+            out.push_str(heading);
+            out.push_str("<ul>");
+            for line in &ask.details {
+                let _ = write!(out, "<li>{}</li>", escape(line));
+            }
+            out.push_str("</ul>");
         }
-        details.push_str("</ul>");
-    }
-    details.push_str(&version_shown::version_html(&ask.surfaces, &ask.warnings));
+        out
+    };
+    let details = match &ask.review {
+        // A publish: the sign-ins, then the tools, then where each surface
+        // leads, then the kernel's own lines and the checks' warnings
+        // (decision 0264).
+        Some(review) => {
+            let mut details = review_shown::review_html(review);
+            details.push_str(&version_shown::version_html(&ask.surfaces, &[]));
+            details.push_str(&lines("<h2>Before you publish</h2>"));
+            details.push_str(&version_shown::version_html(&[], &ask.warnings));
+            details
+        }
+        None => {
+            let mut details = lines("<h2>What it may do</h2>");
+            details.push_str(&version_shown::version_html(&ask.surfaces, &ask.warnings));
+            details
+        }
+    };
     (input, details)
 }
 

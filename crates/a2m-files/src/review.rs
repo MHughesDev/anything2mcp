@@ -442,9 +442,7 @@ impl ReviewSummary {
                             })
                             .collect(),
                         states: match &binding.states {
-                            BindingStates::NotStated { says } => {
-                                BindingStates::NotStated { says }
-                            }
+                            BindingStates::NotStated { says } => BindingStates::NotStated { says },
                             BindingStates::Stated { runs, environment } => BindingStates::Stated {
                                 runs: runs
                                     .iter()

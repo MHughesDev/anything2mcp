@@ -64,6 +64,9 @@ a2m_core::failure_codes! {
     UNEXPECTED_PROMPT = UnknownVariant, "unexpected_prompt",
         meaning "A read's output holds a declared prompt.",
         next "Add the argument that makes the command not ask, such as `--yes`, to its `args` in `commands/`.";
+    COMMAND_FILE_UNREADABLE = Input, "command_file_unreadable",
+        meaning "A file handed to the scout as a completion file or a manual page cannot be read as one: it is not UTF-8 text, it is compressed in a form other than gzip, its gzip form is damaged, or it is no manual page in the `man` or the `mdoc` macros.",
+        next "Hand the file as plain UTF-8 text, or a manual page compressed with gzip; uncompress a page compressed any other way first.";
     AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match",
         meaning "A lookup that must match one record matched more than one.",
         next "Find the records by hand, and decide which is the one that was written.";
@@ -90,6 +93,9 @@ pub const FILE_KIND: FileKindName = FileKindName::fixed("command");
 pub const FOLDER: &str = "commands";
 /// The kind of finding the pack's discoverer makes.
 pub const FINDING_KIND: &str = "command";
+/// The kind of finding about one file handed to the discoverer: a
+/// completion file or a manual page, and how much of it was read.
+pub const FILE_FINDING_KIND: &str = "command_file";
 /// The discoverer's name.
 pub const DISCOVERER: &str = "help";
 /// The step that starts a program and waits for it to end.
@@ -111,6 +117,13 @@ pub fn mode() -> Mode {
 pub fn finding_kind() -> FindingKind {
     FindingKind::new(FINDING_KIND)
         .unwrap_or_else(|_| unreachable!("`command` is a well-formed finding kind"))
+}
+
+/// The kind of finding about a handed file, as a checked name.
+#[must_use]
+pub fn file_finding_kind() -> FindingKind {
+    FindingKind::new(FILE_FINDING_KIND)
+        .unwrap_or_else(|_| unreachable!("`command_file` is a well-formed finding kind"))
 }
 
 /// A lint code of the pack. `rule` is one of the fixed rule names of this

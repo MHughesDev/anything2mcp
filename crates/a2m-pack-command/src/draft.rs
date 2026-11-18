@@ -4,12 +4,71 @@
 //! version, the command's words, and the arguments its usage line shows.
 //! It holds no effect, no exit status beyond `0`, no output form, and no
 //! read-back: each of those is an open question for a person.
+//!
+//! What a handed completion file or manual page says of an option may type
+//! a parameter the usage line shows, or word the question about it. A flag
+//! only a file states, and a flag the sources disagree on, is a question,
+//! never a parameter (decision 0284).
 
 use a2m_core::{FileKindName, Finding, FindingKind};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
 
 use crate::codes::{self, FILE_KIND, FOLDER};
 use crate::discover::CommandFound;
+use crate::metadata::{HELP, OptionFound};
+
+/// Whether words name a whole number.
+fn whole(words: &str) -> bool {
+    let lower = words.to_ascii_lowercase();
+    lower.contains("whole number") || lower.contains("integer")
+}
+
+/// What the handed files, and not the help, say of an option: its value's
+/// name and its description, in the order the sources were read.
+fn file_words(option: &OptionFound) -> impl Iterator<Item = &str> {
+    option
+        .said
+        .iter()
+        .filter(|said| said.from != HELP)
+        .flat_map(|said| said.value.iter().chain(said.about.iter()))
+        .map(String::as_str)
+}
+
+/// How a value's place is typed, from the usage line and what the handed
+/// files say of its flag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Typed<'a> {
+    /// A whole number: the place, or a file's words for it, says so.
+    Integer,
+    /// The sources disagree on whether the flag takes a value.
+    Disagree,
+    /// A question that quotes what a file says of the value.
+    AskQuoting(&'a str),
+    /// A question with nothing more to quote.
+    Ask,
+}
+
+pub(crate) fn typed<'a>(place: &str, option: Option<&'a OptionFound>) -> Typed<'a> {
+    if option.is_some_and(|option| option.disagree) {
+        return Typed::Disagree;
+    }
+    if whole(place) || option.is_some_and(|option| file_words(option).any(whole)) {
+        return Typed::Integer;
+    }
+    option
+        .and_then(|option| {
+            option
+                .said
+                .iter()
+                .filter(|said| said.from != HELP)
+                .find_map(|said| said.about.as_deref())
+        })
+        .map_or(Typed::Ask, Typed::AskQuoting)
+}
+
+const DISAGREE: &str = "Does the quoted flag of the quoted command take a value? The program's help and a file handed to the scout disagree, and neither is taken. The first quoted words are the command, the second the flag.";
+const FILE_ONLY: &str = "Does the quoted command take the quoted flag, and in what form? A file handed to the scout states it, and the program's own help does not show it. The first quoted words are the command, the second the flag.";
+const TYPED_BY_FILE: &str = "What type is the value that the usage line of the command writes in the place quoted? The first quoted words are the command, the second the place, and the third what a file handed to the scout says of it. A text param also needs an anchored `pattern`.";
 
 /// The drafting rule from `command` findings to `commands/` files.
 pub(crate) struct CommandFromFinding;
@@ -184,15 +243,23 @@ impl DraftingRule for CommandFromFinding {
         let parts = found.usage.as_deref().map(usage_parts);
         let args = match parts {
             Some(Some(parts)) => {
+                let option_of =
+                    |flag: &str| found.options.iter().find(|option| option.has(flag));
                 for part in parts {
-                    let typed = |place: &str| {
-                        let lower = place.to_ascii_lowercase();
-                        if lower.contains("whole number") || lower.contains("integer") {
-                            DraftValue::text("integer")
-                        } else {
-                            cx.open_question_quoting("What type is the value that the usage line of the command writes in the place quoted? The first quoted words are the command, the second the place. A text param also needs an anchored `pattern`.", &[listed, place])
+                    let typed = |place: &str, flag: Option<&str>| match typed(
+                        place,
+                        flag.and_then(option_of),
+                    ) {
+                        Typed::Integer => DraftValue::text("integer"),
+                        Typed::Disagree => {
+                            cx.open_question_quoting(DISAGREE, &[listed, flag.unwrap_or(place)])
                         }
+                        Typed::AskQuoting(about) => {
+                            cx.open_question_quoting(TYPED_BY_FILE, &[listed, place, about])
+                        }
+                        Typed::Ask => cx.open_question_quoting("What type is the value that the usage line of the command writes in the place quoted? The first quoted words are the command, the second the place. A text param also needs an anchored `pattern`.", &[listed, place]),
                     };
+                    let disagreed = |flag: &str| option_of(flag).is_some_and(|o| o.disagree);
                     let mut param = |name: String, ty: DraftValue, optional: bool| {
                         let mut fields = vec![("type", ty)];
                         if optional {
@@ -205,12 +272,12 @@ impl DraftingRule for CommandFromFinding {
                     match (part.flag, part.place) {
                         (None, Some(place)) => {
                             let name = slug(&place);
-                            param(name.clone(), typed(&place), part.optional);
+                            param(name.clone(), typed(&place, None), part.optional);
                             args.push(DraftValue::map(vec![("param", DraftValue::Text(name))]));
                         }
                         (Some(flag), Some(place)) => {
                             let name = slug(&flag);
-                            param(name.clone(), typed(&place), part.optional);
+                            param(name.clone(), typed(&place, Some(&flag)), part.optional);
                             let mut entry = vec![
                                 ("flag", DraftValue::Text(flag)),
                                 ("param", DraftValue::Text(name)),
@@ -222,14 +289,29 @@ impl DraftingRule for CommandFromFinding {
                         }
                         (Some(flag), None) if part.optional => {
                             let name = slug(&flag);
-                            param(name.clone(), DraftValue::text("boolean"), true);
+                            let ty = if disagreed(&flag) {
+                                cx.open_question_quoting(DISAGREE, &[listed, &flag])
+                            } else {
+                                DraftValue::text("boolean")
+                            };
+                            param(name.clone(), ty, true);
                             args.push(DraftValue::map(vec![
                                 ("flag", DraftValue::Text(flag)),
                                 ("when", DraftValue::Text(name)),
                             ]));
                         }
+                        (Some(flag), None) if disagreed(&flag) => {
+                            args.push(cx.open_question_quoting(DISAGREE, &[listed, &flag]));
+                        }
                         (Some(flag), None) => args.push(DraftValue::Text(flag)),
                         (None, None) => {}
+                    }
+                }
+                // A flag that only a handed file states is a question, never
+                // a parameter: the program's own help does not show it.
+                for option in found.options.iter().filter(|option| !option.in_help()) {
+                    if let Some(flag) = option.flags.first() {
+                        args.push(cx.open_question_quoting(FILE_ONLY, &[listed, flag]));
                     }
                 }
                 DraftValue::List(args)
@@ -278,7 +360,52 @@ impl DraftingRule for CommandFromFinding {
 
 #[cfg(test)]
 mod tests {
-    use super::{UsagePart, slug, usage_parts};
+    use super::{Typed, UsagePart, slug, typed, usage_parts};
+    use crate::metadata::{OptionFound, OptionSaid, Takes};
+
+    fn said(from: &str, takes: Takes, value: Option<&str>, about: Option<&str>) -> OptionSaid {
+        OptionSaid {
+            from: from.to_owned(),
+            takes,
+            value: value.map(str::to_owned),
+            about: about.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_files_words_type_a_place_the_help_left_open_and_a_disagreement_is_asked() {
+        let rows = OptionFound {
+            flags: vec!["--rows".to_owned()],
+            said: vec![
+                said("help", Takes::Value, Some("n"), None),
+                said("manual", Takes::Value, Some("N"), Some("At most N rows, a whole number.")),
+            ],
+            disagree: false,
+        };
+        assert_eq!(typed("n", Some(&rows)), Typed::Integer);
+        let form = OptionFound {
+            flags: vec!["--format".to_owned()],
+            said: vec![
+                said("help", Takes::Value, Some("form"), None),
+                said("completions", Takes::Value, None, Some("How to print it")),
+            ],
+            disagree: false,
+        };
+        assert_eq!(typed("form", Some(&form)), Typed::AskQuoting("How to print it"));
+        // The help's own words never count as a file's.
+        let help_only = OptionFound {
+            flags: vec!["--x".to_owned()],
+            said: vec![said("help", Takes::Value, Some("integer of sorts"), None)],
+            disagree: false,
+        };
+        assert_eq!(typed("thing", Some(&help_only)), Typed::Ask);
+        assert_eq!(typed("whole number", None), Typed::Integer);
+        let split = OptionFound {
+            disagree: true,
+            ..rows.clone()
+        };
+        assert_eq!(typed("whole number", Some(&split)), Typed::Disagree);
+    }
 
     #[test]
     fn a_usage_line_is_read_part_by_part_or_not_at_all() {

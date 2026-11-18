@@ -3629,7 +3629,9 @@ async fn the_publish_act_carries_the_typed_review_with_sign_in_addresses_from_th
     assert_eq!(sent, expected);
     // The tools are no longer repeated as text lines.
     assert!(
-        !ask.details.iter().any(|line| line.starts_with("Sign-in of")),
+        !ask.details
+            .iter()
+            .any(|line| line.starts_with("Sign-in of")),
         "{:?}",
         ask.details
     );
