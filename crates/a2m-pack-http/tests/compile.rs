@@ -281,16 +281,28 @@ fn the_lint_rules_find_what_they_name() {
     );
     assert_eq!(signed.at.file.as_str(), "operations/orders.yaml");
 
-    // A warning does not stop the compile: an endpoint marked `read` whose
-    // method HTTP does not mark safe.
-    let folder = Folder::new("warning");
+    // An endpoint marked `read` whose method HTTP does not mark safe is
+    // refused, unless it says so with `read_asserted` (decision 0249); and
+    // `read_asserted` where nothing needs it is refused too.
+    let unasserted = refused(
+        orders,
+        |text| text.replacen("method: GET", "method: POST", 1),
+        "http.effect_method",
+    );
+    assert_eq!((unasserted.level, unasserted.at.line), (Level::Error, 3));
+    let folder = Folder::new("asserted");
     let registry = registry(&folder, Arc::new(NoSecrets));
     let compiled = compile_changed(&registry, "example", orders, |text| {
         text.replacen("method: GET", "method: POST", 1)
+            .replacen("effect: read\n", "effect: read\nread_asserted: true\n", 1)
     })
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let warning = compiled.warnings.find("http.effect_method").unwrap();
-    assert_eq!((warning.level, warning.at.line), (Level::Warning, 3));
+    assert!(compiled.warnings.find("http.effect_method").is_none());
+    refused(
+        orders,
+        |text| text.replacen("effect: read\n", "effect: read\nread_asserted: true\n", 1),
+        "http.effect_method",
+    );
 }
 
 #[test]

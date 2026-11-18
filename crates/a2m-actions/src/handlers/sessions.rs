@@ -10,6 +10,16 @@
 //! needs; it reaches the handler beside the press, is sealed in the vault
 //! for that person alone, and is never part of an input, a result, or a
 //! log. A credential stored beforehand with `secret.set` is used as it is.
+//!
+//! A sign-in goes only where the target's files say, and what they say
+//! counts only once a person has published it (decision 0248). A sign-in
+//! that a published version declares may use a stored credential without
+//! the person. One that only the drafts declare, or that the drafts declare
+//! otherwise than the published version, is always the person's: the page
+//! shows them every address a credential or token is sent to, marked as
+//! not published, and their act allows that one sign-in to those
+//! addresses. What they were shown is pinned, and drafts changed since are
+//! refused when they press.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,19 +42,67 @@ use crate::kernel::Kernel;
 /// setting says: a press on a page waits for it.
 const SIGN_IN_WAIT_LONGEST: Duration = Duration::from_secs(10 * 60);
 
+/// Where a declaration of a sign-in comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Basis {
+    /// The target's published version declares it, as it is.
+    Published,
+    /// Only the target's drafts declare it, or they declare it otherwise
+    /// than the published version. Nobody has published it.
+    Drafts,
+}
+
 /// The sign-in a target's files declare for one surface in one environment,
-/// as the keeper is given it.
+/// as the keeper is given it, and where the declaration comes from.
 struct Declared {
     target: TargetName,
     surface: SurfaceName,
     environment: Environment,
     entry: AuthEntry,
+    basis: Basis,
+}
+
+impl Declared {
+    /// Everything of the declaration that decides what is sent where: the
+    /// provider, its settings, the references, the surfaces covered and
+    /// their addresses, and every address the target declares. Two
+    /// declarations with the same digest send the same things to the same
+    /// places.
+    fn digest(&self) -> a2m_core::Digest {
+        let entry = &self.entry;
+        let shown = json!({
+            "target": self.target.as_str(),
+            "surface": self.surface.as_str(),
+            "environment": self.environment.as_str(),
+            "provider": entry.provider.as_str(),
+            "settings": entry.settings,
+            "credentials": entry
+                .credentials
+                .iter()
+                .map(|(role, reference)| (role.clone(), reference.as_str().to_owned()))
+                .collect::<std::collections::BTreeMap<String, String>>(),
+            "idle_ms": entry.idle.map(|idle| idle.as_millis().to_string()),
+            "absolute_ms": entry.absolute.map(|absolute| absolute.as_millis().to_string()),
+            "attempt_limit": entry.attempt_limit,
+            "movable": entry.movable,
+            "surfaces": entry
+                .surfaces
+                .surfaces
+                .iter()
+                .map(|surface| json!([surface.name.as_str(), surface.kind.as_str(), surface.address]))
+                .collect::<Vec<Json>>(),
+            "destinations": entry.surfaces.destinations.iter().collect::<Vec<&str>>(),
+        });
+        a2m_core::Digest::of(shown.to_string().as_bytes())
+    }
 }
 
 /// The sign-in `input` names, or `None` when the target's files declare no
 /// sign-in for the surface named, or for any surface when none is named.
 /// The plan is the drafts' in a project that holds the target, and the
-/// published version's otherwise, as the scout observes it.
+/// published version's otherwise, as the scout observes it. A drafts'
+/// declaration that is the published version's, the same in everything
+/// that decides what is sent where, is the published version's.
 async fn declared(
     kernel: &Kernel,
     project: Option<PathBuf>,
@@ -52,7 +110,47 @@ async fn declared(
 ) -> Result<Option<Declared>, Failure> {
     let text = |name: &str| input.get(name).and_then(Json::as_str);
     let target = TargetName::new(text("target").unwrap_or_default())?;
-    let (_, plan) = super::tools::plan_in(kernel, project, &target).await?;
+    let published = kernel
+        .current_plans()
+        .await?
+        .0
+        .into_iter()
+        .find(|(name, _, _)| name == &target)
+        .map(|(_, hash, plan)| (hash, plan));
+    let (hash, plan) = super::tools::plan_in(kernel, project, &target).await?;
+    let from_published = published.as_ref().is_some_and(|(at, _)| *at == hash);
+    let Some(found) = declared_in(&target, &plan, input, from_published)? else {
+        return Ok(None);
+    };
+    if from_published {
+        return Ok(Some(found));
+    }
+    if let Some((_, plan)) = &published {
+        let mut pinned = input.clone();
+        pinned.insert("surface".to_owned(), json!(found.surface.as_str()));
+        pinned.insert(
+            "environment".to_owned(),
+            json!(found.environment.as_str()),
+        );
+        if let Ok(Some(same)) = declared_in(&target, plan, &pinned, true)
+            && same.digest() == found.digest()
+        {
+            return Ok(Some(same));
+        }
+    }
+    Ok(Some(found))
+}
+
+/// The sign-in `input` names in `plan`, a published version's when
+/// `published` says so.
+fn declared_in(
+    target: &TargetName,
+    plan: &a2m_core::Plan,
+    input: &Map<String, Json>,
+    published: bool,
+) -> Result<Option<Declared>, Failure> {
+    let target = target.clone();
+    let text = |name: &str| input.get(name).and_then(Json::as_str);
     let index = match text("surface") {
         Some(named) => {
             let Some(at) = plan
@@ -113,11 +211,17 @@ async fn declared(
                 )
             })?,
     };
+    let entry = crate::control::entry_of(plan, auth, &environment, published);
     Ok(Some(Declared {
         target,
         surface: plan.surfaces[index].name.clone(),
         environment,
-        entry: crate::control::entry_of(auth),
+        entry,
+        basis: if published {
+            Basis::Published
+        } else {
+            Basis::Drafts
+        },
     }))
 }
 
@@ -174,18 +278,50 @@ pub(crate) async fn pinned(
         .await?
         .ok_or_else(not_declared_failure)?;
     let person = caller.principal.principal.id;
+    let keeper = kernel.keeper()?;
+    // Refused here, before the person is asked, as the keeper would refuse
+    // it before anything is sent: an address the target does not declare,
+    // or a credential of another target.
+    let addresses = keeper.sign_in_addresses(&declared.target, &declared.entry)?;
     let secrets = roles(kernel, &caller.principal.workspace, person, &declared.entry).await?;
     input.insert("surface".to_owned(), json!(declared.surface.as_str()));
     input.insert(
         "environment".to_owned(),
         json!(declared.environment.as_str()),
     );
+    // What the person reads is what is carried out: the press is refused
+    // if the declaration changed since.
+    input.insert(
+        "declaration".to_owned(),
+        json!(declared.digest().to_string()),
+    );
     let provider = declared.entry.provider.as_str().to_owned();
-    let needs = kernel.keeper()?.needs(&declared.entry.provider)?;
+    let needs = keeper.needs(&declared.entry.provider)?;
     let mut details = vec![format!(
         "Signs in to the surface {} of {} in the environment {}, as you and for you alone, through the provider {provider}.",
         declared.surface, declared.target, declared.environment
     )];
+    details.push(match declared.basis {
+        Basis::Published => format!(
+            "This sign-in is declared by the published version of {}.",
+            declared.target
+        ),
+        Basis::Drafts => format!(
+            "This sign-in is declared by the drafts of {}, and nobody has published it: an agent can write a draft. Carry it out only if you expect every address below.",
+            declared.target
+        ),
+    });
+    let from = match declared.basis {
+        Basis::Published => "as the published version declares it",
+        Basis::Drafts => "as the drafts declare it, not published",
+    };
+    for sent in &addresses {
+        details.push(format!(
+            "A credential or a token of this sign-in is sent to {} ({}), {from}.",
+            sent.address, sent.what
+        ));
+    }
+    details.push("It is sent to no other address.".to_owned());
     for secret in &secrets {
         details.push(if secret.stored {
             format!(
@@ -194,8 +330,8 @@ pub(crate) async fn pinned(
             )
         } else {
             format!(
-                "Type the {} below. It is sealed in this machine's vault under {}, for you alone, and used for this target's sign-ins from then on. No program is shown it.",
-                secret.role, secret.reference
+                "Type the {} below. It is sealed in this machine's vault under {}, for you alone and for {} alone, and used for this target's sign-ins from then on. No program is shown it.",
+                secret.role, secret.reference, declared.target
             )
         });
     }
@@ -297,11 +433,32 @@ handler!(
         let missing: Vec<&AskedSecret> = asked.iter().filter(|secret| !secret.stored).collect();
 
         let key = key_of(workspace, me, &declared);
-        // An agent's ask that a person must answer goes to the person's
-        // page; nothing is done until they carry it out there. A session
-        // that holds already is said to, and nobody is asked.
-        if call.caller.is_agent && call.presence.is_none() && (needs.person || !missing.is_empty())
-        {
+        let mut declared = declared;
+        // An ask that a person must answer goes to the person's page;
+        // nothing is done until they carry it out there. That is every ask
+        // whose sign-in only the drafts declare: nothing stored is sent on a
+        // drafts' word alone (decision 0248). A session that holds already,
+        // for every address the declaration sends to, is said to, and
+        // nobody is asked.
+        let to_person = match declared.basis {
+            Basis::Published => {
+                call.caller.is_agent && (needs.person || !missing.is_empty())
+            }
+            Basis::Drafts => true,
+        };
+        if call.presence.is_some() {
+            // The person carries out what their page showed them.
+            if call.text("declaration") != Some(declared.digest().to_string().as_str()) {
+                return Err(codes::stale(
+                    codes::DRAFTS_CHANGED,
+                    "The sign-in's declaration changed after its page was shown: what would be sent where is not what the page said.",
+                    "Ask for the sign-in again, and read the new page.",
+                ));
+            }
+            if declared.basis == Basis::Drafts {
+                declared.entry.surfaces = declared.entry.surfaces.clone().shown_to_person();
+            }
+        } else if to_person {
             let holding = keeper
                 .status(&workspace, Some(&key.identity))
                 .await?
@@ -315,7 +472,8 @@ handler!(
                                 | a2m_core::SessionState::Suspect
                                 | a2m_core::SessionState::Renewing
                         )
-                });
+                })
+                .filter(|session| keeper.allows(session.session, &declared.entry));
             if let Some(holding) = holding {
                 return Ok(
                     Output::ok(shown(&holding, &declared.surface, needs.confirms)).then(Next::new(
