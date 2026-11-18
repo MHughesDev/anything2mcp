@@ -19,9 +19,14 @@
 //! keeper seals for the person. A run's driver gets it back only through
 //! the lease, and places it into the browser's in-memory context.
 //!
-//! Not built: the sign-in in a visible window that the person carries out
-//! themself, single sign-on through an identity provider's pages, the
-//! application's own sign-out, and a session kept in page storage.
+//! Each value is set on the element found and checked, by its node, and the
+//! page is proven again just before each value and the press: the tab's
+//! document at the declared path of the declared origin, the screen's
+//! `ready`, and no frame (decision 0254).
+//!
+//! The sign-in a person carries out themself in a window is in
+//! `window.rs`. Not built: the application's own sign-out, and a session
+//! kept in page storage.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};

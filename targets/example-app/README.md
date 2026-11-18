@@ -56,6 +56,11 @@ Everything about signing in is under `/secure`, so nothing outside it changes. T
 | `/secure/bearer/api/...` | The same, for `Authorization: Bearer` with `BEARER_TOKEN`. Missing: 401 with `WWW-Authenticate: Bearer realm="example"`. Wrong or revoked: 401 with `error="invalid_token"` added |
 | `/secure/key/api/...` | The same, for `API_KEY` in the `x-api-key` header. Missing, wrong, or revoked: 401 with `WWW-Authenticate: ApiKey realm="example", header="X-Api-Key"` |
 
+| `GET /secure/sso`, `GET /secure/sso/return` | Single sign-on through an imaginary identity provider, "Example ID", for an application started with `TestApp::start_with_identity_provider()` (decision 0254). The first sends the browser to the provider's `/authorize` with a state it remembers; the second takes the provider's one-use code and the state back once, sets the session cookie, and redirects to `/secure/orders`. A code not issued, one used before, or a state not sent answers 400 and is counted |
+| `GET`, `POST /authorize` at `TestApp::provider_url` | The identity provider's own sign-in page, on a second origin, served under the name `localhost` while the application is under `127.0.0.1`, so that each keeps its cookies apart. A right password sets the provider's own cookie and redirects back to the application with a one-use code. With `identity_provider_strays` it redirects instead to its own `/elsewhere` under the name `127.0.0.1`, an origin nobody declared, which counts every arrival |
+
+The sign-in settings (`TestApp::set_auth_settings`) also take `person_at_the_window`, under which the sign-in page and the identity provider's fill in the made-up username and password with a script of their own and send the form, as a person at a window would; `focus_thief`, under which the sign-in page moves the focus from its password field to a note field and the application counts a form whose note holds anything (`typed_elsewhere`); and `foreign_frame`, under which the sign-in page holds a frame from the identity provider's origin. The fault `expire_sessions` ends every session just before the request it applies to is handled.
+
 The harness signs in as a person would with `TestApp::session_cookie()`, which returns the value for a `Cookie` header, passing the code step when it is on.
 
 ## Pages that write by themselves

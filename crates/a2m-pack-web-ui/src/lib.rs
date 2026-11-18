@@ -20,10 +20,9 @@
 //! ```
 //!
 //! Not built yet, and so not declared in the pack's manifest: the
-//! `site_tools` mode; `page_http` writes beyond `update` by PUT; the
-//! `sso_oidc` and `sso_saml` auth providers and the sign-in window in which
-//! a person signs in themself; signs of expiry in `page_http`;
-//! frames; platform profiles; the controls beyond text, select, and check
+//! `site_tools` mode; `page_http` writes beyond `update` by PUT; a session
+//! kept in page storage; the application's own sign-out; frames; platform
+//! profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
 //! identity by a stamp or a search; setting a finding against existing
 //! screen models, and drafting a field that is set or a type from a
@@ -35,7 +34,12 @@
 //! the cookies the browser then holds as the session's sealed state; the
 //! `ui` driver places them into the session's browser, and stops a run as
 //! `session_expired` when the page shows a screen the target declares as a
-//! sign of expiry (decision 0245).
+//! sign of expiry (decision 0245); `page_http` stops so too, when its page
+//! is answered with that screen or its request with a status the target
+//! declares (decision 0254). Its providers `window_login`, `sso_oidc`, and
+//! `sso_saml` open a window of the engine's own browser in which the person
+//! signs in themself, on the application's pages or through an identity
+//! provider's, and keep the same state (decision 0254).
 //!
 //! Its drafting rules turn a snapshot the web pack's discoverers took into
 //! a screen that reads one of the page's tables by its headings and a

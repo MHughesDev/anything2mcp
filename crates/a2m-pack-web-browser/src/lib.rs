@@ -27,8 +27,13 @@
 //! out with [`Browser::export_state`] and placed back with
 //! [`Browser::import_state`] (decision 0245).
 //!
-//! Not built yet: a visible window, page storage in a session's state, the
-//! watching tab, frames, the stream of every network exchange,
+//! A browser may show a window ([`Visibility::Window`]) for a sign-in a
+//! person carries out themself, in a tab held to the origins given that
+//! hears no network event ([`Browser::sign_in_tab`]); an acting tab's
+//! network events carry no body of a request its page's script makes
+//! (decision 0254).
+//!
+//! Not built yet: page storage in a session's state, the watching tab, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
 //! reported), uploads, recycling, and the platform profiles.
 

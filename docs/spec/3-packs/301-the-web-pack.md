@@ -56,7 +56,7 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 | Finding kinds | `surface`, `sign_in_method`, `screen`, `field`, `action`, `exchange`, `declared_tool`. It produces `endpoint` findings, a kind the HTTP pack owns |
 | Discoverers | Screen matching, in `a2m-pack-web-ui`; six in `a2m-pack-web-probe` (below) |
 | Describer | `web_describer` |
-| Auth providers | `form_login`, `sso_oidc`, `sso_saml` |
+| Auth providers | `form_login`, `window_login`, `sso_oidc`, `sso_saml` |
 | Lint rules, drafting rules | Below |
 
 `screens/` is also registered by the desktop pack, for surfaces of kind `desktop` ([section 305](305-the-desktop-pack.md)). Registration is keyed by file kind and surface kind, so the two do not collide.
@@ -243,7 +243,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 
 | The pack supplies | How |
 | --- | --- |
-| `sso_oidc`, `sso_saml` | Single sign-on in the engine's own profile. A person signs in once, in a visible window that shows its purpose; or, where the browser supports it, the engine's new profile signs in silently through the device's account (hypothesis H-05, brief 30) |
+| `window_login`, `sso_oidc`, `sso_saml` | The person signs in themself, in a visible window of the engine's own browser that names the target and the identity: on the application's own pages, or through an identity provider's declared origins. The engine fills and reads nothing and waits for a declared sign. Built ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)). Signing in silently through the device's account is not built (hypothesis H-05, brief 30) |
 | `form_login` | A sign-in page with a stored credential, tried once. A refused credential is a stop, never a second try. Built ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): the entry names the sign-in screen and its parts; success, a refused credential, a one-time code asked, and a block are each a declared sign of that screen, and a page with none is a stop. The code is asked of the person each time; only a published version's addresses take the stored credential |
 | The browser profile as the session's live state | A data directory owned by the engine, one per session, on the session's home runner, given to the base as a checked path ([decision 0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md)). Every tab is in an in-memory context of that browser, so no cookie and no page storage is written to the directory ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)) |
 | Saved state | The cookies the browser holds for the application's origins, exported after a sign-in, each value a secret part of the session's material, sealed for its person and held by the keeper; placed into the session's browser before a run's first tab. Page storage is not exported yet |

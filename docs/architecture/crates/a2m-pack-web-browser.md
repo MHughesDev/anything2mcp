@@ -74,7 +74,7 @@ impl Browsers {
 
 pub struct ProfileKey { pub target: TargetName, pub environment: Environment, pub identity: Identity }
 impl ProfileKey { pub fn place(&self) -> String; }        // the data directory, relative to the root
-#[non_exhaustive] pub enum Visibility { Background }
+#[non_exhaustive] pub enum Visibility { Background, Window { notice: String } }   // a window: always started afresh (decision 0254)
 pub enum BrowserHealth { Idle, Busy, Exited }
 pub struct OpenBrowser { pub profile, pub subsystem: SubsystemId, pub product: String,
                          pub program_digest: Digest, pub verified: bool, pub tabs: usize,
@@ -89,7 +89,11 @@ impl Browser {
     /// The cookies of the browser's context for `origins`' hosts (decision 0245). Values are `Secret`s.
     pub async fn export_state(&self, origins: &Origins, deadline: Deadline) -> Result<BrowserState, BrowserError>;
     /// Places them, unless the state of the same `mark` was placed already. True when placed now.
-    pub async fn import_state(&self, mark: &str, state: &BrowserState, deadline: Deadline) -> Result<bool, BrowserError>;
+    /// A cookie for none of `origins`' hosts refuses the whole state (`ForeignOrigin`; decision 0254).
+    pub async fn import_state(&self, mark: &str, state: &BrowserState, origins: &Origins, deadline: Deadline) -> Result<bool, BrowserError>;
+    /// A tab a person signs in in: held to both lists, its helper looking at `look_on` alone, no network event.
+    pub async fn sign_in_tab(&self, env: &PageEnvironment, look_on: &Origins, pass_through: &Origins) -> Result<ActTab, BrowserError>;
+    pub fn shows_window(&self) -> bool;
 }
 pub struct BrowserState { pub cookies: Vec<StateCookie> }   // Debug shows names only; not serializable
 pub struct StateCookie { pub name, pub value: Secret, pub domain, pub path, pub expires: Option<serde_json::Number>,
@@ -128,6 +132,13 @@ impl ActTab {
     pub async fn answer_dialog(&self, how: &DialogAnswer, deadline: Deadline) -> Result<(), BrowserError>;
     /// A write from inside the page, with the page's own token read and sent in the same call (decision 0206).
     pub async fn write_from_page(&self, write: &PageWrite, deadline: Deadline) -> Result<PageAnswer, BrowserError>;
+    /// Where the tab's document is, and the origins of its frames, by the browser's word (decision 0254).
+    pub async fn address(&self, deadline: Deadline) -> Result<String, BrowserError>;
+    pub async fn frame_origins(&self, deadline: Deadline) -> Result<Vec<String>, BrowserError>;
+    /// A count of documents loaded and refusals; a wait for it to grow; a wait for a condition that ends on a change.
+    pub fn changes(&self) -> u64;
+    pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError>;
+    pub async fn wait_unless_changed(&self, until: &Primitive, seen: u64, deadline: Deadline) -> Result<bool, BrowserError>;
 }
 pub enum WriteMethod { Post, Put, Patch, Delete }          // the closed list; GET is the read's
 pub enum TokenFrom { Meta(String), Input(String), Cookie(String) }  pub enum TokenTo { Header(String), Field(String) }
@@ -178,7 +189,7 @@ pub const MASK: &str;                                      // what a snapshot sh
 /// Whether a request reached the page. The crate above decides what that means for a write.
 pub enum Dispatch { Sent, NotSent, Unknown }
 pub enum Reason { NotVisible, Disabled, NotEditable, Obscured, WrongControl, NoSuchOption }
-pub enum LaunchReason { NotInstalled, Supervisor(Failure), NotOwned(String), NoAnswer(String), DataDirectory(Failure) }
+pub enum LaunchReason { NotInstalled, NoScreen, Supervisor(Failure), NotOwned(String), NoAnswer(String), DataDirectory(Failure) }
 pub struct RequestShape { pub method: String, pub address: String }
 pub enum BrowserError {
     NotFound, Ambiguous { count: usize }, NotActionable(Reason),
@@ -235,7 +246,7 @@ Contracts that the signatures do not show:
 - **A data directory is its owner's alone.** On Linux and macOS it is set to mode 0700 before the browser starts on it, and one that is still open to others afterwards is refused; the browser's own files are 0600 and 0700, measured. On Windows the folder takes its parent's access list and the engine reads none.
 - **Nothing a page stores is written to the data directory** ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)). The browser makes a context of its own when it starts (`Target.createBrowserContext`), every tab is opened in it, and downloads are denied and permissions refused for it as for the default context. It keeps cookies and page storage in memory: a test signs in through the test application's page, closes the browser, and finds the session cookie in no file. A browser that does not make the context is closed as not owned. A session's state leaves the browser only through `export_state`, as `Secret`s, and returns through `import_state`, once for each mark, so a cookie the application changed since is kept.
 - **The page's service worker is passed by in both kinds of tab** (decision 0245, audit finding M6), so a write from inside the page reaches the application as sent, and no worker answers it.
-- **A write's answer that quotes its token in any spelling is withheld whole in the page** (decision 0245, audit finding S4): after JSON escapes, character references, and percent-encoding are undone, in any case, the token or its first half is looked for; on a match `PageAnswer::withheld` is set and the body is empty. The token, a password typed into a page, and the cookies an application sets still cross into the engine's process in the acting tab's network events; none of those fields is parsed or kept (audit finding M7; switching the events off around a write is not built).
+- **A write's answer that quotes its token in any spelling is withheld whole in the page** (decision 0245, audit finding S4): after JSON escapes, character references, and percent-encoding are undone, in any case, the token or its first half is looked for; on a match `PageAnswer::withheld` is set and the body is empty. Measured ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md), audit finding M7): an acting tab's network events cannot be switched off, since the service worker is passed by only while they are on; they carry no body of a request the page's script makes (`maxPostDataSize` of one byte). A form a document posts, the cookies, and a token in a header still cross, in the events the record names; none of those fields is parsed or kept. A sign-in tab hears no network event.
 - **Looking at the disk for a launch is off the async threads:** finding the program and making the folder run on a blocking thread. `availability()` is not async and looks when it is called.
 
 ### Two postures
@@ -348,7 +359,7 @@ A test finds its browser as the product does: in the known places. Two variables
 5. Done: `input` with `Dispatch` reported, `answer_dialog`, and `fetch` from inside the page.
 6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets. Done after the safety audit ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)): `Origins` on every tab; the lock on a tab's moves; downloads denied, permissions refused, and windows closed; the lock of a frame in another process; the private data directory; the settings reader for digests.
 7. Not built, slice 1.6: declared frames; the check of a helper's match against the browser's own accessibility query; recycling; the stable-position check before a click; `Input::Scroll`; one telemetry span per round trip group.
-8. Done in part ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): the in-memory context, `export_state` and `import_state` of cookies. Not built, package 2.3: `Visibility::Window`, page storage in a session's state, the watching tab.
+8. Done in part ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): the in-memory context, `export_state` and `import_state` of cookies. Done ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)): `Visibility::Window` with its notice tab, the sign-in tab, the screen a window needs on Linux, `import_state` held to the run's origins, a test screen (`test_support::Screen`), run here on a virtual display. Not built: page storage in a session's state, the watching tab.
 9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); a read from inside the page, GET alone, in an observing tab ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). A write from inside the page with the page's own token, in an acting tab alone ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
 
 ## Open points
