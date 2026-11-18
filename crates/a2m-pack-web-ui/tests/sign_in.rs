@@ -29,13 +29,13 @@ use a2m_auth::{
 };
 use a2m_core::{
     DecisionId, Environment, Failure, FailureClass, Identity, Plan, PrincipalId, Redact, RunId,
-    Secret, SessionState, TargetName, Timestamp, Values, WorkspaceId,
+    Secret, SessionState, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
-use a2m_provider::{Posture, StepFailure};
+use a2m_provider::{Posture, Sent, StepFailure};
 use a2m_telemetry::ManualClock;
 use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
-use common::{Folder, Scene, Stand, compile, ui_mode};
+use common::{Folder, Scene, Stand, compile, compile_changed, page_http_mode, ui_mode};
 use example_app::auth::AuthSettings;
 use example_app::faults::{Fault, FaultKind};
 use example_app::harness::{PASSWORD, SECOND_FACTOR_CODE, SESSION_COOKIE, TestApp, USERNAME};
@@ -141,6 +141,26 @@ async fn read(scene: &Scene, lease: &SessionLease) -> Result<Values, StepFailure
             &mut prepared,
             "example_account_get",
             &Values::new(),
+        )
+        .await;
+    let _ = handle.release(prepared, false).await;
+    ran.map(|ran| ran.values)
+}
+
+/// The `page_http` read of an order's totals, from inside the signed-in
+/// orders page, under the session's lease.
+async fn totals(scene: &Scene, lease: &SessionLease) -> Result<Values, StepFailure> {
+    let mode = page_http_mode();
+    let (handle, mut prepared) = scene
+        .try_prepare_leased(&mode, None, Posture::Live, Some(lease))
+        .await?;
+    let ran = scene
+        .read_in(
+            &mode,
+            &handle,
+            &mut prepared,
+            "example_order_totals_get",
+            &Values::new().with("order_id", "A-100"),
         )
         .await;
     let _ = handle.release(prepared, false).await;
@@ -523,5 +543,89 @@ async fn a_sign_in_declared_by_drafts_fills_in_and_sends_nothing() {
     // The application heard nothing: no page was opened, no field filled.
     assert_eq!(world.app.seen().await.unwrap(), before);
     assert_eq!(world.app.auth_report().await.unwrap().sign_in_attempts, 0);
+    world.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_again_once_renewed() {
+    let world = World::new("signin-page-http", true).await;
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let stored = world.app.stored_order("A-100").await.unwrap().unwrap();
+    let quantity: u32 = stored.items.values().map(|item| item.quantity).sum();
+    let expected = Value::Int(i64::from(quantity));
+
+    // Signed in: the page's own session reads the totals.
+    let lease = world.lease().await.unwrap();
+    let values = totals(&world.scene, &lease).await.unwrap();
+    assert_eq!(values.get("total_quantity"), Some(&expected));
+
+    // The application ends the session. The page is answered with the
+    // sign-in page, which the target declares as a sign: a named stop
+    // before anything is sent from it.
+    world.app.expire_sessions().await.unwrap();
+    let refused_before = world.app.auth_report().await.unwrap().refused_sessions;
+    let stopped = totals(&world.scene, &lease).await.unwrap_err();
+    assert_eq!(stopped.failure.class(), FailureClass::SessionExpired);
+    assert_eq!(stopped.failure.code().as_str(), "needs_login");
+    assert_eq!(stopped.sent, Sent::NotSent);
+    assert!(stopped.failure.message().contains("sign_in"), "{stopped:?}");
+    let report = world.app.auth_report().await.unwrap();
+    // The page was refused; the request was never made.
+    assert_eq!(report.refused_sessions, refused_before + 1);
+    assert_eq!(report.sign_in_attempts, 1);
+
+    // The keeper renews once; the read succeeds under the new lease.
+    world.keeper.report(&lease, ExpirySign::Refused).await;
+    world.keeper.idle().await;
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (2, 2));
+    let renewed = world.lease().await.unwrap();
+    let values = totals(&world.scene, &renewed).await.unwrap();
+    assert_eq!(values.get("total_quantity"), Some(&expected));
+
+    // The session ends after the page loaded and before its request: the
+    // application's own guard answers the request with 401, which the
+    // target declares as a sign. A named stop, and the read was answered.
+    world
+        .app
+        .set_fault(&Fault::once(FaultKind::ExpireSessions).on_paths("/secure/api/"))
+        .await
+        .unwrap();
+    let stopped = totals(&world.scene, &renewed).await.unwrap_err();
+    assert_eq!(stopped.failure.class(), FailureClass::SessionExpired);
+    assert_eq!(stopped.failure.code().as_str(), "needs_login");
+    assert!(stopped.failure.message().contains("401"), "{stopped:?}");
+    world.keeper.report(&renewed, ExpirySign::Refused).await;
+    world.keeper.idle().await;
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (3, 3));
+    let third = world.lease().await.unwrap();
+    let values = totals(&world.scene, &third).await.unwrap();
+    assert_eq!(values.get("total_quantity"), Some(&expected));
+
+    // A sign nobody declared is never guessed: the same target without
+    // the status among its signs reads the same 401 as an answer no entry
+    // declares, and the keeper is not told the session ended.
+    let origin = world.app.url("").trim_end_matches('/').to_owned();
+    let stand = Stand::new(
+        "signin-page-http-undeclared",
+        world.vault.redactor() as Arc<dyn Redact>,
+    );
+    let mut plan = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
+        text.replace("      - {status: 401}\n", "")
+    })
+    .unwrap()
+    .plan;
+    plan.surfaces[0].address.clone_from(&origin);
+    let undeclared = Scene::over(stand, plan, &origin);
+    world
+        .app
+        .set_fault(&Fault::once(FaultKind::ExpireSessions).on_paths("/secure/api/"))
+        .await
+        .unwrap();
+    let stopped = totals(&undeclared, &third).await.unwrap_err();
+    assert_eq!(stopped.failure.class(), FailureClass::UnknownVariant);
+    assert_eq!(stopped.failure.code().as_str(), "unexpected_status");
+    undeclared.stand.end().await;
     world.end().await;
 }
