@@ -98,6 +98,32 @@ impl Format {
                 rest = &rest[first.len_utf8()..];
             }
         }
+        // A number of one or two digits ends where the next part begins,
+        // so the next part cannot be digits too: `2026111` would be the
+        // first of November and the eleventh of January.
+        for pair in parts.windows(2) {
+            let open = matches!(
+                pair[0],
+                Part::Month(false) | Part::Day(false) | Part::Hour(false) | Part::Hour12(false)
+            );
+            let digits_follow = match &pair[1] {
+                Part::Year
+                | Part::Month(_)
+                | Part::Day(_)
+                | Part::Hour(_)
+                | Part::Hour12(_)
+                | Part::Minute
+                | Part::Second
+                | Part::Milli => true,
+                Part::Literal(literal) => literal.starts_with(|c: char| c.is_ascii_digit()),
+                Part::MonthName | Part::Half => false,
+            };
+            if open && digits_follow {
+                return Err(
+                    "a part of one or two digits is followed by digits, so where it ends would be a guess; put a separator between them, or write the part with two letters",
+                );
+            }
+        }
         let has = |wanted: fn(&Part) -> bool| parts.iter().any(wanted);
         let year = has(|part| matches!(part, Part::Year));
         let month = parts
@@ -523,6 +549,45 @@ mod tests {
         ] {
             assert!(Format::new(pattern, shape).is_err(), "{pattern}");
         }
+    }
+
+    #[test]
+    fn a_format_whose_parts_run_together_is_refused_because_reading_it_would_be_a_guess() {
+        // `2026111` would be the first of November and the eleventh of
+        // January alike.
+        for (pattern, shape) in [
+            ("YYYYMD", Shape::Date),
+            ("MD/YYYY", Shape::Date),
+            ("MDD/YYYY", Shape::Date),
+            ("DMYYYY", Shape::Date),
+            ("D'1'M-YYYY", Shape::Date),
+            ("Hmm", Shape::Time),
+            ("hmm A", Shape::Time),
+            ("YYYY-MM-DHH:mm", Shape::DateTime),
+        ] {
+            let problem = Format::new(pattern, shape).unwrap_err();
+            assert!(problem.contains("guess"), "{pattern}: {problem}");
+        }
+        // Parts of a fixed width may run together, and a part of one or two
+        // digits may end the text or stand before a separator or a name.
+        for (pattern, shape) in [
+            ("YYYYMMDD", Shape::Date),
+            ("YYYYMMD", Shape::Date),
+            ("M/D/YYYY", Shape::Date),
+            ("D MMM YYYY", Shape::Date),
+            ("DMMMYYYY", Shape::Date),
+            ("HHmm", Shape::Time),
+            ("hA:mm", Shape::Time),
+            ("H:mm", Shape::Time),
+        ] {
+            assert!(Format::new(pattern, shape).is_ok(), "{pattern}");
+        }
+        let format = Format::new("YYYYMMD", Shape::Date).unwrap();
+        assert_eq!(
+            date_from_text("2026111", &format).unwrap(),
+            date(2026, 11, 1)
+        );
+        assert_eq!(text_from_date(date(2026, 1, 11), &format), "20260111");
     }
 
     #[test]

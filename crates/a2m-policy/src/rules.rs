@@ -33,7 +33,7 @@ word! {
 
 /// Raised whenever the logic of a guardrail changes, so that the guardrails'
 /// hash, and with it every set's version, changes too.
-const GUARDRAILS_REVISION: u32 = 1;
+const GUARDRAILS_REVISION: u32 = 2;
 
 /// A built-in forbid. No policy set can remove one: they are not in a set's
 /// data, they are consulted before any permit, and their hash is part of
@@ -47,6 +47,12 @@ pub(crate) struct Guardrail {
 
 fn caller_is_not_a_person(request: &Request) -> bool {
     request.principal.kind != PrincipalKind::Person || request.context.caller_is_agent
+}
+
+/// Whether the caller is an agent: an agent identity, or any principal a
+/// front door says an agent calls as.
+fn caller_is_an_agent(request: &Request) -> bool {
+    request.principal.kind == PrincipalKind::Agent || request.context.caller_is_agent
 }
 
 /// Whether the principal is `person`, or was proved to act for them.
@@ -108,6 +114,39 @@ pub(crate) const GUARDRAILS: &[Guardrail] = &[
                 && matches!(&request.resource, Resource::Identity(Identity::Person(owner)) if !is_or_acts_for(request, owner))
         },
         refusal: || Some(failure::identity_not_allowed()),
+    },
+    // The forbids below follow the settings in force, so a set, or the
+    // installation's settings, can only switch them on (decision 0145).
+    Guardrail {
+        id: "limit.agent_effect_ceiling",
+        says: "When the caller is an agent, a tool whose effect class is above the setting `agent_effect_ceiling` is not used, whatever a grant gives.",
+        applies: |settings, request| {
+            matches!(
+                request.question,
+                Question::UseTool | Question::WriteWithoutPerson
+            ) && caller_is_an_agent(request)
+                && request.context.effect > settings.agent_effect_ceiling
+        },
+        refusal: || Some(failure::effect_too_high()),
+    },
+    Guardrail {
+        id: "limit.writes_only_to_test_records",
+        says: "With the setting `writes_outside_tests` off, a write proceeds only when every record it writes is a declared test record of a test environment. The question is asked of every write before it begins, with or without a person's approval.",
+        applies: |settings, request| {
+            !settings.writes_outside_tests
+                && request.question == Question::WriteWithoutPerson
+                && request.context.effect != EffectClass::Read
+                && !request.context.test_records
+        },
+        refusal: || Some(failure::not_granted()),
+    },
+    Guardrail {
+        id: "limit.no_pre_approval",
+        says: "With the setting `pre_approval` off, no pre-approval rule lets a write proceed without a person: every write waits for one.",
+        applies: |settings, request| {
+            !settings.pre_approval && request.question == Question::WriteWithoutPerson
+        },
+        refusal: || None,
     },
 ];
 
@@ -432,12 +471,18 @@ pub(crate) fn local_tests(user: PrincipalId, workspace: WorkspaceId) -> Vec<Poli
         expect,
     };
     vec![
+        // Asked as the user, not as their agent: a ceiling for agents in
+        // the installation's settings does not change this row.
         test(
             "the user may call a tool that writes",
             PrincipalRef::person(user),
             Question::UseTool,
             tool.clone(),
-            context(EffectClass::Write),
+            Context {
+                caller_is_agent: false,
+                acting_for: None,
+                ..context(EffectClass::Write)
+            },
             Answer::Allow,
         ),
         test(
@@ -592,6 +637,10 @@ mod tests {
                 approve_writes: ApproveWrites::NamedApprover,
                 max_records_per_run: 1_000_000,
                 approval_window_minutes: Settings::LONGEST_WINDOW_MINUTES,
+                agent_effect_ceiling: EffectClass::Irreversible,
+                writes_outside_tests: true,
+                two_person_irreversible: false,
+                pre_approval: true,
             },
             tests: Vec::new(),
         };
@@ -1096,13 +1145,82 @@ mod tests {
         );
     }
 
+    /// Decision 0145: each setting the kernel hands in changes the answer,
+    /// under the loosest set, by a forbid that names it.
+    #[test]
+    fn each_policy_setting_is_a_forbid_that_changes_the_answer() {
+        let with = |change: fn(&mut Settings)| {
+            let mut set = loosest();
+            change(&mut set.compiled.layers.settings);
+            set
+        };
+        let agent = || {
+            let mut context = context(EffectClass::Write);
+            context.caller_is_agent = true;
+            context
+        };
+        // The ceiling for an agent: a write tool is refused to an agent under
+        // `read`, and allowed to a person.
+        let use_write = ask(
+            PrincipalRef::person(id(1)),
+            Question::UseTool,
+            tool("example_order_update"),
+            agent(),
+        );
+        assert_eq!(
+            evaluate(&loosest().compiled, &use_write).answer,
+            Answer::Allow
+        );
+        let ceiling = with(|settings| settings.agent_effect_ceiling = EffectClass::Read);
+        let refused = evaluate(&ceiling.compiled, &use_write);
+        assert_eq!(refused.rules, ["limit.agent_effect_ceiling"]);
+        assert_eq!(refused.refusal.unwrap().code(), &EFFECT_TOO_HIGH);
+        let mut by_a_person = use_write.clone();
+        by_a_person.context.caller_is_agent = false;
+        assert_eq!(
+            evaluate(&ceiling.compiled, &by_a_person).answer,
+            Answer::Allow
+        );
+
+        // Writes only to test records: a write that may proceed without a
+        // person is refused unless every record is a declared test record.
+        let unattended = ask(
+            PrincipalRef::person(id(1)),
+            Question::WriteWithoutPerson,
+            tool("example_order_update"),
+            context(EffectClass::Write),
+        );
+        assert_eq!(
+            evaluate(&loosest().compiled, &unattended).answer,
+            Answer::Allow
+        );
+        let tests_only = with(|settings| settings.writes_outside_tests = false);
+        let refused = evaluate(&tests_only.compiled, &unattended);
+        assert_eq!(refused.rules, ["limit.writes_only_to_test_records"]);
+        assert_eq!(refused.refusal.unwrap().code(), &NOT_GRANTED);
+        let mut on_test_records = unattended.clone();
+        on_test_records.context.test_records = true;
+        assert_eq!(
+            evaluate(&tests_only.compiled, &on_test_records).answer,
+            Answer::Allow
+        );
+
+        // Pre-approval off: no rule lets the write proceed, and the run
+        // waits for a person; it is not refused.
+        let off = with(|settings| settings.pre_approval = false);
+        let waits = evaluate(&off.compiled, &unattended);
+        assert_eq!(waits.answer, Answer::Deny);
+        assert_eq!(waits.rules, ["limit.no_pre_approval"]);
+        assert!(waits.refusal.is_none());
+    }
+
     #[test]
     fn the_version_covers_the_guardrails_the_layers_and_the_tests() {
         let base = local();
         // The guardrails' hash is pinned: a change to their text or revision
         // changes every version, and must be made on purpose.
         assert_eq!(guardrails_digest(), guardrails_digest());
-        assert_eq!(GUARDRAILS.len(), 5);
+        assert_eq!(GUARDRAILS.len(), 8);
 
         let mut layers = base.layers().clone();
         layers.settings.max_records_per_run = 10;

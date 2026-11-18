@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use a2m_core::{
     Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, FindingKind,
-    LimitationCode, PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
+    LimitationCode, PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -36,8 +36,11 @@ pub const DESCRIPTION_FILE: &str = "description";
 /// The name, in a discovery's focus, of the path a description is fetched
 /// from on the surface.
 pub const DESCRIPTION_PATH: &str = "description_path";
-/// Where a description is looked for when the focus names no path.
-const DEFAULT_DESCRIPTION_PATH: &str = "/openapi.json";
+/// Where a description is looked for when the focus names no path, in
+/// order: the places the format's own tooling serves one by convention.
+/// The first that answers with a success and a body is read; one GET each,
+/// and no other place is tried.
+const DEFAULT_DESCRIPTION_PATHS: &[&str] = &["/openapi.json", "/api/openapi.json"];
 
 /// The version of the shape of an `endpoint` finding's `found`.
 const ENDPOINT_FOUND_FORMAT: &str = "1";
@@ -75,13 +78,7 @@ impl<'a> ReadClient<'a> {
             })?,
         };
         let args = Values::new();
-        let input = StepInput {
-            args: &args,
-            record: None,
-            key: None,
-            stamp: None,
-            deadline: self.scope.deadline,
-        };
+        let input = StepInput::new(&args, self.scope.deadline);
         match self.port.act(&step, &input).await {
             Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => Ok(observed.values),
             Err(failure) => Err(failure.failure),
@@ -108,7 +105,9 @@ fn produced_by(provider: &ProviderName) -> ProducedBy {
 }
 
 fn suits_http(surface: &SurfaceDescription) -> bool {
-    surface.kind == HTTP_SURFACE && surface.address.starts_with("http://")
+    surface.kind == HTTP_SURFACE
+        && (surface.address.starts_with("http://")
+            || (a2m_auth::tls::enabled() && surface.address.starts_with("https://")))
 }
 
 /// `http_surface`: whether the base address answers, and which sign-in
@@ -229,7 +228,12 @@ impl HttpDescription {
         })
     }
 
-    fn finding(&self, origin: &Origin, operation: &DescribedOperation) -> Result<Finding, Failure> {
+    fn finding(
+        &self,
+        origin: &Origin,
+        operation: &DescribedOperation,
+        redact: &dyn Redact,
+    ) -> Result<Finding, Failure> {
         let path = format!("{}{}", origin.prefix, operation.path);
         // Braces are part of a template; anything else that is not plain
         // makes the address the surface's root, and the path stays in what
@@ -239,7 +243,8 @@ impl HttpDescription {
         Ok(Finding::about(
             Subject::Address(address),
             self.kind.clone(),
-            operation.found(),
+            // Once more as it is written: what was formatted is what goes out.
+            redact.redact(&operation.found()),
             Source::PublishedDescription,
             produced_by(&self.provider),
             self.clock.now(),
@@ -282,26 +287,46 @@ impl Discoverer for HttpDescription {
             let bytes = if let Some(file) = scope.paths.get(DESCRIPTION_FILE) {
                 file.read(scope.bounds.bytes)?
             } else {
-                let path = scope
-                    .focus
-                    .get(DESCRIPTION_PATH)
-                    .and_then(Value::as_text)
-                    .unwrap_or(DEFAULT_DESCRIPTION_PATH);
-                let answer = ReadClient::new(port, scope).get(path).await?;
-                let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
-                let body = answer.get("body").and_then(Value::as_text).ok_or_else(|| {
+                let named = scope.focus.get(DESCRIPTION_PATH).and_then(Value::as_text);
+                let paths =
+                    named.map_or_else(|| DEFAULT_DESCRIPTION_PATHS.to_vec(), |path| vec![path]);
+                let client = ReadClient::new(port, scope);
+                let mut statuses = Vec::new();
+                let mut read = None;
+                for path in paths {
+                    let answer = client.get(path).await?;
+                    let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
+                    let body = answer.get("body").and_then(Value::as_text);
+                    match body {
+                        // A named path is read whatever its status says; a
+                        // place tried by convention only on a success.
+                        Some(body) if named.is_some() || (200..300).contains(&status) => {
+                            read = Some(body.to_owned());
+                            break;
+                        }
+                        _ => statuses.push(status.to_string()),
+                    }
+                }
+                let body = read.ok_or_else(|| {
                     unreadable(&format!(
-                        "the surface answered the request for it with status {status}"
+                        "the surface answered the request for it with status {}",
+                        statuses.join(", then ")
                     ))
                 })?;
                 if u64::try_from(body.len()).unwrap_or(u64::MAX) > scope.bounds.bytes {
-                    return Err(unreadable("it is larger than the discovery may read"));
+                    return Err(openapi::too_large(&format!(
+                        "it is more than the {} bytes the discovery may read",
+                        scope.bounds.bytes
+                    )));
                 }
-                body.as_bytes().to_vec()
+                body.into_bytes()
             };
-            let operations = openapi::operations(&bytes)?;
+            // The redactor comes first, whichever way the description
+            // arrived: before the text is parsed, cut, or quoted.
+            let text = openapi::redacted(&bytes, scope.redact)?;
+            let operations = openapi::operations(text.as_bytes())?;
             for operation in &operations {
-                out.found(self.finding(&origin, operation)?)?;
+                out.found(self.finding(&origin, operation, scope.redact)?)?;
             }
             Ok(DiscoveryReport {
                 coverage: Coverage::Complete,

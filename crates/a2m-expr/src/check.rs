@@ -893,18 +893,46 @@ fn check_rule(param: Param, param_name: &str, function: &str, arg: &Node) -> Res
             }
         }
         (Param::Codes, Kind::Record(fields)) => {
+            // A value read from the system may be a code or a label, so no
+            // text may stand for two choices: no two labels alike, no two
+            // codes alike, and no code that is another choice's label. A
+            // code may be its own label.
             let mut labels = BTreeSet::new();
-            for (_, label) in fields {
+            let mut codes = BTreeSet::new();
+            for (code, label) in fields {
                 let Kind::Text(label_text) = &label.kind else {
                     return Err(ExprError::invalid(
                         "a code list maps each stored code to its label, both as literal text",
                         label.span,
                     ));
                 };
-                if !labels.insert(crate::text::collapse_space(&crate::text::nfc(label_text))) {
+                if !labels.insert(functions::label_form(label_text)) {
                     return Err(ExprError::invalid(
                         "two codes of a code list have the same label",
                         label.span,
+                    ));
+                }
+                if !codes.insert(functions::label_form(code)) {
+                    return Err(ExprError::invalid(
+                        "two codes of a code list differ only in spacing or composition",
+                        label.span,
+                    )
+                    .with_fix("Give each choice a code no other choice could be read as."));
+                }
+            }
+            for (code, label) in fields {
+                let Kind::Text(label_text) = &label.kind else {
+                    continue;
+                };
+                let own = functions::label_form(label_text);
+                let as_label = functions::label_form(code);
+                if as_label != own && labels.contains(&as_label) {
+                    return Err(ExprError::invalid(
+                        "a code of a code list is also the label of another choice, so a value read back could be either",
+                        label.span,
+                    )
+                    .with_fix(
+                        "Rename the code or the label, so that no text stands for two choices.",
                     ));
                 }
             }

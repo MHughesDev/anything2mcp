@@ -26,7 +26,7 @@ mod settings;
 mod tools;
 
 pub use http::{HttpRequest, HttpResponse, McpPeer, McpService, mcp_path};
-pub use proxy::{BoxFuture, Upstream, stdio_proxy};
+pub use proxy::{BoxFuture, LINE_LIMIT, OPEN_LIMIT, Upstream, stdio_proxy};
 pub use settings::{Listing, McpSettings, Revision};
 
 #[cfg(test)]

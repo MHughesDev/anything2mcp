@@ -7,13 +7,15 @@ use a2m_core::{
     CanonicalJson, DecisionId, Digest, Failure, FailureClass, OperationName, PrincipalId, RunId,
     TargetName, Timestamp, WorkspaceId,
 };
-use a2m_ledger::{Durability, Store, Tx, WriteClearance};
+use a2m_ledger::{Durability, PolicyKey, Store, Tx, WriteClearance};
 
 use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
 use crate::model::{PrincipalRef, Question, Request, RuleId, word};
 use crate::rules::{self, Answer, Verdict};
-use crate::set::{self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, TestReport};
+use crate::set::{
+    self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, Settings, TestReport,
+};
 use crate::store;
 
 /// The policy engine. Cheap to clone; every clone is the same engine.
@@ -24,7 +26,13 @@ pub struct Policy {
 
 struct Inner {
     store: Store,
+    /// The key to this crate's tables, which the store hands out once.
+    key: PolicyKey,
     profile: Profile,
+    /// The installation's policy settings, from the built-in set the engine
+    /// was opened with: in force under any stored set, which can only
+    /// tighten them.
+    floor: Settings,
     /// The set in force as this process last saw it. `decide` asks the store
     /// for the newest version on every call and loads it when it differs, so
     /// a version published by any process takes effect at the next decision.
@@ -254,12 +262,19 @@ impl Policy {
         built_in: BuiltIn,
     ) -> Result<(Self, ApprovalSurface), Failure> {
         let profile = built_in.profile();
+        let floor = built_in.layers().settings.clone();
         let candidate = CandidateSet::compile(built_in.layers(), profile)?;
         tests_must_pass(&candidate.test())?;
+        // The key to this crate's tables comes from the store once: a
+        // second opening on the same store is refused, so there is one
+        // approval handle and one policy engine per store (decision 0145).
+        let key = store.policy_key()?;
         let policy = Self {
             inner: Arc::new(Inner {
                 store: store.clone(),
+                key,
                 profile,
+                floor,
                 current: Mutex::new(Current::None),
             }),
         };
@@ -269,12 +284,19 @@ impl Policy {
                 // The built-in set is stored when the store holds none, and
                 // again when the newest one is an earlier built-in set: the
                 // binary's guardrails or the local user may have changed.
-                let newest = match store::newest_version(tx)? {
-                    Some(version) => store::version(tx, &version)?,
+                let newest = match store::newest_version(tx, opened.key())? {
+                    Some(version) => store::version(tx, opened.key(), &version)?,
                     None => None,
                 };
                 if newest.is_none_or(|row| row.built_in) {
-                    store::insert_version(tx, &candidate, rules::guardrails_digest(), None, None)?;
+                    store::insert_version(
+                        tx,
+                        opened.key(),
+                        &candidate,
+                        rules::guardrails_digest(),
+                        None,
+                        None,
+                    )?;
                 }
                 opened.current(tx);
                 Ok(())
@@ -288,6 +310,10 @@ impl Policy {
         &self.inner.store
     }
 
+    pub(crate) fn key(&self) -> &PolicyKey {
+        &self.inner.key
+    }
+
     fn cached(&self) -> Current {
         self.inner
             .current
@@ -299,7 +325,7 @@ impl Policy {
     /// The set in force, read through `tx`: the newest stored version,
     /// loaded once and kept until another is the newest.
     pub(crate) fn current(&self, tx: &mut Tx<'_>) -> Option<Arc<Compiled>> {
-        let found = match store::newest_version(tx) {
+        let found = match store::newest_version(tx, self.key()) {
             Ok(Some(newest)) => match self.cached() {
                 Current::Loaded(set) if set.version.to_string() == newest => Current::Loaded(set),
                 Current::Unreadable(version) if version == newest => Current::Unreadable(version),
@@ -323,10 +349,18 @@ impl Policy {
     }
 
     fn load(&self, tx: &mut Tx<'_>, version: &str) -> Current {
-        let loaded = store::version(tx, version).ok().flatten().and_then(|row| {
-            let digest: Digest = row.version.parse().ok()?;
-            set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()
-        });
+        let loaded = store::version(tx, self.key(), version)
+            .ok()
+            .flatten()
+            .and_then(|row| {
+                let digest: Digest = row.version.parse().ok()?;
+                let mut set =
+                    set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()?;
+                // The installation's settings stay in force under a set
+                // published later: on each setting, the tighter one holds.
+                set.layers.settings = set.layers.settings.tighter(&self.inner.floor);
+                Some(set)
+            });
         loaded.map_or_else(
             || Current::Unreadable(version.to_owned()),
             |set| Current::Loaded(Arc::new(set)),
@@ -355,7 +389,15 @@ impl Policy {
         let recorded = (|| {
             let id = DecisionId::from_parts(tx.now(), tx.random()?)?;
             let text = set::text_of(&CanonicalJson::encode(request)?)?;
-            store::insert_decision(tx, &id.to_string(), request, &text, &verdict, version)?;
+            store::insert_decision(
+                tx,
+                self.key(),
+                &id.to_string(),
+                request,
+                &text,
+                &verdict,
+                version,
+            )?;
             Ok::<_, Failure>(id)
         })();
         let (id, verdict) = match recorded {
@@ -413,7 +455,7 @@ impl Policy {
     fn verdict(&self, tx: &mut Tx<'_>, request: &Request) -> (Verdict, Option<Digest>) {
         // Kill switches come first, before any rule.
         let stopped = if request.question.is_work() {
-            store::switches_on(tx).map(|on| covers(&on, request))
+            store::switches_on(tx, self.key()).map(|on| covers(&on, request))
         } else {
             Ok(false)
         };
@@ -472,6 +514,7 @@ impl Policy {
         }
         store::insert_version(
             tx,
+            self.key(),
             candidate,
             rules::guardrails_digest(),
             Some(by.id),
@@ -485,10 +528,18 @@ impl Policy {
     ///
     /// # Errors
     ///
-    /// `input`/`decision_not_found` when no such decision is recorded; the
-    /// store's failures.
-    pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId) -> Result<Explanation, Failure> {
-        let Some(row) = store::decision(tx, &id.to_string())? else {
+    /// `input`/`decision_not_found` when no such decision is recorded in
+    /// the caller's `workspace`: a decision of another workspace is not
+    /// told apart from one that does not exist. The store's failures.
+    pub fn explain(
+        &self,
+        tx: &mut Tx<'_>,
+        id: DecisionId,
+        workspace: WorkspaceId,
+    ) -> Result<Explanation, Failure> {
+        let found = store::decision(tx, self.key(), &id.to_string())?
+            .filter(|row| row.workspace == workspace.to_string());
+        let Some(row) = found else {
             return Err(Failure::new(
                 FailureClass::Input,
                 DECISION_NOT_FOUND,
@@ -497,7 +548,7 @@ impl Policy {
             ));
         };
         let set = row.version.as_deref().and_then(|version| {
-            let stored = store::version(tx, version).ok().flatten()?;
+            let stored = store::version(tx, self.key(), version).ok().flatten()?;
             let digest: Digest = stored.version.parse().ok()?;
             set::load(digest, &stored.layers, &stored.tests, self.inner.profile).ok()
         });
@@ -570,6 +621,7 @@ impl Policy {
             }
             let calls = store::count_call(
                 tx,
+                self.key(),
                 check.workspace.to_string(),
                 check.principal.id.to_string(),
                 quota.period_minutes,
@@ -600,6 +652,7 @@ impl Policy {
         let (scope, name) = switch.scope.stored();
         store::set_switch(
             tx,
+            self.key(),
             scope,
             name,
             switch.on,
@@ -615,7 +668,7 @@ impl Policy {
     ///
     /// The store's failures.
     pub fn kill_epoch(&self, tx: &mut Tx<'_>) -> Result<u64, Failure> {
-        store::kill_epoch(tx)
+        store::kill_epoch(tx, self.key())
     }
 }
 
@@ -642,17 +695,26 @@ fn tests_must_pass(report: &TestReport) -> Result<(), Failure> {
 
 /// Whether a kill switch that is on covers the request.
 fn covers(on: &[(String, String)], request: &Request) -> bool {
-    let workspace = request.context.workspace.to_string();
     let tool = match &request.resource {
-        crate::model::Resource::Tool(tool) => Some(tool),
+        crate::model::Resource::Tool(tool) => Some((tool.target.as_str(), tool.tool.as_str())),
         _ => None,
     };
+    covers_parts(on, &request.context.workspace.to_string(), tool)
+}
+
+/// Whether a switch that is on covers work in `workspace` on a tool, named
+/// by its target and its full name.
+pub(crate) fn covers_parts(
+    on: &[(String, String)],
+    workspace: &str,
+    tool: Option<(&str, &str)>,
+) -> bool {
     on.iter()
         .any(|(scope, name)| match KillScopeKind::from_text(scope) {
             Some(KillScopeKind::Everything) => true,
-            Some(KillScopeKind::Workspace) => *name == workspace,
-            Some(KillScopeKind::Target) => tool.is_some_and(|tool| tool.target.as_str() == name),
-            Some(KillScopeKind::Operation) => tool.is_some_and(|tool| tool.tool.as_str() == name),
+            Some(KillScopeKind::Workspace) => name == workspace,
+            Some(KillScopeKind::Target) => tool.is_some_and(|(target, _)| target == name),
+            Some(KillScopeKind::Operation) => tool.is_some_and(|(_, tool)| tool == name),
             // A switch this engine cannot read stops everything.
             None => true,
         })

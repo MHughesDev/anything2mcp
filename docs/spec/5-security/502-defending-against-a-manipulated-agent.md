@@ -13,6 +13,7 @@ Operation inputs are filled into request templates. A crafted input must not be 
 - **Scheme, host, and port never come from an input.** They come from the surface.
 - **Redirects are followed only within declared surfaces.** Anything else stops with `policy` and the code `surface_not_declared`.
 - **Inputs that are themselves addresses** use a `url` field type that accepts only destinations the operation declared. On a server, private and loopback addresses are refused unless declared.
+- **A credential never crosses an unencrypted link to another machine.** The HTTP, MCP, and data packs refuse, unsent, a request that would carry a credential over a plain link to an address that is not a loopback address. Only the target's own surface can accept it, in words a reviewer sees and the lint repeats; no input, setting, or variable can ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)).
 
 ## Inputs cannot make Anything2MCP read arbitrary files
 
@@ -21,7 +22,7 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 | Where | Rule |
 | --- | --- |
 | On a server | A caller never passes a path. It uploads content, which becomes a blob, and passes the blob's reference |
-| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make |
+| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make. A project folder is one that holds a project file and is no program's own folder: not the engine's, not the home folder or a hidden folder of it, not a folder the operating system gives programs for their data. A source file is read only from the project's `sources` folder |
 | Everywhere | Size limits; the content must be the type it claims, so a renamed file is refused; a file is read once and stored as a blob, so what was previewed is what is uploaded |
 
 ## Downloads are data
@@ -33,7 +34,7 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 
 - Tool names and descriptions are written by the target's author and reviewed by a person. Text captured from the system never flows into them unreviewed.
 - Results are structured. Free text from the system sits only in fields marked untrusted, limited in length and stripped of markup.
-- A validation message from the system, returned with a `rejected` result, is such a field.
+- A validation message from the system, returned with a `rejected` result, is such a field. A driver hands it over apart from the failure's own sentence, bounded and redacted, and every door shows it marked as the system's words, never joined into the product's message ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)), with every character that can reorder, hide, or restyle shown text written as its escape: control characters and terminal escapes, bidirectional marks and isolates, invisible format characters, and line and paragraph separators ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - Snapshots and captures given to a building agent mark the system's text the same way.
 
 ## A manipulated building agent

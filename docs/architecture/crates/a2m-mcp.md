@@ -29,7 +29,7 @@ It must never: hold run state between requests; decide whether a call is allowed
 
 ## Interface
 
-As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md), and [decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md), which changed nothing in it).
+As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md); [decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md), which changed nothing in it; and [decision 0151](../../decisions/0151-the-doors-take-up-the-action-registrys-second-pass.md), which added no public item and changed what a mount may put on a request).
 
 ```rust
 /// One endpoint per toolset. Cheap to clone; no state between requests.
@@ -48,7 +48,8 @@ pub type HttpRequest = axum::http::Request<axum::body::Body>;
 pub type HttpResponse = axum::http::Response<axum::body::Body>;
 
 /// Who the local channel saw connect. The mount puts one in each request's extensions,
-/// or a `Caller` the kernel already checked.
+/// or a `Caller` the kernel already checked. Beside it the mount may put the
+/// `ProjectFolder` of the action layer: the folder the client end works in.
 pub struct McpPeer { pub user: String, pub label: String }
 
 pub struct McpSettings {
@@ -67,8 +68,13 @@ pub enum Listing { Default, Full }
 
 /// The way to the engine's endpoint. Any function from a request to a response is one.
 pub trait Upstream: Send + Sync + 'static {
+    /// A failure of class `busy`, `policy`, `input`, or `transient` says the request was not
+    /// handed to the engine; any other class, `possible_commit` above all, says it may have been.
     fn send(&self, request: HttpRequest) -> BoxFuture<'static, Result<HttpResponse, Failure>>;
 }
+/// The longest line the proxy reads (4 MiB), and the most requests it carries at once (64).
+pub const LINE_LIMIT: usize;
+pub const OPEN_LIMIT: usize;
 /// The stdio proxy. It reads and writes MCP messages and nothing else; it has no tools of its own.
 /// It ends well when its input ends.
 pub async fn stdio_proxy<U, R, W>(upstream: U, toolset: &ToolsetName, input: R, output: W)
@@ -77,7 +83,7 @@ pub async fn stdio_proxy<U, R, W>(upstream: U, toolset: &ToolsetName, input: R, 
 
 The proxy is started by `bridge`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
 
-**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. For `bridge`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
+**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. Beside the caller it puts the `ProjectFolder` the client end stated, when it stated one; the endpoint hands it to `Request::in_project_folder` with every dispatch, and nothing in a message can set it. `bridge` names the folder it was started in, or the one `--project` gives, on every request it carries. For `bridge`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
 
 ## Revisions
 
@@ -130,11 +136,11 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | `tools/list` (H and M) | List each tool with its name, description, and input schema of type object; annotations from the effect class; the same tools in the same order every time; no `nextCursor` on a single page; -32602 for a cursor it did not issue |
 | `tools/list` (M) | Also carry `ttlMs` and `cacheScope` |
 | `tools/call` for a known tool (H and M) | Answer `structuredContent` that fits the tool's output schema, and one text item |
-| `tools/call` for an unknown tool | Answer -32602, a protocol error. An action the toolset does not list is an unknown tool |
+| `tools/call` for an unknown tool | Answer -32602, a protocol error. An action the toolset does not list is an unknown tool. So is a name nobody published: the error's data then holds the dispatcher's own failure |
 | `tools/call` whose name is not text or whose arguments are not an object | Answer -32602, before any dispatch |
 | `tools/call` with input that fails the schema | Answer a result with `isError` true, not a protocol error |
 | `tools/call` that fails | Answer a result with `isError` true and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content and nothing else |
-| `tools/call` with a `progressToken` | Answer as a stream of events: `notifications/progress` with that token and a rising count, then the result. Say nothing in progress that the result does not say |
+| `tools/call` with a `progressToken` | Answer as a stream of events: `notifications/progress` with that token, a rising count, and a sentence of the server's own, then the result. Say nothing in progress that a system said |
 | `tools/call` without a `progressToken` | Send no progress, and answer with one JSON message |
 | `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
 | `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
@@ -146,6 +152,10 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | Any message that leaves | Hold no registered secret, in a result or in a protocol error |
 | End of input on stdio | The proxy exits with status 0 |
 | Standard output on stdio | Carry one JSON message per line and nothing else |
+| A line on stdio longer than 4 MiB, the endpoint's cap on a body | Answer -32600 with a null id, and keep none of the line: the rest of it is read and dropped |
+| More than 64 requests open on stdio at once | The next line is read when one of them is answered |
+| A request on stdio refused before it was handed to the engine: nothing answered, or the connection ended first | Answer -32000 with the failure as `data` and `retry_safe` true |
+| A `tools/call` on stdio whose answer was lost after the engine may have had it: the connection broke, the answer broke off, or what came back is no MCP response | Answer -32000 with `data` of class `possible_commit`, code `answer_lost`, `retry_safe` false, and a fix that says not to call again and to find the run first. Any other request in that case writes nothing, and its `data` says `retry_safe` true |
 | Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result. Not yet run against this service; owed before Phase 1 exits |
 
 Every line but the last is a test in this crate, with raw messages over the HTTP service in process, and, for the lines that hold on both transports, through the proxy with in-memory streams as well.
@@ -162,29 +172,45 @@ A toolset's list is the same for every caller connected to it; rights are checke
 
 - **Names.** An action `noun.verb` is listed as `a2m_<noun>_<verb>`. A target's tool keeps its published name, `{target}_{module}_{object}_{verb}`; its version appears in results, never in the name.
 - **Descriptions** are the published ones, or the action's summary. The first 240 characters are enough to choose. A published tool with no description is listed with its title.
-- **Where a list comes from.** It is built on each request: the registry's MCP faces, then `tool.search` and one `tool.describe` for each published tool listed, dispatched as the caller. Nothing is kept between requests.
+- **Where a list comes from.** It is built on each request: the registry's MCP faces, then the published tools, read through `tool.search` with `full`, twenty to a page, dispatched as the caller: one dispatch for each page, and one in all for a target of twenty tools or fewer. A page that the result size cap cut is asked for again at half the size. Nothing is kept between requests.
 - **Schemas.** The input schema in a list may be the compact form, provided every difference is exact or wider; today the full schema is listed. Output schemas are left out of the list; `tool.describe` returns them.
 - **Annotations.** `readOnlyHint` for `read`; `destructiveHint` for `irreversible` and for writes without a key; `idempotentHint` from the key.
-- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_limit`, which counts the built-in tools too; past it, pipelines beyond the cap move to search. The server instructions do not yet say so. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
+- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_limit`, which counts the built-in tools too; past it, pipelines beyond the cap move to search. The server instructions say that a tool that is not listed is found with `a2m_tool_search` and called with `a2m_tool_call`. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
 - **Full listing** is a setting for clients with their own tool search. It lists every operation, and changes nothing about how calls are checked.
 
 ## Calls and results
 
-1. `tools/call` arrives with a name and arguments. A name of an action the toolset lists is that action. Any other name is `tool.call` with the name as its `tool` input, after `tool.describe` has said that such a tool is published; `a2m_tool_call` is the same action called by name.
-2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, and the client label. An idempotency key from the request's metadata is not built.
+1. `tools/call` arrives with a name and arguments. A name of an action the toolset lists is that action. Any other name is `tool.call` with the name as its `tool` input: one dispatch. When the dispatcher answers `input`, `not_found` with no result, no such tool is published, and the answer is the protocol's unknown-tool error. `a2m_tool_call` is the same action called by name, and a tool it does not find is a failed call ([decision 0151](../../decisions/0151-the-doors-take-up-the-action-registrys-second-pass.md)).
+2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, the client label, and the project folder the mount stated, and the idempotency key of the call's `_meta`, `anything2mcp/idempotency_key`, which the dispatcher checks (decision 0160). A request's JSON-RPC id is the connection's and is never taken as a key.
 3. `Kernel::dispatch` does the rest. This crate only renders the `Response`:
 
 | Part of the response | MCP result |
 | --- | --- |
 | `result` | `structuredContent`, matching the action's output schema, and one text item holding the same JSON |
+| `next` of a success | Inside the structured content, as `next`: the action, the name of its tool, its input, and when. Every output schema admits it. Rendered by `McpResultFace::of_in` with the endpoint's toolset: when this toolset does not list the tool, `next` names `a2m_action_run` with the action as its argument |
 | Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links and `resources/read` are not built |
-| `next` and `warnings` of a success | `_meta`, under `anything2mcp/next` and `anything2mcp/warnings`. The output schemas take no other key, so structured content holds the result alone |
+| `warnings` of a success | `_meta`, under `anything2mcp/warnings`. The output schemas take no key for them |
 | `error` | `isError`, and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content |
 | Text from the target | Inside fields marked untrusted, already cut and stripped by the dispatcher |
 
-**Long jobs.** A long-running action returns its `run_id` at once. A client that supports the Tasks extension gets a task whose `tasks/get` is answered by `run.get` and whose cancel is `run.cancel`; that is not built. Progress is sent only to a caller that asked. It counts two steps, handed to the dispatcher and answered, until the kernel offers a run's events to follow.
+**Long jobs.** A long-running action returns its `run_id` at once. A client that supports the Tasks extension gets a task whose `tasks/get` is answered by `run.get` and whose cancel is `run.cancel`; that is not built.
 
-**Cancelling.** A dispatch runs on its own task and is never cut off. When the caller cancels or the stream closes, the endpoint stops waiting and sends nothing more for that request. The run goes on, and is stopped with `a2m_run_cancel`.
+**Progress** is sent only to a caller that asked, and says what the call's run does ([decision 0151](../../decisions/0151-the-doors-take-up-the-action-registrys-second-pass.md)).
+
+| The call | How it is made | What is followed |
+| --- | --- | --- |
+| Starts a run and waits for it: `tool.call`, by the control tool or by a published tool's own name | Dispatched with `wait_seconds` 0, which returns the run's identifier at once | The run's events after those the first answer counted, through `Kernel::next_events_from`, until the run rests, ends, or the wait the caller asked for (60 s when it did not say) is over |
+| Continues a run the caller names and waits for it: `run.resume` | Dispatched as it was written, on a task of its own | The run's events after its last one, until the dispatch answers |
+| Any other call, a call that asks for no wait, and a call whose `wait_seconds` is not what the schema takes | Dispatched as it was written | Nothing: two notes, handed to the engine and answered |
+
+- **What is told.** A change of state, a step that began, the records planned, the stored preview; and, once for each page of events, how many records were verified so far, how many failed, and how many in doubt were read again. A lease, a lock, a chosen binding, an intent, and a need are not told.
+- **What is said.** A note is `progress`, a count that rises by one, and `message`, a sentence of this crate with a count, a step's number, or the name of a state in it. Nothing an event carries as text is passed on, so nothing a system said can reach a model as an instruction. No `total` is sent: the number of events to come is not known.
+- **The answer to a call that started a run.** A run that has ended, or is still worked on when the wait is over, is read with `run.get`, whose output is `tool.call`'s. A run that came to rest is answered by the caller's own call made once more with `wait_seconds` 0: the same call is the same run while the run is unfinished, and only a call that starts or continues a run tells the run's person that it waits; `run.get` asks nobody anything. So a followed call costs two dispatches. Should the second be refused with no result, the first answer stands: the run's identifier, and `a2m_run_get` as the next call.
+- **A run that already rests or has ended** when its call is answered has nothing to follow, and the answer is the answer.
+- **Settling.** The record that a job has ended appends no event. Each wait is `Kernel::next_events_from` with what the last page showed, a `Followed`: the last event's number and whether the run was settled. The kernel answers at once when that has changed, so a run whose state rests while its job is still in a runner's hands is told the moment the job is recorded as ended, with no timer ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
+- **A reader that stops reading.** Each message of a stream waits at most 60 s for the reader to take it (`READER_PATIENCE`). After that the caller is treated as gone: following stops, and the dispatch, on its own task, goes on to its end.
+
+**Cancelling.** A dispatch runs on its own task and is never cut off. When the caller cancels or the stream closes, the endpoint stops waiting, stops following the run, and sends nothing more for that request. The run goes on, and is stopped with `a2m_run_cancel`.
 
 **Elicitation.** Only the fallback is built: the link in the result. When a run rests at `needs_login` or `needs_approval`, the result carries the link from `PersonSurface`; that includes a plain link from `give_link`, which a sign-in provider such as authorization-code sign-in needs the person to open in their own browser. Where the client supports URL-mode elicitation, the same link is also sent as an elicitation. On one machine the link is the loopback page, which can only raise the operating system's prompt; on a server it is the console page behind the identity provider's sign-in. Following the link is never an approval by itself, so giving it to an agent is safe.
 
@@ -219,7 +245,7 @@ None between requests. Settings are read at start.
 
 ## Failures
 
-Every failure of a call is the dispatcher's, rendered. This crate adds four, none of which reaches the dispatcher:
+Every failure of a call is the dispatcher's, rendered. This crate adds five, none of which reaches the dispatcher:
 
 | Class and code | When |
 | --- | --- |
@@ -227,6 +253,7 @@ Every failure of a call is the dispatcher's, rendered. This crate adds four, non
 | `input` / `mcp_not_served` | An endpoint is asked for a toolset or a revision that is not served |
 | `policy` / `caller_missing` | A request names no caller |
 | `transient` / `stdio_read_failed` | The proxy cannot read its input |
+| `possible_commit` / `answer_lost` | The proxy lost the answer to a `tools/call` after the engine may have had it. It is the `data` of the -32000 error, with `retry_safe` false |
 
 ## Invariants
 
@@ -239,26 +266,36 @@ Every failure of a call is the dispatcher's, rendered. This crate adds four, non
 | Nothing that passed through the door is in the process's log: no secret of the engine, no caller's token, no caller's input | A test in a program of its own, with every event captured at the most verbose level |
 | No client name reaches the kernel | Not proven. The label goes to the dispatcher as the caller's label and nowhere else |
 | The proxy copies messages and adds nothing | A test that compares proxied and direct answers byte for byte |
+| A lost answer to a tool call is a write in doubt, and a request refused before it was sent may be made again | The tests in `tests/lost.rs`, against an engine of the test's own that takes a request and goes away, never answers, breaks off a stream after a note, or answers 500 or 401 with no message |
+| A line longer than a request may be is refused and not kept | The same file: a line of more than 4 MiB, then a line that is carried |
+| `next` names a tool the caller's toolset lists | `a_next_step_names_a_tool_the_callers_toolset_lists` |
 | A cancelled request is sent nothing more, and others are still answered | A test that holds a call open, cancels it through the proxy, and waits for the endpoint to see the stream close |
 | The door offers no way to approve | A test over the tools of both toolsets, names an agent might try, and the registry |
+| A list costs one dispatch for each page of published tools, and a call by a published tool's own name costs one | Tests that count what the endpoint handed the dispatcher |
+| A list is whole when the result size cap is smaller than a page | A test with a cap that one tool fits under and the page does not: the same list, in more dispatches |
+| The project folder is what the mount stated, and nothing a caller writes | A test with the folder stated, not stated, and written as an argument |
+| A person is told once that a run waits, also when the call's progress was followed; the answer carries the link and the next call | The progress test: a write that rests, the same call again, and the approvals the person surface counted |
+| A progress note holds nothing a system said | The same test: every note is one of this crate's sentences, and none holds a value the test application answered with |
+| A resumed write that was followed is written once | The same test asks the test application what it stored and how often |
 | What is not well formed never reaches the dispatcher | A test that counts what the endpoint handed the dispatcher |
 
 ## Build order
 
 1. Done: one service, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for a read. Package 1.5.
-2. Done: structured results, `next`, annotations, the two revisions, progress, and cancelling. Not built: resource links.
+2. Done: structured results, `next` inside them, annotations, the two revisions, cancelling, and progress from the run's events for `tool.call` and `run.resume`. Not built: resource links.
 3. Not built: elicitation. The link fallback is in the result. Package 3.6.
-4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions. Not built: prompts, resources, instructions generated from the guidance file. Package 5.1.
+4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions. Not built: prompts, resources, instructions generated from the guidance file. Section 221 says nothing of the instructions; section 220 says they carry the handful of rules every caller needs and come from the same sources as the guidance file, which is now the `guidance` page of `docs.get`. The one sentence stays until that generation is built. Package 5.1.
 5. Done: stateless Streamable HTTP with the `Host` check, as a router to nest at `/mcp/<toolset>`. Not built: token checks, protected resource metadata, named toolsets. Package 6.2.
 
-Also not built: client profiles, the Tasks extension, an idempotency key from the request's metadata, compact schemas, and a byte budget for a list.
+Also not built: client profiles, the Tasks extension, compact schemas, and a byte budget for a list.
 
 ## Open points
 
-- Whether a client that does not read `_meta` needs the following call. If so, the output schemas must admit `next`, which is a change in `a2m-actions`.
-- The cost of a list: one dispatch, and one recorded decision, for each published tool listed, and two dispatches for a call by a published tool's own name. A kernel call that returns a toolset's tools with their schemas would remove it.
+- A default listing reads every published tool in full to list the pipelines among them, because `tool.search` has no filter by kind. A `kind` input on `tool.search` would make a target of five hundred operations cost one page.
+- A tool call whose answer the proxy lost is answered with the exact next step (decision 0160): when it carried an idempotency key, in its `_meta` or as the argument of `a2m_tool_call`, the same call again with the same key; when it did not, `a2m_action_run` with `run.list` since a minute before the call was sent, by the proxy's clock, and the tool it named. The moment is shown and decides nothing.
+- A followed call that comes to rest is made twice, so that the run's person is told. The kernel telling the person when a run comes to rest, whoever waits, would make `run.get` the answer in every case. Until then a `run.resume` that is followed is dispatched whole, so a note cannot say that the wait is over before the answer does.
+- How many notes a run of very many records sends. A note for each page of events is bounded by how fast the client reads; a rate of its own is not built.
 - Keep-alive comments on an event stream that stays open for minutes, which an intermediary that closes idle connections would need. The SDK sent them; this layer does not.
-- Progress from a run's events, which the kernel does not offer yet.
 - Whether cancelling a request should also cancel the run it started.
 - The byte budget for a tool list and for one compact schema.
 - How compact schemas are derived from full ones mechanically, so that "exact or wider" is proven, not reviewed.

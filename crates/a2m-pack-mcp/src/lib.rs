@@ -33,6 +33,7 @@ mod auth;
 mod client;
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod json;
 mod lower;
@@ -84,6 +85,9 @@ impl Pack for McpPack {
         let limits = client::Limits {
             max_message_bytes: setting(cx, "max_message_bytes", 4 * 1024 * 1024),
             max_tools: setting(cx, "max_tools", 500),
+            list_max_age: std::time::Duration::from_millis(
+                u64::try_from(setting(cx, "list_max_age_ms", 10_000)).unwrap_or(u64::MAX),
+            ),
         };
         to.driver(
             names.mode.clone(),
@@ -93,7 +97,8 @@ impl Pack for McpPack {
             .surface_kind(mapping::surface_kind_spec())
             .file_kind(Arc::new(mapping::MappingKind::new()))
             .lowering(Arc::new(lower::McpLowering::new(names.mode.clone())))
-            .drafting_rule(Arc::new(discover::ToolToMapping::new(names.clone())));
+            .drafting_rule(Arc::new(discover::ToolToMapping::new(names.clone())))
+            .drafting_rule(Arc::new(draft::ToolToRead::new(names.clone())));
         for rule in lower::Rule::ALL {
             compiler = compiler.lint_rule(Arc::new(rule));
         }

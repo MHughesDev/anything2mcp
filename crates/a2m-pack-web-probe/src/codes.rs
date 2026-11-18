@@ -21,6 +21,8 @@ codes! {
     NEEDS_LOGIN = SessionExpired, "needs_login";
     /// Discovery was asked to look at an address outside the surface.
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared";
+    /// Discovery was to visit an address that looks like an action.
+    ADDRESS_LOOKS_LIKE_AN_ACTION = Policy, "address_looks_like_an_action";
     /// The focus of a discovery is not in the form this pack reads.
     FOCUS_INVALID = Input, "focus_invalid";
     /// A page could not be read, in a way no rule covers.

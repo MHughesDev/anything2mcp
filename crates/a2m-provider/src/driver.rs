@@ -14,9 +14,10 @@ use std::time::Duration;
 use a2m_auth::SessionLease;
 use a2m_core::{
     Archetype, Digest, Environment, Epoch, Failure, FailureClass, FailureCode, Mode, Plan,
-    RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Values, Version,
+    RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Value, Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
+use a2m_telemetry::Acting;
 
 use crate::BoxFuture;
 use crate::codes;
@@ -151,7 +152,52 @@ impl fmt::Debug for PrepareContext<'_> {
 pub struct Prepared {
     state: Box<dyn Any + Send>,
     guard: Option<Guard>,
+    /// What the record's earlier steps recorded, for the step being acted.
+    recorded: Values,
+    /// Who answers whether another record holds a value, and the record
+    /// of the step being acted, for that step alone.
+    others: Option<(Arc<dyn OtherRecords>, Option<RecordRef>)>,
 }
+
+/// The engine's answer to a driver that asks whether another record holds
+/// a value it recorded ([`Prepared::recorded_elsewhere`]). It names the
+/// record and never gives back a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedElsewhere {
+    /// Another record of the operation holds the value under the name: the
+    /// run and the record. Never the record that asks.
+    Held(RecordRef),
+    /// No other record of the operation, in any run of the workspace, holds
+    /// it, as the ledger's stored values say.
+    NotHeld,
+    /// The engine cannot tell: it was not asked through a handle that
+    /// answers, the question was malformed, its time ran out, or a value it
+    /// would compare was masked. A driver treats this as "may be held".
+    CannotTell,
+}
+
+/// What answers [`Prepared::recorded_elsewhere`]: the engine, for one step
+/// of one record, from its `Control` (the action registry, from the
+/// ledger's stored values). It is bound to the workspace, the operation,
+/// and the record that asks, so the driver names only the value.
+pub trait OtherRecords: Send + Sync {
+    /// Whether any other record of the asking record's operation, in any
+    /// run of the workspace, holds a recorded value under `name` whose
+    /// [`recorded_digest`] is `value`. Compared by digest; the values are
+    /// never handed out.
+    fn holding<'a>(&'a self, name: &'a str, value: Digest) -> BoxFuture<'a, RecordedElsewhere>;
+}
+
+/// The digest a recorded value is compared by when a driver asks whether
+/// another record holds it: of the value's canonical bytes. The answerer
+/// digests each stored value the same way.
+#[must_use]
+pub fn recorded_digest(value: &Value) -> Digest {
+    Digest::of(&value.canonical_bytes())
+}
+
+/// The longest name a driver may ask about.
+const LONGEST_RECORDED_NAME: usize = 64;
 
 /// What the handle remembers of the context a `Prepared` was made in.
 #[derive(Debug, Clone, Copy)]
@@ -168,7 +214,80 @@ impl Prepared {
         Self {
             state: Box::new(state),
             guard: None,
+            recorded: Values::new(),
+            others: None,
         }
+    }
+
+    /// Asks the engine, within a step, whether any other record of this
+    /// operation, in any run of this workspace, holds `value` under `name`
+    /// among the values it recorded before its save: a message a take
+    /// already holds, a sequence another record recorded. Bounded: one
+    /// name of lowercase letters, digits, and underscores, at most 64
+    /// characters; one plain value, compared by its [`recorded_digest`];
+    /// an answer by `deadline`. The answer is [`RecordedElsewhere::CannotTell`]
+    /// outside `act`, through a handle the engine called without an
+    /// answerer ([`DriverHandle::act`], [`DriverHandle::act_recorded`]), for
+    /// a malformed name, a null, a list, a record, or a masked value, and
+    /// when the time runs out. A driver never takes it for "not held".
+    ///
+    /// The future holds nothing of the `Prepared`, so a driver may await it
+    /// while it holds its own state.
+    pub fn recorded_elsewhere(
+        &self,
+        name: &str,
+        value: &Value,
+        deadline: Deadline,
+    ) -> BoxFuture<'static, RecordedElsewhere> {
+        let named = !name.is_empty()
+            && name.len() <= LONGEST_RECORDED_NAME
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        let plain = match value {
+            Value::Null | Value::List(_) | Value::Record(_) => false,
+            Value::Text(text) => !text.contains(a2m_core::REDACTED),
+            _ => true,
+        };
+        let asked = match &self.others {
+            Some((others, asking)) if named && plain => Some((
+                Arc::clone(others),
+                *asking,
+                name.to_owned(),
+                recorded_digest(value),
+            )),
+            _ => None,
+        };
+        Box::pin(async move {
+            let Some((others, asking, name, digest)) = asked else {
+                return RecordedElsewhere::CannotTell;
+            };
+            match tokio::time::timeout_at(deadline.at(), others.holding(&name, digest)).await {
+                // The asking record is never "another" record.
+                Ok(RecordedElsewhere::Held(record)) if Some(record) == asking => {
+                    RecordedElsewhere::CannotTell
+                }
+                Ok(answer) => answer,
+                Err(_) => RecordedElsewhere::CannotTell,
+            }
+        })
+    }
+
+    /// What the earlier steps of the record this step belongs to returned
+    /// in [`Observed::for_reconcile`], by name: within a pass, and on a
+    /// resume what the engine stored before the record's commit point. A
+    /// read-back, a lookup, or a reconcile read uses it to find the record
+    /// by a message id, a log position, a file's digest, or a frame built
+    /// before the save. Empty for a step of no record, and for a record
+    /// whose steps recorded nothing.
+    ///
+    /// The handle sets it for each step, just before the driver's `act` is
+    /// called, and empties it after; outside `act` it is empty. A driver
+    /// that holds its state borrowed reads this first.
+    #[must_use]
+    pub fn recorded(&self) -> &Values {
+        &self.recorded
     }
 
     /// The driver's state, when it is a `T`.
@@ -184,9 +303,12 @@ impl Prepared {
     /// The `Prepared` itself, when its state is not a `T`.
     pub fn into_state<T: Any>(self) -> Result<Box<T>, Self> {
         let guard = self.guard;
-        self.state
-            .downcast::<T>()
-            .map_err(|state| Self { state, guard })
+        self.state.downcast::<T>().map_err(|state| Self {
+            state,
+            guard,
+            recorded: Values::new(),
+            others: None,
+        })
     }
 }
 
@@ -203,7 +325,9 @@ pub struct StepInput<'a> {
     pub args: &'a Values,
     /// The commit point the step belongs to, when it belongs to one.
     pub record: Option<RecordRef>,
-    /// The record's key, when it is known.
+    /// The record's key in the system: from its key inputs, or the key the
+    /// system assigned. `None` while the record has none; never the
+    /// engine's own name for the record in a run (decision 0161).
     pub key: Option<&'a RecordKey>,
     /// The record's idempotency token: sent where the system takes an
     /// idempotency key, and the stamp for `stamped` identity.
@@ -212,8 +336,44 @@ pub struct StepInput<'a> {
     pub deadline: Deadline,
 }
 
+impl<'a> StepInput<'a> {
+    /// The input of a step of no record, with these arguments, to be done
+    /// by `deadline`. A caller that makes a `StepInput` makes it here, so
+    /// that a field the contract adds later does not break it.
+    #[must_use]
+    pub const fn new(args: &'a Values, deadline: Deadline) -> Self {
+        Self {
+            args,
+            record: None,
+            key: None,
+            stamp: None,
+            deadline,
+        }
+    }
+
+    /// The same input, for a step of this record, with its key in the
+    /// system and its stamp, when known.
+    #[must_use]
+    pub const fn for_record(
+        mut self,
+        record: RecordRef,
+        key: Option<&'a RecordKey>,
+        stamp: Option<&'a str>,
+    ) -> Self {
+        self.record = Some(record);
+        self.key = key;
+        self.stamp = stamp;
+        self
+    }
+}
+
 /// Something a step kept as evidence: a response, a screenshot, a file. It
 /// has passed the redactor before it left `act`.
+///
+/// One name is the contract's own: a capture named [`Capture::ACTING`], of
+/// the media type `application/json`, is how the step was done, an
+/// [`Acting`], which the engine puts in the step's trace record and does not
+/// keep as evidence. Make it with [`Capture::acting`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
     /// A short name, such as `response`.
@@ -222,6 +382,31 @@ pub struct Capture {
     pub media_type: String,
     /// Its bytes, already redacted.
     pub bytes: Vec<u8>,
+}
+
+impl Capture {
+    /// The name of the capture that says how a step was done.
+    pub const ACTING: &'static str = "acting";
+
+    /// The capture that says how the step was done: `means`, which the
+    /// trace's signature covers, so two runs that did the same thing give
+    /// the same signature; and `measured`, which it does not. Each detail's
+    /// name is the pack's own fixed word.
+    #[must_use]
+    pub fn acting(acting: &Acting) -> Self {
+        Self {
+            name: Self::ACTING.to_owned(),
+            media_type: "application/json".to_owned(),
+            // Two lists of names and texts always encode.
+            bytes: serde_json::to_vec(acting).unwrap_or_default(),
+        }
+    }
+
+    /// Whether this is the capture that says how the step was done.
+    #[must_use]
+    pub fn is_acting(&self) -> bool {
+        self.name == Self::ACTING && self.media_type == "application/json"
+    }
 }
 
 /// What a step observed.
@@ -237,6 +422,19 @@ pub struct Observed {
     pub for_reconcile: Values,
     /// Evidence, already redacted.
     pub captures: Vec<Capture>,
+}
+
+impl Observed {
+    /// How the step was done, from its [`Capture::ACTING`] capture; `None`
+    /// when it has none, or when that capture is not an [`Acting`] once the
+    /// redactor has passed over it.
+    #[must_use]
+    pub fn acting(&self) -> Option<Acting> {
+        self.captures
+            .iter()
+            .find(|capture| capture.is_acting())
+            .and_then(|capture| serde_json::from_slice(&capture.bytes).ok())
+    }
 }
 
 /// How a step ended when it did not fail.
@@ -296,6 +494,16 @@ impl StepFailure {
             failure,
             sent: Sent::Unknown,
         }
+    }
+
+    /// The same failure with what the system itself said: its validation
+    /// message, the name of the constraint it broke. Bounded, redacted by
+    /// the handle, and carried to the run's failure as untrusted data, kept
+    /// apart from the sentence (see [`Failure::with_said`]).
+    #[must_use]
+    pub fn with_said(mut self, said: impl AsRef<str>) -> Self {
+        self.failure = self.failure.with_said(said);
+        self
     }
 }
 
@@ -407,6 +615,10 @@ pub(crate) struct HandleFacts {
     pub mode: Mode,
     pub archetype: Archetype,
     pub steps: BTreeSet<StepKind>,
+    /// The kinds of step that always save.
+    pub commit_steps: BTreeSet<StepKind>,
+    /// The kinds of step whose "absent" is authoritative.
+    pub absence_steps: BTreeSet<StepKind>,
     pub codes: BTreeMap<FailureCode, FailureClass>,
     pub choice: ProviderChoice,
     pub supervisor: ScopedSupervisor,
@@ -471,6 +683,18 @@ impl DriverHandle {
         &self.facts.choice
     }
 
+    /// Whether "absent" from these steps proves that a record is not there:
+    /// true only when there is at least one step and the mode's manifest
+    /// states every one of their kinds in `absence_steps` (decision 0185).
+    /// A lookup of other steps, or none, proves nothing by finding nothing.
+    #[must_use]
+    pub fn proves_absence(&self, steps: &[Step]) -> bool {
+        !steps.is_empty()
+            && steps
+                .iter()
+                .all(|step| !step.commits && self.facts.absence_steps.contains(&step.kind))
+    }
+
     /// The supervisor to put in the [`PrepareContext`]: it starts only the
     /// programs the provider's manifest declares, and, when the manifest
     /// says `plan_programs`, those of `plan_programs`, which the engine
@@ -531,6 +755,63 @@ impl DriverHandle {
         input: &StepInput<'_>,
         authority: Authority<'_>,
     ) -> Result<StepOutcome, StepFailure> {
+        self.act_recorded(prepared, step, input, authority, &Values::new())
+            .await
+    }
+
+    /// As [`DriverHandle::act`], with what the record's earlier steps
+    /// recorded, which the driver reads through [`Prepared::recorded`]
+    /// while it acts.
+    ///
+    /// # Errors
+    ///
+    /// As [`DriverHandle::act`].
+    pub async fn act_recorded(
+        &self,
+        prepared: &mut Prepared,
+        step: &Step,
+        input: &StepInput<'_>,
+        authority: Authority<'_>,
+        recorded: &Values,
+    ) -> Result<StepOutcome, StepFailure> {
+        prepared.recorded = recorded.clone();
+        let result = self.act_checked(prepared, step, input, authority).await;
+        prepared.recorded = Values::new();
+        result
+    }
+
+    /// As [`DriverHandle::act_recorded`], with the engine's answerer for
+    /// the question whether another record holds a value, which the driver
+    /// asks through [`Prepared::recorded_elsewhere`] while it acts, for this
+    /// step and its record alone (decision 0193).
+    ///
+    /// # Errors
+    ///
+    /// As [`DriverHandle::act`].
+    pub async fn act_asking(
+        &self,
+        prepared: &mut Prepared,
+        step: &Step,
+        input: &StepInput<'_>,
+        authority: Authority<'_>,
+        recorded: &Values,
+        others: Arc<dyn OtherRecords>,
+    ) -> Result<StepOutcome, StepFailure> {
+        prepared.others = Some((others, input.record));
+        let result = self
+            .act_recorded(prepared, step, input, authority, recorded)
+            .await;
+        prepared.others = None;
+        result
+    }
+
+    async fn act_checked(
+        &self,
+        prepared: &mut Prepared,
+        step: &Step,
+        input: &StepInput<'_>,
+        authority: Authority<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
         if !self.facts.steps.contains(&step.kind) {
             return Err(refused(codes::unknown_variant(
                 codes::STEP_KIND_UNKNOWN,
@@ -543,6 +824,18 @@ impl DriverHandle {
         }
         if step.commits {
             self.may_commit(prepared, input, authority)?;
+        } else if self.facts.commit_steps.contains(&step.kind) {
+            // The mode says a step of this kind always saves. Sent as a
+            // step that commits nothing, it would be a write with no intent
+            // stored and no token, on the word of whoever built the step.
+            return Err(refused(codes::policy(
+                codes::INTENT_MISSING,
+                format!(
+                    "A `{}` step always commits in the mode `{}`, and was sent as a step that commits nothing.",
+                    step.kind, self.facts.mode
+                ),
+                "Mark the step as the binding's commit point, so that its intent is stored first.",
+            )));
         }
         let result = self.driver.act(prepared, step, input).await;
         match result {
@@ -569,7 +862,33 @@ impl DriverHandle {
                     "Read the record back; then report this to the provider's author.",
                 )))
             }
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => Ok(self.redacted(outcome)),
+        }
+    }
+
+    /// The backstop of rule 4. A driver redacts what it returns; whatever
+    /// it missed is redacted here, with the same redactor, before the
+    /// outcome reaches the engine: every text in the values, in the values
+    /// for reconcile, in a capture's name, and in a capture whose bytes are
+    /// text. Bytes that are not text cannot be searched and pass as the
+    /// driver left them.
+    fn redacted(&self, outcome: StepOutcome) -> StepOutcome {
+        let clean = |mut observed: Observed| {
+            observed.values = self.redact.redact_values(&observed.values);
+            observed.for_reconcile = self.redact.redact_values(&observed.for_reconcile);
+            for capture in &mut observed.captures {
+                capture.name = self.redact.redact(&capture.name);
+                if let Ok(text) = std::str::from_utf8(&capture.bytes)
+                    && self.redact.contains_secret(text)
+                {
+                    capture.bytes = self.redact.redact(text).into_bytes();
+                }
+            }
+            observed
+        };
+        match outcome {
+            StepOutcome::Done(observed) => StepOutcome::Done(clean(observed)),
+            StepOutcome::Absent(observed) => StepOutcome::Absent(clean(observed)),
         }
     }
 
@@ -629,15 +948,16 @@ impl DriverHandle {
     }
 
     /// Redacts a driver's failure, refuses a code nothing declares, and
-    /// fixes the class of a doubtful write.
+    /// fixes the class of a write that was sent and is not settled.
     fn checked_failure(&self, failure: StepFailure, step: Option<&Step>) -> StepFailure {
-        let StepFailure { failure, sent } = failure;
+        let StepFailure { failure, mut sent } = failure;
         let mut failure = self.redact.redact_failure(&failure);
-        let declared = self.facts.codes.get(failure.code()) == Some(&failure.class())
-            || step.is_some_and(|step| {
-                step.fails_as.class == failure.class() && step.fails_as.code == *failure.code()
-            })
-            || is_contract_code(failure.class(), failure.code());
+        let declared = !codes::is_kernel_only(failure.code())
+            && (self.facts.codes.get(failure.code()) == Some(&failure.class())
+                || step.is_some_and(|step| {
+                    step.fails_as.class == failure.class() && step.fails_as.code == *failure.code()
+                })
+                || is_contract_code(failure.class(), failure.code()));
         if !declared {
             failure = codes::unknown_variant(
                 codes::UNDECLARED_CODE,
@@ -650,13 +970,31 @@ impl DriverHandle {
                 "Report this to the provider's author; every failure code is declared in the manifest.",
             );
         }
-        if sent == Sent::Unknown && step.is_some_and(|step| step.commits) {
+        // A write that was sent is settled only by the system's own
+        // verdict. Where nothing says what became of it, it is in doubt.
+        // `policy` and `input` say that nothing was sent: the kernel
+        // releases a record's lock on them without reading the record. On a
+        // committing step that did leave they are not a verdict of the
+        // system, so the write is in doubt as well. `stale` stays: there
+        // the system answered that the record had changed and nothing was
+        // written.
+        let in_doubt = step.is_some_and(|step| step.commits)
+            && match sent {
+                Sent::NotSent => false,
+                Sent::Unknown => true,
+                Sent::Answered => {
+                    matches!(failure.class(), FailureClass::Policy | FailureClass::Input)
+                }
+            };
+        if in_doubt {
+            sent = Sent::Unknown;
             failure = Failure::new(
                 FailureClass::PossibleCommit,
                 codes::NO_CONFIRMATION,
                 failure.message().to_owned(),
                 "Reconcile the record: read it back before anything is written again.",
-            );
+            )
+            .carrying_said(&failure);
         }
         StepFailure { failure, sent }
     }

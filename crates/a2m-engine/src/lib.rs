@@ -23,6 +23,7 @@ mod compare;
 mod control;
 mod diff;
 mod engine;
+mod guard;
 mod job;
 mod loaded;
 mod run;
@@ -36,13 +37,16 @@ pub use a2m_provider::BoxFuture;
 
 pub use compare::Comparison;
 pub use control::{
-    Clearance, Control, EngineEvent, Evidence, GuardQuestion, PassedOver, Preview, SessionWant,
+    Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
+    SessionWant,
 };
-pub use diff::{Diff, DiffAction, DiffCounts, DiffField, DiffRecord};
-pub use engine::{Engine, EngineDeps, EngineSettings};
+pub use diff::{
+    Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord, NOW_CANNOT_BE_READ,
+};
+pub use engine::{Engine, EngineDeps, EngineSettings, ExclusiveNeed};
 pub use job::{
     Conditions, Directive, JobKind, JobOutcome, JobSpec, KernelHealth, LeaseClock, Parallelism,
     RecordSnapshot, RunSnapshot, ToolRef,
 };
-pub use loaded::CURRENT;
+pub use loaded::{CURRENT, RECORD};
 pub use values::{decode_values, encode_values};

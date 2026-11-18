@@ -106,7 +106,21 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
         ("identifier", text(true, Whitespace::Trim)),
         ("url", text(true, Whitespace::Trim)),
         ("file", text(true, Whitespace::Exact)),
+        (UNTRUSTED_TEXT, text(true, Whitespace::Collapse)),
     ]
+}
+
+/// The built-in field type of free text that came from the system: `text`,
+/// marked untrusted. A drafting rule types such an output with it, so that
+/// a drafted read marks what the system said without a `types.yaml`.
+pub const UNTRUSTED_TEXT: &str = "untrusted_text";
+
+/// What a built-in field type states beside its rule.
+pub(crate) fn built_in_labels(name: &str) -> Labels {
+    Labels {
+        untrusted: name == UNTRUSTED_TEXT,
+        ..Labels::default()
+    }
 }
 
 /// The offset from UTC, in minutes, of a zone the expression library can
@@ -526,5 +540,20 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert!(plan.normalizer.is_some(), "{name}");
         }
+    }
+
+    #[test]
+    fn of_the_built_in_field_types_only_untrusted_text_is_marked_untrusted() {
+        let mut exprs = ExprTable::default();
+        let marked: Vec<&str> = built_ins()
+            .into_iter()
+            .filter(|(name, rule)| {
+                plan_of(name, rule, super::built_in_labels(name), &mut exprs)
+                    .unwrap()
+                    .untrusted
+            })
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(marked, [super::UNTRUSTED_TEXT]);
     }
 }

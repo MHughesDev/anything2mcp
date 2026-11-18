@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use a2m_core::LintCode;
+use a2m_core::{LintCode, ValueType};
 use a2m_files::{CompileMode, Diagnostic, Level, LintRule, Located, ResolvedView, Stage};
 
 use crate::channel::{code, problem};
@@ -97,5 +97,218 @@ impl LintRule for ConsumersUnknown {
                 )
             })
             .collect()
+    }
+}
+
+/// Whether a value of this type is, or holds, text.
+fn holds_text(ty: &ValueType) -> bool {
+    match ty {
+        ValueType::Text => true,
+        ValueType::List(of) => holds_text(of),
+        ValueType::Record(fields) => fields.iter().any(|field| holds_text(&field.ty)),
+        _ => false,
+    }
+}
+
+/// Text a broker returns reaches a caller only as untrusted text.
+///
+/// Every value of the mode is a broker's: a message another producer
+/// wrote, or the broker's own words about one. So every output of an
+/// operation bound through the mode that is or holds text must be of a
+/// field type marked untrusted. One kind of text is not free: a field the
+/// channel's schema holds to an `enum`, because the driver refuses a
+/// message whose field holds anything else.
+pub(crate) struct UntrustedUnmarked;
+
+impl LintRule for UntrustedUnmarked {
+    fn code(&self) -> LintCode {
+        code("untrusted_unmarked")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let channels = view.entries(&CHANNEL, &BROKER);
+        let schemas = view.entries(&MESSAGE_SCHEMA, &BROKER);
+        // Whether the schema of a channel holds a field to listed texts.
+        let listed = |channel: &str, field: &str| {
+            channels
+                .iter()
+                .find(|doc| doc.text("channel") == Some(channel))
+                .and_then(|doc| doc.text("schema"))
+                .and_then(|name| schemas.iter().find(|doc| doc.text("schema") == Some(name)))
+                .and_then(|doc| doc.get("properties"))
+                .and_then(|properties| properties.get(field))
+                .and_then(|rule| rule.get("enum"))
+                .is_some_and(|texts| !texts.items().is_empty())
+        };
+        let mut found = Vec::new();
+        for operation in view.operations() {
+            let bound: Vec<&str> = operation
+                .doc()
+                .get("bindings")
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .filter(|binding| binding.text("mode") == Some(PACK))
+                .map(|binding| binding.text("channel").unwrap_or_default())
+                .collect();
+            if bound.is_empty() {
+                continue;
+            }
+            for output in operation
+                .doc()
+                .get("outputs")
+                .map(Located::entries)
+                .unwrap_or_default()
+            {
+                let name = output.key.value.as_str();
+                let text = operation
+                    .outputs()
+                    .iter()
+                    .find(|plan| plan.name == name)
+                    .is_some_and(|plan| holds_text(&plan.ty));
+                let marked = output
+                    .value
+                    .text("type")
+                    .and_then(|field_type| view.target().field_type(field_type))
+                    .is_some_and(|field_type| field_type.plan.untrusted);
+                if text && !marked && !bound.iter().all(|channel| listed(channel, name)) {
+                    found.push(problem(
+                        "untrusted_unmarked",
+                        Stage::Lint,
+                        &output.key.at,
+                        format!(
+                            "The output `{name}` is text, and text a broker returns is untrusted: its field type is not marked untrusted, and the channel's schema does not hold the field to an `enum`."
+                        ),
+                        "Give the output a field type with `untrusted: true`, or list the texts the field may hold under `enum` in the channel's schema.",
+                    ));
+                }
+            }
+        }
+        found
+    }
+}
+
+/// A channel states only what the wire protocol of its surface can carry.
+/// Checked here because a channel's own file kind does not see its surface.
+pub(crate) struct ProtocolUnfit;
+
+impl LintRule for ProtocolUnfit {
+    fn code(&self) -> LintCode {
+        code("protocol_unfit")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "A channel states only what the wire protocol its surface speaks can carry."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        use crate::nats_wire::{self, Place};
+
+        let target = view.target();
+        let brokers: Vec<_> = target
+            .surfaces()
+            .into_iter()
+            .filter(|surface| surface.kind == &BROKER)
+            .collect();
+        let mut problems = Vec::new();
+        for doc in view.entries(&CHANNEL, &BROKER) {
+            let surface = match doc.text("surface") {
+                Some(name) => brokers.iter().find(|s| s.name.as_str() == name),
+                None => brokers.first(),
+            };
+            if surface.and_then(|s| s.doc.text("protocol")) != Some(nats_wire::NAME) {
+                continue;
+            }
+            let mut wrong = |at: &a2m_files::Place, message: &str, fix: &str| {
+                problems.push(problem("protocol_unfit", Stage::Lint, at, message, fix));
+            };
+            let at = |key: &str| doc.get(key).map_or(&doc.at, |field| &field.at);
+            let shape = doc.text("shape").unwrap_or_default();
+            let topic = shape == "topic";
+            match nats_wire::place(doc.text("address").unwrap_or_default()) {
+                Err(why) => wrong(
+                    at("address"),
+                    &format!("The protocol `nats` cannot name this address: {why}."),
+                    "Write `STREAM/subject` for a stream, or a subject for a topic.",
+                ),
+                Ok(Place::Stream { .. }) if topic => wrong(
+                    at("address"),
+                    "A topic of the protocol `nats` is a subject no stream keeps, and this address names a stream.",
+                    "Write the subject alone, or correct `shape`.",
+                ),
+                Ok(Place::Topic { .. }) if !topic => wrong(
+                    at("address"),
+                    "A channel that keeps messages is a stream of the protocol `nats`, and this address names none.",
+                    "Write `STREAM/subject`: the stream's name, a `/`, and the subject its messages are published on.",
+                ),
+                Ok(_) => {}
+            }
+            if let Some(name) = doc.text("subscription") {
+                if topic {
+                    wrong(
+                        at("subscription"),
+                        "A topic of the protocol `nats` has no named subscription.",
+                        "Remove `subscription`: a wait on a topic reads through a subscription the server discards with the connection.",
+                    );
+                } else if !nats_wire::is_name(name) {
+                    wrong(
+                        at("subscription"),
+                        "A consumer's name holds no space, `.`, `*`, `>`, `/`, or `\\`.",
+                        "Write the consumer exactly as the server names it.",
+                    );
+                }
+            }
+            if shape == "queue"
+                && doc.text("ownership") == Some("runtime_owned")
+                && doc.text("subscription").is_none()
+            {
+                wrong(
+                    &doc.at,
+                    "A take on a work queue of the protocol `nats` pulls from a consumer a person made for the runtime, and this channel names none.",
+                    "Add `subscription:` with that consumer's name. The runtime never makes one on a queue.",
+                );
+            }
+            if let Some(idempotency) = doc.get("idempotency")
+                && idempotency
+                    .get("broker_dedupe")
+                    .and_then(Located::as_bool)
+                    .unwrap_or(false)
+            {
+                if topic {
+                    wrong(
+                        &idempotency.at,
+                        "A topic keeps nothing, so nothing refuses a repeated token.",
+                        "Write `broker_dedupe: false`.",
+                    );
+                }
+                if idempotency.text("header") != Some(nats_wire::MSG_ID) {
+                    wrong(
+                        &idempotency.at,
+                        "A stream of the protocol `nats` refuses a repeated token only in the header `Nats-Msg-Id`.",
+                        "Write `header: Nats-Msg-Id`.",
+                    );
+                }
+                if idempotency.get("window").is_none() {
+                    wrong(
+                        &idempotency.at,
+                        "A stream of the protocol `nats` remembers a token only within its duplicate window, and the file states none.",
+                        "Add `window:` with the stream's duplicate window, such as `2m`; the driver checks it against the stream.",
+                    );
+                }
+            }
+        }
+        problems
     }
 }

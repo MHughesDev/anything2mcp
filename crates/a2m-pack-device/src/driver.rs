@@ -1,36 +1,57 @@
 //! The `device` driver: one link, one request at a time.
 //!
 //! `prepare` opens the link. Each step then does one thing: `open`
-//! identifies the device against the step's map, `write_frame` sends one
-//! frame, `read_frame` reads its reply, and `expect` reads the reply in the
-//! form the map declares. A write is checked against its register's range
-//! before any frame is built, and a write frame that was sent and not
-//! clearly acknowledged is `possible_commit`. Nothing is retried.
+//! identifies the device against the step's map and the surface's serial,
+//! `build_frame` builds the frame of a write and gives its bytes out to be
+//! recorded, `write_frame` sends one frame, `read_frame` reads its reply,
+//! and `expect` reads the reply in the form the map declares. A write is
+//! checked against its register's range before any frame is built, its
+//! frame is recorded before the step that sends it, and a write frame that
+//! was sent and not clearly acknowledged is `possible_commit`. Nothing is
+//! retried.
+//!
+//! The driver holds its own lines, whatever the plan says: no frame but
+//! identification in the discovery posture, no write to a register with
+//! the hazard `physical`, no write to a device whose serial the surface
+//! does not declare, and no frame past the run's ceiling.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{Failure, FailureClass, FailureCode, Plan, Redact, Step, Value, Values};
+use a2m_core::{
+    Digest, Failure, FailureClass, FailureCode, Hazard, Plan, Redact, Step, Value, Values,
+};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codec::{self, Unwritable};
 use crate::codes;
 use crate::link::{self, Link, LinkError, OpenError, Refusal, Reply, Request, SendError};
-use crate::lower::{StepPayload, before_name};
+use crate::lower::{StepPayload, before_name, frame_name};
 use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, SECTION_FORMAT};
 use crate::names::{Names, PACK};
 
-/// The pace of a link whose map states none: the pack's settings.
+/// How long a reply may take when neither a map nor a setting says.
+pub(crate) const DEFAULT_REPLY_WITHIN_MS: u64 = 1000;
+/// The least time between two frames when neither a map nor a setting
+/// says: four frames a second at most.
+pub(crate) const DEFAULT_MIN_GAP_MS: u64 = 250;
+/// The most frames one run may send on one link when no setting says.
+pub(crate) const DEFAULT_MAX_FRAMES: u64 = 100;
+
+/// The pack's settings: the pace of a link whose map states none, and the
+/// most frames one run may send.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PaceDefaults {
+pub(crate) struct Limits {
     pub reply_within: Duration,
     pub min_gap: Duration,
+    pub max_frames: u32,
 }
 
 /// What a `device_link` surface states beside its address.
@@ -39,13 +60,25 @@ pub(crate) struct PaceDefaults {
 struct LinkFields {
     protocol: String,
     unit: u8,
+    /// The serial of the device that answers in each environment, by the
+    /// environment's name.
+    #[serde(default)]
+    serials: BTreeMap<String, String>,
 }
 
 /// The `device` driver.
 pub(crate) struct DeviceDriver {
     names: Arc<Names>,
     redact: Arc<dyn Redact>,
-    defaults: PaceDefaults,
+    defaults: Limits,
+}
+
+/// The frame of a write, built and given out to be recorded, and not sent
+/// yet.
+struct Staged {
+    register: String,
+    request: Request,
+    bytes: Vec<u8>,
 }
 
 /// A frame that was sent and whose reply has not been read.
@@ -69,6 +102,15 @@ struct LinkState {
     maps: BTreeMap<usize, MapSection>,
     /// The maps the device on this link was compared with.
     identified: BTreeSet<(usize, String)>,
+    /// The serial the surface declares for the device of the run's
+    /// environment. Every identification is compared with it, and nothing
+    /// is written where it is absent.
+    serial: Option<String>,
+    /// The write frame that was built and waits to be sent. While one
+    /// waits, no other frame is sent.
+    staged: Option<Staged>,
+    /// How many more frames this run may send on the link.
+    frames_left: u32,
     pending: Option<Pending>,
     unread: Option<Unread>,
     last_frame: Option<tokio::time::Instant>,
@@ -113,6 +155,94 @@ fn no_confirmation(what: &str) -> StepFailure {
     ))
 }
 
+fn read_only() -> StepFailure {
+    StepFailure::not_sent(fail(
+        FailureClass::Policy,
+        a2m_provider::codes::READ_ONLY_POSTURE,
+        "A write frame was asked for where nothing may be written.",
+        "Run the operation live, as a step that commits.",
+    ))
+}
+
+const fn may_write(posture: Posture) -> bool {
+    matches!(
+        posture,
+        Posture::Live | Posture::Sandbox { test_records: true }
+    )
+}
+
+fn budget_exceeded(what: &str) -> StepFailure {
+    StepFailure::not_sent(fail(
+        FailureClass::Policy,
+        codes::FRAME_BUDGET_EXCEEDED,
+        format!("{what} Nothing was sent."),
+        "Do the work in smaller runs, or raise the device pack's setting `max_frames_per_run`.",
+    ))
+}
+
+/// The bytes a hexadecimal text stands for, or `None` when it is not one.
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.is_ascii() || !text.len().is_multiple_of(2) {
+        return None;
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
+}
+
+/// What the device holds, set beside what the frame recorded for the
+/// register would have written. It is evidence, in the register's raw
+/// layout, where the engine compares the normalized values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameCheck {
+    /// The device holds what the frame carried.
+    Matches,
+    /// The device holds something else.
+    Differs,
+    /// The recorded frame is not one this link's protocol reads back into
+    /// a write of this register.
+    Unreadable,
+}
+
+impl FrameCheck {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Matches => "matches",
+            Self::Differs => "differs",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// How a step was done, as the capture the trace takes. `means` is what the
+/// trace's signature covers: the kind of step, what it does, and the
+/// register it concerns. `measured` is what it does not.
+fn acting(step: &Step, payload: &StepPayload, framed: bool, measured: Vec<Detail>) -> Capture {
+    let (what, register) = match payload {
+        StepPayload::Identify => ("identify", None),
+        StepPayload::Report => ("report", None),
+        StepPayload::AskRead { register } => ("ask_read", Some(register)),
+        StepPayload::Build { register, .. } => ("build", Some(register)),
+        StepPayload::Write { register, .. } => ("write", Some(register)),
+        StepPayload::Reply => ("reply", None),
+        StepPayload::Value { register, .. } => ("value", Some(register)),
+        StepPayload::Before { register } => ("before", Some(register)),
+        StepPayload::Acknowledged => ("acknowledged", None),
+    };
+    let mut means = vec![
+        Detail::new("step", step.kind.as_str()),
+        Detail::new("does", what),
+    ];
+    if let Some(register) = register {
+        means.push(Detail::new("register", register.as_str()));
+    }
+    if framed {
+        means.push(Detail::new("compared_with", "recorded_frame"));
+    }
+    Capture::acting(&Acting { means, measured })
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, byte| {
@@ -122,7 +252,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl DeviceDriver {
-    pub fn new(names: Arc<Names>, redact: Arc<dyn Redact>, defaults: PaceDefaults) -> Self {
+    pub fn new(names: Arc<Names>, redact: Arc<dyn Redact>, defaults: Limits) -> Self {
         Self {
             names,
             redact,
@@ -202,18 +332,76 @@ impl LinkState {
             .ok_or_else(|| plan_unreadable("a step names a register its map does not hold"))
     }
 
-    /// Waits until the gap since the last frame has passed, then sends.
-    async fn send(
-        &mut self,
-        request: Request,
-        gap: Duration,
-        within: Duration,
-    ) -> Result<(), StepFailure> {
+    /// What every frame passes before it is built, whatever step asks for
+    /// it: the posture, the order of frames, and the run's ceiling.
+    fn may_send(&self, request: &Request) -> Result<(), StepFailure> {
+        if request.is_write() && !may_write(self.posture) {
+            return Err(read_only());
+        }
+        // Discovery asks a device what it is, and nothing else: a read is
+        // not always without effect on a device.
+        if self.posture == Posture::Discovery && *request != Request::Identify {
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::Policy,
+                codes::DISCOVERY_IDENTIFIES_ONLY,
+                "A frame other than identification was asked for during discovery, so nothing was sent.",
+                "Read a register through an operation, in a run that is not discovery.",
+            )));
+        }
         if self.pending.is_some() {
             return Err(plan_unreadable(
                 "a frame is sent while another still waits for its reply",
             ));
         }
+        if self.staged.is_some() {
+            return Err(plan_unreadable(
+                "a frame is sent while a write frame that was built still waits to be sent",
+            ));
+        }
+        if self.frames_left == 0 {
+            return Err(budget_exceeded(
+                "The run reached the most frames it may send on a device link.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Builds the frame for a request. Nothing is sent.
+    fn frame(&mut self, request: &Request) -> Result<Vec<u8>, StepFailure> {
+        let Some(link) = self.link.as_mut() else {
+            return Err(link_lost_before());
+        };
+        link.frame(request)
+            .ok_or_else(|| plan_unreadable("the link's protocol cannot carry a request"))
+    }
+
+    /// Builds the frame of a request that reads or identifies, and sends
+    /// it.
+    async fn ask(
+        &mut self,
+        request: Request,
+        gap: Duration,
+        within: Duration,
+    ) -> Result<(), StepFailure> {
+        if request.is_write() {
+            return Err(plan_unreadable(
+                "a write frame is sent that no step built and recorded first",
+            ));
+        }
+        self.may_send(&request)?;
+        let bytes = self.frame(&request)?;
+        self.send(request, bytes, gap, within).await
+    }
+
+    /// Waits until the gap since the last frame has passed, then sends the
+    /// frame. The caller passed [`LinkState::may_send`] first.
+    async fn send(
+        &mut self,
+        request: Request,
+        bytes: Vec<u8>,
+        gap: Duration,
+        within: Duration,
+    ) -> Result<(), StepFailure> {
         let Some(link) = self.link.as_mut() else {
             return Err(link_lost_before());
         };
@@ -221,10 +409,15 @@ impl LinkState {
             tokio::time::sleep_until(last + gap).await;
         }
         let write = request.is_write();
-        match link.send(&request, within).await {
-            Ok(sent) => {
+        // A frame counts from the moment its first byte may leave.
+        self.frames_left = self.frames_left.saturating_sub(1);
+        match link.send(&bytes, within).await {
+            Ok(()) => {
                 self.last_frame = Some(tokio::time::Instant::now());
-                self.pending = Some(Pending { request, sent });
+                self.pending = Some(Pending {
+                    request,
+                    sent: bytes,
+                });
                 Ok(())
             }
             Err(SendError::NotSent) => {
@@ -374,7 +567,7 @@ impl DeviceDriver {
     ) -> Result<(BTreeMap<String, String>, Capture), StepFailure> {
         let within = reply_within.min(input.deadline.remaining());
         state
-            .send(Request::Identify, self.defaults.min_gap, within)
+            .ask(Request::Identify, self.defaults.min_gap, within)
             .await?;
         state.receive(within).await?;
         let (unread, reply) = state.answer()?;
@@ -451,6 +644,18 @@ impl DeviceDriver {
                 "reports a firmware version that is not on the list of",
             ));
         }
+        // The unit, not only its model: a map proven on one device must
+        // not drive another of the same model that answers at the address.
+        if let Some(declared) = &state.serial
+            && found.get("serial") != Some(declared)
+        {
+            return Err(StepFailure::answered(fail(
+                FailureClass::UnknownVariant,
+                codes::DEVICE_IDENTITY_MISMATCH,
+                "The device on this link does not report the serial its surface declares for this environment: it is another unit, so nothing is read from it or written to it.",
+                "Check the surface's address in this environment. If the unit was replaced, prove the map against the new unit in a test environment and declare its serial under `serials:`.",
+            )));
+        }
         state.identified.insert(key);
         Ok(StepOutcome::Done(Observed {
             captures: vec![capture],
@@ -478,6 +683,127 @@ impl DeviceDriver {
         gap.max(by_rate)
     }
 
+    /// The request that writes one argument to a register, after every
+    /// check a write passes before a frame is built: the register is one
+    /// the device was compared with, it may be written, its hazard is one
+    /// whose writes are built, the unit is the one the surface declares,
+    /// and the value is inside its range, twice.
+    fn write_request(
+        state: &LinkState,
+        step: &Step,
+        input: &StepInput<'_>,
+        register: &str,
+        arg: &str,
+    ) -> Result<(Request, MapPlan), StepFailure> {
+        let (found, map) = state.register(step, register)?;
+        if !found.access.writable() {
+            return Err(plan_unreadable(
+                "a step writes a register its map declares read-only",
+            ));
+        }
+        match found.hazard {
+            None => {
+                return Err(plan_unreadable(
+                    "a step writes a register that declares no hazard",
+                ));
+            }
+            // The compiler refuses such a binding. A plan is data, and a
+            // write that moves something is refused here too, until
+            // `confirm_by`, the safe state, and link-loss handling are
+            // built.
+            Some(Hazard::Physical) => {
+                return Err(StepFailure::not_sent(fail(
+                    FailureClass::UnknownVariant,
+                    codes::PHYSICAL_NOT_BUILT,
+                    format!(
+                        "The register `{register}` has the hazard `physical`, and a write that moves, heats, or opens something is not built. No frame was sent."
+                    ),
+                    "Leave this operation out until `confirm_by` and the safe-state operation are built.",
+                )));
+            }
+            Some(_) => {}
+        }
+        if state.serial.is_none() {
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::Policy,
+                codes::DEVICE_SERIAL_NOT_DECLARED,
+                "The surface declares no serial for the device of this environment, so nothing is written to it. No frame was sent.",
+                "Declare the unit's serial for this environment under `serials:` on the surface, after proving the map against that unit.",
+            )));
+        }
+        let value = input.args.get(arg).filter(|value| !value.is_null());
+        let request = value
+            .ok_or(Unwritable::WrongKind)
+            .and_then(|value| codec::write_request(&found, value))
+            .map_err(|unwritable| {
+                StepFailure::not_sent(match unwritable {
+                    Unwritable::WrongKind => fail(
+                        FailureClass::Input,
+                        codes::SCHEMA_INVALID,
+                        format!("The value for the register `{register}` is absent or is not of the kind the register takes. No frame was sent."),
+                        "Give a value of the register's field type.",
+                    ),
+                    Unwritable::OutOfRange => fail(
+                        FailureClass::Input,
+                        codes::VALUE_OUT_OF_RANGE,
+                        format!("The value for the register `{register}` is outside the safe range its map declares. No frame was sent."),
+                        "Give a value inside the register's range.",
+                    ),
+                    Unwritable::NotRepresentable => fail(
+                        FailureClass::Input,
+                        codes::VALUE_OUT_OF_RANGE,
+                        format!("The value for the register `{register}` is not a whole number of the register's steps, or is more than it can hold. No frame was sent."),
+                        "Give a value the register can hold exactly; nothing is rounded on the way to a device.",
+                    ),
+                })
+            })?;
+        Ok((request, map))
+    }
+
+    /// Builds the frame of a write and gives its bytes out, so that they
+    /// are recorded before the step that sends them. Nothing is sent.
+    fn build_frame(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        input: &StepInput<'_>,
+        register: &str,
+        arg: &str,
+        reads_after: u32,
+    ) -> Result<StepOutcome, StepFailure> {
+        let (request, _) = Self::write_request(state, step, input, register, arg)?;
+        state.may_send(&request)?;
+        // A write that could not be read back afterwards is not started.
+        if state.frames_left <= reads_after {
+            return Err(budget_exceeded(
+                "The frames this run may still send on the device link would not cover the write and its read-back, so the write was not started.",
+            ));
+        }
+        let bytes = state.frame(&request)?;
+        let frame = self.redact.redact(&hex(&bytes));
+        let evidence = format!(
+            "{{\"digest\":\"{}\",\"frame\":\"{frame}\"}}",
+            Digest::of(&bytes)
+        );
+        let mut observed = Observed {
+            captures: vec![Capture {
+                name: "frame".to_owned(),
+                media_type: "application/json".to_owned(),
+                bytes: self.redact.redact(&evidence).into_bytes(),
+            }],
+            ..Observed::default()
+        };
+        observed
+            .for_reconcile
+            .insert(frame_name(register), Value::Text(frame));
+        state.staged = Some(Staged {
+            register: register.to_owned(),
+            request,
+            bytes,
+        });
+        Ok(StepOutcome::Done(observed))
+    }
+
     async fn write_frame(
         &self,
         state: &mut LinkState,
@@ -485,7 +811,7 @@ impl DeviceDriver {
         input: &StepInput<'_>,
         payload: &StepPayload,
     ) -> Result<StepOutcome, StepFailure> {
-        let (request, map) = match payload {
+        match payload {
             StepPayload::AskRead { register } => {
                 let (found, map) = state.register(step, register)?;
                 if !found.access.readable() || found.read_effect != ReadEffect::None {
@@ -493,65 +819,71 @@ impl DeviceDriver {
                         "a step reads a register that has nothing to read, or that reading changes",
                     ));
                 }
-                (codec::read_request(&found), map)
+                let within = self.reply_within(&map).min(input.deadline.remaining());
+                state
+                    .ask(codec::read_request(&found), self.gap(&map), within)
+                    .await?;
             }
             StepPayload::Write { register, arg } => {
-                if !step.commits
-                    || !matches!(
-                        state.posture,
-                        Posture::Live | Posture::Sandbox { test_records: true }
-                    )
-                {
-                    return Err(StepFailure::not_sent(fail(
-                        FailureClass::Policy,
-                        a2m_provider::codes::READ_ONLY_POSTURE,
-                        "A write frame was asked for where nothing may be written.",
-                        "Run the operation live, as a step that commits.",
-                    )));
+                if !step.commits || !may_write(state.posture) {
+                    return Err(read_only());
                 }
-                let (found, map) = state.register(step, register)?;
-                if !found.access.writable() {
-                    return Err(plan_unreadable(
-                        "a step writes a register its map declares read-only",
-                    ));
-                }
-                let value = input.args.get(arg).filter(|value| !value.is_null());
-                let request = value
-                    .ok_or(Unwritable::WrongKind)
-                    .and_then(|value| codec::write_request(&found, value))
-                    .map_err(|unwritable| {
-                        StepFailure::not_sent(match unwritable {
-                            Unwritable::WrongKind => fail(
-                                FailureClass::Input,
-                                codes::SCHEMA_INVALID,
-                                format!("The value for the register `{register}` is absent or is not of the kind the register takes. No frame was sent."),
-                                "Give a value of the register's field type.",
-                            ),
-                            Unwritable::OutOfRange => fail(
-                                FailureClass::Input,
-                                codes::VALUE_OUT_OF_RANGE,
-                                format!("The value for the register `{register}` is outside the safe range its map declares. No frame was sent."),
-                                "Give a value inside the register's range.",
-                            ),
-                            Unwritable::NotRepresentable => fail(
-                                FailureClass::Input,
-                                codes::VALUE_OUT_OF_RANGE,
-                                format!("The value for the register `{register}` is not a whole number of the register's steps, or is more than it can hold. No frame was sent."),
-                                "Give a value the register can hold exactly; nothing is rounded on the way to a device.",
-                            ),
-                        })
+                // Every check again, on the value this step was given.
+                let (request, map) = Self::write_request(state, step, input, register, arg)?;
+                // The frame sent is the frame that was recorded, or none.
+                let staged = state
+                    .staged
+                    .take()
+                    .filter(|staged| staged.register == *register && staged.request == request)
+                    .ok_or_else(|| {
+                        plan_unreadable(
+                            "a write frame is sent that was not built and recorded first, or whose value changed since",
+                        )
                     })?;
-                (request, map)
+                state.may_send(&request)?;
+                let within = self.reply_within(&map).min(input.deadline.remaining());
+                state
+                    .send(request, staged.bytes, self.gap(&map), within)
+                    .await?;
             }
             _ => {
                 return Err(plan_unreadable(
                     "a `write_frame` step holds no frame to send",
                 ));
             }
-        };
-        let within = self.reply_within(&map).min(input.deadline.remaining());
-        state.send(request, self.gap(&map), within).await?;
+        }
         Ok(StepOutcome::Done(Observed::default()))
+    }
+
+    /// What the register holds, against what the frame recorded for it
+    /// before the write would have written. `None` when no frame was
+    /// recorded for the register, which is every plain read.
+    fn frame_check(
+        state: &LinkState,
+        found: &RegisterPlan,
+        recorded: &Values,
+        register: &str,
+        held: &Value,
+    ) -> Option<FrameCheck> {
+        let frame = recorded.get(&frame_name(register))?;
+        let would_write = frame
+            .as_text()
+            .and_then(unhex)
+            .and_then(|bytes| state.link.as_ref()?.written(&bytes))
+            .and_then(|request| match request {
+                Request::WriteWords { offset, words } if offset == found.offset => {
+                    codec::decode(found, &Reply::Words(words))
+                }
+                Request::WriteBit { offset, on } if offset == found.offset => {
+                    codec::decode(found, &Reply::Bits(vec![on]))
+                }
+                _ => None,
+            });
+        Some(match would_write {
+            None => FrameCheck::Unreadable,
+            Some(value) if value == *held => FrameCheck::Matches,
+            Some(_) => FrameCheck::Differs,
+        })
     }
 
     fn expect(
@@ -559,6 +891,8 @@ impl DeviceDriver {
         state: &mut LinkState,
         step: &Step,
         payload: &StepPayload,
+        recorded: &Values,
+        measured: &mut Vec<Detail>,
     ) -> Result<StepOutcome, StepFailure> {
         let (unread, reply) = state.answer()?;
         let capture = self.capture(&unread.sent, &unread.reply);
@@ -581,11 +915,29 @@ impl DeviceDriver {
                     Some(reply) => codec::decode(&found, &reply).ok_or_else(unexpected)?,
                     None => return Err(unexpected()),
                 };
+                // A read after a write that recorded its frame: what the device
+                // holds is set beside what the frame carried. The verdict on
+                // the value is the engine's; this is evidence of it.
+                let checked = matches!(payload, StepPayload::Value { .. })
+                    .then(|| Self::frame_check(state, &found, recorded, register, &value))
+                    .flatten();
                 let value = self.redact.redact_value(&value);
                 let mut observed = Observed {
                     captures: vec![capture],
                     ..Observed::default()
                 };
+                if let Some(check) = checked {
+                    measured.push(Detail::new("frame_match", check.as_str()));
+                    let text = format!(
+                        "{{\"register\":\"{register}\",\"device_vs_frame\":\"{}\"}}",
+                        check.as_str()
+                    );
+                    observed.captures.push(Capture {
+                        name: "frame_check".to_owned(),
+                        media_type: "application/json".to_owned(),
+                        bytes: self.redact.redact(&text).into_bytes(),
+                    });
+                }
                 match payload {
                     StepPayload::Value { output, .. } => {
                         observed.values.insert(output.clone(), value);
@@ -650,6 +1002,9 @@ impl Driver for DeviceDriver {
                 .decode::<LinkFields>()
                 .map_err(|_| plan_unreadable("the surface does not state its protocol and unit"))?;
             let maps = self.maps(cx.plan)?;
+            // The unit this run means: the serial the surface declares for
+            // the run's environment.
+            let serial = fields.serials.get(cx.surface.environment.as_str()).cloned();
             let within = self.defaults.reply_within.min(cx.deadline.remaining());
             let link = link::open(&fields.protocol, &surface.address, fields.unit, within)
                 .await
@@ -679,6 +1034,9 @@ impl Driver for DeviceDriver {
                 link: Some(link),
                 maps,
                 identified: BTreeSet::new(),
+                serial,
+                staged: None,
+                frames_left: self.defaults.max_frames,
                 pending: None,
                 unread: None,
                 last_frame: None,
@@ -694,6 +1052,9 @@ impl Driver for DeviceDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
+            // What this record's earlier steps gave for reconcile: the frame
+            // of a write, and the value before it.
+            let recorded = prepared.recorded().clone();
             let state = prepared
                 .state::<LinkState>()
                 .ok_or_else(|| plan_unreadable("the link was not prepared by this driver"))?;
@@ -702,11 +1063,21 @@ impl Driver for DeviceDriver {
                 .decode::<StepPayload>()
                 .map_err(|_| plan_unreadable("a step's details do not decode"))?;
             let names = &self.names;
-            if step.kind == names.open {
+            let mut measured = Vec::new();
+            let outcome = if step.kind == names.open {
                 match payload {
                     StepPayload::Identify => self.open(state, step, input, false).await,
                     StepPayload::Report => self.open(state, step, input, true).await,
                     _ => Err(plan_unreadable("an `open` step opens nothing")),
+                }
+            } else if step.kind == names.build_frame {
+                match &payload {
+                    StepPayload::Build {
+                        register,
+                        arg,
+                        reads_after,
+                    } => self.build_frame(state, step, input, register, arg, *reads_after),
+                    _ => Err(plan_unreadable("a `build_frame` step builds no frame")),
                 }
             } else if step.kind == names.write_frame {
                 self.write_frame(state, step, input, &payload).await
@@ -723,12 +1094,30 @@ impl Driver for DeviceDriver {
                     .await?;
                 Ok(StepOutcome::Done(Observed::default()))
             } else if step.kind == names.expect {
-                self.expect(state, step, &payload)
+                self.expect(state, step, &payload, &recorded, &mut measured)
             } else {
                 Err(plan_unreadable(
                     "a step is of a kind this driver does not carry out",
                 ))
-            }
+            };
+            // How the step was done goes to the trace with what it returned.
+            let mut outcome = outcome?;
+            let framed = matches!(
+                &payload,
+                StepPayload::Value { register, .. } if recorded.get(&frame_name(register)).is_some()
+            );
+            measured.push(Detail::new(
+                "frames_sent",
+                self.defaults
+                    .max_frames
+                    .saturating_sub(state.frames_left)
+                    .to_string(),
+            ));
+            let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = &mut outcome;
+            observed
+                .captures
+                .push(acting(step, &payload, framed, measured));
+            Ok(outcome)
         })
     }
 
@@ -743,5 +1132,213 @@ impl Driver for DeviceDriver {
             drop(prepared);
             Cleanup::complete()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use a2m_core::{
+        FailsAs, FailureClass, NoSecrets, PackPayload, PackRef, SectionIndex, Step, StepKind,
+        Values,
+    };
+    use a2m_provider::{BoxFuture, Deadline, Driver, Posture, Prepared, StepInput};
+    use tokio::time::Instant;
+
+    use super::{DEFAULT_MAX_FRAMES, DEFAULT_MIN_GAP_MS, DeviceDriver, Limits, LinkState};
+    use crate::codes;
+    use crate::link::{Link, LinkError, Reply, Request, SendError};
+    use crate::lower::StepPayload;
+    use crate::map::{
+        Access, Data, MapPlan, MapSection, Pace, ReadEffect, RegisterPlan, Table, ValueKind,
+        WordOrder,
+    };
+    use crate::names::Names;
+
+    /// A link in memory that answers at once, and notes the moment each
+    /// frame left.
+    struct Timed(Arc<Mutex<Vec<Instant>>>);
+
+    impl Link for Timed {
+        fn frame(&mut self, request: &Request) -> Option<Vec<u8>> {
+            Some(vec![u8::from(request.is_write())])
+        }
+
+        fn send<'a>(
+            &'a mut self,
+            _frame: &'a [u8],
+            _within: Duration,
+        ) -> BoxFuture<'a, Result<(), SendError>> {
+            self.0.lock().unwrap().push(Instant::now());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(&mut self, _within: Duration) -> BoxFuture<'_, Result<Vec<u8>, LinkError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn interpret(&self, request: &Request, _reply: &[u8]) -> Option<Reply> {
+            Some(match request {
+                Request::Identify => Reply::Identity(BTreeMap::from([
+                    ("model".to_owned(), "example-controller".to_owned()),
+                    ("firmware_version".to_owned(), "1.0.0".to_owned()),
+                ])),
+                _ => Reply::Words(vec![7]),
+            })
+        }
+    }
+
+    fn map(pace: Pace) -> MapPlan {
+        MapPlan {
+            surface: "controller".to_owned(),
+            model: "example-controller".to_owned(),
+            firmware: vec!["1.0.0".to_owned()],
+            identify: vec!["model".to_owned(), "firmware_version".to_owned()],
+            pace,
+            registers: BTreeMap::from([(
+                "level".to_owned(),
+                RegisterPlan {
+                    table: Table::Input,
+                    offset: 1,
+                    data: Data::U16,
+                    words: 1,
+                    word_order: WordOrder::HighFirst,
+                    scale: None,
+                    kind: ValueKind::Int,
+                    access: Access::Read,
+                    range: None,
+                    hazard: None,
+                    read_effect: ReadEffect::None,
+                    confirm_by: None,
+                },
+            )]),
+            safe_state: None,
+            on_link_loss: None,
+        }
+    }
+
+    fn step(kind: &StepKind, payload: &StepPayload) -> Step {
+        Step {
+            kind: kind.clone(),
+            refers_to: Some(PackRef {
+                section: SectionIndex::new(0),
+                entry: "main".to_owned(),
+            }),
+            args: Vec::new(),
+            timeout_ms: 1000,
+            fails_as: FailsAs {
+                class: FailureClass::Transient,
+                code: codes::TIMEOUT,
+            },
+            commits: false,
+            lookup: false,
+            idempotent: false,
+            when: None,
+            payload: PackPayload::encode(payload).unwrap(),
+        }
+    }
+
+    /// Identifies the device and reads one register `reads` times, with
+    /// the gap between frames that `min_gap_ms` and the map's `pace` give.
+    /// Returns the moment each frame left.
+    async fn moments(min_gap_ms: u64, pace: Pace, reads: usize) -> Vec<Instant> {
+        let names = Arc::new(Names::new().unwrap());
+        let driver = DeviceDriver::new(
+            Arc::clone(&names),
+            Arc::new(NoSecrets),
+            Limits {
+                reply_within: Duration::from_secs(1),
+                min_gap: Duration::from_millis(min_gap_ms),
+                max_frames: u32::try_from(DEFAULT_MAX_FRAMES).unwrap(),
+            },
+        );
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut prepared = Prepared::new(LinkState {
+            link: Some(Box::new(Timed(Arc::clone(&sent)))),
+            maps: BTreeMap::from([(0, MapSection::from([("main".to_owned(), map(pace))]))]),
+            identified: BTreeSet::new(),
+            serial: None,
+            staged: None,
+            frames_left: u32::try_from(DEFAULT_MAX_FRAMES).unwrap(),
+            pending: None,
+            unread: None,
+            last_frame: None,
+            posture: Posture::Live,
+        });
+        let register = "level".to_owned();
+        let mut steps = vec![step(&names.open, &StepPayload::Identify)];
+        for _ in 0..reads {
+            steps.push(step(
+                &names.write_frame,
+                &StepPayload::AskRead {
+                    register: register.clone(),
+                },
+            ));
+            steps.push(step(&names.read_frame, &StepPayload::Reply));
+            steps.push(step(
+                &names.expect,
+                &StepPayload::Value {
+                    register: register.clone(),
+                    output: "level".to_owned(),
+                },
+            ));
+        }
+        let args = Values::new();
+        for step in &steps {
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(1)));
+            driver.act(&mut prepared, step, &input).await.unwrap();
+        }
+        sent.lock().unwrap().clone()
+    }
+
+    fn gaps(moments: &[Instant]) -> Vec<Duration> {
+        moments.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+
+    // The clock is the test's: it moves only when the driver waits on it,
+    // so each gap is exactly what the driver asked for.
+    #[tokio::test(start_paused = true)]
+    async fn a_map_with_no_pace_sends_four_frames_a_second_at_most() {
+        let quarter = Duration::from_millis(250);
+        assert_eq!(Duration::from_millis(DEFAULT_MIN_GAP_MS), quarter);
+
+        let left = moments(DEFAULT_MIN_GAP_MS, Pace::default(), 9).await;
+        assert_eq!(left.len(), 10);
+        assert_eq!(gaps(&left), vec![quarter; 9]);
+        // No second holds a fifth frame.
+        assert!(
+            left.windows(5)
+                .all(|five| five[4] - five[0] >= Duration::from_secs(1))
+        );
+
+        // A map's own pace: the larger of its gap and what its rate
+        // allows, whatever the setting says.
+        let slow = Pace {
+            min_gap_ms: Some(20),
+            reply_within_ms: None,
+            max_per_second: Some(2),
+        };
+        assert_eq!(
+            gaps(&moments(DEFAULT_MIN_GAP_MS, slow, 3).await),
+            vec![Duration::from_millis(500); 3]
+        );
+        let quick = Pace {
+            min_gap_ms: Some(20),
+            reply_within_ms: None,
+            max_per_second: None,
+        };
+        assert_eq!(
+            gaps(&moments(DEFAULT_MIN_GAP_MS, quick, 3).await),
+            vec![Duration::from_millis(20); 3]
+        );
+
+        // A person who knows the device can take more lowers the setting.
+        assert_eq!(
+            gaps(&moments(100, Pace::default(), 3).await),
+            vec![Duration::from_millis(100); 3]
+        );
     }
 }

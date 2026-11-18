@@ -99,6 +99,9 @@ pub struct Shape {
     items: Option<Box<Shape>>,
     /// How many names were left out at the limit.
     left_out: u64,
+    /// Whether an object's names were withheld because they read as
+    /// values: a dictionary's keys (decision 0195).
+    withheld: bool,
 }
 
 impl Shape {
@@ -147,6 +150,13 @@ impl Shape {
             Json::Object(fields) => {
                 shape.types.insert("object");
                 shape.objects = 1;
+                // An object with more names than a record has, or with a
+                // name that is not a plain one, is a dictionary: its names
+                // are values, and none is kept.
+                if !a2m_pack_web_browser::names_are_structure(fields.keys()) {
+                    shape.withheld = true;
+                    return shape;
+                }
                 let mut names: Vec<&String> = fields.keys().collect();
                 names.sort();
                 for name in names {
@@ -165,6 +175,80 @@ impl Shape {
         shape
     }
 
+    /// The shape of a JSON answer that only its names and the kinds of
+    /// their values were kept of, to one level inside an object or a
+    /// list's items, as the browser's observing tab records it: `outer`,
+    /// `outer.inner`, `[]`, and `[].name`. What is deeper is not known, and
+    /// a text is `text`, its form not seen.
+    #[must_use]
+    pub fn of_fields(fields: &BTreeMap<String, String>) -> Self {
+        fn kind(name: &str) -> &'static str {
+            match name {
+                "string" => "text",
+                "integer" => "integer",
+                "number" => "decimal",
+                "boolean" => "boolean",
+                "null" => "null",
+                "object" => "object",
+                "array" => "list",
+                _ => "mixed",
+            }
+        }
+        fn one(name: &str) -> Shape {
+            let mut shape = Shape::default();
+            let kind = kind(name);
+            shape.types.insert(kind);
+            if kind == "object" {
+                shape.objects = 1;
+            }
+            shape
+        }
+        fn object(fields: &BTreeMap<String, String>, prefix: &str) -> Shape {
+            let mut shape = Shape::default();
+            shape.types.insert("object");
+            shape.objects = 1;
+            for (name, value) in fields {
+                let Some(rest) = name.strip_prefix(prefix) else {
+                    continue;
+                };
+                match rest.split_once('.') {
+                    None if !rest.is_empty() => {
+                        let entry = shape
+                            .fields
+                            .entry(rest.to_owned())
+                            .or_insert_with(|| (Shape::default(), 1));
+                        let own = one(value);
+                        entry.0.types.extend(own.types);
+                        entry.0.objects = entry.0.objects.max(own.objects);
+                    }
+                    Some((outer, inner)) if !outer.is_empty() && !inner.is_empty() => {
+                        let entry = shape
+                            .fields
+                            .entry(outer.to_owned())
+                            .or_insert_with(|| (Shape::default(), 1));
+                        entry.0.objects = 1;
+                        entry.0.fields.insert(inner.to_owned(), (one(value), 1));
+                    }
+                    _ => {}
+                }
+            }
+            shape
+        }
+        match fields.get("[]") {
+            Some(items) => {
+                let mut shape = Self::default();
+                shape.types.insert("list");
+                let mut inner = object(fields, "[].");
+                if items != "object" {
+                    inner = one(items);
+                }
+                shape.items = Some(Box::new(inner));
+                shape
+            }
+            None => object(fields, ""),
+        }
+    }
+
     /// This shape and another observation of the same place, as one.
     #[must_use]
     pub fn merged(&self, other: &Self) -> Self {
@@ -172,6 +256,7 @@ impl Shape {
         out.types.extend(other.types.iter().copied());
         out.objects += other.objects;
         out.left_out += other.left_out;
+        out.withheld |= other.withheld;
         for (name, (shape, seen)) in &other.fields {
             match out.fields.get_mut(name) {
                 Some((mine, count)) => {
@@ -212,6 +297,15 @@ impl Shape {
             || self.items.as_ref().is_some_and(|items| items.cut())
     }
 
+    /// Whether the names of an object were withheld as a dictionary's,
+    /// anywhere in the shape.
+    #[must_use]
+    pub fn withheld(&self) -> bool {
+        self.withheld
+            || self.fields.values().any(|(shape, _)| shape.withheld())
+            || self.items.as_ref().is_some_and(|items| items.withheld())
+    }
+
     /// The shape as JSON: `type` is one name or a sorted list of names;
     /// an object has `fields`, each with `optional` when some observations
     /// lacked it; a list has `items`.
@@ -237,6 +331,9 @@ impl Shape {
         }
         if self.left_out > 0 {
             out.insert("left_out".to_owned(), Json::from(self.left_out));
+        }
+        if self.withheld {
+            out.insert("names_withheld".to_owned(), Json::Bool(true));
         }
         let mut types: Vec<Json> = self.types.iter().map(|name| Json::from(*name)).collect();
         out.insert(

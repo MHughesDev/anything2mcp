@@ -1,6 +1,6 @@
 //! Navigating, locating, reading, waiting, and snapshots.
 
-use crate::{Primitive, RawValue, ReadWhat, SnapshotLimits, TextMatch};
+use crate::{MASK, Primitive, RawValue, ReadWhat, SnapshotLimits, TextMatch};
 
 use super::*;
 
@@ -9,7 +9,7 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("looking");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &origins(&app)).await);
     assert_eq!(browser.health(), BrowserHealth::Busy);
 
     let loaded = must(
@@ -152,12 +152,23 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
             .unwrap_err(),
         BrowserError::NotFound
     );
-    // And to one tab.
-    let second = must(browser.acting_tab(&environment()).await);
-    must(
+    // And to one tab. This one is sent with a query, which is where
+    // tokens travel: `Loaded` keeps it, for the crates above to decide
+    // by, and a snapshot, which is kept, is cut there.
+    let second = must(browser.acting_tab(&environment(), &origins(&app)).await);
+    let with_query = format!("{}?ticket=example-token-in-query", app.url(FORM));
+    let loaded = must(
         second
-            .goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .goto(&Address::new(&with_query).unwrap(), soon())
             .await,
+    );
+    assert_eq!(loaded.address, with_query);
+    let kept = must(second.snapshot(&SnapshotLimits::default(), soon()).await);
+    assert_eq!(kept.address, app.url(FORM));
+    assert!(
+        !kept.to_text().contains("example-token-in-query"),
+        "{}",
+        kept.to_text()
     );
     let theirs = must(second.locate(&textbox("Description"), soon()).await);
     assert_eq!(
@@ -172,16 +183,16 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         listener.local_addr().unwrap().port()
     };
-    let refused = tab
-        .goto(
-            &Address::new(&format!("http://127.0.0.1:{unused}/")).unwrap(),
-            soon(),
-        )
-        .await
-        .unwrap_err();
+    let nobody = Address::new(&format!("http://127.0.0.1:{unused}/")).unwrap();
+    let third = must(
+        browser
+            .acting_tab(&environment(), &Origins::of([&nobody]))
+            .await,
+    );
+    let refused = third.goto(&nobody, soon()).await.unwrap_err();
     assert!(matches!(refused, BrowserError::NotLoaded(_)), "{refused}");
 
-    drop((tab, second));
+    drop((tab, second, third));
     stand.end().await;
 }
 
@@ -190,7 +201,7 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("waiting");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &origins(&app)).await);
 
     // An element that arrives late is noticed when it arrives. Nothing in
     // this page runs on a timer: the element is added when the test says
@@ -295,7 +306,7 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
     settings.max_read_chars = 64;
     let stand = Stand::with_redactor("secrets", settings, &[], Arc::new(Knows(SECRET)));
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &data_pages()).await);
     let page = page_of(&format!(
         "<!doctype html><title>Sign in {SECRET}</title>\
          <input type=password aria-label=Password value=hunter2-password>\
@@ -304,8 +315,11 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
          <p id=note>The token is {SECRET}.</p>\
          <p id=long>{}</p>\
          <div id=host></div>\
+         <div id=sealed></div>\
          <script>document.getElementById('host').attachShadow({{mode: 'open'}}).innerHTML = \
-         '<button>Inside</button>';</script>",
+         '<button>Inside</button>';\
+         document.getElementById('sealed').attachShadow({{mode: 'closed'}}).innerHTML = \
+         '<input aria-label=Sealed autocomplete=current-password value=hunter2-password>';</script>",
         "long ".repeat(40)
     ));
     let loaded = must(tab.page.goto_text(&page, soon()).await);
@@ -354,10 +368,59 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
         must(tab.read(&note, &ReadWhat::Text, soon()).await),
         RawValue::Text("The token is [redacted].".to_owned())
     );
+    // A snapshot masks every password input, also one inside a closed
+    // shadow root, which only the browser itself can see into.
     let snapshot = must(tab.snapshot(&SnapshotLimits::default(), soon()).await).to_text();
     assert!(!snapshot.contains(SECRET), "{snapshot}");
     assert!(!snapshot.contains("hunter2-password"), "{snapshot}");
     assert!(snapshot.contains("textbox \"Password\""), "{snapshot}");
+    assert!(
+        snapshot.contains(&format!("textbox \"Sealed\" value=\"{MASK}\"")),
+        "{snapshot}"
+    );
+
+    // A selector cannot ask what a password input was served with: a
+    // right guess and a wrong one are refused alike, in a locate and in a
+    // wait, however the attribute's name is spelled.
+    for guess in [
+        "input[type=password][value^='h']",
+        "input[type=password][value^='x']",
+        "input[ VALUE ^= 'hunter2' ]",
+        "input[\\76 alue^='h']",
+        "body:has(input[value*='hunter2'])",
+    ] {
+        assert_eq!(
+            tab.locate(&css(guess), soon()).await.unwrap_err(),
+            BrowserError::PasswordField,
+            "{guess}"
+        );
+        assert_eq!(
+            tab.wait(&Primitive::Visible(css(guess)), soon())
+                .await
+                .unwrap_err(),
+            BrowserError::PasswordField,
+            "{guess}"
+        );
+    }
+    // A selector that asks nothing about a value is answered as before.
+    must(tab.locate(&css("input[type=password]"), soon()).await);
+
+    // A message is redacted whole before it is cut to length: a secret
+    // that lies across the cut leaves no part of itself. The browser's
+    // complaint about a selector quotes the selector.
+    // Wherever the cut falls in the secret, or before it, or after it.
+    for before in 100..160 {
+        let across = format!("p[title='{}{SECRET}'] >", "x".repeat(before));
+        let complaint = tab.locate(&css(&across), soon()).await.unwrap_err();
+        let BrowserError::Unexpected(complaint) = complaint else {
+            panic!("{complaint}");
+        };
+        assert!(complaint.contains("xxxx"), "{complaint}");
+        assert!(!complaint.contains("plan"), "{before}: {complaint}");
+    }
+    let whole = format!("{}{SECRET} and more", "x".repeat(190));
+    let message = crate::tab::shown(&Knows(SECRET), &whole);
+    assert!(message.ends_with("xx[redacted]…"), "{message}");
 
     // What is read has a limit, and nothing is cut silently.
     let long = must(tab.locate(&css("#long"), soon()).await);

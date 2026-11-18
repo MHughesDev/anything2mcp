@@ -315,3 +315,295 @@ fn nothing_the_redactor_prints_holds_a_secret() {
     assert!(!shown.contains("tok_3x4mpl3"), "{shown}");
     assert!(!shown.contains("pa ss"), "{shown}");
 }
+
+/// A token as an identity service issues one: long, and made of characters
+/// no encoding escapes.
+const TOKEN: &str = "example-token-Zq9mV7tK2xLw4Nc8Rb1Hd6Jf3Gs5Py0AuEiOo-_~.end";
+
+/// `text` broken into lines of `width` characters, as mail and key files
+/// wrap base64.
+fn wrapped(text: &str, width: usize, line_break: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    characters
+        .chunks(width)
+        .map(|line| line.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(line_break)
+}
+
+/// Audit finding V-2, letter case. Systems print hexadecimal in either
+/// case, so a secret written in it is found in any.
+#[test]
+fn a_hexadecimal_secret_is_masked_in_any_letter_case() {
+    for secret in [
+        "4f8a0c2e9b7d1a3f5e6c8b0d2f4a6c8e",
+        "4F8A0C2E-9B7D-1A3F-5E6C-8B0D2F4A6C8E",
+        "0a:1b:2c:3d:4e:5f",
+    ] {
+        let redactor = redactor(&[secret]);
+        let mixed: String = secret
+            .chars()
+            .enumerate()
+            .map(|(at, c)| {
+                if at % 3 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        for spelling in [
+            secret.to_owned(),
+            secret.to_ascii_uppercase(),
+            secret.to_ascii_lowercase(),
+            mixed,
+        ] {
+            let text = format!("key={spelling};");
+            assert!(redactor.contains_secret(&text), "{spelling}");
+            assert_eq!(redactor.redact(&text), format!("key={REDACTED};"));
+        }
+    }
+
+    // A secret of any other shape is matched as it is written, and in
+    // another case only when it was registered so.
+    let exact = redactor(&[TOKEN]);
+    assert!(!exact.contains_secret(&TOKEN.to_ascii_uppercase()));
+    let folded = Redactor::new();
+    folded.register_folded(&Secret::new(TOKEN));
+    for spelling in [
+        TOKEN.to_owned(),
+        TOKEN.to_ascii_uppercase(),
+        TOKEN.to_ascii_lowercase(),
+    ] {
+        assert_eq!(
+            folded.redact(&format!("<{spelling}>")),
+            format!("<{REDACTED}>")
+        );
+    }
+    // Registering it both ways counts it once, in either order.
+    folded.register(&Secret::new(TOKEN));
+    exact.register_folded(&Secret::new(TOKEN));
+    assert_eq!(folded.health().registered, 1);
+    assert_eq!(exact.health().registered, 1);
+    assert!(exact.contains_secret(&TOKEN.to_ascii_uppercase()));
+}
+
+/// The hexadecimal writing of a secret's bytes, as a frame capture or a
+/// dump shows them.
+#[test]
+fn a_secret_written_out_in_hexadecimal_is_masked() {
+    let redactor = redactor(&[SECRET, TOKEN]);
+    for secret in [SECRET, TOKEN] {
+        let lower: String = secret.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let upper = lower.to_ascii_uppercase();
+        for spelling in [lower, upper] {
+            let text = format!("{{\"frame\":\"0102{spelling}0304\"}}");
+            assert!(redactor.contains_secret(&text));
+            assert_eq!(
+                redactor.redact(&text),
+                format!("{{\"frame\":\"0102{REDACTED}0304\"}}")
+            );
+        }
+    }
+}
+
+/// Audit finding V-2, base64 with line breaks. Mail wraps base64 at 76
+/// characters and key files at 64; a secret longer than a line is found
+/// across the breaks, also where the breaks are written as escapes.
+#[test]
+fn a_secret_in_base64_broken_into_lines_is_masked() {
+    let redactor = redactor(&[SECRET, TOKEN]);
+    let value = format!("first part {SECRET} middle {TOKEN} last part, long enough to wrap");
+    for (url_safe, pad) in [(false, true), (true, false)] {
+        let encoded = base64(value.as_bytes(), url_safe, pad);
+        for width in [76, 64, 20, 7] {
+            for line_break in ["\n", "\r\n", "\n  ", "\r\n\t"] {
+                let text = format!("body:\n{}\n--", wrapped(&encoded, width, line_break));
+                assert!(redactor.contains_secret(&text), "{width} {line_break:?}");
+                let clean = redactor.redact(&text);
+                assert!(!redactor.contains_secret(&clean), "{clean}");
+                assert!(clean.starts_with("body:\n") && clean.ends_with("\n--"));
+            }
+            // In a JSON string the break is written as an escape, and in a
+            // query it is percent-encoded.
+            let in_json = wrapped(&encoded, width, "\\n");
+            assert!(redactor.contains_secret(&in_json), "json {width}");
+            assert!(!redactor.contains_secret(&redactor.redact(&in_json)));
+            let in_query = percent(&wrapped(&encoded, width, "\r\n"), unreserved, true);
+            assert!(redactor.contains_secret(&in_query), "query {width}");
+            assert!(!redactor.contains_secret(&redactor.redact(&in_query)));
+        }
+    }
+    // Words on two lines are not a secret because a line break joins them.
+    redactor.register(&Secret::new("word1word2"));
+    assert!(!redactor.contains_secret("word1\nword2"));
+}
+
+/// Audit finding V-2, character references. A page's source writes `&`,
+/// `<`, `>`, and the quotes as references, and may write any character as
+/// a number.
+#[test]
+fn a_secret_written_with_character_references_is_masked() {
+    let secret = "p&ss<w>o\"r'd\u{e9}-Zq9";
+    let redactor = redactor(&[secret]);
+    let named = secret
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;");
+    let decimal: String = secret
+        .chars()
+        .map(|c| format!("&#{};", u32::from(c)))
+        .collect();
+    let hexadecimal: String = secret
+        .chars()
+        .map(|c| format!("&#x{:X};", u32::from(c)))
+        .collect();
+    let mixed = secret.replace('&', "&#38;").replace('\'', "&#x27;");
+    for spelling in [named, decimal, hexadecimal, mixed] {
+        let text = format!("<input value=\"{spelling}\">");
+        assert!(redactor.contains_secret(&text), "{spelling}");
+        assert_eq!(
+            redactor.redact(&text),
+            format!("<input value=\"{REDACTED}\">")
+        );
+    }
+    // A reference that is not one stays as it is.
+    let untouched = "a &amp b &; &#; &#xZZ; &unknown; a=1&b=2";
+    assert_eq!(redactor.redact(untouched), untouched);
+}
+
+/// Audit finding V-5 led the registered set to be kept as the forms
+/// themselves. A secret that equals a form of another secret is still a
+/// secret of its own, with all its own forms.
+#[test]
+fn a_secret_equal_to_a_form_of_another_is_registered_whole() {
+    let redactor = redactor(&["first second"]);
+    // The form-submission spelling of the first secret.
+    redactor.register(&Secret::new("first+second"));
+    assert_eq!(redactor.health().registered, 2);
+    let encoded = base64(b"first+second", false, true);
+    assert!(redactor.contains_secret(&encoded));
+    redactor.register(&Secret::new("first second"));
+    redactor.register(&Secret::new("first+second"));
+    assert_eq!(redactor.health().registered, 2);
+}
+
+/// `text` in pieces of `size` characters.
+fn pieces(text: &str, size: usize) -> Vec<String> {
+    let characters: Vec<char> = text.chars().collect();
+    characters
+        .chunks(size)
+        .map(|piece| piece.iter().collect())
+        .collect()
+}
+
+/// What a stream lets out for `pieces`, joined.
+fn streamed(redactor: &Redactor, pieces: &[String]) -> String {
+    let mut stream = redactor.stream();
+    let mut out = String::new();
+    for piece in pieces {
+        out.push_str(&stream.push(piece));
+    }
+    out.push_str(&stream.finish());
+    out
+}
+
+/// Audit finding V-2, a secret split across two pieces. `redact` keeps
+/// nothing between two calls, so a text that arrives in pieces goes through
+/// a stream, and the stream masks what `redact` masks in the whole text,
+/// wherever the pieces were divided.
+#[test]
+fn a_secret_split_across_the_pieces_of_a_stream_is_masked() {
+    let redactor = redactor(&[SECRET, TOKEN, "4f8a0c2e9b7d1a3f"]);
+
+    // Each piece redacted on its own lets both halves through.
+    let text = format!("before {TOKEN} after");
+    let (first, second) = text.split_at(text.len() / 2);
+    let piecewise = format!("{}{}", redactor.redact(first), redactor.redact(second));
+    assert!(piecewise.contains(TOKEN));
+
+    let filler = "Words with a %41, a \\u0041 and an &amp; in them.";
+    let mut forms = encoded_forms();
+    let long = format!("start {SECRET} middle {TOKEN} end");
+    forms.extend([
+        ("another secret", TOKEN.to_owned()),
+        ("two that touch", format!("{TOKEN}{SECRET}")),
+        ("hexadecimal, another case", "4F8A0C2E9B7D1A3F".to_owned()),
+        (
+            "written out in hexadecimal",
+            TOKEN.bytes().map(|byte| format!("{byte:02x}")).collect(),
+        ),
+        (
+            "character references",
+            SECRET.replace('"', "&quot;").replace('/', "&#47;"),
+        ),
+        (
+            "base64 in lines",
+            wrapped(&base64(long.as_bytes(), false, true), 20, "\r\n "),
+        ),
+        (
+            "base64 in lines, in json",
+            wrapped(&base64(long.as_bytes(), true, false), 16, "\\n"),
+        ),
+    ]);
+    for (name, form) in &forms {
+        let text = format!("{filler}<{form}>\n{filler}");
+        let whole = redactor.redact(&text);
+        assert!(!redactor.contains_secret(&whole), "{name}");
+        let characters = text.chars().count();
+        // Divided in two at every place, and into pieces of every small
+        // size and some larger ones.
+        let in_two = (1..characters).map(|at| {
+            let (first, second): (String, String) = (
+                text.chars().take(at).collect(),
+                text.chars().skip(at).collect(),
+            );
+            vec![first, second]
+        });
+        let in_many = [1, 2, 3, 5, 7, 11, 64, 300]
+            .into_iter()
+            .map(|size| pieces(&text, size));
+        for divided in in_two.chain(in_many) {
+            let joined = streamed(&redactor, &divided);
+            assert!(!redactor.contains_secret(&joined), "{name}: {joined}");
+            assert_eq!(joined, whole, "{name}, first piece {:?}", divided[0]);
+        }
+    }
+}
+
+#[test]
+fn a_stream_lets_text_out_as_it_goes_and_changes_nothing_without_a_secret() {
+    // With nothing registered, every piece comes straight back.
+    let empty = Redactor::new();
+    let mut stream = empty.stream();
+    assert_eq!(stream.push("one piece"), "one piece");
+    assert_eq!(stream.finish(), "");
+
+    // With a secret registered the stream runs behind by about the longest
+    // form and no more, and what it lets out is the text.
+    let redactor = redactor(&[TOKEN]);
+    let line = "A line of a program's output, with nothing secret in it at all.\n";
+    let mut stream = redactor.stream();
+    let mut out = String::new();
+    for _ in 0..200 {
+        out.push_str(&stream.push(line));
+    }
+    let given = line.len() * 200;
+    let behind = given - out.len();
+    assert!(behind <= 4 * TOKEN.len() + 100, "{behind}");
+    out.push_str(&stream.finish());
+    assert_eq!(out, line.repeat(200));
+
+    // A secret registered while the stream runs is masked in what follows.
+    let late = "late-secret-for-tests-0123456789";
+    let mut stream = redactor.stream();
+    let mut out = stream.push("nothing yet; ");
+    redactor.register(&Secret::new(late));
+    out.push_str(&stream.push("then late-secret-for-"));
+    out.push_str(&stream.push("tests-0123456789 at the end"));
+    out.push_str(&stream.finish());
+    assert_eq!(out, format!("nothing yet; then {REDACTED} at the end"));
+    assert!(!format!("{:?}", redactor.stream()).contains("late"));
+}

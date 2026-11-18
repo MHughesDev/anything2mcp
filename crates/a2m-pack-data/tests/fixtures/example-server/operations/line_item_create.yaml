@@ -1,0 +1,22 @@
+operation: example_line_item_create
+title: Create a line item
+effect: irreversible
+hazard: data_elsewhere
+key: [order_id, item_code]
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  description: {type: note, description: "What the item is"}
+  quantity: {type: integer, description: "How many"}
+  length: {type: length_inches, description: "Length, in inches"}
+  unit_price: {type: price, description: "Price of one unit"}
+outputs:
+  length: {type: length_inches}
+bindings:
+  - mode: sql
+    verb: create
+    statement: line_item_insert
+    read_back: line_item_by_key
+description: >
+  Adds one line item to an order under a key the caller chooses.
+  Prefer example_line_item_update when the line already exists.

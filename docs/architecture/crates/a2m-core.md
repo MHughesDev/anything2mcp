@@ -37,6 +37,8 @@ pub enum EffectClass { Read, Write, Irreversible }            // ordered
 pub enum Hazard { None, DataElsewhere, SendsOutside, DeviceFunction, Physical }   // ordered
 pub enum FailureClass { /* twelve */ }
 pub enum EvidenceLevel { /* seven, ordered; default Inferred */ }
+pub enum WriteEvidence { ReadBack, Response, Acknowledged }    // what a write binding offers as evidence; default ReadBack; decision 0161
+pub enum SurfaceNotice { UnencryptedCredentials }              // what a door must show beside a surface; words() fixed; decision 0193
 pub enum Coverage { Complete, Partial, Unknown }               // default Unknown
 pub enum RunState { /* twelve */ }      impl RunState { pub const fn is_final(self) -> bool; }
 pub enum RecordState { /* six */ }
@@ -70,7 +72,7 @@ pub enum ApproveWrites { CallerConfirms, PersonEachRun, NamedApprover }   // sec
 pub enum WhitespaceRule { Collapse, Trim, Exact }
 pub enum DecimalMark { Point /* "." */, Comma /* "," */ }
 pub enum Rounding { HalfUp, HalfEven, HalfDown, Up, Down, Ceiling, Floor }
-pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey }
+pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey, CallerKey }
 
 // Checked names: lowercase letters, digits, and underscores, starting with a letter. Each has
 // LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name. Each one
@@ -90,7 +92,16 @@ pub struct LintCode(/* owner and rule joined by one dot, 64 in all: kernel.no_fi
 impl LintCode { pub fn owner(&self) -> &str; pub fn rule(&self) -> &str; }
 pub struct InvalidName; pub struct UnknownName;               // both convert to Failure
 
-pub struct Failure { /* class, code, message, next_step */ }
+pub struct Failure { /* class, code, message, next_step; and `said`, what the system itself said, whole and untrusted */ }
+// Failure::with_said(text), said(), carrying_said(&other): kept apart from the sentence, never joined into it; decision 0162
+// with_said keeps the text whole up to SAID_CEILING (64 KiB), above it SAID_TOO_LONG in its place: nothing is cut,
+// joined, or flattened before the redactor sees it. said_cut / said_shown(redacted, SAID_LONGEST) cut it for a door,
+// never inside a redaction mark, and said_shown escapes control characters; decision 0185
+// said_hides(c) names every character that can reorder, hide, or restyle shown text: controls and terminal escapes,
+// bidirectional marks and isolates, invisible format characters, line and paragraph separators, variation selectors
+// and tags. said_cut keeps the text raw; it is escaped once, where a door shows it: said_shown (a line of its own),
+// said_quoted (between quotes: quotes and backslashes too), said_neutral (inside JSON: all but line feed and tab).
+// A Failure read as data is held to the same SAID_CEILING; decision 0193
 pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 
@@ -155,8 +166,8 @@ pub trait Redact: Send + Sync {
     fn redact(&self, text: &str) -> String;                      // the one required method
     fn contains_secret(&self, text: &str) -> bool;               // default: redact(text) != text
     fn redact_failure(&self, failure: &Failure) -> Failure;      // default
-    fn redact_value(&self, value: &Value) -> Value;              // default
-    fn redact_values(&self, values: &Values) -> Values;          // default; names too
+    fn redact_value(&self, value: &Value) -> Value;              // default; a number, a date, a moment, and a length of time by their text
+    fn redact_values(&self, values: &Values) -> Values;          // default; names too, and two names that redact alike are both kept
 }
 pub struct NoSecrets;                                            // nothing registered; for tests and where no vault can exist
 pub trait KeyedDigest: Send + Sync {
@@ -196,7 +207,11 @@ pub struct Plan {
 /// A program a surface's driver may start. `SurfacePlan::programs` lists them for every environment of the target;
 /// the engine hands them to the supervisor and reads nothing else in them. A path that is not absolute does not encode or decode.
 pub struct DeclaredProgram { pub path: String, pub digest: Option<Digest> }
-impl DeclaredProgram { pub fn is_absolute_path(path: &str) -> bool; }   // from the root, a drive, or a network share; the same answer on every machine
+impl DeclaredProgram {
+    pub fn is_absolute_path(path: &str) -> bool;   // from the root, a drive, or a network share; the same answer on every machine
+    pub fn is_direct_path(path: &str) -> bool;     // no part is `.` or `..`, with either slash
+    pub fn is_share_path(path: &str) -> bool;      // absolute, and on a network share
+}
 pub struct PlanExpr { pub source: String, pub result: ValueType, pub library: u32 }   // canonical CEL text, already checked
 pub struct ExprIndex(u32);   // and SurfaceIndex, EnvironmentIndex, FieldTypeIndex, InputIndex, OperationIndex, PipelineIndex, SectionIndex, ToolIndex: new, get
 
@@ -249,7 +264,9 @@ pub struct BindingPlan {
     pub mode: Mode, pub verb: Verb, pub status: BindingStatus, pub surface: SurfaceIndex,
     pub act: Vec<Step>, pub confirm: Vec<Step>, pub read_back: Vec<Step>,
     pub lookup: Vec<Step>, pub settle_ms: u32,      // for the `stamped` and `find` strategies
-    pub prefer_response: bool,
+    pub evidence: WriteEvidence,            // read_back, response, or acknowledged (only for an irreversible operation); decision 0161
+                                            // and never where acknowledgement_may_stand(strategy, read_back) is false:
+                                            // a record read back by its key is verified by that read; decision 0193
     pub precondition: Option<ExprIndex>,
 }
 
@@ -285,7 +302,7 @@ impl CanonicalJson {
 impl Plan {
     pub fn encode(&self) -> Result<EncodedPlan, Failure>;                       // one first line, then canonical JSON; checks references
     pub fn decode(bytes: &[u8], expected: &Digest) -> Result<Plan, Failure>;   // checks the hash before anything else
-    pub fn check(&self) -> Result<(), Failure>;                                 // the format, and every reference
+    pub fn check(&self) -> Result<(), Failure>;                                 // the format, every reference, and the rules of a write
     pub fn show(&self) -> Result<String, Failure>;                              // stable text, for `plan.show`
     pub fn expression(&self, index: ExprIndex) -> Option<&PlanExpr>;            // and surface, environment, field_type, operation, pipeline, section
     pub fn default_environment(&self) -> Option<&EnvironmentPlan>;              // and environment_named(&Environment)
@@ -316,6 +333,9 @@ Contracts that the signatures do not show:
 - **A field type's format and its normalizer say the same thing.** The compiler makes both from one rule. The format is for writing a value and describing the type; only the normalizer decides whether two values are equal.
 - **The plan names no kind of surface.** What one kind has, such as a viewport, is in that surface's payload. An expiry signal is a payload for the same reason.
 - **A plan's references are checked on the way out and on the way in.** `encode` and `decode` both refuse an index that points at a part the plan does not hold, so the engine indexes a decoded plan without checking again.
+- **A plan keeps the rules of a write, whoever made it** ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)). `check` refuses, on the way out and on the way in: an operation with a hazard that is not `irreversible`; a `write` whose identity strategy is `none`; a read that states a commit point or has a step that commits; a write with no commit point, or with a binding whose committing steps among `act` are not exactly its commit points; a step that commits in `confirm`, `read_back`, or `lookup`; a `write`, or an `irreversible` operation with an identity, with a binding that has no read-back; a pipeline whose effect or hazard is below one of its operations'; and a tool described as read-only that runs anything but a read. The hash proves the bytes are the ones stored. These rules are what make them safe to run. The refusal is `plan_unreadable` and names the operation by its position, never its content. Two of the compiler's rules are not held here: that a sign-in's probe is a read, and that a pipeline that writes has a record limit and a checkpoint.
+- **A declared program is named directly.** Beside being absolute, a path holds no `.` or `..` part, and a program on a network share is declared with its digest; `check` refuses the rest. The second supersedes one line of [decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md), which let a share path stand alone.
+- **A secret that is a number is redacted as a number's text.** `redact_value` judges a whole number, a decimal, a date, a moment, and a length of time by the text each is written as, and replaces one that holds a registered secret by the text `[redacted]`. What that costs: a short numeric secret, such as a four-digit PIN, also removes every number whose digits hold it; the value's kind becomes text, so a result's schema must allow text where a number may be redacted; and each number in a result is one more search. What it does not find: a secret written with leading zeros, or with zeros after a decimal mark, in a number that has lost them; and a secret that lies across two values.
 - **A plan holds expressions as text with their type.** `a2m-expr` turns its compiled form into a `PlanExpr` and back. This crate never parses one.
 - **The minimum engine version is the engine's to check.** `decode` cannot know which engine is running.
 - **Every implementation of `KeyedDigest` gives the same digest for the same key,** because each calls `keyed_digest_under`. The key is separate for each workspace.
@@ -351,7 +371,7 @@ None.
 | `input` | `value_out_of_range` | A decimal, a date, a key part, or the moment in an identifier cannot be represented |
 | `input` | `plan_hash_mismatch` | A plan's bytes do not match the hash it was published with. That tool is unavailable ([section 224](../../spec/2-kernel/224-when-the-engine-itself-fails.md)) |
 | `input` | `plan_format_unsupported` | A plan's format is neither the current one nor the one before |
-| `input` | `plan_unreadable` | A plan's bytes match its hash and are not a plan that holds together: not this format's shape, a field it does not have, or a reference to a part that is not there |
+| `input` | `plan_unreadable` | A plan's bytes match its hash and are not a plan that holds together: not this format's shape, a field it does not have, a reference to a part that is not there, a program named indirectly, or an operation that breaks a rule of a write |
 | `input` | `payload_unreadable` | A payload does not decode as the type its reader expects |
 | `input` | `payload_not_encodable` | Data to be encoded holds a float, a map whose keys are not text, or a number beyond 64 bits |
 
@@ -376,11 +396,13 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 | No plan type is written as a float, and no map's own order reaches the bytes | `plan::tests` walks an encoded plan that uses every part; `canonical::tests` encodes a hash map twenty times and refuses a float |
 | A plan with a loose reference is refused by `encode` and by `decode` | `plan::tests`, one case for each kind of reference, and one for a surface signed in to twice |
 | A credential in a plan is a reference; other text in its place is refused and never shown | `plan::tests`, `ident::tests` |
-| A program a plan declares is named by an absolute path, judged the same way on every machine; a plan that names one any other way is refused by `encode` and by `decode` | `plan::tests` |
+| A program a plan declares is named by an absolute path, judged the same way on every machine, with no `.` or `..` in it, and with a digest when it is on a network share; a plan that names one any other way is refused by `encode` and by `decode` | `plan::tests` |
+| A plan that breaks a rule of a write is refused by `encode` and by `decode`: a write stored as a read, a write with no commit point or no read-back, a commit outside the steps that do the work | `plan::tests`, one case for each rule, and bytes changed under their own hash |
 | A name written in the source is checked when the crate is built | `ident::tests`, whose constants would not compile otherwise; the doc test of `checked_name!` |
 | A dropped secret's bytes are zeros | `secret::tests`, on what `Drop` calls; memory that was given back cannot be read by a test |
 | The digest of named fields has one encoding | `digest::tests`, against a digest worked out apart from the crate |
 | The trait's own helpers redact a failure and values at every depth, names included | `redact::tests`, with a redactor that implements `redact` alone |
+| A secret a system returns as a number, a date, a moment, or a length of time does not pass as one; two names that redact alike keep both values | `redact::tests` |
 | A keyed digest differs by key, by workspace, and by purpose, and HMAC gives the standard answers | `redact::tests`, with three cases of RFC 4231 |
 | An identifier reads back what it writes, sorts by the moment it was made, and refuses another kind's prefix | `ident::tests` |
 
@@ -402,6 +424,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 
 ## Open points
 
+- The plan's shape changed once more for decision 0161: a binding's `prefer_response` is now its `evidence`, and the sample's pinned hash moved with it. The format number stays 1, because no release has carried a plan: a plan stored before the change does not load and is compiled again.
 - The plan's parts have met the compiler and not yet an engine. The engine's slice confirms each one or changes it. The format number is still 1 because no release has carried a plan; from the first release on, a change that stored plans cannot be read under raises it.
 - `CaptureLevel` and `ApproveWrites` are here because the plan carries them. `a2m-telemetry` and `a2m-policy` each have a list of their own with the same names, which should become these.
 - A decision point is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.

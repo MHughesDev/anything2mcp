@@ -308,18 +308,28 @@ fn read_workbook(bytes: &[u8]) -> Result<Workbook, Failure> {
             continue;
         };
         match name {
-            "workbookPr" if attributes.flag("date1904") => {
-                workbook.date_system = DateSystem::From1904;
+            "workbookPr" => {
+                if attributes.flag("date1904")? {
+                    workbook.date_system = DateSystem::From1904;
+                }
             }
             "sheet" => {
                 let (Some(name), Some(relation)) = (attributes.get("name"), attributes.get("r:id"))
                 else {
                     return Err(malformed("a sheet lacks its name or its part"));
                 };
-                let state = attributes.get("state");
+                let hidden = match attributes.get("state").as_deref() {
+                    None | Some("visible") => false,
+                    Some("hidden" | "veryHidden") => true,
+                    Some(_) => {
+                        return Err(malformed(
+                            "a sheet states a visibility the format does not define",
+                        ));
+                    }
+                };
                 workbook.sheets.push(SheetEntry {
                     name: name.into_owned(),
-                    hidden: matches!(state.as_deref(), Some("hidden" | "veryHidden")),
+                    hidden,
                     relation: relation.into_owned(),
                 });
             }
@@ -584,10 +594,12 @@ fn read_styles(bytes: &[u8]) -> Result<Vec<Style>, Failure> {
                 attributes,
                 ..
             } if in_cell_styles => {
-                let id = attributes
-                    .get("numFmtId")
-                    .and_then(|id| id.parse::<u32>().ok())
-                    .unwrap_or(0);
+                let id = match attributes.get("numFmtId") {
+                    None => 0,
+                    Some(id) => id
+                        .parse::<u32>()
+                        .map_err(|_| malformed("a cell style's number format is not a number"))?,
+                };
                 ids.push(id);
             }
             _ => {}
@@ -709,9 +721,15 @@ fn read_sheet(
             continue;
         };
         match name {
-            "col" if attributes.flag("hidden") => {
-                let bound = |name: &str| attributes.get(name).and_then(|n| n.parse::<u32>().ok());
-                if let (Some(min), Some(max)) = (bound("min"), bound("max")) {
+            "col" => {
+                if attributes.flag("hidden")? {
+                    let bound =
+                        |name: &str| attributes.get(name).and_then(|n| n.parse::<u32>().ok());
+                    let (Some(min), Some(max)) = (bound("min"), bound("max")) else {
+                        return Err(malformed(
+                            "a hidden column does not say which columns it covers",
+                        ));
+                    };
                     hidden_columns.push((min, max));
                 }
             }
@@ -724,7 +742,7 @@ fn read_sheet(
                         .ok_or_else(|| malformed("a sheet's rows are not in order"))?,
                     None => row + 1,
                 };
-                row_hidden = attributes.flag("hidden");
+                row_hidden = attributes.flag("hidden")?;
                 column = 0;
                 rows_seen += 1;
                 if rows_seen > context.limits.rows {
@@ -750,10 +768,18 @@ fn read_sheet(
                     continue;
                 }
                 let parts = cell_parts(&mut xml)?;
-                let style = attributes
-                    .get("s")
-                    .and_then(|index| index.parse::<usize>().ok())
-                    .and_then(|index| context.styles.get(index));
+                // A style the workbook lacks is never read as no style: a
+                // date would then be read as a plain number.
+                let style = match attributes.get("s") {
+                    None => None,
+                    Some(index) => Some(
+                        index
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| context.styles.get(index))
+                            .ok_or_else(|| malformed("a cell names a style the workbook lacks"))?,
+                    ),
+                };
                 let kind = attributes.get("t");
                 let (raw, span, shared) =
                     cell_value(kind.as_deref(), &parts, style, context.shared)?;

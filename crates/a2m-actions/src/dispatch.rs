@@ -79,6 +79,19 @@ impl Principal {
     pub const fn acting_for(&self) -> Option<&ActingFor> {
         self.acting_for.as_ref()
     }
+
+    /// The person whose runs this caller may read, resume, and cancel: the
+    /// person it was proved to act for, or itself when it is a person. A
+    /// delegation proves nothing yet, and an agent or a program that acts
+    /// for nobody owns no person's run.
+    #[must_use]
+    pub fn person(&self) -> Option<a2m_core::PrincipalId> {
+        match &self.acting_for {
+            Some(ActingFor::LocalUser(person) | ActingFor::TokenSubject(person)) => Some(*person),
+            Some(ActingFor::Delegation(_)) => None,
+            None => (self.principal.kind == PrincipalKind::Person).then_some(self.principal.id),
+        }
+    }
 }
 
 /// Who is calling, as the front door states it after the check.
@@ -112,8 +125,37 @@ impl Caller {
     }
 }
 
+/// The project folder a request works in, as the mount of a front door
+/// states it: the folder a local command was run in.
+///
+/// It is the one home of that fact for every door. Whoever mounts a door on
+/// the local channel puts one on each request, as an extension beside the
+/// caller, from what the client end said. The door reads it and hands it to
+/// [`Request::in_project_folder`]; nothing in a request's path, query,
+/// body, or tool arguments can set it. It is a statement and is not
+/// trusted: the dispatcher checks it before any handler sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFolder(PathBuf);
+
+impl ProjectFolder {
+    /// The folder at `path`.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    /// The folder's path, as it was stated.
+    #[must_use]
+    pub fn as_path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
 /// What a front door hands the dispatcher.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Its debug print names the action and the fields of its input and never
+/// shows a value: the input of `secret.set` holds the secret.
+#[derive(Clone, PartialEq)]
 pub struct Request {
     /// The action's name, as the caller wrote it.
     pub action: String,
@@ -123,9 +165,28 @@ pub struct Request {
     pub caller: Caller,
     /// A key that makes a repeated call the same call.
     pub idempotency_key: Option<String>,
-    /// The project folder a local command was run in. Checked against the
-    /// allowed roots before any use.
+    /// The project folder a local command was run in, as it was stated.
+    /// The dispatcher checks it before any handler sees it: see
+    /// [`Request::in_project_folder`].
     pub project: Option<PathBuf>,
+}
+
+/// The names of an input's fields, for a debug print that shows no value.
+fn field_names(input: &Map<String, Json>) -> Vec<&str> {
+    input.keys().map(String::as_str).collect()
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fields = self.input.as_object().map(field_names).unwrap_or_default();
+        f.debug_struct("Request")
+            .field("action", &codes::shown(&self.action))
+            .field("input_fields", &fields)
+            .field("door", &self.caller.door)
+            .field("is_agent", &self.caller.is_agent)
+            .field("project", &self.project.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Request {
@@ -145,6 +206,22 @@ impl Request {
     #[must_use]
     pub fn in_project(mut self, project: impl Into<PathBuf>) -> Self {
         self.project = Some(project.into());
+        self
+    }
+
+    /// The same request, run in the project folder its door's mount
+    /// stated, when it stated one. Every door calls this with what it
+    /// found in the request's extensions.
+    ///
+    /// The dispatcher takes the folder only on one machine, and only when
+    /// it is an absolute path to a folder that exists and that neither
+    /// holds nor lies inside one of the engine's own folders. A folder
+    /// that fails is not used, and an action that needs a project answers
+    /// `input`/`path_not_allowed` with the reason; every other action is
+    /// served as if none had been stated.
+    #[must_use]
+    pub fn in_project_folder(mut self, project: Option<&ProjectFolder>) -> Self {
+        self.project = project.map(|folder| folder.0.clone());
         self
     }
 }
@@ -213,6 +290,28 @@ impl Next {
 
     fn to_json(&self) -> Json {
         json!({"action": self.action, "args": self.args, "when": self.when})
+    }
+
+    /// `next` as a result carries it: the action, the name of its tool,
+    /// its input, and when to call it.
+    pub(crate) fn to_result_json(&self) -> Json {
+        let tool = match self.action.split_once('.') {
+            Some((noun, verb)) => format!("{}{noun}_{verb}", crate::faces::TOOL_PREFIX),
+            None => self.action.clone(),
+        };
+        json!({"action": self.action, "tool": tool, "args": self.args, "when": self.when})
+    }
+
+    /// `next` for a caller whose tool list does not hold the action's own
+    /// tool: the same step through `action.run`, which every toolset
+    /// lists, with the action as its argument.
+    pub(crate) fn through_action_run(&self) -> Json {
+        json!({
+            "action": "action.run",
+            "tool": format!("{}action_run", crate::faces::TOOL_PREFIX),
+            "args": {"action": self.action, "input": self.args},
+            "when": self.when,
+        })
     }
 }
 
@@ -322,7 +421,9 @@ impl Response {
 }
 
 /// What a handler is given: the validated input and the checked caller.
-#[derive(Debug, Clone)]
+///
+/// Its debug print names the fields of the input and never shows a value.
+#[derive(Clone)]
 pub struct Call {
     /// The input. It passed the action's schema.
     pub input: Map<String, Json>,
@@ -332,13 +433,55 @@ pub struct Call {
     pub decision: DecisionId,
     /// The idempotency key, if the caller sent one.
     pub idempotency_key: Option<String>,
-    /// The project folder, not yet checked.
+    /// The project folder the request stated, after the dispatcher's
+    /// check. `None` when none was stated or the one stated was refused.
+    /// A handler still reaches every file through a checked path under it.
     pub project: Option<PathBuf>,
+    /// Why the stated project folder was refused, when it was.
+    pub project_refused: Option<Failure>,
     /// Proof that a person is present, when the action needed it.
     pub presence: Option<PresenceProof>,
+    /// The effect class and hazard the dispatcher's decision was made for.
+    /// For `tool.call` these are the published tool's, as it stood when
+    /// the decision was made; the handler refuses a tool that has another
+    /// by the time it looks. `None` for `tool.call` of a tool that was not
+    /// found.
+    pub decided: Option<(EffectClass, Hazard)>,
+}
+
+impl std::fmt::Debug for Call {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Call")
+            .field("input_fields", &field_names(&self.input))
+            .field("door", &self.caller.door)
+            .field("is_agent", &self.caller.is_agent)
+            .field("decision", &self.decision)
+            .field("project", &self.project.is_some())
+            .field("presence", &self.presence.is_some())
+            .field("decided", &self.decided)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Call {
+    /// The project folder of the call.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed`: the reason the stated folder was
+    /// refused, or that the call states none.
+    pub fn project_folder(&self) -> Result<&std::path::Path, Failure> {
+        match (&self.project, &self.project_refused) {
+            (Some(folder), _) => Ok(folder),
+            (None, Some(refused)) => Err(refused.clone()),
+            (None, None) => Err(codes::input(
+                codes::PATH_NOT_ALLOWED,
+                "This action works on a project folder, and the call names none.",
+                "Run it inside a project folder, or pass `--project` with the folder's full path.",
+            )),
+        }
+    }
+
     /// A text field, when it was given.
     #[must_use]
     pub fn text(&self, name: &str) -> Option<&str> {
@@ -442,7 +585,19 @@ impl Kernel {
         // The name is echoed as it was asked for, and so passes the
         // redactor like everything else that leaves.
         let asked = redact.redact(&codes::shown(&request.action));
-        match self.dispatch_inner(request).await {
+        let outcome = self.dispatch_inner(request).await;
+        self.shaped(asked, outcome)
+    }
+
+    /// A response from what the dispatcher, or a person's act carried out
+    /// on its page, came to: every string through the redactor.
+    pub(crate) fn shaped(
+        &self,
+        asked: String,
+        outcome: Result<(Output, DecisionId), Box<Refused>>,
+    ) -> Response {
+        let redact = self.redact();
+        match outcome {
             Ok((output, decision)) => {
                 let exit = output.exit;
                 Response {
@@ -518,6 +673,12 @@ impl Kernel {
             ))
         })?;
 
+        // The idempotency key: from the request, as a door carried it, or,
+        // for `tool.call`, from its own field. Two different keys on one
+        // request are refused; a key is checked before anything is decided.
+        let (input, idempotency_key) =
+            taken_key(&def, input, request.idempotency_key).map_err(Refused::malformed)?;
+
         // 3. Health.
         let health = self.health();
         let effect = self.effect_of(&def, &input).await;
@@ -541,6 +702,7 @@ impl Kernel {
         // The `Nothing` actions report on the engine and must answer when
         // there is no store to record a decision in. They change nothing and
         // show no data of any system.
+        let decided = effect;
         let decision = if def.needs == HealthNeed::Nothing && health.state == HealthState::Stopped {
             DecisionId::from_bytes([0; 16])
         } else {
@@ -566,8 +728,31 @@ impl Kernel {
             decision.id
         };
 
-        // 5. Person.
-        let presence = if def.person == PersonNeed::Presence {
+        // 5. Person. An act that is a person's whenever it loosens is asked
+        // for here as well, so that no handler has to remember to ask.
+        let asks = match def.person {
+            PersonNeed::Presence => true,
+            PersonNeed::PresenceWhenLoosening => loosens(&def, &input),
+            PersonNeed::None => false,
+        };
+        if asks && request.caller.is_agent {
+            // A person's act asked for by an agent is shown to the person
+            // on a page of the person surface; a press there, and the
+            // presence prompt it raises, carry it out (decision 0163).
+            let project = match request.project {
+                Some(stated) => match self.checked_project(&stated).await {
+                    Ok(folder) => (Some(folder), None),
+                    Err(refused) => (None, Some(refused)),
+                },
+                None => (None, None),
+            };
+            let output = self
+                .ask_person(&def, &request.caller, input, project)
+                .await
+                .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+            return Ok((output, decision));
+        }
+        let presence = if asks {
             Some(
                 self.presence(&request.caller, &def, effect_class)
                     .await
@@ -577,22 +762,89 @@ impl Kernel {
             None
         };
 
-        // 6. Run.
+        // 6. Run. The project folder a door stated is checked first; one
+        // that fails is not handed on.
+        // What is handed on is the folder as the check resolved it, with
+        // every link followed, never the path as it was stated: a link in
+        // the stated path that is changed after the check moves nothing.
+        let (project, project_refused) = match request.project {
+            Some(stated) => match self.checked_project(&stated).await {
+                Ok(folder) => (Some(folder), None),
+                Err(refused) => (None, Some(refused)),
+            },
+            None => (None, None),
+        };
         let call = Call {
             input,
             caller: request.caller,
             decision,
-            idempotency_key: request.idempotency_key,
-            project: request.project,
+            idempotency_key: idempotency_key.clone(),
+            project,
+            project_refused,
             presence,
+            decided,
         };
-        let output = self
+        let mut output = self
             .run_handler(&def, call)
             .await
             .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+        if idempotency_key.is_some() && !READS_KEY.contains(&def.name.as_str()) {
+            output = output.warn(format!(
+                "`{}` starts no run, so the idempotency key was not used.",
+                def.name
+            ));
+        }
 
         // 7. Shape: the cap. Redaction is the caller's last act, above.
         Ok((self.capped(&def, output), decision))
+    }
+
+    /// Checks a project folder a front door stated, and gives the folder
+    /// with every link followed. It is taken only on one machine, where
+    /// the caller is the user the engine runs as; it must be an absolute
+    /// path to a folder that exists; it may neither hold nor lie inside one
+    /// of the engine's own folders, or a folder in which another program
+    /// keeps its data; it must hold a project file; and it must be inside
+    /// what the setting `files.allowed_roots` allows. So no action can be
+    /// pointed at the store, the vault's files, a browser's profile, or a
+    /// key folder through it.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed`, with the reason.
+    pub(crate) async fn checked_project(
+        &self,
+        stated: &std::path::Path,
+    ) -> Result<PathBuf, Failure> {
+        let refuse = |why: &str| {
+            codes::input(
+                codes::PATH_NOT_ALLOWED,
+                format!("The project folder of this call is not used: {why}."),
+                "Run the command inside a project folder of your own, one that holds `anything2mcp.toml`, or pass `--project` with its full path.",
+            )
+        };
+        if !self.is_local() {
+            return Err(refuse(
+                "a project folder belongs to one machine, and this engine is a server",
+            ));
+        }
+        if !stated.is_absolute() {
+            return Err(refuse("its path is not a full path"));
+        }
+        let stated = stated.to_path_buf();
+        let kernel = self.clone();
+        // Looking at the disk waits: off the async threads.
+        tokio::task::spawn_blocking(move || {
+            crate::project::check(
+                &stated,
+                kernel.paths(),
+                kernel.settings(),
+                &kernel.inner.places,
+            )
+        })
+        .await
+        .unwrap_or(Err("it could not be looked at"))
+        .map_err(refuse)
     }
 
     /// Asks the role's person surface for proof that a person is present.
@@ -617,17 +869,36 @@ impl Kernel {
                 "Ask the person to run it themselves, at a terminal.",
             ));
         }
-        self.person()
+        let asked = caller.principal.principal.id;
+        let proof = self
+            .person()
             .confirm_presence(PresenceAsk {
-                principal: caller.principal.principal.id,
+                principal: asked,
                 action: def.name.clone(),
                 effect,
                 summary: def.summary.clone(),
             })
-            .await
+            .await?;
+        // The proof is checked where it is used: it must be this caller's,
+        // and it must be of now. A surface that hands back a proof it kept
+        // from another person's prompt, or from an earlier one, proves
+        // nothing about this call.
+        proof
+            .checked(asked, self.inner.clock.now())
+            .map_err(|why| {
+                codes::policy(
+                    a2m_policy::PRESENCE_REQUIRED,
+                    format!(
+                        "`{}` is a person's act, and the proof of presence was not taken: {why}.",
+                        def.name
+                    ),
+                    "Run the command again and answer the prompt yourself.",
+                )
+            })?;
+        Ok(proof)
     }
 
-    async fn run_handler(&self, def: &ActionDef, call: Call) -> Result<Output, Failure> {
+    pub(crate) async fn run_handler(&self, def: &ActionDef, call: Call) -> Result<Output, Failure> {
         match &def.handler {
             Handler::Kernel(handler) => handler(self, call).await,
             Handler::Provider(name) => {
@@ -640,6 +911,9 @@ impl Kernel {
                     .provider_roots(&provider)
                     .cloned()
                     .unwrap_or_else(a2m_provider::Roots::none);
+                // The call's own project folder, as the dispatcher checked
+                // it, taken before the input is.
+                let call_paths = call_paths(call.project_folder().ok());
                 let input: Values =
                     serde_json::from_value(Json::Object(call.input)).map_err(|_| {
                         codes::input(
@@ -649,10 +923,13 @@ impl Kernel {
                         )
                     })?;
                 let redact = self.redact();
+                // A provider's project root resolves in the call's own
+                // project folder and in no other (decision 0196).
                 let cx = a2m_provider::ActionContext {
                     roots: &roots,
                     registry: self.providers(),
                     redact: redact.as_ref(),
+                    paths: &call_paths,
                 };
                 let values = action.handle(&input, &cx).await?;
                 let result = serde_json::to_value(&values).map_err(|_| {
@@ -678,7 +955,7 @@ impl Kernel {
 
     /// Cuts a result to the configured size cap, and says which limit cut
     /// it.
-    fn capped(&self, def: &ActionDef, mut output: Output) -> Output {
+    pub(crate) fn capped(&self, def: &ActionDef, mut output: Output) -> Output {
         let cap = self.settings().int("tools.result_cap_bytes").unwrap_or(0);
         let Ok(cap) = usize::try_from(cap) else {
             return output;
@@ -756,6 +1033,25 @@ impl Kernel {
         }
     }
 
+    /// A caller of this installation's workspace who is not its user: a
+    /// second person, who holds no role and no grant under the built-in
+    /// set. For a test of a crate above this one that must prove that a
+    /// caller who did not start a run cannot follow, read, or resume it.
+    /// Never part of the product: a caller is named by
+    /// [`Kernel::verify_caller`] and by nothing else.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the store is not open.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn second_person(&self, id: [u8; 16]) -> Result<Principal, Failure> {
+        Ok(Principal {
+            principal: PrincipalRef::person(a2m_core::PrincipalId::from_bytes(id)),
+            workspace: self.installation()?.workspace,
+            acting_for: None,
+        })
+    }
+
     /// The effect class and hazard a call would have: the action's own, or,
     /// for `tool.call`, the published tool's.
     async fn effect_of(
@@ -773,6 +1069,21 @@ impl Kernel {
     }
 }
 
+/// Whether a call of an action that is a person's act whenever it loosens
+/// does loosen. Releasing a kill switch does. An action that has not said
+/// how its loosening is told is asked for on every call, which is the safe
+/// side: `config.set` and `provider.enable`, until they are built.
+fn loosens(def: &ActionDef, input: &Map<String, Json>) -> bool {
+    match def.name.as_str() {
+        "killswitch.set" => input.get("on").and_then(Json::as_bool) == Some(false),
+        // Whether the operation writes is known only once its drafts are
+        // compiled: the handler asks, as a person's act, when it does
+        // (decision 0189).
+        "binding.promote" => false,
+        _ => true,
+    }
+}
+
 /// A decision, as the dispatcher needs it.
 pub(crate) struct Decided {
     pub(crate) id: DecisionId,
@@ -780,7 +1091,7 @@ pub(crate) struct Decided {
     pub(crate) refusal: Option<Failure>,
 }
 
-struct Refused {
+pub(crate) struct Refused {
     failure: Failure,
     malformed: bool,
     effect: EffectClass,
@@ -809,7 +1120,7 @@ impl Refused {
         })
     }
 
-    fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Box<Self> {
+    pub(crate) fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Box<Self> {
         Box::new(Self {
             failure,
             malformed: false,
@@ -855,6 +1166,73 @@ fn person_is_needed(failure: &Failure) -> bool {
 /// # Errors
 ///
 /// `input`/`schema_invalid`, naming the field and what it must be.
+/// The actions that read a request's idempotency key: `tool.call`, which
+/// starts a run, and `action.run`, which hands it to the action it runs.
+const READS_KEY: &[&str] = &["tool.call", "action.run"];
+
+/// The field of `tool.call` that carries the idempotency key, for a door
+/// that has no other place for one.
+pub(crate) const KEY_FIELD: &str = "idempotency_key";
+
+/// Takes the idempotency key of a request: the one the door carried, or,
+/// for `tool.call`, the one in its own field, which is taken out of the
+/// input. Both may be given only when they are the same key.
+///
+/// # Errors
+///
+/// `input`/`idempotency_key_invalid` for a key that is not 1 to 200
+/// printable characters, or for two different keys.
+fn taken_key(
+    def: &ActionDef,
+    mut input: Map<String, Json>,
+    stated: Option<String>,
+) -> Result<(Map<String, Json>, Option<String>), Failure> {
+    if def.name.as_str() == "run.list" {
+        // A key beside a listing is the key to look for: a door or a
+        // command line with one place for a key carries it there. It is
+        // no key of the listing's own, which starts no run.
+        if let Some(door) = stated {
+            match input.get(KEY_FIELD) {
+                Some(Json::String(field)) if *field != door => {
+                    return Err(codes::input(
+                        codes::IDEMPOTENCY_KEY_INVALID,
+                        "The call carries two different idempotency keys: one in its input and one beside it.",
+                        "Send one key, in one place.",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    a2m_ledger::CallerKey::new(&door)?;
+                    input.insert(KEY_FIELD.to_owned(), Json::String(door));
+                }
+            }
+        }
+        return Ok((input, None));
+    }
+    let given = if def.name.as_str() == "tool.call" {
+        match input.remove(KEY_FIELD) {
+            Some(Json::String(text)) => Some(text),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let key = match (given, stated) {
+        (Some(field), Some(door)) if field != door => {
+            return Err(codes::input(
+                codes::IDEMPOTENCY_KEY_INVALID,
+                "The call carries two different idempotency keys: one in its input and one beside it.",
+                "Send one key, in one place.",
+            ));
+        }
+        (field, door) => field.or(door),
+    };
+    if let Some(key) = &key {
+        a2m_ledger::CallerKey::new(key)?;
+    }
+    Ok((input, key))
+}
+
 pub(crate) fn validate(def: &ActionDef, input: Json) -> Result<Map<String, Json>, Failure> {
     let map = match input {
         Json::Null => Map::new(),
@@ -945,6 +1323,10 @@ fn check_type(def: &ActionDef, name: &str, ty: &FieldType, value: &Json) -> Resu
             .as_object()
             .map(|_| ())
             .ok_or_else(|| wrong("a map of named values".to_owned())),
+        FieldType::MapList => match value.as_array() {
+            Some(items) if items.iter().all(Json::is_object) => Ok(()),
+            _ => Err(wrong("a list of maps of named values".to_owned())),
+        },
         FieldType::Any => Ok(()),
     }
 }
@@ -969,4 +1351,25 @@ pub(crate) fn redact_json(redact: &dyn Redact, value: &Json) -> Json {
         ),
         other => other.clone(),
     }
+}
+
+/// The checked paths of a call: its project folder, checked as a root of
+/// its own, or none.
+pub(crate) fn call_paths(project: Option<&std::path::Path>) -> a2m_provider::CheckedPaths {
+    let mut paths = a2m_provider::CheckedPaths::none();
+    if let Some(folder) = project {
+        let mut roots = a2m_provider::Roots::none();
+        let checked = a2m_provider::RootName::new("project")
+            .ok()
+            .and_then(|name| {
+                roots
+                    .add(name.clone(), folder, a2m_provider::Access::Write)
+                    .ok()?;
+                roots.folder(&name, a2m_provider::Access::Write).ok()
+            });
+        if let Some(project) = checked {
+            paths = paths.with_project(project);
+        }
+    }
+    paths
 }

@@ -245,6 +245,22 @@ pub struct ModeDecl {
     /// Every kind of step the mode's driver carries out.
     #[serde(default)]
     pub steps: Vec<StepKind>,
+    /// The kinds of step that always save. The handle refuses one that is
+    /// sent as a step that commits nothing, so that the mark a plan or a
+    /// discoverer puts on a step is not all that stands between a read and
+    /// a write. Empty, the default, checks nothing.
+    #[serde(default)]
+    pub commit_steps: Vec<StepKind>,
+    /// The kinds of step whose "absent" the mode's driver states is
+    /// authoritative: when such a step answers that a record is not there,
+    /// after the binding's settle time, the record is not there in the
+    /// system, whatever replica, page, or window a reader might otherwise
+    /// see. Only a lookup made of these kinds alone may prove that a write
+    /// of a record with no key did not land (decision 0185); a read-back
+    /// never does. Empty, the default, states none: "absent" from such a
+    /// mode proves nothing on its own.
+    #[serde(default)]
+    pub absence_steps: Vec<StepKind>,
     /// Its place in binding order when an operation states none; lower is
     /// tried first.
     #[serde(default = "default_rank")]
@@ -960,6 +976,28 @@ impl Manifest {
                     "a mode lists each step kind and each verb once",
                 ));
             }
+            if !unique(mode.commit_steps.iter())
+                || mode
+                    .commit_steps
+                    .iter()
+                    .any(|kind| !mode.steps.contains(kind))
+            {
+                return Err(invalid(
+                    "modes",
+                    "a step kind that always commits is listed once, and is one of the mode's step kinds",
+                ));
+            }
+            if !unique(mode.absence_steps.iter())
+                || mode
+                    .absence_steps
+                    .iter()
+                    .any(|kind| !mode.steps.contains(kind) || mode.commit_steps.contains(kind))
+            {
+                return Err(invalid(
+                    "modes",
+                    "a step kind whose absence is authoritative is listed once, is one of the mode's step kinds, and never commits",
+                ));
+            }
             if mode.session_reads == 0 || mode.session_writes == 0 {
                 return Err(invalid(
                     "modes",
@@ -1013,7 +1051,16 @@ impl Manifest {
             if other_class {
                 return Err(invalid(
                     "failure_codes",
-                    "a code of the provider contract keeps its own class",
+                    &format!(
+                        "`{}` is a code of the provider contract and keeps its own class, not `{}`",
+                        code.code, code.class
+                    ),
+                ));
+            }
+            if codes::is_kernel_only(&code.code) {
+                return Err(invalid(
+                    "failure_codes",
+                    "a code that states the kernel's own bookkeeping is the kernel's alone, and no provider declares it",
                 ));
             }
         }
@@ -1099,6 +1146,19 @@ impl Manifest {
         let mut processes = Vec::new();
         for program in &raw.effects.processes {
             program_path("effects.processes", &program.path)?;
+            // A plug-in has a folder of its own, and a relative path is
+            // inside it. A pack is compiled in and has none: a relative
+            // path would be looked for in the engine's own working folder.
+            if provider.kind == ProviderKind::Pack && !is_absolute_anywhere(&program.path) {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!(
+                        "The manifest field `effects.processes` names the program `{}` by a relative path, and a pack has no folder of its own.",
+                        shown(&program.path)
+                    ),
+                    "Name the program by one fixed absolute path.",
+                ));
+            }
             processes.push(ProgramDecl {
                 path: program.path.clone(),
                 digest: program

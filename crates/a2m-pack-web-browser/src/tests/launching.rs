@@ -226,3 +226,150 @@ fn a_shared_cell_gives_every_caller_the_first_caller_s_browsers() {
     assert!(Arc::ptr_eq(&first.shared, &cell.get().unwrap().shared));
     assert!(other.observer().is_some());
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_folder_is_private_to_the_engine_s_user_however_it_was_left() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |folder: &Path| std::fs::metadata(folder).unwrap().permissions().mode() & 0o777;
+    let stand = Stand::with_browser("private");
+    let profiles = stand.folder.0.join("profiles");
+
+    // A folder the engine makes: the process's mask would leave it open
+    // to every user of the machine.
+    let clerk = profile("clerk");
+    stand.open(&clerk).await;
+    assert_eq!(mode(&profiles.join(clerk.place())), 0o700);
+
+    // A folder left open by an earlier version, or by a person: it is
+    // closed before the browser is started on it.
+    let auditor = profile("auditor");
+    let left_open = profiles.join(auditor.place());
+    std::fs::create_dir_all(&left_open).unwrap();
+    std::fs::set_permissions(&left_open, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stand.open(&auditor).await;
+    assert_eq!(mode(&left_open), 0o700);
+
+    // What the browser itself writes there is its owner's alone too,
+    // apart from files that hold nothing of a session.
+    let mut open_to_others = Vec::new();
+    let mut folders = vec![profiles.join(clerk.place())];
+    while let Some(folder) = folders.pop() {
+        // The browser is running: a file can be gone again, and some
+        // entries are links that lead nowhere.
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let Ok(found) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if found.is_symlink() {
+                continue;
+            }
+            if found.permissions().mode() & 0o077 != 0 {
+                open_to_others.push(entry.file_name().to_string_lossy().into_owned());
+            }
+            if found.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    for name in &open_to_others {
+        assert!(
+            ![
+                "Cookies",
+                "Login Data",
+                "Local State",
+                "Preferences",
+                "Web Data",
+                "History"
+            ]
+            .iter()
+            .any(|kept| name.starts_with(kept)),
+            "{open_to_others:?}"
+        );
+    }
+    stand.end().await;
+}
+
+/// A tab that is dropped is no longer counted, at once and every time. The
+/// end of a tab's events, which its release causes, is heard on another
+/// thread in the same moment; the count, and with it the browser's health,
+/// must not depend on which comes first. Tried many times, because the
+/// order is not the same each time.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_tab_is_no_longer_counted_whichever_thread_hears_its_end_first() {
+    let stand = Stand::with_browser("released");
+    let browser = stand.open(&profile("clerk")).await;
+    let origins = Origins::of([&Address::new("http://127.0.0.1/").unwrap()]);
+    for _ in 0..20 {
+        let tab = must(browser.acting_tab(&environment(), &origins).await);
+        assert_eq!(stand.browsers.list()[0].tabs, 1);
+        assert_eq!(browser.health(), BrowserHealth::Busy);
+        drop(tab);
+        assert_eq!(stand.browsers.list()[0].tabs, 0);
+        assert_eq!(browser.health(), BrowserHealth::Idle);
+    }
+    stand.end().await;
+}
+
+/// A listener on a loopback port of its own that stands for a proxy: it
+/// counts every connection made to it and answers each with an error.
+async fn stand_in_proxy() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&seen);
+    tokio::spawn(async move {
+        while let Ok((mut connection, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let mut first = [0_u8; 512];
+            let _ = connection.read(&mut first).await;
+            let _ = connection
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+        }
+    });
+    (address, seen)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_browser_takes_no_proxy_from_the_environment_around_it() {
+    // Every variable by which a browser on Linux takes a proxy, set in the
+    // browser's own environment and naming a listener that stands for the
+    // proxy. The page is at a name that no resolver knows: only a proxy
+    // could answer for it.
+    let (proxy, seen) = stand_in_proxy().await;
+    let mut settings = test_support::settings();
+    settings.environment_for_tests = [
+        "http_proxy",
+        "HTTP_PROXY",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "all_proxy",
+        "ALL_PROXY",
+    ]
+    .into_iter()
+    .map(|name| (name.to_owned(), proxy.clone().into()))
+    .collect();
+    let stand = Stand::new("proxy", settings, &[]);
+    let browser = stand.open(&profile("clerk")).await;
+    let page = Address::new("http://a2m-proxy-check.invalid/").unwrap();
+    let tab = must(
+        browser
+            .acting_tab(&environment(), &Origins::of([&page]))
+            .await,
+    );
+    // The page cannot be reached without a proxy; that the browser tried,
+    // and how it failed, is not what is asked.
+    let _ = tab.goto(&page, soon()).await;
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        0,
+        "the browser connected to the proxy its environment named"
+    );
+    drop(tab);
+    stand.end().await;
+}

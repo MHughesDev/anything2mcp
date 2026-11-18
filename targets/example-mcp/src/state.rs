@@ -230,7 +230,9 @@ impl State {
     ) -> Option<FaultKind> {
         let applies = |fault: &Fault| {
             let kind_fits = match fault.kind {
-                FaultKind::InjectText | FaultKind::ResultOffSchema => method == "tools/call",
+                FaultKind::InjectText
+                | FaultKind::ResultOffSchema
+                | FaultKind::ResultStructured { .. } => method == "tools/call",
                 FaultKind::HttpStatus { .. } => transport == Transport::Http,
                 _ => true,
             };

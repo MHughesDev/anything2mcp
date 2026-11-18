@@ -27,6 +27,7 @@ mod failure;
 mod finding;
 mod ident;
 mod kind;
+mod notice;
 mod plan;
 mod redact;
 mod secret;
@@ -44,8 +45,11 @@ pub use canonical::{CanonicalJson, PackPayload};
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};
 pub use effect::{EffectClass, Hazard};
-pub use evidence::{Coverage, EvidenceLevel};
-pub use failure::{Failure, FailureClass, FailureCode};
+pub use evidence::{Coverage, EvidenceLevel, WriteEvidence};
+pub use failure::{
+    Failure, FailureClass, FailureCode, SAID_CEILING, SAID_LONGEST, SAID_TOO_LONG, said_cut,
+    said_hides, said_neutral, said_quoted, said_shown,
+};
 pub use finding::{
     Address, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation, LimitationCode,
     ProducedBy, Source, Subject, Timestamp, UnknownReason,
@@ -58,6 +62,7 @@ pub use ident::{
 };
 pub use kind::{Archetype, Mode};
 pub use name::{InvalidName, UnknownName};
+pub use notice::SurfaceNotice;
 pub use plan::{
     AddressOverride, ApproveWrites, AuthPlan, AuthSetting, BindingPlan, CaptureLevel, Checkpoint,
     CodeLabel, CredentialUse, DecimalMark, DecisionPoint, DeclaredProgram, DriftRisk, EncodedPlan,
@@ -67,7 +72,7 @@ pub use plan::{
     PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr,
     PlanHeader, ProbePlan, RatePlan, SectionIndex, Sensitivity, SignInMode, SourcePlan, Stands,
     Step, StepArg, SurfaceIndex, SurfacePlan, TargetPlan, TestKind, TestPlan, ToolAnnotations,
-    ToolIndex, ToolPlan, ToolRuns, WhitespaceRule, ZoneRule,
+    ToolIndex, ToolPlan, ToolRuns, WhitespaceRule, ZoneRule, acknowledgement_may_stand,
 };
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,

@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Approve a write</title>
 <style>
-body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
 dt { font-weight: 600; margin-top: 0.75rem; }
 dd { margin: 0; overflow-wrap: anywhere; }
 code { font-family: ui-monospace, monospace; }
-.presses { display: flex; gap: 1rem; margin-top: 1.5rem; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; }
+th, td { border: 1px solid; padding: 0.3rem 0.5rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; white-space: pre-wrap; }
+h3 { margin-bottom: 0.4rem; overflow-wrap: anywhere; }
+.presses { display: flex; gap: 1rem; margin-top: 1.5rem; align-items: center; }
 button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer; }
 </style>
 </head>
@@ -23,8 +26,13 @@ button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer
 <dt>Started by</dt><dd>A program on this machine, acting for you (<code>{{started_by}}</code>)</dd>
 <dt>Hash of the change</dt><dd><code>{{diff_hash}}</code></dd>
 </dl>
-<p>This page does not show the changed records yet. <code>anything2mcp run get</code> for this run names the stored change; check that the hash there is the hash above. An approval is recorded for that exact change and no other.</p>
+<h2>What would change</h2>
+<p>These are the stored records the hash above was computed from. An approval is recorded for that exact change and no other.</p>
+{{change}}
+<h2>Your answer</h2>
 <p>Pressing Approve does not approve by itself: this machine then asks for proof that a person is present. This page closes {{minutes}} minutes after it was first asked for. No answer is a decline.</p>
+<p>Answer a prompt only right after you press Approve here. A prompt that comes up before you press, or while nothing on this page says it is waiting for one, is not for this change: cancel it. Where the prompt can show text, it shows <code>{{short_hash}}</code>, the same twelve characters as beside the buttons.</p>
+{{presence}}
 <div class="presses">
 <form method="post" action="/approve/{{code}}/approve">
 <input type="hidden" name="once" value="{{once}}">
@@ -34,6 +42,7 @@ button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer
 <input type="hidden" name="once" value="{{once}}">
 <button type="submit">Decline</button>
 </form>
+<span>Change <code>{{short_hash}}</code></span>
 </div>
 </main>
 </body>

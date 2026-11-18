@@ -39,7 +39,8 @@ fn a_registry_with_only_the_file_pack_builds_and_its_digest_is_stable() {
         ["create", "delete", "list", "read", "update"]
     );
     assert_eq!(set.file_kinds().count(), 1);
-    assert_eq!(set.drafting_rules().count(), 1);
+    // A document from a layout, and the reads over it.
+    assert_eq!(set.drafting_rules().count(), 2);
 }
 
 #[test]
@@ -141,7 +142,7 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
     // Each case: the changes, as a file, what is replaced, and what replaces
     // it; then the code of the diagnostic and a word its message holds.
     type Case<'a> = (&'a [(&'a str, &'a str, &'a str)], &'a str, &'a str);
-    let cases: [Case<'_>; 9] = [
+    let cases: [Case<'_>; 11] = [
         // An unknown key in a document is the kernel's schema check.
         (
             &[("documents/stock.yaml", "records:", "shape: wide\nrecords:")],
@@ -200,6 +201,24 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
             "file.open_without_signal",
             "lock signal",
         ),
+        // A write to a file whose document does not say whether an
+        // application may hold it open. Absent is not "no".
+        (
+            &[("documents/price_list.yaml", "may_be_open: false\n", "")],
+            "file.open_undeclared",
+            "does not say",
+        ),
+        // Text that may begin as a formula does, declared where no
+        // spreadsheet program opens the file as cells.
+        (
+            &[(
+                "documents/settings.yaml",
+                "type: cutoff, writable: true",
+                "type: cutoff, writable: true, may_begin_formula: true",
+            )],
+            "file.document_invalid",
+            "delimited text",
+        ),
         // A write to a format with no patch editor.
         (
             &[
@@ -241,4 +260,214 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
         assert!(found.at.line >= 1 && !found.at.file.as_str().is_empty());
         assert!(!found.fix.is_empty(), "{code} gives no fix");
     }
+}
+
+#[test]
+fn an_authorization_key_that_names_no_record_authorizes_no_write_beneath_an_application() {
+    let registry = registry(Roots::none());
+    // The surface stands beneath an application, one operation that writes
+    // there is irreversible, and `target.yaml` holds an authorization.
+    let refused = |authorization: &str| -> bool {
+        let line = format!("target: example\nauthorization: {authorization}\n");
+        let changed = Changed::new(&[
+            (
+                "target.yaml",
+                "stands: alone\n  config_files:",
+                "stands: {beneath: config_files}\n  config_files:",
+            ),
+            ("target.yaml", "target: example\n", &line),
+            (
+                "operations/stock_set.yaml",
+                "effect: write",
+                "effect: irreversible",
+            ),
+        ]);
+        let problems = match compile(&changed.0, registry.compiler_set()) {
+            Ok(_) => panic!("the other writes beneath the application compiled"),
+            Err(problems) => problems,
+        };
+        problems.iter().any(|found| {
+            found.code.as_str() == "file.beneath_application"
+                && found.at.file.as_str() == "operations/stock_set.yaml"
+        })
+    };
+    // A reference to the record lets the irreversible write through.
+    assert!(!refused("owner-agreement-2026-11"));
+    // A key with nothing in it is no record.
+    assert!(refused("\" \""));
+}
+
+/// A rule that drafts what the pack's own rule never does: a document with
+/// a field a caller may write.
+struct DraftsAWrite;
+
+impl a2m_files::DraftingRule for DraftsAWrite {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_LAYOUT).unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_pack_file::DOCUMENT_KIND
+    }
+
+    fn draft(
+        &self,
+        _finding: &a2m_core::Finding,
+        cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
+        use a2m_files::DraftValue;
+        let document = |file: &str,
+                        writable: Option<DraftValue>|
+         -> Result<a2m_files::DraftDoc, a2m_core::Failure> {
+            let mut field = vec![
+                ("header", DraftValue::text("price")),
+                ("type", DraftValue::text("price")),
+            ];
+            if let Some(writable) = writable {
+                field.push(("writable", writable));
+            }
+            Ok(a2m_files::DraftDoc {
+                path: a2m_files::RelPath::new(&format!("documents/{file}.yaml"))?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("files")),
+                    ("file", DraftValue::text("prices.csv")),
+                    ("format", DraftValue::text("delimited")),
+                    (
+                        "records",
+                        DraftValue::map(vec![(
+                            "price",
+                            DraftValue::map(vec![
+                                ("rows", DraftValue::text("all")),
+                                (
+                                    "fields",
+                                    DraftValue::map(vec![("price", DraftValue::map(field))]),
+                                ),
+                            ]),
+                        )]),
+                    ),
+                ]),
+            })
+        };
+        Ok(vec![
+            document("tries_a_write", Some(DraftValue::Bool(true)))?,
+            document("only_reads", None)?,
+            // Whether a field may be written, left as a question, counts as
+            // a write (decision 0161, point 10).
+            document(
+                "asks_whether_it_writes",
+                Some(cx.open_question("May a caller write the price?")),
+            )?,
+        ])
+    }
+}
+
+#[test]
+fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
+    use a2m_core::{Coverage, Finding, ProducedBy, Source, Subject};
+    let mut builder = a2m_files::CompilerSet::builder();
+    builder
+        .file_kind(
+            a2m_pack_file::PACK,
+            std::sync::Arc::new(a2m_pack_file::DocumentKind::new()),
+        )
+        .unwrap()
+        .drafting_rule(a2m_pack_file::PACK, std::sync::Arc::new(DraftsAWrite))
+        .unwrap();
+    let set = builder.build();
+    let finding = Finding::about(
+        Subject::File {
+            digest: a2m_core::Digest::of(b"a file"),
+            format: "delimited".to_owned(),
+            part: None,
+        },
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_LAYOUT).unwrap(),
+        "{}",
+        Source::LiveSystem,
+        ProducedBy {
+            provider: "file".to_owned(),
+            version: "0.0.1".to_owned(),
+            component: None,
+        },
+        a2m_core::Timestamp::from_unix_millis(0),
+    )
+    .coverage(Coverage::Complete)
+    .build()
+    .unwrap();
+    let root = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&finding))
+        .unwrap();
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            "documents/tries_a_write.yaml",
+            "documents/asks_whether_it_writes.yaml"
+        ]
+    );
+    assert_eq!(written, ["documents/only_reads.yaml"]);
+    let exists = root.join("documents").join("tries_a_write.yaml").exists();
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(!exists);
+}
+
+#[test]
+fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
+    let changed = Changed::new(&[(
+        "operations/price_set.yaml",
+        "effect: write",
+        "effect: read\n",
+    )]);
+    let registry = registry(Roots::none());
+    let problems = compile(&changed.0, registry.compiler_set()).expect_err("a read that writes");
+    assert!(
+        problems
+            .iter()
+            .any(|found| found.code.as_str() == "kernel.effect_lower_than_derived"),
+        "{problems}"
+    );
+}
+
+#[test]
+fn a_delete_is_irreversible_because_nothing_restores_the_row() {
+    // The fixtures declare it so, and they compile.
+    let registry = registry(Roots::none());
+    let plan = compile(&fixtures(), registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .plan;
+    for name in ["example_stock_remove", "example_warehouse_remove"] {
+        let operation = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap();
+        assert_eq!(operation.effect, a2m_core::EffectClass::Irreversible);
+        // It is still read back: the row must be gone.
+        assert!(!operation.bindings[0].read_back.is_empty());
+    }
+    // Declared as an ordinary write, it does not compile.
+    let changed = Changed::new(&[(
+        "operations/stock_remove.yaml",
+        "effect: irreversible",
+        "effect: write",
+    )]);
+    let problems = compile(&changed.0, registry.compiler_set()).expect_err("a delete as a write");
+    assert!(
+        problems.iter().any(|found| {
+            found.code.as_str() == "kernel.effect_lower_than_derived"
+                && found.at.file.as_str() == "operations/stock_remove.yaml"
+        }),
+        "{problems}"
+    );
 }

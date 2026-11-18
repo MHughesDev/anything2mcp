@@ -131,8 +131,9 @@ async fn a_device_is_read_through_the_device_pack() {
     // raw word, and the bit.
     let raw = device.control().number("pump_speed_measured").unwrap();
     let running = device.control().bit("pump_running").unwrap();
-    // The speed is an exact decimal: a result carries one as its text.
-    let speed = read["speed"]["decimal"]
+    // The speed is an exact decimal: a result carries one as its exact
+    // decimal text, never as a float.
+    let speed = read["speed"]
         .as_str()
         .unwrap_or_else(|| panic!("the speed is not a decimal: {read}"));
     let (whole, part) = speed.split_once('.').unwrap_or((speed, "0"));

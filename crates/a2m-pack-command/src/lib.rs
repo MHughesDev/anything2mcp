@@ -96,7 +96,9 @@ impl Pack for CommandPack {
             Arc::new(discover::HelpDiscoverer {
                 clock: cx.telemetry().clock(),
             }),
-            Arc::new(discover::HelpDescriber),
+            Arc::new(discover::HelpDescriber {
+                redact: Arc::clone(cx.redact()),
+            }),
         )?;
         Ok(())
     }

@@ -22,9 +22,10 @@ tokio.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
-a2m-ledger = { path = "../a2m-ledger" }
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-cli = { path = "../../targets/example-cli" }
+serde_json.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

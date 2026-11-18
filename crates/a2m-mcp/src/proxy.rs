@@ -13,10 +13,18 @@
 //!    stateless revision asks of every HTTP request: the revision, the
 //!    method, and the name of the tool, prompt, or resource.
 //!
-//! A line that is not JSON is answered here with -32700, because no body
-//! was ever sent. When the endpoint cannot be reached, or answers with
-//! something that is not an MCP message, a request is answered with error
-//! -32000 so that its caller is not left waiting.
+//! A line that is not JSON is answered here with -32700, and a line longer
+//! than [`LINE_LIMIT`] with -32600, because no body was ever sent. When the
+//! endpoint cannot be reached, or answers with something that is not an
+//! MCP message, a request is answered with error -32000 so that its caller
+//! is not left waiting. The error's `data` says whether the call may be
+//! made again: a request refused before it was handed to the engine may
+//! be; a `tools/call` whose answer was lost after the engine may have had
+//! it may not, because it may have started a run that writes (class
+//! `possible_commit`, code `answer_lost`).
+//!
+//! At most [`OPEN_LIMIT`] requests are carried at once. The next line is
+//! read when one of them is answered.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -33,8 +41,18 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinSet};
 
-use crate::codes;
+use crate::codes::{self, LostCall};
 use crate::http::{HttpRequest, HttpResponse, VERSION_HEADER, VERSION_KEY, mcp_path};
+use crate::tools::KEY_META;
+
+/// The longest line read, in bytes: the endpoint's own cap on a request
+/// body. A longer line is answered with -32600 and the rest of it is read
+/// and dropped, never kept.
+pub const LINE_LIMIT: usize = 4 * 1024 * 1024;
+
+/// The most requests carried to the endpoint at once, each on its own
+/// connection.
+pub const OPEN_LIMIT: usize = 64;
 
 /// A future the proxy awaits.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -44,6 +62,13 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait Upstream: Send + Sync + 'static {
     /// Sends one request and returns the response, whose body may still be
     /// arriving.
+    ///
+    /// A failure of class `busy`, `policy`, `input`, or `transient` says
+    /// that the request was not handed to the engine: nothing answered,
+    /// what answered was refused, or the connection ended before anything
+    /// was sent. A failure of any other class, `possible_commit` above all
+    /// (the local channel's `answer_lost`), says that the engine may have
+    /// had it.
     fn send(&self, request: HttpRequest) -> BoxFuture<'static, Result<HttpResponse, Failure>>;
 }
 
@@ -94,9 +119,27 @@ where
     let mut line = Vec::new();
     let read = loop {
         line.clear();
-        match reader.read_until(b'\n', &mut line).await {
-            Ok(0) => break Ok(()),
-            Ok(_) => {}
+        // Exchanges that are over are let go, and no more than the limit
+        // are carried at once: the next line waits for one to end.
+        while exchanges.try_join_next().is_some() {}
+        while exchanges.len() >= OPEN_LIMIT {
+            exchanges.join_next().await;
+        }
+        match read_line(&mut reader, &mut line, LINE_LIMIT).await {
+            Ok(Line::End) => break Ok(()),
+            Ok(Line::Read) => {}
+            Ok(Line::TooLong) => {
+                let answer = error_line(
+                    &Json::Null,
+                    codes::INVALID_REQUEST,
+                    "The line is longer than a request may be.",
+                    None,
+                );
+                if lines.send(answer).await.is_err() {
+                    break Ok(());
+                }
+                continue;
+            }
             Err(_) => {
                 break Err(Failure::new(
                     FailureClass::Transient,
@@ -138,11 +181,17 @@ where
             continue;
         }
         let id = message.get("id").filter(|id| !id.is_null()).cloned();
+        // Only a tool call can start a run, and so a write.
+        let may_write = method == Some("tools/call");
         let request = post(&path, &message, std::mem::take(&mut line));
         let handle = exchanges.spawn(exchange(
             Arc::clone(&upstream),
             request,
-            id.clone(),
+            Asked {
+                id: id.clone(),
+                may_write,
+                call: may_write.then(|| lost_call(&message)),
+            },
             lines.clone(),
         ));
         open.retain(|_, handle| !handle.is_finished());
@@ -154,6 +203,129 @@ where
     drop(lines);
     let _ = writer.await;
     read
+}
+
+/// How a line was read.
+enum Line {
+    /// The input has ended.
+    End,
+    /// A line, without its end, is in the buffer.
+    Read,
+    /// The line was longer than the limit. It was read to its end and
+    /// dropped.
+    TooLong,
+}
+
+/// Reads one line into `line`, holding no more than `limit` bytes of it.
+async fn read_line<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    line: &mut Vec<u8>,
+    limit: usize,
+) -> std::io::Result<Line> {
+    let mut too_long = false;
+    loop {
+        let buffer = reader.fill_buf().await?;
+        if buffer.is_empty() {
+            return Ok(match (too_long, line.is_empty()) {
+                (true, _) => Line::TooLong,
+                (false, true) => Line::End,
+                (false, false) => Line::Read,
+            });
+        }
+        let (taken, ended) = match buffer.iter().position(|byte| *byte == b'\n') {
+            Some(at) => (at + 1, true),
+            None => (buffer.len(), false),
+        };
+        if !too_long {
+            if line.len() + taken > limit.saturating_add(1) {
+                too_long = true;
+                line.clear();
+            } else {
+                line.extend_from_slice(&buffer[..taken]);
+            }
+        }
+        reader.consume(taken);
+        if ended {
+            return Ok(if too_long { Line::TooLong } else { Line::Read });
+        }
+    }
+}
+
+/// What the proxy knows of a request it carries.
+struct Asked {
+    /// Its id; `None` for a notification, which is owed no answer.
+    id: Option<Json>,
+    /// Whether it is a tool call, which may start a run that writes.
+    may_write: bool,
+    /// For a tool call, what its caller needs to find its run if the
+    /// answer is lost.
+    call: Option<LostCall>,
+}
+
+/// The name of the control tool that calls a published tool by name.
+const TOOL_CALL: &str = "a2m_tool_call";
+
+/// What a caller needs to find a tool call's run: whether it carries an
+/// idempotency key, and the published tool it names. A tool's name is
+/// shown only when it is one a target could publish.
+fn lost_call(message: &Json) -> LostCall {
+    let name = message.pointer("/params/name").and_then(Json::as_str);
+    let arguments = message.pointer("/params/arguments");
+    let in_meta = message
+        .pointer("/params/_meta")
+        .and_then(|meta| meta.get(KEY_META))
+        .is_some_and(Json::is_string);
+    let (tool, in_arguments) = match name {
+        Some(TOOL_CALL) => (
+            arguments
+                .and_then(|given| given.get("tool"))
+                .and_then(Json::as_str),
+            arguments
+                .and_then(|given| given.get("idempotency_key"))
+                .is_some_and(Json::is_string),
+        ),
+        Some(name) if !name.starts_with("a2m_") => (Some(name), false),
+        _ => (None, false),
+    };
+    let tool = tool
+        .filter(|tool| {
+            !tool.is_empty()
+                && tool.len() <= 128
+                && tool
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        })
+        .map(str::to_owned);
+    // The moment is shown to the caller and decides nothing; it is the
+    // wall clock of the machine the proxy runs on, a minute early.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        });
+    LostCall {
+        keyed: in_meta || in_arguments,
+        tool,
+        since: (now - 60_000).max(0),
+    }
+}
+
+/// The `data` of an error for a request that was not handed to the
+/// engine: it may be made again.
+fn not_sent(failure: &Failure) -> Json {
+    let mut data = codes::failure_data(failure);
+    data["retry_safe"] = json!(true);
+    data
+}
+
+/// The `data` of an error for a tool call whose answer was lost after the
+/// engine may have had it: a write in doubt, never "not sent", with the
+/// exact next step for this call.
+fn in_doubt(call: Option<&LostCall>) -> Json {
+    let failure = call.map_or_else(codes::answer_lost, codes::answer_lost_for);
+    let mut data = codes::failure_data(&failure);
+    data["retry_safe"] = json!(false);
+    data
 }
 
 /// The HTTP request that carries one line: the line as the body, and the
@@ -191,18 +363,36 @@ fn post(path: &str, message: &Json, body: Vec<u8>) -> Result<HttpRequest, axum::
 async fn exchange(
     upstream: Arc<dyn Upstream>,
     request: Result<HttpRequest, axum::http::Error>,
-    id: Option<Json>,
+    asked: Asked,
     lines: mpsc::Sender<Vec<u8>>,
 ) {
     // A caller with a request open is always answered; a notification is
     // owed nothing.
     let unanswered = |message: &str, data: Option<Json>| {
-        id.as_ref()
+        asked
+            .id
+            .as_ref()
             .map(|id| error_line(id, codes::ENGINE_UNREACHABLE, message, data))
+    };
+    // A request the engine may have had, whose answer is lost: a tool
+    // call is a write in doubt; any other request wrote nothing.
+    let lost = |failure: &Failure| {
+        if asked.may_write {
+            unanswered(
+                codes::answer_lost().message(),
+                Some(in_doubt(asked.call.as_ref())),
+            )
+        } else {
+            unanswered(failure.message(), Some(not_sent(failure)))
+        }
     };
     let Ok(request) = request else {
         // A value copied into a header was not one a header can carry.
-        if let Some(line) = unanswered("The message names something a header cannot carry.", None) {
+        // Nothing was sent.
+        if let Some(line) = unanswered(
+            "The message names something a header cannot carry.",
+            Some(json!({"retry_safe": true})),
+        ) {
             let _ = lines.send(line).await;
         }
         return;
@@ -210,7 +400,19 @@ async fn exchange(
     let response = match upstream.send(request).await {
         Ok(response) => response,
         Err(failure) => {
-            if let Some(line) = unanswered(failure.message(), Some(codes::failure_data(&failure))) {
+            let sent = !matches!(
+                failure.class(),
+                FailureClass::Busy
+                    | FailureClass::Policy
+                    | FailureClass::Input
+                    | FailureClass::Transient
+            );
+            let line = if sent {
+                lost(&failure)
+            } else {
+                unanswered(failure.message(), Some(not_sent(&failure)))
+            };
+            if let Some(line) = line {
                 let _ = lines.send(line).await;
             }
             return;
@@ -247,8 +449,14 @@ async fn exchange(
             if let Some(value) = field.strip_prefix(b"data:") {
                 data.extend_from_slice(value.strip_prefix(b" ").unwrap_or(value));
             } else if field.is_empty() && !data.is_empty() {
-                answered = true;
-                if lines.send(std::mem::take(&mut data)).await.is_err() {
+                let message = std::mem::take(&mut data);
+                // Only one JSON message goes on a line. The call is
+                // answered by its response, not by a note of progress.
+                let Ok(parsed) = serde_json::from_slice::<Json>(&message) else {
+                    continue;
+                };
+                answered |= is_response(&parsed);
+                if lines.send(message).await.is_err() {
                     return;
                 }
             }
@@ -263,14 +471,35 @@ async fn exchange(
             let _ = lines.send(buffer).await;
         }
     }
-    if !answered
-        && let Some(line) = unanswered(
+    if answered {
+        return;
+    }
+    // A refusal of the endpoint's own comes before any dispatch, with a
+    // status of 400 to 499. Any other answer that is not a response, or
+    // breaks off before one, may follow a dispatch.
+    let line = if status.is_client_error() || !asked.may_write {
+        unanswered(
             "The engine answered with something that is not an MCP message.",
-            Some(json!({"status": status.as_u16()})),
+            Some(
+                json!({"status": status.as_u16(), "retry_safe": !asked.may_write || status.is_client_error()}),
+            ),
         )
-    {
+    } else {
+        unanswered(
+            codes::answer_lost().message(),
+            Some(in_doubt(asked.call.as_ref())),
+        )
+    };
+    if let Some(line) = line {
         let _ = lines.send(line).await;
     }
+}
+
+/// Whether a message is the response to a request, not a note.
+fn is_response(message: &Json) -> bool {
+    message.get("method").is_none()
+        && message.get("id").is_some()
+        && (message.get("result").is_some() || message.get("error").is_some())
 }
 
 fn error_line(id: &Json, code: i64, message: &str, data: Option<Json>) -> Vec<u8> {

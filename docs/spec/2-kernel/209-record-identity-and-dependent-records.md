@@ -26,18 +26,21 @@ Every write operation declares how its record is found again. The compiler refus
 
 **Capturing the assigned key.** When the system returns the new identifier in its response, the engine stores it in the ledger at once, with the `acted` mark. From then on the record is found by that identifier. `stamped` and `find` exist for the gap before that: a stop after the write was sent and before its response was recorded.
 
-**Values known before the commit point.** Some systems hand out the identifier before the write commits: a data store returns the assigned key inside an open transaction, and some report a transaction's identifier before it ends. A step's outcome may carry such values, and the engine records them in the ledger before the step that commits is acted. A lost answer to the commit is then reconciled by the captured value ([section 307](../3-packs/307-the-data-pack.md)).
+**Values known before the commit point.** Some systems hand out the identifier before the write commits: a data store returns the assigned key inside an open transaction, and some report a transaction's identifier before it ends. A step's outcome may carry such values, and the engine records them in the ledger before the step that commits is acted. A lost answer to the commit is then reconciled by the captured value ([section 307](../3-packs/307-the-data-pack.md)). The later steps of the record, its read-back, its lookup, and the read at reconcile, are handed what was recorded ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
+
+**A key is never guessed.** A step is handed the record's key in the system: its key inputs, or the key the system assigned. A record's place in the run is the engine's name for it and is never handed to a step; a step of a record that has no key in the system yet is handed none, and a driver that needs one stops by its own name ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)).
 
 **Rules for `find`.**
 
 - Zero matches means the write did not land.
 - One match means it did; the engine captures the identifier and continues to read-back.
-- More than one match stops the run with `ambiguous_match`. The engine never picks one.
+- More than one match stops the run with `ambiguous_match`. The pack's lookup step sees the matches and reports it; the engine never picks one.
 - The lookup must filter on values specific enough to be unique in practice; the linter warns when it filters on fewer than two fields besides the parent.
 
 **Rules for `stamped`.**
 
 - The token is the record's idempotency token from the ledger, in a short form.
+- No record can carry the token before the run has written one, so at the first preview a stamped record is classed `create` without a lookup. The lookup by the token is made from then on: at the freshness check, and on resume.
 - What carries the stamp is whatever the system offers for a reference: a field of a form in the web pack, a column the target declares in the data pack, an argument the program takes in the command pack ([section 306](../3-packs/306-the-command-pack.md)). Each pack's binding marks the element that carries it, and a declared read must be able to find the record by it.
 - The stamp must be carried in every binding of the operation, which the compiler checks.
 - The stamp stays in the record. Where that is unwelcome, use `find`.
@@ -58,10 +61,10 @@ steps:
      checkpoint: per_record}
 ```
 
-- **Results are kept in the ledger.** Each record's outputs, including an assigned key, are stored with its row. On resume, the line steps read the order number from the ledger. The header step is not run again.
+- **Results are kept in the ledger.** Each record's outputs, including an assigned key, are stored with its row when its write is marked `acted`. On resume, the line steps read the order number from the ledger. The header step is not run again. A header that was found unchanged, or that reconcile found had landed, has no outputs in its row and is read once more instead.
 - **Order follows the steps.** A step that uses another step's result runs after it. The compiler rejects a cycle.
-- **A failed parent blocks its children.** They are marked skipped with the reason `blocked_by_parent`, and the run stops.
-- **The preview shows the whole structure.** Lines for an order that does not exist yet are shown under the proposed order. The diff hash uses the parent's intended identity, never an identifier that has not been assigned, so one approval covers header and lines.
+- **A failed parent blocks its children.** They are marked `failed` with the code `blocked_by_parent`, and the run stops. On resume they go back to `planned` without a read, because nothing was sent for them.
+- **The preview shows the whole structure.** Lines for an order that does not exist yet are shown after the proposed order, each a `create` that is not looked up. Such a line is planned under its place in the run, never under an identifier that has not been assigned, so one approval covers header and lines. Only an input that is part of the line's key may wait for the header; a value that is written must be known at the preview ([decision 0092](../../decisions/0092-a-record-that-waits-for-an-earlier-record-is-planned-under-its-place-in-the-run.md)).
 
 ## One save that carries many records
 

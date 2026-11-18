@@ -2,14 +2,16 @@
 //! scoped supervisor with a data directory inside the profile root, owned
 //! by what it answers over its pipe, and stopped with nothing left behind.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
-use a2m_core::{Availability, Digest, Environment, Failure, Identity, Redact, TargetName};
+use a2m_core::{
+    Availability, Digest, Environment, Failure, FailureClass, Identity, Redact, TargetName, Values,
+};
 use a2m_provider::{
     Access, CheckedPath, Cleanup, Deadline, LaunchSpec, PackContext, ProgramRef, RootName,
     ScopedSupervisor, SubsystemId, SubsystemKind,
@@ -18,8 +20,14 @@ use a2m_provider::{
 use crate::client::{Client, ClientError, Why};
 use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
 use crate::launch;
-use crate::protocol::{CloseBrowser, GetVersion};
-use crate::tab::{ActTab, ObserveTab, PageEnvironment, Posture, SafeRequests, open_page};
+use crate::origin::Origins;
+use crate::protocol::{
+    CloseBrowser, GetVersion, GrantPermissions, SetAutoAttach, SetDownloadBehavior, TargetFilter,
+};
+use crate::tab::{
+    ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
+    watch_windows,
+};
 
 /// The named root that holds the browsers' data directories. The manifest
 /// of the pack that uses this crate declares it under `write_roots`.
@@ -30,6 +38,12 @@ pub const BROWSER_KIND: &str = "browser";
 
 /// The version of the DevTools protocol the engine speaks.
 const PROTOCOL_VERSION: &str = "1.3";
+
+/// The key, in the settings group of a pack built on this crate, of the
+/// digests of the browser programs a person has reviewed: a list of
+/// texts, each a digest. The pack's manifest declares it, and
+/// [`BrowserSettings::with_pack_settings`] reads it.
+pub const DIGESTS_SETTING: &str = "browser_digests";
 
 /// How the engine finds and bounds its browsers. Made with
 /// [`BrowserSettings::default`] and changed field by field.
@@ -63,6 +77,11 @@ pub struct BrowserSettings {
     /// build, and nothing in the product can set it.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) without_sandbox: bool,
+    /// This crate's own tests only: variables set in the browser's
+    /// environment, to stand for what a machine around the engine may hold,
+    /// such as a proxy.
+    #[cfg(test)]
+    pub(crate) environment_for_tests: Vec<(String, std::ffi::OsString)>,
 }
 
 impl Default for BrowserSettings {
@@ -77,6 +96,8 @@ impl Default for BrowserSettings {
             max_read_chars: 1024 * 1024,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
+            #[cfg(test)]
+            environment_for_tests: Vec::new(),
         }
     }
 }
@@ -94,6 +115,34 @@ impl BrowserSettings {
     pub fn with_known_digests(mut self, digests: Vec<Digest>) -> Self {
         self.known_digests = digests;
         self
+    }
+
+    /// The same settings with what a pack's settings group says about the
+    /// browser: under [`DIGESTS_SETTING`], the digests a person has
+    /// reviewed. A group that does not hold the key changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`schema_invalid` when the value is not a list of digests. A
+    /// pin that cannot be read is never taken as no pin.
+    pub fn with_pack_settings(mut self, settings: &Values) -> Result<Self, Failure> {
+        let Some(value) = settings.get(DIGESTS_SETTING) else {
+            return Ok(self);
+        };
+        let wrong = || {
+            input(
+                a2m_core::FailureCode::SCHEMA_INVALID,
+                format!("The setting `{DIGESTS_SETTING}` is not a list of digests."),
+                "Write each digest as 64 lowercase hexadecimal characters, in a list.",
+            )
+        };
+        let mut digests = Vec::new();
+        for one in value.as_list().ok_or_else(wrong)? {
+            let text = one.as_text().ok_or_else(wrong)?;
+            digests.push(text.parse::<Digest>().map_err(|_| wrong())?);
+        }
+        self.known_digests = digests;
+        Ok(self)
     }
 }
 
@@ -174,9 +223,105 @@ pub(crate) struct BrowserInner {
     verified: bool,
     pub(crate) tabs: AtomicUsize,
     runs: AtomicU64,
+    /// The open tabs, by the browser's name for each, so that what the
+    /// browser itself refuses can be reported by the tab it concerns.
+    pages: Mutex<BTreeMap<String, Weak<Page>>>,
+    held: Mutex<Held>,
+    /// The windows pages have opened that are still there, by session.
+    windows: Mutex<BTreeMap<String, Window>>,
+}
+
+/// A window a page opened. It is kept locked, and closed once the first
+/// page it asks for has been refused, or when the tab that opened it goes.
+pub(crate) struct Window {
+    /// The browser's name for what opened it.
+    pub(crate) opener: String,
+    /// The browser's name for the window itself.
+    pub(crate) target: String,
+    /// Whether it has asked for a page yet.
+    pub(crate) asked: bool,
+}
+
+/// The new pages the browser holds before they run. Only the session the
+/// browser attached a page on can let it run (measured, decision 0143),
+/// and the browser's word of that session and its answer to the engine's
+/// request for the page come in either order. So each side leaves a note
+/// for the other: a page nobody made here is never let run.
+#[derive(Default)]
+struct Held {
+    /// Pages the browser holds, with the session each is held on.
+    waiting: BTreeMap<String, String>,
+    /// Pages the engine made, and has not yet been told are held.
+    made: BTreeSet<String>,
 }
 
 impl BrowserInner {
+    pub(crate) fn pages(&self) -> MutexGuard<'_, BTreeMap<String, Weak<Page>>> {
+        self.pages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn windows(&self) -> MutexGuard<'_, BTreeMap<String, Window>> {
+        self.windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The windows a tab opened that are still there, by the browser's
+    /// name for each, for the tab to close as it goes.
+    pub(crate) fn windows_of(&self, opener: &str) -> Vec<String> {
+        self.windows()
+            .values()
+            .filter(|window| window.opener == opener)
+            .map(|window| window.target.clone())
+            .collect()
+    }
+
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The engine made this page. The session to let it run on, when the
+    /// browser has already said it holds the page.
+    pub(crate) fn made(&self, target: &str) -> Option<String> {
+        let mut held = self.held();
+        let session = held.waiting.remove(target);
+        if session.is_none() {
+            held.made.insert(target.to_owned());
+        }
+        session
+    }
+
+    /// The browser holds this page on this session. Whether the engine
+    /// made it, so that it may be let run now.
+    pub(crate) fn holds(&self, target: &str, session: &str) -> bool {
+        let mut held = self.held();
+        let ours = held.made.remove(target);
+        if !ours {
+            held.waiting.insert(target.to_owned(), session.to_owned());
+        }
+        ours
+    }
+
+    /// Has the tab that opened something report it. When what opened it
+    /// is not a tab the engine knows, such as a frame inside one, every
+    /// tab reports it: one report too many stops a run, one too few lets
+    /// it go on.
+    pub(crate) fn report(&self, opener: &str, word: &str, address: &str) {
+        let pages = self.pages();
+        match pages.get(opener).and_then(Weak::upgrade) {
+            Some(page) => page.block(word, address),
+            None => {
+                for page in pages.values().filter_map(Weak::upgrade) {
+                    page.block(word, address);
+                }
+            }
+        }
+    }
+
     fn health(&self) -> BrowserHealth {
         if self.client.closed().is_some() {
             BrowserHealth::Exited
@@ -271,21 +416,70 @@ fn unanswered(error: &ClientError, waited: Duration, redact: &dyn Redact) -> Str
             },
             written(dispatch)
         ),
-        ClientError::Protocol { code, message } => {
-            let shown: String = message
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(200)
-                .collect();
-            format!(
-                "it refused the first request over its pipe with the code {code}: {}",
-                redact.redact(&shown)
-            )
-        }
+        ClientError::Protocol { code, message } => format!(
+            "it refused the first request over its pipe with the code {code}: {}",
+            shown(redact, message)
+        ),
         ClientError::Shape { method } => {
             format!("its answer to {method} over its pipe has another shape")
         }
     }
+}
+
+/// Puts on a browser the three locks that are the browser's and not a
+/// tab's.
+///
+/// Every download is denied: the browser writes no file for one, in any
+/// tab, so nothing lands outside the roots the engine was given. Every
+/// permission a page asks for is refused, for every origin, so that no
+/// request waits on a prompt nobody answers and none is granted by one.
+/// And every new page is attached before it runs, so that a window a page
+/// opens is caught before its first request ([`watch_windows`]).
+async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Result<(), String> {
+    let client = &inner.client;
+    let deadline = Deadline::after(call_deadline);
+    // Listening starts before the browser is told to attach anything.
+    let events = client.subscribe(None);
+    tokio::spawn(watch_windows(Arc::downgrade(inner), events, call_deadline));
+    client
+        .call(None, &SetDownloadBehavior { behavior: "deny" }, deadline)
+        .await
+        .map_err(|_| "it did not take the refusal of downloads".to_owned())?;
+    client
+        .call(
+            None,
+            &GrantPermissions {
+                permissions: Vec::new(),
+            },
+            deadline,
+        )
+        .await
+        .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
+    client
+        .call(
+            None,
+            &SetAutoAttach {
+                auto_attach: true,
+                wait_for_debugger_on_start: true,
+                flatten: true,
+                // Pages only. The browser's own parts are not the engine's
+                // to hold.
+                filter: Some(vec![
+                    TargetFilter {
+                        kind: Some("page"),
+                        exclude: false,
+                    },
+                    TargetFilter {
+                        kind: None,
+                        exclude: true,
+                    },
+                ]),
+            },
+            deadline,
+        )
+        .await
+        .map_err(|_| "it did not take the watch on new windows".to_owned())?;
+    Ok(())
 }
 
 /// The engine's browsers. One per engine process; cheap to clone, and
@@ -378,21 +572,46 @@ impl Browsers {
         let Visibility::Background = show;
         let failed = |reason| BrowserError::LaunchFailed(reason);
 
-        let program = launch::find(shared.settings.program.as_deref())
-            .ok_or_else(|| failed(LaunchReason::NotInstalled))?;
         let place = profile.place();
-        let directory = shared
-            .root
-            .clone()
-            .and_then(|root| root.join(&place))
-            .and_then(|directory| directory.create_dir_all().map(|()| directory))
-            .map_err(|failure| failed(LaunchReason::DataDirectory(failure)))?;
+        // Looking for the program and making the folder touch the disk:
+        // off the threads that serve everything else.
+        let named = shared.settings.program.clone();
+        let root = shared.root.clone();
+        let under = place.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            let program = launch::find(named.as_deref()).ok_or(LaunchReason::NotInstalled)?;
+            let directory = root
+                .and_then(|root| root.join(&under))
+                .and_then(|directory| directory.create_dir_all().map(|()| directory))
+                // The folder holds the session's cookies under a key that
+                // is no secret, so the folder itself is what keeps them.
+                .and_then(|directory| launch::make_private(&directory).map(|()| directory))
+                .map_err(LaunchReason::DataDirectory)?;
+            Ok::<_, LaunchReason>((program, directory))
+        })
+        .await;
+        let (program, directory) = match found {
+            Ok(found) => found.map_err(failed)?,
+            Err(_) => {
+                return Err(failed(LaunchReason::DataDirectory(Failure::new(
+                    FailureClass::Transient,
+                    codes::CONNECTION_LOST,
+                    "The engine stopped while the browser's data directory was being made.",
+                    "Try again.",
+                ))));
+            }
+        };
         #[allow(unused_mut, reason = "only a test build adds an argument")]
         let mut args = launch::arguments(directory.as_path(), false);
         #[cfg(any(test, feature = "test-support"))]
         if shared.settings.without_sandbox {
             args.push(crate::test_support::WITHOUT_SANDBOX.into());
         }
+        #[allow(unused_mut, reason = "only this crate's tests add a variable")]
+        let mut env = launch::environment();
+        #[cfg(test)]
+        env.set
+            .extend(shared.settings.environment_for_tests.iter().cloned());
         let kind = SubsystemKind::new(BROWSER_KIND)
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
         // One start at a time in the whole process, from the start of the
@@ -411,7 +630,7 @@ impl Browsers {
                         digest: None,
                     },
                     args,
-                    env: launch::environment(),
+                    env,
                     cwd: None,
                     kind,
                     place: Some(place),
@@ -482,7 +701,18 @@ impl Browsers {
             verified: link.verified || reviewed,
             tabs: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
+            pages: Mutex::new(BTreeMap::new()),
+            held: Mutex::new(Held::default()),
+            windows: Mutex::new(BTreeMap::new()),
         });
+        // The locks that hold for the whole browser go on before any tab
+        // exists. A browser that does not take them is not one the engine
+        // can own: it is closed.
+        if let Err(why) = lock_browser(&inner, shared.settings.call_deadline).await {
+            inner.client.close();
+            shared.supervisor.stop(subsystem).await;
+            return Err(failed(LaunchReason::NotOwned(why)));
+        }
         shared.open().insert(profile.clone(), Arc::clone(&inner));
         Ok(Browser {
             inner,
@@ -575,14 +805,21 @@ impl fmt::Debug for Browser {
 }
 
 impl Browser {
-    /// A new tab that may act, with the fixed environment given.
+    /// A new tab that may act, with the fixed environment given, for the
+    /// origins given: the destinations the plan declares. The tab goes to
+    /// no other origin, whoever moves it, and looks at and acts on no page
+    /// of another: each of those is [`BrowserError::ForeignOrigin`].
     ///
     /// # Errors
     ///
     /// [`BrowserError::Disconnected`] or [`BrowserError::Timeout`] when the
     /// browser is gone or does not answer.
-    pub async fn acting_tab(&self, env: &PageEnvironment) -> Result<ActTab, BrowserError> {
-        let page = open_page(&self.shared, &self.inner, env, Posture::Act).await?;
+    pub async fn acting_tab(
+        &self,
+        env: &PageEnvironment,
+        origins: &Origins,
+    ) -> Result<ActTab, BrowserError> {
+        let page = open_page(&self.shared, &self.inner, env, Posture::Act, origins).await?;
         self.inner.runs.fetch_add(1, Ordering::SeqCst);
         Ok(ActTab::new(page))
     }
@@ -621,10 +858,12 @@ impl fmt::Debug for Observer {
 
 impl Observer {
     /// A new tab that can read and cannot act, in the profile's browser,
-    /// which is started when it is not running. Every request of the page,
+    /// which is started when it is not running, for the origins given, as
+    /// [`Browser::acting_tab`] takes them. Every request of the page,
     /// its frames, and its workers whose method is not GET, HEAD, or
     /// OPTIONS is failed before it leaves the browser, unless `allow`
-    /// names it; each one is reported by [`ObserveTab::blocked`].
+    /// names it, and the page cannot move the tab; each refusal is
+    /// reported by [`ObserveTab::blocked`].
     ///
     /// # Errors
     ///
@@ -634,6 +873,7 @@ impl Observer {
         profile: &ProfileKey,
         env: &PageEnvironment,
         allow: &SafeRequests,
+        origins: &Origins,
     ) -> Result<ObserveTab, BrowserError> {
         let browser = self.browsers.open(profile, Visibility::Background).await?;
         let page = open_page(
@@ -641,6 +881,7 @@ impl Observer {
             &browser.inner,
             env,
             Posture::Observe(allow.clone()),
+            origins,
         )
         .await?;
         Ok(ObserveTab::new(page))
@@ -654,8 +895,9 @@ impl Observer {
 }
 
 /// An address a tab may be sent to: an absolute `http` or `https` address
-/// with no space or control character. Whether its origin is one the
-/// target declared is for the crate above, which knows the target.
+/// with no space or control character. Which origins a target declared is
+/// for the crate above, which knows the target and gives them to the tab
+/// as [`Origins`]; the tab holds itself to them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Address(String);
 

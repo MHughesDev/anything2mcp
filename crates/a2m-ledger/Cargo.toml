@@ -19,5 +19,13 @@ rusqlite = { workspace = true, features = ["hooks"] }
 serde_json.workspace = true
 tokio.workspace = true
 
+[features]
+# A stand-in for the policy engine, and a key to its tables, for the tests of
+# crates that need a write run cleared without opening the policy engine.
+# Turned on only as a feature of a dev-dependency (decision 0145). The
+# crate's own tests take the key from each store they open, as the policy
+# engine does, and need no feature.
+testing = []
+
 [lints]
 workspace = true

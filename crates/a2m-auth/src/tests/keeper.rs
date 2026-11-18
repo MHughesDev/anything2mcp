@@ -9,13 +9,13 @@ use a2m_core::{FailureClass, SessionState};
 use a2m_vault::{ItemId, OwnerRef, SealContext, SealedKind};
 
 use super::support::{
-    HOUR, PERSON_ONLY, PERSON_RENEWING, STORED_HELD, STORED_RENEWING, Step, World, account_key,
-    fake_entry, person_id, person_key, placed, request, until,
+    HOUR, LEAKED, PERSON_ONLY, PERSON_RENEWING, STORED_HELD, STORED_RENEWING, Sink, Step, World,
+    account_key, fake_entry, person_id, person_key, placed, request, until,
 };
 use crate::{
     AuthEntry, EndedBy, ExpirySign, KeeperJob, KeeperSettings, PersonAnswer, PersonAsk,
-    PersonReason, ProbeOutcome, ProviderName, RENEWALS, Returned, SessionRef, Wait, Work,
-    WorkOutcome, codes,
+    PersonReason, ProbeOutcome, ProviderName, RENEWALS, Returned, SessionKey, SessionLease,
+    SessionRef, Wait, Work, WorkOutcome, codes,
 };
 
 #[tokio::test]
@@ -838,4 +838,231 @@ async fn a_call_that_is_cancelled_while_it_waits_is_no_longer_counted() {
     waiting.abort();
     assert!(waiting.await.unwrap_err().is_cancelled());
     assert_eq!(world.keeper.waiting(), 0);
+}
+
+/// A person's session, signed in, saved, and then met by an engine that
+/// was restarted: the lease from before the restart, and the new engine.
+async fn restarted_with_a_saved_session(key: &SessionKey) -> (SessionLease, World) {
+    let world = World::on_disk(PERSON_RENEWING).await;
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    let before = world
+        .keeper
+        .lease(request(key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    (before, world.restarted().await)
+}
+
+fn stale(lease: &SessionLease) -> bool {
+    let mut sink = Sink::default();
+    let refused = lease.apply(&mut sink);
+    assert!(refused.is_err() || !sink.placed.is_empty());
+    refused.is_err_and(|failure| failure.code() == &codes::LEASE_STALE) && sink.placed.is_empty()
+}
+
+/// Audit finding A-1. Two calls restore a session after a restart; the
+/// second is still on its way to the worker when the owner revokes. Each
+/// step is let through by the test, so the order is the one that went wrong.
+#[tokio::test]
+async fn a_restore_that_ends_after_a_revoke_brings_nothing_back() {
+    let key = person_key(1);
+    let entry = fake_entry();
+    let (before, world) = restarted_with_a_saved_session(&key).await;
+
+    // The first call has read the saved state, and its restore is held on
+    // the way to the worker.
+    world.relay.restores.hold();
+    let slow = {
+        let keeper = world.keeper.clone();
+        let req = request(&key, &entry, Wait::NoWait);
+        tokio::spawn(async move { keeper.lease(req).await })
+    };
+    until(|| world.relay.restores_seen() == 1).await;
+
+    // A second call restores, is given a lease, and uses it.
+    world.relay.restores.open();
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(lease.epoch(), before.epoch());
+    assert_eq!(placed(&lease).len(), 1);
+
+    // The owner ends the session. The lease places nothing from here on.
+    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    assert!(stale(&lease));
+
+    // The first call's restore now reaches the worker.
+    world.relay.restores.release_one();
+    let late = slow.await.unwrap().unwrap_err();
+    assert_eq!(late.code(), &codes::NEEDS_LOGIN);
+    world.keeper.idle().await;
+
+    // Nothing came back: the worker holds no credentials of the revoked
+    // session, and the lease from before the revoke still places nothing.
+    assert!(!world.worker.holds(lease.session(), lease.epoch()));
+    assert!(stale(&lease));
+    assert_eq!(world.state(&key).await, SessionState::Revoked);
+    assert!(!world.kinds(&key).await.ends_with(&["restored"]));
+}
+
+/// The keeper's own end of finding A-1: the sign-out never reaches the
+/// worker, so the worker was not told that the session ended. The keeper
+/// sees that the session moved on while its restore ran, and has the worker
+/// drop what the restore brought back.
+#[tokio::test]
+async fn a_restore_is_undone_when_the_session_moved_on_while_it_ran() {
+    let key = person_key(1);
+    let entry = fake_entry();
+    let (before, world) = restarted_with_a_saved_session(&key).await;
+    world.relay.lose_sign_outs();
+
+    world.relay.restores.hold();
+    let slow = {
+        let keeper = world.keeper.clone();
+        let req = request(&key, &entry, Wait::NoWait);
+        tokio::spawn(async move { keeper.lease(req).await })
+    };
+    until(|| world.relay.restores_seen() == 1).await;
+    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+
+    world.relay.restores.release_one();
+    let late = slow.await.unwrap().unwrap_err();
+    assert_eq!(late.code(), &codes::NEEDS_LOGIN);
+    world.keeper.idle().await;
+    assert!(!world.worker.holds(before.session(), before.epoch()));
+    assert!(!world.kinds(&key).await.contains(&"restored"));
+}
+
+async fn run(
+    world: &World,
+    key: &SessionKey,
+    lease: &SessionLease,
+    epoch: u64,
+    work: Work,
+) -> WorkOutcome {
+    let job = KeeperJob {
+        session: SessionRef {
+            session: lease.session(),
+            key: key.clone(),
+            epoch,
+            home: None,
+        },
+        entry: fake_entry(),
+        work,
+    };
+    world.worker.run(job, world.person.as_ref()).await
+}
+
+/// The worker's end of findings A-1 and A-2. An end names the epoch it
+/// ends: it leaves newer credentials alone, and nothing at or below it is
+/// held again.
+#[tokio::test]
+async fn the_worker_keeps_what_is_newer_than_an_end_and_never_holds_what_ended() {
+    let world = World::new(PERSON_RENEWING).await;
+    let key = person_key(1);
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(lease.epoch(), 1);
+    let saved = world.store.saved(lease.session()).await.unwrap().unwrap();
+
+    // An end that names an earlier epoch arrives late. The credentials held
+    // now are newer, and they stay.
+    for late in [Work::Forget, Work::SignOut] {
+        let outcome = run(&world, &key, &lease, 0, late).await;
+        assert!(matches!(outcome, WorkOutcome::Ended), "{outcome:?}");
+        assert!(world.worker.holds(lease.session(), 1));
+        assert_eq!(placed(&lease).len(), 1);
+    }
+
+    // The session ends, as a revoke ends it: the record is at epoch 2.
+    let outcome = run(&world, &key, &lease, 2, Work::SignOut).await;
+    assert!(matches!(outcome, WorkOutcome::Ended), "{outcome:?}");
+    assert!(stale(&lease));
+
+    // A restore of what was saved at epoch 1 arrives after the end.
+    let outcome = run(&world, &key, &lease, 1, Work::Restore(saved)).await;
+    assert!(matches!(outcome, WorkOutcome::Ended), "{outcome:?}");
+    assert!(!world.worker.holds(lease.session(), 1));
+    assert!(stale(&lease));
+
+    // The next sign-in holds at the next epoch, as before.
+    let outcome = run(&world, &key, &lease, 2, Work::SignIn).await;
+    assert!(
+        matches!(outcome, WorkOutcome::Held { epoch: 3, .. }),
+        "{outcome:?}"
+    );
+    assert!(world.worker.holds(lease.session(), 3));
+}
+
+/// A renewal is in flight when the owner revokes. What the renewal then
+/// holds is dropped by the epoch it was held at, and nothing is kept.
+#[tokio::test]
+async fn work_that_ends_after_a_revoke_keeps_nothing() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("svc");
+    let entry = fake_entry();
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+
+    world.fake.hold_renewals();
+    world.clock.advance(HOUR);
+    let waiting = {
+        let keeper = world.keeper.clone();
+        let req = request(&key, &entry, Wait::NoWait);
+        tokio::spawn(async move { keeper.lease(req).await })
+    };
+    until(|| world.fake.refreshes() == 1).await;
+    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world.fake.release_renewals();
+    assert!(waiting.await.unwrap().is_err());
+    world.keeper.idle().await;
+
+    assert_eq!(world.state(&key).await, SessionState::Revoked);
+    for epoch in 0..4 {
+        assert!(!world.worker.holds(lease.session(), epoch), "{epoch}");
+    }
+    assert!(stale(&lease));
+}
+
+/// Audit finding A-3. A provider that breaks its contract puts a secret it
+/// registered into its failure. The failure is redacted before it leaves
+/// the worker, so the call is not given the secret.
+#[tokio::test]
+async fn a_providers_failure_is_redacted_before_it_leaves_the_worker() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("svc");
+    let entry = fake_entry();
+    *world.fake.on_sign_in.lock().unwrap() = Step::Leaks;
+    let failure = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(failure.code(), &codes::UPSTREAM_UNAVAILABLE);
+    for text in [failure.message(), failure.next_step()] {
+        assert!(!text.contains(LEAKED), "{text}");
+        assert!(text.contains(a2m_core::REDACTED), "{text}");
+    }
 }

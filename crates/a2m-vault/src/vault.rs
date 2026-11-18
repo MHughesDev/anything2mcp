@@ -58,8 +58,17 @@ impl Vault {
         Self::with_random(store, records, Arc::new(OsRandom))
     }
 
-    /// The same, taking keys and nonces from `random`. For tests that need
-    /// what they seal to be the same on every run.
+    /// The same, taking keys and nonces from `random`.
+    ///
+    /// The kernel builds its vault with this, from the one random source the
+    /// engine was started with, so that an engine's randomness has one
+    /// origin. In a running engine that source must be the operating
+    /// system's, [`OsRandom`]. A source that is the same on every run is for
+    /// tests alone: with one, every data key and nonce can be predicted,
+    /// and after a restart they repeat, and the cipher then protects
+    /// nothing. The vault cannot tell such a source from a random one. It
+    /// refuses the one fault it can see, a source that is stuck and hands
+    /// out the same bytes again, with `busy`/`randomness_unavailable`.
     #[must_use]
     pub fn with_random(
         store: Arc<dyn KeyStore>,
@@ -84,12 +93,14 @@ impl Vault {
     ///
     /// `busy`/`key_store_unreachable` or `busy`/`key_store_entry_missing`
     /// when the keys above the item cannot be had; whatever the key records
-    /// return; `busy`/`randomness_unavailable`.
+    /// return; `busy`/`randomness_unavailable` when the source gives no
+    /// bytes, or gives the same bytes twice.
     pub async fn seal(&self, cx: &SealContext, plain: &[u8]) -> Result<Sealed, Failure> {
         let owner_id = KeyId::owner(&cx.workspace, &cx.owner);
         let (owner_key, owner) = self.newest_owner_key(&cx.workspace, owner_id).await?;
         let data = KeyMaterial::generate(self.random.as_ref())?;
         let nonce = cipher::fresh_nonce(self.random.as_ref())?;
+        cipher::not_repeated(&data, &nonce)?;
         let ciphertext = cipher::encrypt(
             &data,
             &nonce,
@@ -160,6 +171,12 @@ impl Vault {
     /// secret goes anywhere else.
     pub fn register(&self, secret: &Secret) {
         self.redactor.register(secret);
+    }
+
+    /// Registers a secret whose form is case-insensitive, so that it is
+    /// masked in any letter case. See [`Redactor::register_folded`].
+    pub fn register_folded(&self, secret: &Secret) {
+        self.redactor.register_folded(secret);
     }
 
     /// The redactor, handed to everything that emits text.

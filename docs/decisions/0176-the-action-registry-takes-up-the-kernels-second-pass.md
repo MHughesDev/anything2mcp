@@ -1,0 +1,30 @@
+# 0176. The action registry takes up the kernel's second pass
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-17
+
+**Changes:** the designs of [`a2m-actions`](../architecture/crates/a2m-actions.md), [`a2m-engine`](../architecture/crates/a2m-engine.md), and [`a2m-provider`](../architecture/crates/a2m-provider.md). Builds the action registry's half of [decision 0161](0161-the-plan-and-the-engine-after-the-packs-were-built.md) (point 7), of [decision 0162](0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md) (points 3, 4, and 5), and of [decision 0172](0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md); and what the stream, file, and product packages asked of the engine and the contract.
+
+## Decision
+
+| Point | Built | Instead of, and why |
+| --- | --- | --- |
+| A record ended on an acknowledgement | `InProcessControl::acknowledged` calls `Store::store_acknowledged` and refuses a call without evidence, which leaves the record in doubt. `RecordSnapshot::acknowledged` is filled from `RecordRow::acknowledged`; the engine's `adopt` keeps it and reconcile passes over such a record. A test runs a pipeline of two such writes through the dispatcher and the real store, loses the second answer, and resumes: the first record ends `acted` and acknowledged, is never read back or sent again, and the run completes with `not_read_back: 1`. It is the test that holds the ledger's reading of the diff to the diff the engine writes | A field the ledger fills at planning, which decision 0172 rejected |
+| Captures | `InProcessControl::keep_capture` stores the bytes as a blob of the short class (`screenshot` for an image, `exchange` otherwise), sealed for the run's person, and appends a `need` event of the run that names the capture, its media type, pass, phase, position, record, and digest, with the blob as its evidence, durably before it returns. A capture taken before a committing step is therefore stored before the values kept for reconcile, which the engine stores just before the save. The short class is the one whose time `evidence.trace_retention_days` names; nothing purges a blob yet | A table of captures, which needs a migration in the ledger's folder; an event of the run carries every tie the record asks for |
+| The project folder | Kept in the caller facts of the run's stored call (`project`), set from the request's checked folder by `tool.call`, `draft.try`, and `discover.run`; `InProcessControl::project_folder` gives it, so every lease of the run, a resume's too, hands the engine the folder of the request that started it. A path that is not text is not kept | A column of `actions_run_calls`, which needs a migration; the folder of the request that resumes, which is another caller's |
+| What the system said | A run's failure is read whole through `Ledger::run_failure`. The result shows it as `failure.said = {"by": "system", "text": ...}`, never joined into `message` or `fix`; the MCP face carries `said` and `run_id` into its error object, because a failure there carries no structured content; the REST body carries the result whole; `said_line` is the line a command prints, every control character shown as its escape. `not_read_back` counts the run's records accepted and not read back. `PreviewRecord::not_read_back` holds `NOT_READ_BACK`, "accepted by the system, not read back", for the approval page | A field of `ErrorBody`: the product crate builds that struct field by field, and a field would break it |
+| Rule 6 made plain | A call given back an earlier, unfinished run (running, resting for a person, or stopped and resumable) is marked `earlier_run: true`, with a warning naming the run's state. A final run lets the same call start a new one. This is section 208's rule as written | Giving back only a run still going: a stopped run is resumed, not started again, and two runs of one call would write twice |
+| A record of no identity in doubt | Read through its binding's read-back when the binding has one and the record recorded values before its save; found settles it as landed, the finding standing for the intended values; absent returns it to `planned`; any other answer leaves it in doubt with `cannot_reconcile` and what was recorded as `said` | Settling one whose evidence is `acknowledged` as acknowledged: the ledger ends a record on an acknowledgement only under the lease that sent it, so such a record stays in doubt and the ledger owes a settle of that kind |
+| The save's temporary file | Made with mode 0600 on Unix; `Temporary::keep_owner_and_mode` gives it the target's owner, group, and permission bits through its own handle and checks them, `false` where any cannot be kept or the target has a special bit; `Temporary::identity` and `FileIdentity::of_open`; a temporary file is removed only while its name holds the file it made. On Windows the file takes the access list its folder passes down, and only the read-only flag is kept | Copying a set-user or set-group bit onto a file the engine wrote |
+| A refused manifest | `RegistryBuilder` keeps a provider whose manifest was refused as a `RefusedProvider`, named from the manifest's text where it says a name; its problem names the provider; `provider.list` lists it with availability `refused`. The check of a contract code's class names the code | A stub manifest, which would make a refused provider look registered |
+| The test helper's client | Made through the one maker of clients in `a2m-auth` ([decision 0157](0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)) | None |
+
+## Consequences
+
+- The product crate's renderer prints `said_line(result.failure.said.text)` on a line of its own; the approval page shows `PreviewRecord::not_read_back` beside the record.
+- The ledger owes a way to end a record of no identity on an acknowledgement when reconcile finds it landed.
+
+## Revisit if
+
+The product crate builds `ErrorBody` through a constructor: then `said` belongs on it.

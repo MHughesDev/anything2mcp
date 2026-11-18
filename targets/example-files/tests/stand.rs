@@ -822,6 +822,112 @@ fn fault_a_file_has_two_links() -> Outcome {
 }
 
 #[test]
+fn fault_a_link_stays_inside_the_root() -> Outcome {
+    let stand = FileStand::start()?;
+    let dangling = "prices/stock.csv.lock";
+    if !shown(
+        &stand,
+        Fault::LinkInside {
+            at: dangling.to_owned(),
+            to: "prices/nothing-here".to_owned(),
+        },
+    )? {
+        assert_ne!(
+            std::env::consts::FAMILY,
+            "unix",
+            "Unix must be able to show this fault"
+        );
+        return Ok(());
+    }
+    // A link that points at nothing is still something at its name.
+    assert_eq!(stand.inspect(dangling)?.kind, EntryKind::Link);
+    assert!(!stand.exists("prices/nothing-here")?);
+
+    // A file moved behind a link: the old name is a link, the bytes are under
+    // the new name, and a reader that follows the link reaches them.
+    let before = stand.sha256(seed::STOCK_CSV)?;
+    stand.set_fault(Fault::MovedBehindLink {
+        name: seed::STOCK_CSV.to_owned(),
+        to: "config/app-data.csv".to_owned(),
+    })?;
+    assert_eq!(stand.inspect(seed::STOCK_CSV)?.kind, EntryKind::Link);
+    assert_eq!(stand.sha256("config/app-data.csv")?, before);
+    assert_eq!(
+        fs::canonicalize(stand.path(seed::STOCK_CSV)?)?,
+        stand.path("config/app-data.csv")?
+    );
+    // What the stand did itself is not counted, and is not a stray.
+    assert!(stand.observe()?.is_empty());
+    assert!(stand.strays()?.is_empty());
+
+    // A folder moved behind a link.
+    stand.set_fault(Fault::MovedBehindLink {
+        name: "config".to_owned(),
+        to: "moved-config".to_owned(),
+    })?;
+    assert_eq!(stand.inspect("config")?.kind, EntryKind::Link);
+    assert_eq!(stand.sha256("moved-config/app-data.csv")?, before);
+
+    stand.reset()?;
+    assert_eq!(stand.inspect(seed::STOCK_CSV)?.kind, EntryKind::File);
+    assert!(!stand.exists("moved-config")? && !stand.exists(dangling)?);
+    Ok(())
+}
+
+#[test]
+fn fault_a_file_has_another_owner_or_other_permission_bits() -> Outcome {
+    let stand = FileStand::start()?;
+    let before = stand.inspect(seed::STOCK_CSV)?;
+    assert_eq!(before.owner.is_some(), cfg!(unix));
+    assert_eq!(before.mode.is_some(), cfg!(unix));
+    let mode = Fault::FileMode {
+        file: seed::STOCK_CSV.to_owned(),
+        mode: 0o640,
+        denies_this_user: false,
+    };
+    if !shown(&stand, mode)? {
+        assert_ne!(
+            std::env::consts::FAMILY,
+            "unix",
+            "Unix must be able to show this fault"
+        );
+        return Ok(());
+    }
+    assert_eq!(stand.inspect(seed::STOCK_CSV)?.mode, Some(0o640));
+    stand.clear_faults()?;
+    assert_eq!(stand.inspect(seed::STOCK_CSV)?.mode, before.mode);
+
+    // Bits that leave the owner no right to write hold everyone but the
+    // superuser, and the stand says which of the two the tests run as.
+    let denied = shown(
+        &stand,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o464,
+            denies_this_user: true,
+        },
+    )?;
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .open(stand.path(seed::STOCK_CSV)?);
+    assert_eq!(written.is_err(), denied);
+    stand.clear_faults()?;
+
+    // Only the superuser may give a file away.
+    if shown(
+        &stand,
+        Fault::OwnedByAnother {
+            file: seed::STOCK_CSV.to_owned(),
+        },
+    )? {
+        let after = stand.inspect(seed::STOCK_CSV)?;
+        assert_ne!(after.owner, before.owner);
+        assert_eq!(after.sha256, before.sha256);
+    }
+    Ok(())
+}
+
+#[test]
 fn every_text_that_tries_to_leave_the_root_names_the_file_outside() -> Outcome {
     let stand = FileStand::start()?;
     let outside = stand.outside_folder().join(seed::OUTSIDE_FILE);

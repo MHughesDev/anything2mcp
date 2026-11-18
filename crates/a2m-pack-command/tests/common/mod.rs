@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use a2m_core::{Plan, Redact, Version};
+use a2m_core::{Plan, Redact};
 use a2m_files::{
     CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, SourceFile, Sources, TargetRoot,
 };
@@ -169,7 +169,7 @@ pub fn sources(files: &[(String, String)], set: &CompilerSet) -> Result<Sources,
 /// Compiles files given as text, as a draft.
 pub fn compile(files: &[(String, String)], set: &CompilerSet) -> Result<Compiled, Diagnostics> {
     let sources = sources(files, set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The plan of the fixtures with the stand's program in place.

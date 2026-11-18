@@ -1,0 +1,17 @@
+#!python
+# The short name of the anything2mcp program. It replaces itself with the
+# binary installed beside it, and imports nothing else, so that it starts fast.
+import os
+import sys
+
+here = os.path.dirname(os.path.realpath(__file__))
+binary = os.path.join(here, "anything2mcp.exe" if os.name == "nt" else "anything2mcp")
+if not os.path.isfile(binary):
+    sys.stderr.write("error: the `anything2mcp` program was not found beside `a2m`.\n"
+                     "fix: reinstall it with `pip install --force-reinstall anything2mcp`.\n")
+    sys.exit(4)
+if os.name == "nt":
+    import subprocess
+
+    sys.exit(subprocess.call([binary, *sys.argv[1:]]))
+os.execv(binary, [binary, *sys.argv[1:]])

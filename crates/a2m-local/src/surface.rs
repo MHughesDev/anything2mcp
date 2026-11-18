@@ -3,13 +3,21 @@
 //! [`LocalSurface`] is the only holder of the approval desk. It shows a
 //! waiting write on a page served from a listener on the loopback address,
 //! which exists only while a page is waiting, on a random port, at an
-//! address that holds a one-time code. The page carries a one-time value
-//! of its own; a press without it does nothing. A press of Approve raises
-//! the presence prompt, and only the prompt's success reaches the desk,
-//! for the change the page showed and no other. Silence is a decline.
+//! address that holds a one-time code. The page shows the stored change
+//! itself, read through the desk, and carries a one-time value of its
+//! own; a press without it does nothing. A press of Approve raises the
+//! presence prompt, and only the prompt's success reaches the desk, for
+//! the change the page showed and no other. One prompt is up at a time,
+//! and it ends with the page's window. Silence is a decline.
 //!
-//! The listener is not a front door: it answers its page and two presses,
-//! and nothing else.
+//! A person's act an agent asked for, such as publishing a version, is
+//! shown the same way on a page of its own (decision 0163): exactly what
+//! will be done, every value as text; a press of Carry out raises the
+//! presence prompt, and only a proof from that press, given for that act,
+//! reaches the desk, which carries the act out once.
+//!
+//! The listener is not a front door: it answers its pages and their
+//! presses, and nothing else.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -17,8 +25,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_actions::{
-    ApprovalAsk, ApprovalDesk, BoxFuture, PersonSurface, PresenceAsk, PresenceProof, SessionAsk,
-    SignInAsk, SurfaceLink,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, BoxFuture, MAY_NOT_BE_READ_BACK,
+    NOW_CANNOT_BE_READ, PersonActAsk, PersonActId, PersonSurface, PresenceAsk, PresenceProof,
+    PresenceReport, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Digest, Failure, PrincipalId, RunId};
@@ -34,18 +43,30 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::codes;
-use crate::presence::{PresenceKind, PresencePrompt, PromptAnswer, PromptText};
+use crate::presence::{
+    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptName, PromptText,
+};
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
+const ACT_PAGE: &str = include_str!("pages/act.html");
+/// The most characters of what an act came to that its answer page shows.
+const RESULT_SHOWN: usize = 2_000;
 
 /// The random bytes in the address's code and in the page's one-time
 /// value.
 const CODE_BYTES: usize = 16;
 /// The most a press may send: one short field.
 const PRESS_LIMIT: usize = 256;
+/// The most records of one change a page shows. A change with more cannot
+/// be read in full here, so it cannot be approved here either.
+const RECORDS_SHOWN: usize = 2_000;
+/// How many characters of the hash of a change the page shows beside
+/// Approve, and a prompt that carries words repeats.
+const SHORT_HASH: usize = 12;
 /// How many answered changes are remembered. An older one that is asked
 /// about again gets a new page, which the desk then refuses to act on.
 const ANSWERED_KEPT: usize = 256;
@@ -80,6 +101,26 @@ struct Page {
     pressed: bool,
     /// The window ended while a press was being carried out.
     ended: bool,
+    /// Whether the page served last showed every record of the change.
+    whole: bool,
+    /// The end of the approval window: the page goes then, and a prompt
+    /// raised for it is cancelled then.
+    deadline: Instant,
+    timer: JoinHandle<()>,
+}
+
+/// One person's act that waits on a page.
+struct ActPage {
+    act: PersonActId,
+    action: String,
+    person: PrincipalId,
+    /// The one-time value of the page served last. A press takes it.
+    once: Option<String>,
+    /// A press is being carried out.
+    pressed: bool,
+    /// The window ended while a press was being carried out.
+    ended: bool,
+    deadline: Instant,
     timer: JoinHandle<()>,
 }
 
@@ -94,6 +135,8 @@ struct Waiting {
     listening: Option<Listening>,
     /// The waiting pages, by the code in their address.
     pages: BTreeMap<String, Page>,
+    /// The person's acts that wait on a page, by the code in its address.
+    acts: BTreeMap<String, ActPage>,
     /// Listeners that were told to stop and may still be closing.
     closing: Vec<JoinHandle<()>>,
     /// The changes a person answered, or whose time ended, newest last. A
@@ -127,6 +170,9 @@ struct Inner {
     window: Duration,
     state: Mutex<Waiting>,
     waiting: watch::Sender<usize>,
+    /// Held while a prompt is up. One prompt at a time: a person never
+    /// answers a prompt that was raised for another change.
+    prompting: tokio::sync::Mutex<()>,
 }
 
 /// The person surface on one machine. Cheap to clone; every clone is the
@@ -179,6 +225,46 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// `template` with each `{{name}}` replaced by its value, in one pass, so
+/// that nothing inside a value is ever taken for a place to fill. The
+/// values are markup the caller made: text from anywhere else was escaped
+/// first.
+fn fill(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len() + 1024);
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let name = &after[..end];
+        if let Some((_, value)) = values.iter().find(|(key, _)| *key == name) {
+            out.push_str(value);
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The first characters of a hash, as the page shows them beside Approve.
+fn short(diff_hash: Digest) -> String {
+    diff_hash.to_string().chars().take(SHORT_HASH).collect()
+}
+
+/// The check an approval is recorded with: the policy engine has one word
+/// for each prompt an operating system owns, and this is the one place that
+/// maps them (decision 0145).
+const fn recorded_check(prompt: PromptName) -> PresenceCheck {
+    match prompt {
+        PromptName::Polkit => PresenceCheck::Polkit,
+        PromptName::LocalAuthentication => PresenceCheck::LocalAuthentication,
+        PromptName::WindowsHello => PresenceCheck::WindowsHello,
+    }
+}
+
 /// A page: the status, the fixed headers that keep it to itself, and the
 /// text.
 fn page(status: StatusCode, html: String) -> Response {
@@ -191,7 +277,11 @@ fn page(status: StatusCode, html: String) -> Response {
             (header::CONTENT_SECURITY_POLICY, fixed(CONTENT_POLICY)),
             (header::X_FRAME_OPTIONS, fixed("DENY")),
             (header::X_CONTENT_TYPE_OPTIONS, fixed("nosniff")),
-            (header::REFERRER_POLICY, fixed("no-referrer")),
+            // Not `no-referrer`: under it a browser sends `Origin: null` on
+            // the page's own form post, which the guard refuses, so no real
+            // press could work. `same-origin` keeps the page's origin on a
+            // press and sends nothing to any other origin.
+            (header::REFERRER_POLICY, fixed("same-origin")),
         ],
         html,
     )
@@ -202,9 +292,10 @@ fn page(status: StatusCode, html: String) -> Response {
 fn answer(status: StatusCode, title: &str, detail: &str) -> Response {
     page(
         status,
-        ANSWER_PAGE
-            .replace("{{title}}", &escape(title))
-            .replace("{{detail}}", &escape(detail)),
+        fill(
+            ANSWER_PAGE,
+            &[("title", &escape(title)), ("detail", &escape(detail))],
+        ),
     )
 }
 
@@ -232,12 +323,35 @@ impl Inner {
     /// pages.
     fn settle(&self, state: &mut Waiting) {
         if state.pages.is_empty()
+            && state.acts.is_empty()
             && let Some(listening) = state.listening.take()
         {
             let _ = listening.stop.send(());
             state.closing.push(listening.task);
         }
-        self.waiting.send_replace(state.pages.len());
+        self.waiting
+            .send_replace(state.pages.len() + state.acts.len());
+    }
+
+    /// The window of an act's page ended: silence is a decline.
+    fn end_of_act_window(&self, code: &str) {
+        let act = {
+            let mut state = self.state();
+            let Some(page) = state.acts.get_mut(code) else {
+                return;
+            };
+            if page.pressed {
+                page.ended = true;
+                return;
+            }
+            let act = page.act;
+            state.acts.remove(code);
+            self.settle(&mut state);
+            act
+        };
+        if let Some(desk) = self.desk.get() {
+            desk.decline_act(act, false);
+        }
     }
 
     fn remember(state: &mut Waiting, run: RunId, diff_hash: Digest, how: Answered) {
@@ -310,6 +424,303 @@ fn once_of(body: &Bytes) -> Option<&str> {
         .find_map(|field| field.strip_prefix("once="))
 }
 
+/// A waiting change as the page shows it: what the desk read back from
+/// the stored diff, and nothing rebuilt.
+pub(crate) struct Change {
+    /// The first reading: the tool, the target, the counts.
+    pub(crate) head: ApprovalPreview,
+    /// The records, in the order the run would write them.
+    pub(crate) records: Vec<PreviewRecord>,
+    /// Whether these are all the records of the change.
+    pub(crate) whole: bool,
+}
+
+/// Reads the change `run` waits with, record by record, and only if it is
+/// the change with `diff_hash`, the one the page was opened for. `None`
+/// when the run no longer waits with that change.
+async fn read_change(desk: &ApprovalDesk, run: RunId, diff_hash: Digest) -> Option<Change> {
+    let mut head = desk.preview(run, 0).await.ok()?;
+    if head.diff_hash != diff_hash {
+        return None;
+    }
+    let mut records = std::mem::take(&mut head.records);
+    let mut whole = records.len() >= head.total;
+    while !whole && records.len() < RECORDS_SHOWN {
+        let next = desk.preview(run, records.len()).await.ok()?;
+        if next.diff_hash != diff_hash || next.records.is_empty() {
+            return None;
+        }
+        whole = next.complete();
+        records.extend(next.records);
+    }
+    Some(Change {
+        head,
+        records,
+        whole,
+    })
+}
+
+/// The change as markup. Every value in it comes from a system or a
+/// caller, and is placed as text.
+pub(crate) fn change_html(change: &Change) -> String {
+    use std::fmt::Write as _;
+    let head = &change.head;
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "<p>Target <code>{}</code>, environment <code>{}</code>. {} to create, {} to change, {} already as intended{}: {} records in all.</p>",
+        escape(&head.target),
+        escape(&head.environment),
+        head.create,
+        head.update,
+        head.unchanged,
+        if head.write == 0 {
+            String::new()
+        } else {
+            format!(
+                ", {} to write, whose current values cannot be read",
+                head.write
+            )
+        },
+        head.total,
+    );
+    if !change.whole {
+        let _ = write!(
+            out,
+            "<p><strong>This page shows the first {} records only.</strong> A change that cannot be read in full here cannot be approved here.</p>",
+            change.records.len(),
+        );
+    }
+    for (index, record) in change.records.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<section><h3>{}. <code>{}</code> {}: {}</h3>",
+            index + 1,
+            escape(&record.operation),
+            escape(&record.key),
+            escape(record.action),
+        );
+        out.push_str(&written_by_html(record));
+        out.push_str(&version_shown::notices_html(&record.notices));
+        out.push_str("<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>");
+        for field in &record.fields {
+            // What the record holds now: its value; the product's own
+            // words, set apart, where the binding cannot read it, never as
+            // a value and never as "does not exist" (decision 0196).
+            let now = if field.now_cannot_be_read {
+                format!(
+                    "<em class=\"product\">This program's words: {}</em>",
+                    escape(NOW_CANNOT_BE_READ)
+                )
+            } else {
+                field.current.as_ref().map_or_else(
+                    || "<em>does not exist</em>".to_owned(),
+                    |current| escape(current),
+                )
+            };
+            let _ = write!(
+                out,
+                "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}{}</td></tr>",
+                escape(&field.name),
+                now,
+                escape(&field.proposed),
+                if field.changes { "yes" } else { "no" },
+                if field.cut {
+                    "; a value is cut short here"
+                } else {
+                    ""
+                },
+            );
+        }
+        out.push_str("</tbody></table></section>");
+    }
+    out
+}
+
+/// What one binding's evidence means for whether the write is read back,
+/// in the page's words.
+fn evidence_words(evidence: &str) -> &'static str {
+    match evidence {
+        "read_back" => "it is read back and compared with what was intended after it is sent",
+        "response" => {
+            "the answer the system gives to the write is compared with what was intended; it is not read back apart"
+        }
+        "acknowledged" => {
+            "it is accepted by the system and not read back: nothing compares it after it is sent"
+        }
+        // A kind of evidence this page does not know is told as the
+        // weakest.
+        _ => "this page does not know its evidence: take it as not read back",
+    }
+}
+
+/// What the page says, beside a record and before its fields, about how
+/// it will be written: a write the system only acknowledges, said to be
+/// one before the person approves it (decision 0181), and the binding the
+/// approval binds the write to, or every binding it could take when that
+/// is chosen later (decision 0185). Each word is escaped.
+pub(crate) fn written_by_html(record: &PreviewRecord) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    match record.not_read_back {
+        Some(words) if words == MAY_NOT_BE_READ_BACK => {
+            let _ = write!(
+                out,
+                "<p><strong>This write {}.</strong> A binding that is only acknowledged reads nothing back and compares nothing after it is sent.</p>",
+                escape(words),
+            );
+        }
+        Some(words) => {
+            let _ = write!(
+                out,
+                "<p><strong>This write is {}.</strong> Nothing will read it back or compare it after it is sent.</p>",
+                escape(words),
+            );
+        }
+        None => {}
+    }
+    match (record.binding_later, record.bindings.as_slice()) {
+        (_, []) => {}
+        (None, [binding]) => {
+            let _ = write!(
+                out,
+                "<p>Written by the binding <code>{}</code>, and by no other: {}.</p>",
+                escape(&binding.mode),
+                escape(evidence_words(binding.evidence)),
+            );
+        }
+        (later, bindings) => {
+            let _ = write!(
+                out,
+                "<p>This record is {}. It is written by one of these bindings, and by no other:</p><ul>",
+                escape(later.unwrap_or(BINDING_LATER)),
+            );
+            for binding in bindings {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>: {}.</li>",
+                    escape(&binding.mode),
+                    escape(evidence_words(binding.evidence)),
+                );
+            }
+            out.push_str("</ul>");
+        }
+    }
+    out
+}
+
+/// What a page says of a version's surfaces and of a record's surface:
+/// each surface's kind and where it leads in every environment, each
+/// notice a pack registers for it in the notice's fixed words, and every
+/// lint warning of the version with its code and words (decisions 0193,
+/// 0194, and 0199; AC-1 of the third audit). It prints what the action
+/// registry hands the page (`PreviewRecord::notices`,
+/// `PersonActAsk::surfaces`, and `PersonActAsk::warnings`). Every text may
+/// quote a target file: each is shown with the characters that reorder,
+/// hide, or restyle text written as their escapes, and then escaped for
+/// the page.
+pub(crate) mod version_shown {
+    use std::fmt::Write as _;
+
+    use a2m_actions::{ActSurface, ActWarning, PreviewNotice};
+
+    use super::escape;
+
+    /// Text from a target file, as the page places it: every character
+    /// that can reorder or hide what a person reads written as its escape,
+    /// so an address reads as it is, then escaped as markup.
+    fn shown(text: &str) -> String {
+        escape(&a2m_core::said_neutral(text))
+    }
+
+    /// The notices of a record's surfaces, beside the record, each in its
+    /// own strong sentence. Nothing for a record whose surfaces carry none.
+    pub(crate) fn notices_html(notices: &[PreviewNotice]) -> String {
+        let mut out = String::new();
+        for notice in notices {
+            let _ = write!(
+                out,
+                "<p class=\"notice\"><strong>{}</strong> (<code>{}</code>)</p>",
+                shown(notice.words),
+                shown(notice.code),
+            );
+        }
+        out
+    }
+
+    /// The surfaces of a version and its lint warnings, for the page a
+    /// person publishes from. Every surface is listed with its kind and its
+    /// address in each environment, named, since a version runs against
+    /// each, so a person sees where each leads, not only its name.
+    pub(crate) fn version_html(surfaces: &[ActSurface], warnings: &[ActWarning]) -> String {
+        let mut out = String::new();
+        if !surfaces.is_empty() {
+            out.push_str("<h2>Where it leads</h2><ul>");
+            for surface in surfaces {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>, a surface of the kind <code>{}</code>, leads to ",
+                    shown(&surface.name),
+                    shown(&surface.kind),
+                );
+                if surface.addresses.is_empty() {
+                    let _ = write!(out, "<code>{}</code>.", shown(&surface.address));
+                } else {
+                    let at: Vec<String> = surface
+                        .addresses
+                        .iter()
+                        .map(|(environment, address)| {
+                            format!(
+                                "<code>{}</code> in the environment <code>{}</code>",
+                                shown(address),
+                                shown(environment),
+                            )
+                        })
+                        .collect();
+                    let _ = write!(out, "{}.", at.join("; "));
+                }
+                out.push_str(&notices_html(&surface.notices));
+                out.push_str("</li>");
+            }
+            out.push_str("</ul>");
+        }
+        if !warnings.is_empty() {
+            out.push_str("<h2>What the checks warn of</h2><ul>");
+            for warning in warnings {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>: {}</li>",
+                    shown(&warning.code),
+                    shown(&warning.message),
+                );
+            }
+            out.push_str("</ul>");
+        }
+        out
+    }
+}
+
+/// What the page says about the presence prompt of this machine.
+fn presence_html(presence: &Availability) -> String {
+    if presence.proves_presence() {
+        format!("<p>{}</p>", escape(&presence.message))
+    } else {
+        format!(
+            "<p><strong>No presence prompt is available on this machine, so nothing here can approve this write.</strong> {} {} You can still decline it.</p>",
+            escape(&presence.message),
+            escape(&presence.remedy),
+        )
+    }
+}
+
+fn gone() -> Response {
+    answer(
+        StatusCode::CONFLICT,
+        "Nothing to approve here",
+        "The change this page was opened for no longer waits for an approval. Look at the run again for where it stands.",
+    )
+}
+
 async fn show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Response {
     let once = match inner.code() {
         Ok(once) => once,
@@ -321,24 +732,49 @@ async fn show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Resp
             );
         }
     };
+    let asked = inner
+        .state()
+        .pages
+        .get(&code)
+        .map(|found| (found.run, found.diff_hash));
+    let Some((run, diff_hash)) = asked else {
+        return nothing_here();
+    };
+    let Some(desk) = inner.desk.get() else {
+        return gone();
+    };
+    // The page shows the stored change, and only the one it was opened
+    // for: the desk reads the diff back and computes its hash again.
+    let Some(change) = read_change(desk, run, diff_hash).await else {
+        return gone();
+    };
+    let presence = inner.prompt.available().await;
     let mut state = inner.state();
     let Some(found) = state.pages.get_mut(&code) else {
         return nothing_here();
     };
     // Only the page served last can press.
     found.once = Some(once.clone());
+    found.whole = change.whole;
     let minutes = inner.window.as_secs().div_ceil(60).max(1);
     page(
         StatusCode::OK,
-        APPROVAL_PAGE
-            .replace("{{summary}}", &escape(&found.summary))
-            .replace("{{tool}}", &escape(&found.tool))
-            .replace("{{run}}", &escape(&found.run.to_string()))
-            .replace("{{started_by}}", &escape(&found.started_by.to_string()))
-            .replace("{{diff_hash}}", &escape(&found.diff_hash.to_string()))
-            .replace("{{minutes}}", &minutes.to_string())
-            .replace("{{code}}", &escape(&code))
-            .replace("{{once}}", &escape(&once)),
+        fill(
+            APPROVAL_PAGE,
+            &[
+                ("summary", &escape(&found.summary)),
+                ("tool", &escape(&found.tool)),
+                ("run", &escape(&found.run.to_string())),
+                ("started_by", &escape(&found.started_by.to_string())),
+                ("diff_hash", &escape(&found.diff_hash.to_string())),
+                ("short_hash", &escape(&short(found.diff_hash))),
+                ("change", &change_html(&change)),
+                ("presence", &presence_html(&presence)),
+                ("minutes", &minutes.to_string()),
+                ("code", &escape(&code)),
+                ("once", &escape(&once)),
+            ],
+        ),
     )
 }
 
@@ -348,6 +784,8 @@ struct Pressed {
     tool: String,
     diff_hash: Digest,
     started_by: PrincipalId,
+    whole: bool,
+    deadline: Instant,
 }
 
 /// Takes the page's one-time value and marks the page as pressed. A press
@@ -383,6 +821,8 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Respons
         tool: found.tool.clone(),
         diff_hash: found.diff_hash,
         started_by: found.started_by,
+        whole: found.whole,
+        deadline: found.deadline,
     })
 }
 
@@ -418,6 +858,15 @@ async fn finish(inner: &Inner, code: &str, outcome: Outcome) {
     }
 }
 
+/// What a press answers when the task that carried it out did not end.
+fn not_carried_out() -> Response {
+    answer(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Nothing was recorded",
+        "The engine could not carry out the press. Nothing is written unless a person approves; open the link again.",
+    )
+}
+
 async fn approve(
     State(inner): State<Arc<Inner>>,
     Path(code): Path<String>,
@@ -427,23 +876,38 @@ async fn approve(
         Ok(pressed) => pressed,
         Err(response) => return *response,
     };
-    let (outcome, response) = approve_pressed(&inner, &pressed).await;
-    finish(&inner, &code, outcome).await;
-    response
+    // The press is carried out in a task of its own: a prompt waits for a
+    // person, and a browser that goes away meanwhile must not leave the
+    // page marked as pressed for ever.
+    let carried = tokio::spawn(async move {
+        let (outcome, response) = approve_pressed(&inner, &pressed).await;
+        finish(&inner, &code, outcome).await;
+        response
+    });
+    carried.await.unwrap_or_else(|_| not_carried_out())
+}
+
+fn nothing_approved(status: StatusCode, detail: &str) -> (Outcome, Response) {
+    (
+        Outcome::Open,
+        answer(status, "Nothing was approved", detail),
+    )
 }
 
 /// Carries out a press of Approve, and says how it ended.
 async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response) {
     let Some(desk) = inner.desk.get() else {
-        return (
-            Outcome::Open,
-            answer(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Nothing was approved",
-                "The engine cannot record an approval now. Run `anything2mcp doctor run` for the reason.",
-            ),
+        return nothing_approved(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The engine cannot record an approval now. Run `anything2mcp doctor run` for the reason.",
         );
     };
+    if !pressed.whole {
+        return nothing_approved(
+            StatusCode::CONFLICT,
+            "This change has more records than its page can show, and a change that was not shown in full is not approved here. You can decline it from the page.",
+        );
+    }
     // The desk is asked again at the press: the approval is for the change
     // this page showed, and only while that change is the one that waits.
     let still_waits = match desk.waiting(pressed.run).await {
@@ -460,38 +924,68 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             ),
         );
     }
+    // One prompt at a time. A second press is told so and raises nothing.
+    let Ok(_up) = inner.prompting.try_lock() else {
+        return nothing_approved(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
+        );
+    };
     let asked = inner
         .prompt
-        .ask(PromptText {
-            title: format!("Approve a write by `{}`", pressed.tool),
-            detail: format!("Run {}, change {}", pressed.run, pressed.diff_hash),
-        })
+        .ask(
+            PromptText {
+                title: format!("Approve a write by `{}`", pressed.tool),
+                detail: format!("Change {}", short(pressed.diff_hash)),
+            },
+            pressed.deadline,
+        )
         .await;
-    let check = match asked {
-        PromptAnswer::Present => PresenceCheck::OsPrompt,
-        PromptAnswer::Confirmed => PresenceCheck::NotAvailable,
+    // The window is the surface's own to keep: an answer that comes back
+    // after it closed is a dismissal, whatever the prompt said, so that no
+    // approval is recorded late by a prompt that did not keep its deadline.
+    let asked = if Instant::now() >= pressed.deadline {
+        PromptAnswer::Dismissed
+    } else {
+        asked
+    };
+    let (check, named, how) = match asked {
+        PromptAnswer::Present(prompt) => (
+            recorded_check(prompt),
+            Some(prompt.as_str()),
+            format!("the presence prompt was passed ({})", prompt.as_str()),
+        ),
+        PromptAnswer::Confirmed => (
+            PresenceCheck::NotAvailable,
+            None,
+            "a confirmation dialog was answered, which proves no person".to_owned(),
+        ),
         PromptAnswer::Dismissed => {
-            return (
-                Outcome::Open,
-                answer(
-                    StatusCode::FORBIDDEN,
-                    "Nothing was approved",
-                    "The prompt on this machine was dismissed or not passed. Open the link again to answer once more.",
-                ),
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
             );
         }
-        PromptAnswer::NotAvailable => {
-            return (
-                Outcome::Open,
-                answer(
-                    StatusCode::FORBIDDEN,
-                    "Nothing was approved",
-                    "This machine has no way yet to ask for proof that a person is present, so it records no approval. You can decline the write from the page.",
+        PromptAnswer::Denied => {
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
+            );
+        }
+        PromptAnswer::NotAvailable(why) => {
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                &format!(
+                    "No presence prompt is available on this machine, so no approval is recorded. {} {} You can decline the write from the page.",
+                    why.message, why.remedy
                 ),
             );
         }
     };
-    let proof = PresenceProof::new(check, pressed.started_by, inner.clock.now());
+    let mut proof = PresenceProof::new(check, pressed.started_by, inner.clock.now());
+    if let Some(name) = named {
+        proof = proof.naming(name);
+    }
     let recorded = desk
         .approve(
             pressed.run,
@@ -507,18 +1001,13 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             answer(
                 StatusCode::OK,
                 "Approved",
-                "The approval is recorded for the change this page showed. The program that started the run can resume it. You can close this page.",
+                &format!(
+                    "The approval is recorded for the change this page showed: {how}. The program that started the run can resume it. You can close this page."
+                ),
             ),
         ),
         // The policy engine's refusal is the engine's own words.
-        Err(failure) => (
-            Outcome::Open,
-            answer(
-                StatusCode::FORBIDDEN,
-                "Nothing was approved",
-                failure.message(),
-            ),
-        ),
+        Err(failure) => nothing_approved(StatusCode::FORBIDDEN, failure.message()),
     }
 }
 
@@ -531,36 +1020,369 @@ async fn decline(
         Ok(pressed) => pressed,
         Err(response) => return *response,
     };
-    let recorded = match inner.desk.get() {
-        Some(desk) => desk
-            .decline(
-                pressed.run,
-                Some(PrincipalRef::person(pressed.started_by)),
-                ApprovalChannel::LocalPrompt,
-            )
-            .await
-            .is_ok(),
-        None => false,
-    };
-    let outcome = if recorded {
-        Outcome::Settled(Answered::Declined)
-    } else {
-        Outcome::Open
-    };
-    finish(&inner, &code, outcome).await;
-    if recorded {
-        answer(
+    // In a task of its own, as a press of Approve is.
+    let carried = tokio::spawn(async move {
+        let recorded = match inner.desk.get() {
+            Some(desk) => desk
+                .decline(
+                    pressed.run,
+                    Some(PrincipalRef::person(pressed.started_by)),
+                    ApprovalChannel::LocalPrompt,
+                )
+                .await
+                .is_ok(),
+            None => false,
+        };
+        let outcome = if recorded {
+            Outcome::Settled(Answered::Declined)
+        } else {
+            Outcome::Open
+        };
+        finish(&inner, &code, outcome).await;
+        recorded
+    });
+    match carried.await {
+        Ok(true) => answer(
             StatusCode::OK,
             "Declined",
             "The write was declined and nothing was written. You can close this page.",
-        )
-    } else {
-        answer(
+        ),
+        Ok(false) => answer(
             StatusCode::CONFLICT,
             "Nothing was recorded",
             "The engine could not record the decline. Nothing is written unless a person approves; the page closes at the end of its time.",
+        ),
+        Err(_) => not_carried_out(),
+    }
+}
+
+/// Whether the page shows every value of the act's input whole: none was
+/// cut to the length a page shows.
+fn whole_input(ask: &PersonActAsk) -> bool {
+    ask.input.iter().all(|field| !field.cut)
+}
+
+/// The input of an act as a table, and the lines to read beside it. Every
+/// name and value is placed as text.
+fn act_html(ask: &PersonActAsk) -> (String, String) {
+    use std::fmt::Write as _;
+    let mut input = String::new();
+    if !whole_input(ask) {
+        // What is pressed is what was shown (decision 0181): an act whose
+        // input the page cannot show whole is not carried out from it.
+        input.push_str("<p><strong>A value of this input is longer than this page can show, so this act cannot be carried out here.</strong> You can decline it, and ask the program for an act whose input can be read whole.</p>");
+    }
+    input.push_str(
+        "<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Value</th></tr></thead><tbody>",
+    );
+    for field in &ask.input {
+        let _ = write!(
+            input,
+            "<tr><th scope=\"row\">{}</th><td>{}{}</td></tr>",
+            escape(&field.name),
+            escape(&field.value),
+            if field.cut { " (cut short here)" } else { "" },
+        );
+    }
+    input.push_str("</tbody></table>");
+    let mut details = String::new();
+    if !ask.details.is_empty() {
+        details.push_str("<h2>What it may do</h2><p>The most dangerous first.</p><ul>");
+        for line in &ask.details {
+            let _ = write!(details, "<li>{}</li>", escape(line));
+        }
+        details.push_str("</ul>");
+    }
+    details.push_str(&version_shown::version_html(&ask.surfaces, &ask.warnings));
+    (input, details)
+}
+
+/// The first characters of an act's identifier, as the page and a prompt
+/// that carries words show them.
+fn short_act(act: PersonActId) -> String {
+    act.to_string().chars().take(SHORT_HASH).collect()
+}
+
+async fn act_show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Response {
+    let Ok(once) = inner.code() else {
+        return answer(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The page cannot be shown",
+            "This machine gave no random value for the page. Nothing was done. Open the link again.",
+        );
+    };
+    let Some(act) = inner.state().acts.get(&code).map(|page| page.act) else {
+        return nothing_here();
+    };
+    let Some(desk) = inner.desk.get() else {
+        return gone();
+    };
+    // The page shows what the desk holds for the act, and nothing kept
+    // from the ask.
+    let Ok(ask) = desk.person_act(act) else {
+        return answer(
+            StatusCode::CONFLICT,
+            "Nothing waits here",
+            "The act this page was opened for no longer waits: it was carried out, declined, or its time ended.",
+        );
+    };
+    let presence = inner.prompt.available().await;
+    let mut state = inner.state();
+    let Some(found) = state.acts.get_mut(&code) else {
+        return nothing_here();
+    };
+    found.once = Some(once.clone());
+    let minutes = inner.window.as_secs().div_ceil(60).max(1);
+    let (input, details) = act_html(&ask);
+    page(
+        StatusCode::OK,
+        fill(
+            ACT_PAGE,
+            &[
+                ("action", &escape(ask.action.as_str())),
+                ("summary", &escape(&ask.summary)),
+                ("asked_through", &escape(&ask.asked_through)),
+                ("act", &escape(&act.to_string())),
+                ("short", &escape(&short_act(act))),
+                ("input", &input),
+                ("details", &details),
+                ("presence", &presence_html(&presence)),
+                ("minutes", &minutes.to_string()),
+                ("code", &escape(&code)),
+                ("once", &escape(&once)),
+            ],
+        ),
+    )
+}
+
+/// What a press on an act's page is about.
+struct ActPressed {
+    act: PersonActId,
+    action: String,
+    person: PrincipalId,
+    deadline: Instant,
+}
+
+/// Takes the act page's one-time value and marks it as pressed, as
+/// [`begin`] does for an approval.
+fn act_begin(inner: &Inner, code: &str, body: &Bytes) -> Result<ActPressed, Box<Response>> {
+    let mut state = inner.state();
+    let Some(found) = state.acts.get_mut(code) else {
+        return Err(Box::new(nothing_here()));
+    };
+    let expected = found.once.take();
+    let fits = match (expected.as_deref(), once_of(body)) {
+        (Some(expected), Some(given)) => same(expected, given),
+        _ => false,
+    };
+    if !fits {
+        return Err(Box::new(answer(
+            StatusCode::FORBIDDEN,
+            "Nothing was done",
+            "The press did not come from the page as it was last shown. Open the link again and press there.",
+        )));
+    }
+    if found.pressed {
+        return Err(Box::new(answer(
+            StatusCode::CONFLICT,
+            "A press is already being answered",
+            "Answer the prompt on this machine, or open the link again when it has closed.",
+        )));
+    }
+    found.pressed = true;
+    Ok(ActPressed {
+        act: found.act,
+        action: found.action.clone(),
+        person: found.person,
+        deadline: found.deadline,
+    })
+}
+
+/// Ends a press on an act's page: an act that was answered, or no longer
+/// waits, takes its page with it; any other waits on, unless its window
+/// ended meanwhile, which is a decline.
+fn act_finish(inner: &Inner, code: &str, settled: bool) {
+    let declined = {
+        let mut state = inner.state();
+        let Some(found) = state.acts.get_mut(code) else {
+            return;
+        };
+        found.pressed = false;
+        let (act, ended) = (found.act, found.ended);
+        if settled || ended {
+            if let Some(gone) = state.acts.remove(code) {
+                gone.timer.abort();
+            }
+            inner.settle(&mut state);
+        }
+        (!settled && ended).then_some(act)
+    };
+    if let (Some(act), Some(desk)) = (declined, inner.desk.get()) {
+        desk.decline_act(act, false);
+    }
+}
+
+fn nothing_done(status: StatusCode, detail: &str) -> (bool, Response) {
+    (false, answer(status, "Nothing was done", detail))
+}
+
+/// What the act came to, as its answer page says it: the engine's own
+/// words, and the result as text.
+fn act_answer(done: &a2m_actions::Response) -> Response {
+    if done.ok {
+        let result = done
+            .result
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let result: String = result.chars().take(RESULT_SHOWN).collect();
+        answer(
+            StatusCode::OK,
+            "Done",
+            &format!(
+                "`{}` was carried out as you, once. What it gave: {result}. The program that asked can call it again to be told. You can close this page.",
+                done.action
+            ),
+        )
+    } else {
+        let why = done
+            .error
+            .as_ref()
+            .map_or("The engine did not say why.", |error| {
+                error.message.as_str()
+            });
+        answer(
+            StatusCode::CONFLICT,
+            "Carried out, and it did not succeed",
+            &format!(
+                "`{}` was tried once, as you, and failed: {why}",
+                done.action
+            ),
         )
     }
+}
+
+async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Response) {
+    let Some(desk) = inner.desk.get() else {
+        return nothing_done(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The engine cannot carry out an act now. Run `anything2mcp doctor run` for the reason.",
+        );
+    };
+    // Asked again at the press: only an act that still waits is prompted
+    // for, and only one whose input the page showed whole.
+    let Ok(ask) = desk.person_act(pressed.act) else {
+        return (
+            true,
+            answer(
+                StatusCode::CONFLICT,
+                "Nothing was done",
+                "The act this page showed no longer waits. Ask the program that asked for it.",
+            ),
+        );
+    };
+    if !whole_input(&ask) {
+        return nothing_done(
+            StatusCode::CONFLICT,
+            "A value of this act's input is longer than its page can show, and an act that was not shown whole is not carried out here. You can decline it from the page.",
+        );
+    }
+    let Ok(_up) = inner.prompting.try_lock() else {
+        return nothing_done(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
+        );
+    };
+    let asked = inner
+        .prompt
+        .ask(
+            PromptText {
+                title: format!("Carry out `{}`", pressed.action),
+                detail: format!("Act {}", short_act(pressed.act)),
+            },
+            pressed.deadline,
+        )
+        .await;
+    let asked = if Instant::now() >= pressed.deadline {
+        PromptAnswer::Dismissed
+    } else {
+        asked
+    };
+    let prompt = match asked {
+        PromptAnswer::Present(prompt) => prompt,
+        PromptAnswer::Confirmed => {
+            return nothing_done(
+                StatusCode::FORBIDDEN,
+                "A confirmation dialog was answered, which proves no person, so nothing was done.",
+            );
+        }
+        PromptAnswer::Dismissed => {
+            return nothing_done(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
+            );
+        }
+        PromptAnswer::Denied => {
+            return nothing_done(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
+            );
+        }
+        PromptAnswer::NotAvailable(why) => {
+            return nothing_done(
+                StatusCode::FORBIDDEN,
+                &format!(
+                    "No presence prompt is available on this machine, so nothing is done here. {} {} You can decline the act from the page.",
+                    why.message, why.remedy
+                ),
+            );
+        }
+    };
+    let proof = PresenceProof::new(recorded_check(prompt), pressed.person, inner.clock.now())
+        .naming(prompt.as_str())
+        .for_act(pressed.act);
+    match desk.carry_out(pressed.act, proof).await {
+        Ok(done) => (true, act_answer(&done)),
+        Err(failure) => nothing_done(StatusCode::FORBIDDEN, failure.message()),
+    }
+}
+
+async fn act_confirm(
+    State(inner): State<Arc<Inner>>,
+    Path(code): Path<String>,
+    body: Bytes,
+) -> Response {
+    let pressed = match act_begin(&inner, &code, &body) {
+        Ok(pressed) => pressed,
+        Err(response) => return *response,
+    };
+    // In a task of its own, as a press of Approve is.
+    let carried = tokio::spawn(async move {
+        let (settled, response) = act_confirm_pressed(&inner, &pressed).await;
+        act_finish(&inner, &code, settled);
+        response
+    });
+    carried.await.unwrap_or_else(|_| not_carried_out())
+}
+
+async fn act_decline(
+    State(inner): State<Arc<Inner>>,
+    Path(code): Path<String>,
+    body: Bytes,
+) -> Response {
+    let pressed = match act_begin(&inner, &code, &body) {
+        Ok(pressed) => pressed,
+        Err(response) => return *response,
+    };
+    if let Some(desk) = inner.desk.get() {
+        desk.decline_act(pressed.act, true);
+    }
+    act_finish(&inner, &code, true);
+    answer(
+        StatusCode::OK,
+        "Declined",
+        "The act was declined and nothing was done. You can close this page.",
+    )
 }
 
 impl LocalSurface {
@@ -577,14 +1399,15 @@ impl LocalSurface {
                 window: parts.window,
                 state: Mutex::new(Waiting::default()),
                 waiting,
+                prompting: tokio::sync::Mutex::new(()),
             }),
         }
     }
 
-    /// Which kind of presence check this surface asks with.
-    #[must_use]
-    pub fn presence(&self) -> PresenceKind {
-        self.inner.prompt.kind()
+    /// What this surface's presence prompt can do on this machine now:
+    /// the kind, the reason, and the remedy. `doctor.run` reports it.
+    pub async fn presence(&self) -> Availability {
+        self.inner.prompt.available().await
     }
 
     /// How many pages wait for a person. An engine with a page waiting is
@@ -633,6 +1456,9 @@ impl LocalSurface {
             .route("/approve/{code}", get(show))
             .route("/approve/{code}/approve", post(approve))
             .route("/approve/{code}/decline", post(decline))
+            .route("/act/{code}", get(act_show))
+            .route("/act/{code}/confirm", post(act_confirm))
+            .route("/act/{code}/decline", post(act_decline))
             .fallback(|| async { nothing_here() })
             .layer(axum::middleware::from_fn_with_state(port, guard))
             .with_state(Arc::clone(&self.inner));
@@ -662,6 +1488,24 @@ impl PersonSurface for LocalSurface {
     fn take_desk(&self, desk: ApprovalDesk) {
         // The kernel hands the desk over once. A second one is dropped.
         let _ = self.inner.desk.set(desk);
+    }
+
+    fn presence(&self) -> BoxFuture<'_, PresenceReport> {
+        Box::pin(async move {
+            let found = LocalSurface::presence(self).await;
+            // Only a prompt the operating system owns proves a person; a
+            // dialog alone is reported as no prompt.
+            let kind = match (found.kind, found.prompt) {
+                (PresenceKind::OsPrompt, Some(prompt)) => prompt.as_str(),
+                _ => PresenceReport::NOT_AVAILABLE,
+            };
+            PresenceReport {
+                kind,
+                reason: found.reason.as_str(),
+                message: found.message,
+                fix: found.remedy,
+            }
+        })
     }
 
     fn ask_approval(&self, ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
@@ -727,12 +1571,12 @@ impl PersonSurface for LocalSurface {
                     return Err(failure);
                 }
             };
+            let deadline = Instant::now() + inner.window;
             let timer = tokio::spawn({
-                let window = inner.window;
                 let inner: Weak<Inner> = Arc::downgrade(inner);
                 let code = code.clone();
                 async move {
-                    tokio::time::sleep(window).await;
+                    tokio::time::sleep_until(deadline).await;
                     if let Some(inner) = inner.upgrade() {
                         inner.end_of_window(&code).await;
                     }
@@ -749,11 +1593,72 @@ impl PersonSurface for LocalSurface {
                     once: None,
                     pressed: false,
                     ended: false,
+                    whole: false,
+                    deadline,
                     timer,
                 },
             );
             inner.settle(&mut state);
             Ok(Self::link(port, &code, minutes))
+        })
+    }
+
+    fn shows_person_acts(&self) -> bool {
+        self.inner.desk.get().is_some()
+    }
+
+    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            let inner = &self.inner;
+            if inner.desk.get().is_none() {
+                return Err(codes::busy(
+                    codes::SURFACE_UNAVAILABLE,
+                    "The engine cannot carry out a person's act now, so no page is shown.",
+                    "Run `anything2mcp doctor run` for the reason.",
+                ));
+            }
+            let minutes = inner.window.as_secs().div_ceil(60).max(1);
+            let code = inner.code()?;
+            let mut state = inner.state();
+            let port = match self.listen(&mut state) {
+                Ok(port) => port,
+                Err(failure) => {
+                    inner.settle(&mut state);
+                    return Err(failure);
+                }
+            };
+            let deadline = Instant::now() + inner.window;
+            let timer = tokio::spawn({
+                let inner: Weak<Inner> = Arc::downgrade(inner);
+                let code = code.clone();
+                async move {
+                    tokio::time::sleep_until(deadline).await;
+                    if let Some(inner) = inner.upgrade() {
+                        inner.end_of_act_window(&code);
+                    }
+                }
+            });
+            state.acts.insert(
+                code.clone(),
+                ActPage {
+                    act: ask.act,
+                    action: ask.action.to_string(),
+                    person: ask.person,
+                    once: None,
+                    pressed: false,
+                    ended: false,
+                    deadline,
+                    timer,
+                },
+            );
+            inner.settle(&mut state);
+            Ok(SurfaceLink {
+                url: Some(format!("http://127.0.0.1:{port}/act/{code}")),
+                text: format!(
+                    "`{}` is a person's act. Open the link in your own browser on this machine to read exactly what will be done and to carry it out or decline it. The page closes after {minutes} minutes; no answer is a decline.",
+                    ask.action
+                ),
+            })
         })
     }
 
@@ -771,30 +1676,76 @@ impl PersonSurface for LocalSurface {
 
     fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>> {
         Box::pin(async move {
+            let refused = |message: &str, next: &str| {
+                Err(codes::policy(codes::PRESENCE_FAILED, message, next))
+            };
+            // One prompt at a time, as for an approval.
+            let Ok(_up) = self.inner.prompting.try_lock() else {
+                return Err(codes::busy(
+                    codes::PROMPT_BUSY,
+                    "Another presence prompt is up on this machine.",
+                    "Answer or close that prompt, then run the command again.",
+                ));
+            };
+            // A prompt that no page asked for is not raised while a page
+            // waits for its person: on a system whose dialog shows fixed
+            // text, the person reading that page would take it for theirs.
+            if self.waiting() > 0 {
+                return Err(codes::busy(
+                    codes::PROMPT_BUSY,
+                    "An approval page waits for its person on this machine, and no other presence prompt is raised meanwhile.",
+                    "Answer or let that page close, then run the command again.",
+                ));
+            }
+            let deadline = Instant::now() + self.inner.window;
             let answer = self
                 .inner
                 .prompt
-                .ask(PromptText {
-                    title: format!("Confirm `{}`", ask.action),
-                    detail: ask.summary,
-                })
+                .ask(
+                    PromptText {
+                        title: format!("Confirm `{}`", ask.action),
+                        detail: ask.summary,
+                    },
+                    // A prompt nobody answers ends as an approval's does.
+                    deadline,
+                )
                 .await;
+            // An answer after the window is a dismissal, whatever it says.
+            let answer = if Instant::now() >= deadline {
+                PromptAnswer::Dismissed
+            } else {
+                answer
+            };
             match answer {
-                PromptAnswer::Present => Ok(PresenceProof::new(
-                    PresenceCheck::OsPrompt,
+                PromptAnswer::Present(prompt) => Ok(PresenceProof::new(
+                    recorded_check(prompt),
                     ask.principal,
                     self.inner.clock.now(),
-                )),
-                PromptAnswer::Dismissed => Err(codes::policy(
-                    codes::PRESENCE_FAILED,
-                    "The prompt on this machine was dismissed or not passed.",
+                )
+                .naming(prompt.as_str())),
+                PromptAnswer::Dismissed => refused(
+                    "The prompt on this machine was closed, or its time ended.",
                     "Run the command again and answer the prompt yourself.",
-                )),
-                PromptAnswer::Confirmed | PromptAnswer::NotAvailable => Err(codes::policy(
-                    codes::PRESENCE_FAILED,
-                    "This machine has no way to prove that a person is present, so this cannot be done here.",
+                ),
+                PromptAnswer::Denied => refused(
+                    "The prompt on this machine was answered and not passed.",
+                    "Run the command again and answer the prompt yourself.",
+                ),
+                PromptAnswer::Confirmed => refused(
+                    "A confirmation dialog proves no person, so this cannot be done here.",
                     "Make the change in the installation's settings file, or on a machine whose operating system offers a presence prompt.",
-                )),
+                ),
+                PromptAnswer::NotAvailable(why) => refused(
+                    &format!(
+                        "No presence prompt is available on this machine, so this cannot be done here. {}",
+                        why.message
+                    ),
+                    &if why.remedy.is_empty() {
+                        "Make the change in the installation's settings file, or on a machine whose operating system offers a presence prompt.".to_owned()
+                    } else {
+                        why.remedy
+                    },
+                ),
             }
         })
     }

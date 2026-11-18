@@ -45,7 +45,9 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
     let verbs: Vec<&str> = set.verbs(&mode).iter().map(|verb| verb.as_str()).collect();
     assert_eq!(verbs, ["read", "submit", "update"]);
     assert_eq!(set.file_kinds().count(), 1);
-    assert_eq!(set.drafting_rules().count(), 1);
+    // From an identity, the start of a map; from a published map, a map
+    // and its reads.
+    assert_eq!(set.drafting_rules().count(), 3);
     let codes: Vec<String> = set.lint_codes().into_iter().map(|(code, _)| code).collect();
     for rule in [
         "device.writable_without_hazard",
@@ -62,10 +64,16 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
         facts: Values::new(),
     };
     let discoverers = first.discoverers_for(&surface);
-    assert_eq!(discoverers.len(), 1);
+    let levels: Vec<(&str, a2m_core::EvidenceLevel)> = discoverers
+        .iter()
+        .map(|found| (found.declared().name.as_str(), found.declared().max_level))
+        .collect();
     assert_eq!(
-        discoverers[0].declared().max_level,
-        a2m_core::EvidenceLevel::Discovered
+        levels,
+        [
+            ("device_identity", a2m_core::EvidenceLevel::Discovered),
+            ("device_register_map", a2m_core::EvidenceLevel::Inferred),
+        ]
     );
     let listing = first.listing();
     assert_eq!(listing.len(), 1);
@@ -86,6 +94,20 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
     own.sort_by_key(|(_, code)| *code);
     listed.sort_by_key(|(_, code)| *code);
     assert_eq!(own, listed);
+    // The defaults a person gets without setting anything: four frames a
+    // second at most where a map states no pace, and one hundred frames a
+    // run on a link.
+    let default = |key: &str| {
+        manifest
+            .settings
+            .iter()
+            .find(|setting| setting.key == key)
+            .unwrap_or_else(|| panic!("no setting `{key}`"))
+            .default
+            .as_int()
+    };
+    assert_eq!(default("min_gap_ms"), Some(250));
+    assert_eq!(default("max_frames_per_run"), Some(100));
     // The pack reaches a network and hardware, holds a session for its
     // links, and starts no program.
     assert!(manifest.effects.devices);

@@ -84,3 +84,265 @@ jobs:
         run: python3 tools/docs_audit.py
       - name: Prove the audit fails when it should
         run: python3 tools/test_docs_audit.py
+
+  bindings:
+    name: Wheel and npm packages on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.13"
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Name the paths of this operating system
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "VENV_BIN=Scripts" >> "$GITHUB_ENV"
+            echo "EXE=.exe" >> "$GITHUB_ENV"
+          else
+            echo "VENV_BIN=bin" >> "$GITHUB_ENV"
+            echo "EXE=" >> "$GITHUB_ENV"
+          fi
+      - name: Build the wheel and the source distribution
+        working-directory: bindings/python
+        run: |
+          python -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/$VENV_BIN/pip" install --quiet maturin==1.16.0
+          "$RUNNER_TEMP/tools/$VENV_BIN/maturin" build --release --out dist
+          "$RUNNER_TEMP/tools/$VENV_BIN/maturin" sdist --out dist
+          ls -l dist
+      - name: Install the wheel into a clean environment and run both names and the import
+        run: |
+          python -m venv "$RUNNER_TEMP/try"
+          "$RUNNER_TEMP/try/$VENV_BIN/pip" install --quiet bindings/python/dist/*.whl
+          "$RUNNER_TEMP/try/$VENV_BIN/anything2mcp$EXE" --version
+          # The client runs only the program its own installed distribution
+          # put in the scripts folder: an installed wheel must find it.
+          "$RUNNER_TEMP/try/$VENV_BIN/python" -c "import anything2mcp, sys; found = anything2mcp.binary_path(); print(found); sys.exit(0 if found else 1)"
+          # On Windows pip makes no launcher for the a2m script (research note 21).
+          if [ "$RUNNER_OS" != "Windows" ]; then "$RUNNER_TEMP/try/$VENV_BIN/a2m" --version; fi
+      - name: Test the Python client, against a fake engine and the built one
+        working-directory: bindings/python
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: python -m unittest discover -s tests -v
+      - name: Run the short name from the installed wheel on Windows
+        if: runner.os == 'Windows'
+        run: |
+          cmd.exe //c "$(cygpath -w "$RUNNER_TEMP/try/Scripts/a2m.cmd") --version"
+      - name: Check the generated client methods are current
+        run: |
+          python bindings/python/tools/generate_actions.py --check
+          node bindings/npm/scripts/generate-actions.js --check
+      - name: Test the npm packages and the Node client, against a fake engine and the built one
+        working-directory: bindings/npm
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          node --test test/platform.test.js test/client.test.js
+          node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"
+
+  presence:
+    name: The Linux presence prompt against a real polkit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ACTION: io.github.mhughesdev.anything2mcp.presence
+      ACCOUNT: a2m-presence
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Install polkit, its text agent, and what the job drives them with
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends polkitd dbus bsdutils jq
+      - name: Build the tests of a2m-local and put the test program where another account can run it
+        shell: bash
+        run: |
+          set -euo pipefail
+          program=$(cargo test --locked -p a2m-local --lib --no-run --message-format=json-render-diagnostics \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "a2m_local") | .executable' \
+            | tail -n 1)
+          test -x "$program"
+          sudo install -m 0755 "$program" /usr/local/bin/a2m-local-tests
+          sudo tee /usr/local/bin/a2m-presence-stage >/dev/null <<'SCRIPT'
+          #!/bin/bash
+          # Runs the test against a real polkit as account $1, on a machine prepared as $2.
+          # It fails unless exactly that one test ran and passed.
+          set -euo pipefail
+          sudo -u "$1" env "A2M_TEST_POLKIT=$2" /usr/local/bin/a2m-local-tests \
+            --exact tests::polkit::against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared \
+            --nocapture 2>&1 | tee /tmp/a2m-presence-stage.log
+          grep -q 'test result: ok. 1 passed' /tmp/a2m-presence-stage.log
+          SCRIPT
+          sudo chmod 0755 /usr/local/bin/a2m-presence-stage
+      - name: Create the test account with a made-up password, and start polkit
+        run: |
+          sudo useradd --no-create-home --shell /bin/sh "$ACCOUNT"
+          echo "$ACCOUNT:secret-for-tests-presence" | sudo chpasswd
+          sudo systemctl start polkit.service
+      - name: polkit runs and the policy file is not installed
+        run: a2m-presence-stage "$ACCOUNT" no_policy
+      - name: Install the policy file as an administrator does
+        run: |
+          sudo install -m 0644 "crates/a2m-local/polkit/$ACTION.policy" "/usr/share/polkit-1/actions/$ACTION.policy"
+          sudo systemctl restart polkit.service
+          timeout 60 sh -c "until pkaction --action-id '$ACTION' >/dev/null 2>&1; do sleep 1; done"
+          pkaction --action-id "$ACTION" --verbose
+      - name: A runner has no seat, so no session on it is local and active
+        run: a2m-presence-stage "$ACCOUNT" no_session
+      - name: The administrator account is allowed without being asked, which proves nobody
+        run: a2m-presence-stage root root
+      - name: Give the test account auth_self by a rule, in the place of the seat a runner lacks
+        run: |
+          sudo tee /etc/polkit-1/rules.d/00-a2m-presence-test.rules >/dev/null <<RULE
+          polkit.addRule(function(action, subject) {
+              if (action.id == "$ACTION" && subject.user == "$ACCOUNT") {
+                  return polkit.Result.AUTH_SELF;
+              }
+          });
+          RULE
+          sudo systemctl restart polkit.service
+          timeout 60 sh -c "until pkaction --action-id '$ACTION' >/dev/null 2>&1; do sleep 1; done"
+      - name: polkit would ask, and no agent is there to ask through
+        run: a2m-presence-stage "$ACCOUNT" no_agent
+      - name: A text agent types the password, wrong, right, and not at all
+        run: a2m-presence-stage "$ACCOUNT" ready
+      - name: Show polkit's log when a stage failed
+        if: failure()
+        run: sudo journalctl --unit polkit.service --no-pager | tail -n 200
+
+  tls:
+    name: Rust without TLS on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # HTTPS is in the default build, which the job above tests. This job
+      # holds the build without it, which `--no-default-features` gives.
+      - name: Lint with TLS off
+        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --no-default-features -- -D warnings
+      - name: Test with TLS off
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
+
+  postgres:
+    name: The data pack against a real PostgreSQL server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # A missing server fails each test instead of skipping it.
+      A2M_REQUIRE_POSTGRES: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The runner image carries PostgreSQL's programs, not started. The stand
+      # starts a server of its own from them, in a folder of its own. When
+      # the image stops carrying them, this step says so.
+      - name: The PostgreSQL programs the stand starts its own server from are here
+        run: |
+          bin=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+          test -x "$bin/initdb" && test -x "$bin/pg_ctl" && test -x "$bin/postgres"
+          "$bin/postgres" --version
+      - name: Lint with the server store on
+        run: cargo clippy -p a2m-pack-data --all-targets --locked --features postgres -- -D warnings
+      - name: Test with the server store on
+        run: cargo test -p a2m-pack-data --locked --no-fail-fast --features postgres
+
+  nats:
+    name: The stream pack against a real NATS server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      A2M_TEST_NATS: 127.0.0.1:4222
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The official image, named by its release line. It is a test's
+      # counterpart and nothing of it is shipped; pinning it by digest is owed.
+      - name: Start a real server with JetStream, reachable from this machine only
+        run: docker run -d --name nats -p 127.0.0.1:4222:4222 nats:2.12 -js
+      - name: Wait until the server greets a connection
+        run: |
+          for attempt in $(seq 1 60); do
+            if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4222 && head -c 4 <&3' 2>/dev/null | grep -q INFO; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the server did not greet a connection within a minute"
+          exit 1
+      - name: The pack's own client against the real server
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p a2m-pack-stream --locked --test nats -- the_same_client_against_a_real_server --nocapture 2>&1 | tee nats-test.log
+          # The test says so when it finds no server, and passes: that is not a pass here.
+          if grep -q "skipped:" nats-test.log; then
+            echo "the test skipped itself"
+            exit 1
+          fi
+          grep -q "test result: ok. 1 passed" nats-test.log
+      - name: Show the server's log
+        if: always()
+        run: docker logs nats
+
+  desktop:
+    name: The desktop pack on Linux, against its stand
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # A machine without the programs fails each test instead of skipping it.
+      A2M_REQUIRE_DESKTOP: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # No display is needed: the stand draws nothing. The test starts a
+      # session bus of its own, which starts the accessibility bus on demand.
+      - name: Install the session bus daemon and the accessibility bus and registry
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dbus-daemon at-spi2-core
+      - name: Test the desktop pack against its stand
+        run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop

@@ -2,10 +2,13 @@
 //! tab that may only observe. Everything that only looks is the [`Look`]
 //! trait, which both have; only [`ActTab`] has a method that acts.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use serde_json::Value as Json;
+use std::fmt;
 use std::future::Future;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use a2m_core::Redact;
@@ -17,18 +20,50 @@ use tokio::sync::{mpsc, watch};
 use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
+use crate::origin::{Origins, origin_of, path_of, shown_origin};
+use crate::page_read::{PageAnswer, PagePath};
 use crate::protocol::{
-    AddBinding, AddScriptOnNewDocument, AttachToTarget, BypassServiceWorker, CallArgument,
-    CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld, CreateTarget,
-    DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind, FailRequest,
-    FetchEnable, GetFullAxTree, GetProperties, HandleDialog, InsertText, MediaFeature, Navigate,
-    NetworkEnable, PageEnable, RequestPattern, RunIfWaiting, RuntimeEnable, SetAutoAttach,
-    SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
+    CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
+    CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
+    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, HandleDialog,
+    InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
+    RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
+    SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
 /// The helper that runs in the page, in a world of its own.
 const HELPER: &str = include_str!("helper.js");
+
+/// Where the helper's source holds the origins its tab was opened for.
+const HELPER_ORIGINS: &str = "/*a2m:origins*/[]";
+
+/// How the helper says that the page is on an origin the tab was not
+/// opened for, and that a selector would tell a password.
+const OUTSIDE_ORIGINS: &str = "a2m-outside-origins ";
+const PASSWORD_REFUSED: &str = "a2m-password-refused";
+
+/// What a tab reports for a move of the tab that was refused, a new window
+/// that was closed before it ran, and a download that was refused.
+const NAVIGATION: &str = "NAVIGATION";
+const POPUP: &str = "POPUP";
+const DOWNLOAD: &str = "DOWNLOAD";
+
+/// How the browser is told to end a request. A document that is ended as
+/// aborted leaves the page that asked for it in place; one that is ended
+/// as blocked is replaced by the browser's own error page (measured,
+/// decision 0143).
+const ABORTED: &str = "Aborted";
+const BLOCKED: &str = "BlockedByClient";
+
+/// The helper's source for a tab opened for these origins.
+fn helper_for(origins: &Origins) -> String {
+    let list: Vec<&str> = origins.iter().collect();
+    // A list of plain texts is always written; an empty one refuses all.
+    let list = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_owned());
+    HELPER.replacen(HELPER_ORIGINS, &list, 1)
+}
 
 /// The name of the helper's isolated world.
 const WORLD: &str = "anything2mcp";
@@ -102,8 +137,11 @@ impl Default for PageEnvironment {
 pub struct SafeRequest {
     /// The method, in capitals, such as `POST`.
     pub method: String,
-    /// What the address must start with, such as the address of a search
-    /// endpoint that is called with POST.
+    /// The address the request must be at or under: the same origin, and
+    /// the same path or a path below it, such as the address of a search
+    /// endpoint that is called with POST. Text that only begins the same
+    /// way is not under it: neither a longer host nor a longer last name
+    /// of the path. An address with a query marks nothing.
     pub address_prefix: String,
 }
 
@@ -116,14 +154,28 @@ pub struct SafeRequests {
 }
 
 impl SafeRequests {
-    fn allows(&self, method: &str, address: &str) -> bool {
+    pub(crate) fn allows(&self, method: &str, address: &str) -> bool {
         matches!(method, "GET" | "HEAD" | "OPTIONS")
-            || self.allowed.iter().any(|safe| {
-                safe.method == method
-                    && !safe.address_prefix.is_empty()
-                    && address.starts_with(&safe.address_prefix)
-            })
+            || self
+                .allowed
+                .iter()
+                .any(|safe| safe.method == method && under(&safe.address_prefix, address))
     }
+}
+
+/// Whether `address` is at `prefix` or under it.
+fn under(prefix: &str, address: &str) -> bool {
+    let (Some(marked), Some(asked)) = (origin_of(prefix), origin_of(address)) else {
+        return false;
+    };
+    if marked != asked || prefix.contains(['?', '#']) {
+        return false;
+    }
+    let (marked, asked) = (path_of(prefix), path_of(address));
+    asked == marked
+        || asked
+            .strip_prefix(marked)
+            .is_some_and(|below| marked.ends_with('/') || below.starts_with('/'))
 }
 
 pub(crate) enum Posture {
@@ -391,8 +443,9 @@ impl Key {
 }
 
 /// One input to one element. Each is one strategy; none falls back to
-/// another.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// another. A text to enter may be a password, so it is never printed:
+/// the debug form says how long it is.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Input {
     /// Focus, select what is there, and insert the text as one edit.
     Fill(String),
@@ -411,6 +464,21 @@ pub enum Input {
     SelectByValue(String),
 }
 
+impl fmt::Debug for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let length = |text: &str| text.chars().count();
+        match self {
+            Self::Fill(text) => write!(f, "Fill({} characters)", length(text)),
+            Self::Type(text) => write!(f, "Type({} characters)", length(text)),
+            Self::NativeSet(text) => write!(f, "NativeSet({} characters)", length(text)),
+            Self::Press(key) => write!(f, "Press({key:?})"),
+            Self::Click => f.write_str("Click"),
+            Self::Check(on) => write!(f, "Check({on})"),
+            Self::SelectByValue(value) => write!(f, "SelectByValue({value:?})"),
+        }
+    }
+}
+
 /// How to answer a dialog of the page.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DialogAnswer {
@@ -422,12 +490,16 @@ pub enum DialogAnswer {
     Dismiss,
 }
 
-/// A request sent from inside the page, with the page's own session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A request sent from inside the page, with the page's own session. Its
+/// headers and its body may carry a credential, so they are never printed:
+/// the debug form gives the names of the headers and the length of the
+/// body, and the address without its query.
+#[derive(Clone, PartialEq, Eq)]
 pub struct PageRequest {
     /// The method, in capitals.
     pub method: String,
-    /// Where it goes. The crate above has checked the origin.
+    /// Where it goes: an address on one of the tab's origins. The tab
+    /// refuses any other, and follows no redirect.
     pub address: Address,
     /// Its headers.
     pub headers: Vec<(String, String)>,
@@ -435,17 +507,206 @@ pub struct PageRequest {
     pub body: Option<String>,
 }
 
+impl fmt::Debug for PageRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = self.headers.iter().map(|(name, _)| name.as_str()).collect();
+        f.debug_struct("PageRequest")
+            .field("method", &self.method)
+            .field("address", &without_query(self.address.as_str()))
+            .field("headers", &names)
+            .field(
+                "body_characters",
+                &self.body.as_ref().map(|body| body.chars().count()),
+            )
+            .finish()
+    }
+}
+
 /// The answer to a [`PageRequest`], with credentials removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageResponse {
     /// The status.
     pub status: u16,
-    /// The address that answered, after redirects.
+    /// The address that answered, without its query.
     pub address: String,
     /// The headers, without cookies and authorization, in order of name.
     pub headers: Vec<(String, String)>,
     /// The body, with every known secret replaced.
     pub body: String,
+}
+
+/// One request the page of an observing tab made by itself, with GET, to
+/// one of the tab's origins, and its answer, by structure alone: no value
+/// of the address's query, of a header, of a cookie, or of the answer is
+/// kept (decisions 0187 and 0195).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageExchange {
+    /// The method, in capitals: `GET`.
+    pub method: String,
+    /// The origin, as the browser writes it.
+    pub origin: String,
+    /// The path, without its query, with every known secret replaced and
+    /// every segment that is not a plain word kept as
+    /// [`crate::PLACEHOLDER`] ([`crate::path_by_structure`]).
+    pub path: String,
+    /// The names of the query's parameters, in order, each once: only
+    /// those that are plain names ([`crate::query_names`]).
+    pub query: Vec<String>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// whose whole text is a value, or one whose name is not a plain name.
+    pub query_left_out: bool,
+    /// The names, in lowercase and in order, of the request's headers that
+    /// carry a credential or an anti-forgery token. Never their values.
+    pub credential_headers: Vec<String>,
+    /// The names, in lowercase and in order, of the request's headers that
+    /// the page's own script set: every header but those the browser sends
+    /// with any request of a script by itself ([`BROWSER_HEADERS`]), and
+    /// `accept` when it is not the browser's own `*/*`. Never their values.
+    /// A read made again from inside the page sends none of them.
+    pub set_headers: Vec<String>,
+    /// The status of the answer.
+    pub status: u16,
+    /// The answer's media type, in lowercase, without its parameters.
+    pub content_type: String,
+    /// For an answer that is a JSON document: each of its top-level names,
+    /// and each name one level inside an object, as `outer.inner`, or
+    /// `[]` and `[].name` for a list's items, with the kind of value it held:
+    /// `string`, `integer`, `number`, `boolean`, `null`, `object`, or
+    /// `array`; `mixed` when the items of a list held more than one.
+    /// `None` when the answer is not JSON, could not be read, or is longer
+    /// than the tab reads.
+    pub fields: Option<BTreeMap<String, String>>,
+    /// Whether the names of an object of the answer were withheld: it had
+    /// more names than [`crate::MOST_NAMES`], or one that is not a plain
+    /// name, and was read as a dictionary, whose names are values. Only its
+    /// own name and kind are in `fields`.
+    pub names_withheld: bool,
+}
+
+/// What [`ObserveTab::exchanges`] gives: the page's own requests answered
+/// whole, and what was not kept, said.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageExchanges {
+    /// The exchanges, oldest first.
+    pub exchanges: Vec<PageExchange>,
+    /// How many requests of the page were left out because the tab already
+    /// held [`EXCHANGES_KEPT`].
+    pub dropped: usize,
+    /// How many requests of the page were still awaiting their answer when
+    /// the deadline came.
+    pub awaited: usize,
+}
+
+/// The request headers the browser sends by itself with a request a script
+/// of the page makes, and that the script cannot set: a read made again
+/// from inside the page sends each the same. Data, found by looking at what
+/// the browser reports for a `fetch` with no header of its own (decision
+/// 0195).
+pub const BROWSER_HEADERS: &[&str] = &[
+    "cookie",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+];
+
+/// The request headers the browser also sends by itself with every such
+/// request, and that a script may set too. Each is the browser's own when
+/// it holds what the request of the page's own document held; `referer`
+/// when it is the page's own address; `accept` when it is `*/*`. Otherwise
+/// the page set it. Data.
+pub const BROWSER_DEFAULT_HEADERS: &[&str] = &["accept-language", "user-agent"];
+
+/// What the request of the tab's own document held of the headers in
+/// [`BROWSER_DEFAULT_HEADERS`], and its address: kept in memory to tell the
+/// browser's own headers from the page's, and never recorded.
+#[derive(Debug, Clone, Default)]
+struct DocumentHeaders {
+    address: String,
+    defaults: BTreeMap<String, String>,
+}
+
+/// The words in a request header's name that say it carries a credential
+/// or an anti-forgery token. Data.
+pub const CREDENTIAL_HEADER_WORDS: &[&str] = &[
+    "authorization",
+    "cookie",
+    "token",
+    "csrf",
+    "xsrf",
+    "auth",
+    "session",
+    "key",
+    "secret",
+];
+
+/// A request of the page, heard and not yet answered whole.
+#[derive(Debug, Clone)]
+struct Pending {
+    exchange: PageExchange,
+    answered: bool,
+}
+
+/// The most exchanges an observing tab keeps before they are taken.
+pub const EXCHANGES_KEPT: usize = 256;
+
+fn json_kind(value: &Json) -> &'static str {
+    match value {
+        Json::Null => "null",
+        Json::Bool(_) => "boolean",
+        Json::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Json::Number(_) => "number",
+        Json::String(_) => "string",
+        Json::Array(_) => "array",
+        Json::Object(_) => "object",
+    }
+}
+
+/// The names of a JSON answer and the kinds of what they held, to one
+/// level inside an object or a list's items, and whether the names of an
+/// object were withheld. No value is kept, and the names of an object that
+/// reads as a dictionary are not either ([`crate::names_are_structure`]):
+/// only the object's own name and kind are.
+pub(crate) fn fields_of(json: &Json) -> (BTreeMap<String, String>, bool) {
+    fn note(out: &mut BTreeMap<String, String>, name: String, kind: &str) {
+        let entry = out.entry(name).or_insert_with(|| kind.to_owned());
+        if entry != kind {
+            "mixed".clone_into(entry);
+        }
+    }
+    fn object(
+        out: &mut BTreeMap<String, String>,
+        prefix: &str,
+        map: &serde_json::Map<String, Json>,
+        inner: bool,
+    ) -> bool {
+        if !crate::names_are_structure(map.keys()) {
+            return true;
+        }
+        let mut withheld = false;
+        for (name, value) in map {
+            let at = format!("{prefix}{name}");
+            note(out, at.clone(), json_kind(value));
+            if inner && let Json::Object(nested) = value {
+                withheld |= object(out, &format!("{at}."), nested, false);
+            }
+        }
+        withheld
+    }
+    let mut out = BTreeMap::new();
+    let mut withheld = false;
+    match json {
+        Json::Object(map) => withheld = object(&mut out, "", map, true),
+        Json::Array(items) => {
+            for item in items {
+                note(&mut out, "[]".to_owned(), json_kind(item));
+                if let Json::Object(map) = item {
+                    withheld |= object(&mut out, "[].", map, false);
+                }
+            }
+        }
+        _ => {}
+    }
+    (out, withheld)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +725,108 @@ struct Nav {
     document: Option<(String, u16)>,
 }
 
+/// Who is moving the tab to another document: the `goto` under way, or the
+/// page itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mover {
+    Goto,
+    Page,
+}
+
+/// What the tab knows about the moves of its own frame.
+#[derive(Debug, Default)]
+struct Moves {
+    /// Whether a `goto` is under way.
+    going: bool,
+    /// The loader of the move that is the `goto`'s, once its request has
+    /// been seen, and that request's latest number: a redirect keeps the
+    /// loader and takes a new number.
+    goto_loader: Option<String>,
+    goto_request: Option<String>,
+    /// The origin the `goto` under way was refused for.
+    refused: Option<String>,
+    /// The addresses of moves the page has asked for and that have not
+    /// started, without their fragments.
+    asked: VecDeque<String>,
+    /// The loaders of the moves the page started.
+    by_page: VecDeque<String>,
+}
+
+impl Moves {
+    /// A page that keeps asking must not fill the engine's memory.
+    const KEPT: usize = 64;
+
+    fn remember(list: &mut VecDeque<String>, one: String) {
+        if list.len() >= Self::KEPT {
+            list.pop_front();
+        }
+        list.push_back(one);
+    }
+
+    /// The page asked for a move to this address.
+    fn asked(&mut self, address: &str) {
+        Self::remember(&mut self.asked, without_fragment(address).to_owned());
+    }
+
+    /// A move has started. It is the page's when the page asked for it, or
+    /// when it is a move through the tab's history, which `goto` never is.
+    fn started(&mut self, address: &str, loader: &str, kind: &str) {
+        let address = without_fragment(address);
+        let asked = self.asked.iter().position(|one| one == address);
+        if let Some(at) = asked {
+            self.asked.remove(at);
+        }
+        let history = kind.starts_with("history") || kind.starts_with("restore");
+        if (asked.is_some() || history) && !loader.is_empty() {
+            Self::remember(&mut self.by_page, loader.to_owned());
+        }
+    }
+
+    /// Whose the request of the tab's own document is. The `goto`'s is the
+    /// first one, since the `goto` began, that the page did not ask for,
+    /// and every redirect of it.
+    fn mover(&mut self, paused: &RequestPaused) -> Mover {
+        let loader = paused
+            .network_id
+            .as_deref()
+            .filter(|loader| !loader.is_empty());
+        let follows = paused.redirected_request_id.as_deref();
+        let of_goto = (follows.is_some() && follows == self.goto_request.as_deref())
+            || (loader.is_some() && loader == self.goto_loader.as_deref());
+        if of_goto {
+            self.goto_request = Some(paused.request_id.clone());
+            return Mover::Goto;
+        }
+        if loader.is_some_and(|loader| self.by_page.iter().any(|one| one == loader)) {
+            return Mover::Page;
+        }
+        let address = without_fragment(&paused.request.url);
+        if let Some(at) = self.asked.iter().position(|one| one == address) {
+            self.asked.remove(at);
+            if let Some(loader) = loader {
+                Self::remember(&mut self.by_page, loader.to_owned());
+            }
+            return Mover::Page;
+        }
+        if follows.is_none() && self.going && self.goto_request.is_none() {
+            self.goto_loader = loader.map(str::to_owned);
+            self.goto_request = Some(paused.request_id.clone());
+            return Mover::Goto;
+        }
+        Mover::Page
+    }
+}
+
+/// What becomes of a request the browser holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Verdict {
+    /// It goes on.
+    Pass,
+    /// It is ended before it leaves the browser, and reported under this
+    /// word when there is one.
+    Refuse(Option<String>),
+}
+
 pub(crate) struct Page {
     client: Client,
     session: String,
@@ -478,8 +841,43 @@ pub(crate) struct Page {
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
+    /// The page's own requests heard and not yet answered whole, by the
+    /// browser's number for them, and how many there are.
+    pending: Mutex<BTreeMap<String, Pending>>,
+    waiting: watch::Sender<usize>,
+    /// The page's own requests answered whole, oldest first.
+    exchanges: Mutex<Vec<PageExchange>>,
+    /// Whether the page's own requests are recorded: only once
+    /// [`ObserveTab::record_exchanges`] asked, so that a tab whose
+    /// exchanges nobody takes fetches no answer (decision 0195).
+    recording: AtomicBool,
+    /// How many requests of the page were left out at [`EXCHANGES_KEPT`]
+    /// since the exchanges were last taken.
+    dropped: AtomicUsize,
+    /// What the request of the page's own document held, for telling the
+    /// browser's headers from the page's.
+    document: Mutex<Option<DocumentHeaders>>,
     safe: Option<SafeRequests>,
+    /// The origins the tab was opened for.
+    origins: Origins,
+    /// The helper's source, with those origins written in.
+    helper: String,
+    moves: Mutex<Moves>,
+    /// Whether the tab has been released. Kept apart from its status,
+    /// which the tab's events also end: the release is done once, whatever
+    /// the status says by then.
+    released: AtomicBool,
     browser: Arc<BrowserInner>,
+}
+
+/// Clears the mark of a `goto` under way when the `goto` ends, however it
+/// ends.
+struct Going<'a>(&'a Page);
+
+impl Drop for Going<'_> {
+    fn drop(&mut self) {
+        self.0.moves().going = false;
+    }
 }
 
 /// A call that could not be made as asked.
@@ -504,6 +902,14 @@ enum On<'a> {
     Element(&'a str),
 }
 
+/// A text of the page or of the browser, as far as it may leave the crate
+/// in a message: every known secret replaced, and only then cut. Cut
+/// first, a secret that the cut divides would leave its first part behind
+/// (decision 0143).
+pub(crate) fn shown(redact: &dyn Redact, text: &str) -> String {
+    cut(&redact.redact(text))
+}
+
 fn cut(text: &str) -> String {
     const SHOWN: usize = 200;
     let clean: String = text
@@ -524,9 +930,38 @@ fn without_query(address: &str) -> &str {
     address.split(['?', '#']).next().unwrap_or(address)
 }
 
+fn without_fragment(address: &str) -> &str {
+    address.split('#').next().unwrap_or(address)
+}
+
+/// Whether a node the browser described is a password input: by its type,
+/// or by an `autocomplete` that names a password.
+fn is_password(node: &NodeDescription) -> bool {
+    node.local_name.eq_ignore_ascii_case("input")
+        && (node
+            .attribute("type")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("password"))
+            || node
+                .attribute("autocomplete")
+                .is_some_and(|hint| hint.to_ascii_lowercase().contains("password")))
+}
+
 impl Page {
     fn shown(&self, text: &str) -> String {
-        self.redact.redact(&cut(text))
+        shown(self.redact.as_ref(), text)
+    }
+
+    /// The tab's moves, also after a panic elsewhere poisoned the lock:
+    /// the state is plain data and every change to it is whole.
+    fn moves(&self) -> MutexGuard<'_, Moves> {
+        self.moves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The error for a page, or an address, outside the tab's origins.
+    fn outside(&self, origin: &str) -> BrowserError {
+        BrowserError::ForeignOrigin(self.shown(origin))
     }
 
     fn client_error(&self, error: ClientError) -> BrowserError {
@@ -632,7 +1067,19 @@ impl Page {
                     details.text,
                     evaluated.result.description.as_deref().unwrap_or_default()
                 );
-                if text.contains("__a2m") {
+                if text.contains(OUTSIDE_ORIGINS) {
+                    // The helper found the page on an origin the tab was
+                    // not opened for, and did nothing. The whole text is
+                    // redacted before the origin is taken out of it.
+                    let whole = self.redact.redact(&text);
+                    let origin = whole
+                        .split_once(OUTSIDE_ORIGINS)
+                        .and_then(|(_, after)| after.split_whitespace().next())
+                        .unwrap_or_default();
+                    Err(BrowserError::ForeignOrigin(cut(origin)).into())
+                } else if text.contains(PASSWORD_REFUSED) {
+                    Err(BrowserError::PasswordField.into())
+                } else if text.contains("__a2m") {
                     Err(CallError::NoHelper)
                 } else if gone(&text) {
                     Err(CallError::Gone)
@@ -701,7 +1148,7 @@ impl Page {
                 Err(CallError::NoHelper) => {
                     // The world was made before the helper reached it.
                     let install = Evaluate {
-                        expression: HELPER,
+                        expression: &self.helper,
                         context_id: Some(world),
                         return_by_value: true,
                         await_promise: false,
@@ -776,6 +1223,10 @@ impl Page {
     // ---- looking ----
 
     async fn goto(&self, address: &Address, deadline: Deadline) -> Result<Loaded, BrowserError> {
+        // Refused before the browser hears of it.
+        if !self.origins.allows(address) {
+            return Err(self.outside(&address.origin()));
+        }
         self.goto_text(address.as_str(), deadline).await
     }
 
@@ -786,9 +1237,23 @@ impl Page {
     ) -> Result<Loaded, BrowserError> {
         let mut nav = self.nav.subscribe();
         let mut status = self.status.subscribe();
+        {
+            let mut moves = self.moves();
+            moves.going = true;
+            moves.goto_loader = None;
+            moves.goto_request = None;
+            moves.refused = None;
+        }
+        let _going = Going(self);
         let navigated = self.call(&Navigate { url: address }, deadline).await?;
         if let Some(why) = navigated.error_text.filter(|why| !why.is_empty()) {
-            return Err(BrowserError::NotLoaded(self.shown(&why)));
+            // The tab itself ended the move, at a redirect to an origin it
+            // was not opened for: that is the reason, not the browser's.
+            let refused = self.moves().refused.take();
+            return Err(match refused {
+                Some(origin) => self.outside(&origin),
+                None => BrowserError::NotLoaded(self.shown(&why)),
+            });
         }
         let mut document_status = None;
         if let Some(loader) = navigated.loader_id {
@@ -963,6 +1428,9 @@ impl Page {
             Waited { ok: true, .. } => Ok(()),
             Waited {
                 error: Some(error), ..
+            } if error.contains(PASSWORD_REFUSED) => Err(BrowserError::PasswordField),
+            Waited {
+                error: Some(error), ..
             } => Err(BrowserError::Unexpected(self.shown(&error))),
             Waited { .. } => Err(BrowserError::Timeout {
                 dispatch: Dispatch::NotSent,
@@ -976,10 +1444,44 @@ impl Page {
         deadline: Deadline,
     ) -> Result<Snapshot, BrowserError> {
         let (address, title) = self.address_and_title(deadline).await?;
-        let masked = self.password_nodes(deadline).await?;
+        // Before the tree is taken: the password inputs the helper sees.
+        let mut masked = self.password_nodes(deadline).await?;
         let tree = self.call(&GetFullAxTree {}, deadline).await?;
+        // After it: every node that carries a value is asked of the
+        // browser itself, which also sees inside a closed shadow root. A
+        // node that is a password input at either moment is masked, and
+        // so is one the browser can no longer describe.
+        for node in &tree.nodes {
+            let valued = node
+                .value
+                .as_ref()
+                .is_some_and(|value| !value.text().is_empty());
+            let Some(number) = node.backend_dom_node_id.filter(|_| valued) else {
+                continue;
+            };
+            if masked.contains(&number) {
+                continue;
+            }
+            let described = self
+                .call(
+                    &DescribeNode {
+                        object_id: None,
+                        backend_node_id: Some(number),
+                    },
+                    deadline,
+                )
+                .await;
+            match described {
+                Ok(described) if !is_password(&described.node) => {}
+                Ok(_) | Err(BrowserError::Unexpected(_)) => {
+                    masked.insert(number);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         Ok(Snapshot::build(
-            address,
+            // A query is where tokens travel, and a snapshot is kept.
+            without_query(&address).to_owned(),
             title,
             &tree.nodes,
             &masked,
@@ -1028,7 +1530,8 @@ impl Page {
                 let described = self
                     .call(
                         &DescribeNode {
-                            object_id: &element,
+                            object_id: Some(&element),
+                            backend_node_id: None,
                         },
                         deadline,
                     )
@@ -1211,7 +1714,7 @@ impl Page {
         }
     }
 
-    async fn fetch(
+    pub(crate) async fn fetch(
         &self,
         request: &PageRequest,
         deadline: Deadline,
@@ -1227,6 +1730,7 @@ impl Page {
         #[serde(default)]
         struct Answer {
             too_large: bool,
+            redirected: bool,
             status: Option<u16>,
             address: String,
             headers: Vec<(String, String)>,
@@ -1234,6 +1738,11 @@ impl Page {
         }
         let shape =
             || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        // Refused before anything is sent: the request would carry the
+        // page's session to an origin the tab was not opened for.
+        if !self.origins.allows(&request.address) {
+            return Err(self.outside(&request.address.origin()));
+        }
         let spec = Spec {
             method: &request.method,
             address: request.address.as_str(),
@@ -1269,6 +1778,14 @@ impl Page {
             }
         };
         let answer: Answer = Self::answer(evaluated)?;
+        if answer.redirected {
+            // The request was answered, by a redirect. Its next address
+            // was checked by nobody, so it is not followed; what the first
+            // request did is for the crate above to find out.
+            return Err(BrowserError::RequestFailed(
+                "the answer was a redirect, and a request from the page follows none".to_owned(),
+            ));
+        }
         let Some(status) = answer.status else {
             return Err(if answer.too_large {
                 BrowserError::TooLarge {
@@ -1282,13 +1799,76 @@ impl Page {
             .headers
             .into_iter()
             .filter(|(name, _)| !credential_header(name))
-            .map(|(name, value)| (name, self.redact.redact(&value)))
+            .map(|(name, value)| (self.redact.redact(&name), self.redact.redact(&value)))
             .collect();
         headers.sort();
         Ok(PageResponse {
             status,
-            address: self.redact.redact(&answer.address),
+            address: without_query(&self.redact.redact(&answer.address)).to_owned(),
             headers,
+            body: self.redact.redact(&answer.body),
+        })
+    }
+
+    /// A read from inside the page, with GET, to a checked path on the
+    /// page's own origin (decision 0190). The page's origin is checked
+    /// against the tab's in the same call that sends it.
+    async fn read_from_page(
+        &self,
+        path: &PagePath,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Answer {
+            too_large: bool,
+            redirected: bool,
+            status: Option<u16>,
+            media_type: String,
+            body: String,
+        }
+        let world = self.world(deadline).await?;
+        let outcome = self
+            .evaluate(
+                On::World(world),
+                "function (path, limit) { return __a2m.readFromPage(path, limit); }",
+                vec![
+                    CallArgument::text(path.as_str()),
+                    CallArgument::number(self.max_read),
+                ],
+                true,
+                true,
+                deadline,
+            )
+            .await;
+        let evaluated = match outcome {
+            Ok(evaluated) => evaluated,
+            Err(CallError::Browser(BrowserError::Unexpected(why))) => {
+                return Err(BrowserError::RequestFailed(self.shown(&why)));
+            }
+            Err(CallError::Browser(error)) => return Err(error),
+            Err(CallError::Gone | CallError::NoHelper) => {
+                return Err(BrowserError::RequestFailed(
+                    "the page was replaced while the read was under way".to_owned(),
+                ));
+            }
+        };
+        let answer: Answer = Self::answer(evaluated)?;
+        if answer.redirected {
+            return Err(BrowserError::Redirected);
+        }
+        let Some(status) = answer.status else {
+            return Err(if answer.too_large {
+                BrowserError::TooLarge {
+                    limit: self.max_read,
+                }
+            } else {
+                BrowserError::Unexpected("the helper answered a read with no status".to_owned())
+            });
+        };
+        Ok(PageAnswer {
+            status,
+            media_type: self.redact.redact(&answer.media_type),
             body: self.redact.redact(&answer.body),
         })
     }
@@ -1366,6 +1946,29 @@ impl Page {
         Ok(evaluated.result.read::<String>().unwrap_or_default())
     }
 
+    /// The same, run as if a person had just used the page: what a page
+    /// needs before the browser lets it open a window. For this crate's
+    /// tests only.
+    #[cfg(test)]
+    pub(crate) async fn as_the_page_with_a_gesture(
+        &self,
+        expression: &str,
+        deadline: Deadline,
+    ) -> Result<String, BrowserError> {
+        let evaluated = self
+            .call(
+                &crate::protocol::EvaluateAsUser {
+                    expression,
+                    return_by_value: true,
+                    await_promise: true,
+                    user_gesture: true,
+                },
+                deadline,
+            )
+            .await?;
+        Ok(evaluated.result.read::<String>().unwrap_or_default())
+    }
+
     /// One request that never answers, for the test that kills the browser
     /// while a call is pending.
     #[cfg(test)]
@@ -1385,10 +1988,11 @@ impl Page {
 
     // ---- the tab's own task ----
 
-    fn block(&self, method: &str, address: &str) {
+    pub(crate) fn block(&self, method: &str, address: &str) {
         let shape = RequestShape {
             method: method.to_owned(),
-            address: self.redact.redact(&cut(without_query(address))),
+            // Redacted whole, then cut at the query, then to length.
+            address: cut(without_query(&self.redact.redact(address))),
         };
         if let Ok(mut blocked) = self.blocked.lock() {
             // A page that keeps trying must not fill the engine's memory.
@@ -1406,6 +2010,13 @@ impl Page {
     /// requests pass through its page's, which is already on (measured
     /// against the browser of decision 0111). Every other kind must take
     /// its own, or it stays stopped.
+    ///
+    /// The refusal of sockets is placed where the child can take it. A
+    /// worker has one global, which is there while it waits: the script is
+    /// run in it once. A frame in another process has no document while it
+    /// waits, and loads a new one whenever it moves: the script is placed
+    /// on every document it will load, which the browser allows once the
+    /// frame's page events are switched on (measured, decision 0143).
     async fn guard_child(&self, session: &str, kind: &str, waiting: bool) {
         let deadline = Deadline::after(self.call_deadline);
         let client = &self.client;
@@ -1425,6 +2036,7 @@ impl Page {
                     auto_attach: true,
                     wait_for_debugger_on_start: true,
                     flatten: true,
+                    filter: None,
                 },
                 deadline,
             )
@@ -1434,6 +2046,11 @@ impl Page {
             Err(ClientError::Protocol { code, .. }) => code == METHOD_NOT_FOUND,
             Err(_) => false,
         };
+        // The report of a refused socket is an event of the child's own
+        // scripts, which the browser sends only once they are switched on.
+        let _ = client
+            .call(Some(session), &RuntimeEnable {}, deadline)
+            .await;
         let _ = client
             .call(
                 Some(session),
@@ -1443,25 +2060,85 @@ impl Page {
                 deadline,
             )
             .await;
-        let sockets_refused = client
-            .call(
-                Some(session),
-                &Evaluate {
-                    expression: REFUSE_SOCKETS,
-                    context_id: None,
-                    return_by_value: true,
-                    await_promise: false,
-                },
-                deadline,
-            )
-            .await
-            .is_ok_and(|evaluated| evaluated.exception_details.is_none());
+        let now = Evaluate {
+            expression: REFUSE_SOCKETS,
+            context_id: None,
+            return_by_value: true,
+            await_promise: false,
+        };
+        let sockets_refused = match client.call(Some(session), &PageEnable {}, deadline).await {
+            Ok(_) => {
+                let on_every_document = client
+                    .call(
+                        Some(session),
+                        &AddScriptOnNewDocument {
+                            source: REFUSE_SOCKETS,
+                            world_name: None,
+                        },
+                        deadline,
+                    )
+                    .await
+                    .is_ok();
+                if !waiting {
+                    // It already runs: the document it has is locked too.
+                    let _ = client.call(Some(session), &now, deadline).await;
+                }
+                on_every_document
+            }
+            // Not a frame: it has no page events to switch on.
+            Err(ClientError::Protocol { code, .. }) if code == METHOD_NOT_FOUND => client
+                .call(Some(session), &now, deadline)
+                .await
+                .is_ok_and(|evaluated| evaluated.exception_details.is_none()),
+            Err(_) => false,
+        };
         if !(intercepted && nested && sockets_refused) {
             self.block("WORKER", "");
             return;
         }
         if waiting {
             let _ = client.call(Some(session), &RunIfWaiting {}, deadline).await;
+        }
+    }
+
+    /// What becomes of a request that is not a move of the tab itself.
+    fn judge_request(&self, paused: &RequestPaused) -> Verdict {
+        let request = &paused.request;
+        match &self.safe {
+            Some(safe) if !safe.allows(&request.method, &request.url) => {
+                Verdict::Refuse(Some(request.method.clone()))
+            }
+            _ => Verdict::Pass,
+        }
+    }
+
+    /// What becomes of the request of the tab's own next document.
+    ///
+    /// A tab goes only to the origins it was opened for, whoever moves it
+    /// and through however many redirects: each hop is asked here. A tab
+    /// that only observes is moved by `goto` alone: a move its page starts
+    /// is ended before its request leaves the browser, whatever its
+    /// method, because a system may treat a GET as an action.
+    fn judge_move(&self, paused: &RequestPaused) -> Verdict {
+        let request = &paused.request;
+        let inside = self.origins.allows_reported(&request.url);
+        let mut moves = self.moves();
+        let mover = moves.mover(paused);
+        let reads = matches!(request.method.as_str(), "GET" | "HEAD" | "OPTIONS");
+        match (mover, &self.safe) {
+            (Mover::Goto, _) if !inside => {
+                // The `goto` reports it, as its own error.
+                moves.refused = Some(shown_origin(&request.url));
+                Verdict::Refuse(None)
+            }
+            (Mover::Goto, _) => {
+                drop(moves);
+                self.judge_request(paused)
+            }
+            (Mover::Page, Some(_)) if reads => Verdict::Refuse(Some(NAVIGATION.to_owned())),
+            (Mover::Page, Some(_)) => Verdict::Refuse(Some(request.method.clone())),
+            (Mover::Page, None) if inside => Verdict::Pass,
+            (Mover::Page, None) => Verdict::Refuse(Some(NAVIGATION.to_owned())),
         }
     }
 
@@ -1475,6 +2152,7 @@ impl Page {
                 }
             }
             EventKind::ResponseReceived(received) if own => {
+                self.answered(&received.request_id, &received.response);
                 if received.kind == "Document" && !received.loader_id.is_empty() {
                     self.nav.send_modify(|nav| {
                         nav.document = Some((received.loader_id, received.response.status));
@@ -1518,6 +2196,23 @@ impl Page {
             EventKind::TargetCrashed if own => {
                 self.status.send_replace(Status::Crashed);
             }
+            EventKind::MoveAsked(asked) if own => {
+                if asked.frame_id == self.target {
+                    self.moves().asked(&asked.url);
+                }
+            }
+            EventKind::MoveStarted(started) if own => {
+                if started.frame_id == self.target {
+                    self.moves().started(
+                        &started.url,
+                        &started.loader_id,
+                        &started.navigation_type,
+                    );
+                }
+            }
+            // The browser writes no file for it: every download is denied
+            // when the browser starts. This is the report.
+            EventKind::DownloadBegins(download) => self.block(DOWNLOAD, &download.url),
             EventKind::Attached(attached) => {
                 if self.safe.is_some() {
                     self.guard_child(
@@ -1535,40 +2230,57 @@ impl Page {
                 }
             }
             EventKind::RequestPaused(paused) => {
-                let Some(safe) = &self.safe else { return };
                 let deadline = Deadline::after(self.call_deadline);
                 let session = event.session.as_deref();
-                let (method, address) = (&paused.request.method, &paused.request.url);
-                if safe.allows(method, address) {
-                    let _ = self
-                        .client
-                        .call(
-                            session,
-                            &ContinueRequest {
-                                request_id: &paused.request_id,
-                            },
-                            deadline,
-                        )
-                        .await;
+                let document = paused.resource_type == "Document";
+                let verdict = if own && document && paused.frame_id == self.target {
+                    self.judge_move(&paused)
                 } else {
-                    // Recorded first, so that whoever sees the request fail
-                    // can already read why.
-                    self.block(method, address);
-                    // Failed before it leaves the browser. If this call is
-                    // lost, the request stays paused: it is never sent.
-                    let _ = self
-                        .client
-                        .call(
-                            session,
-                            &FailRequest {
-                                request_id: &paused.request_id,
-                                error_reason: "BlockedByClient",
-                            },
-                            deadline,
-                        )
-                        .await;
+                    self.judge_request(&paused)
+                };
+                match verdict {
+                    Verdict::Pass => {
+                        if own && !document {
+                            self.heard_request(&paused);
+                        } else if own && paused.frame_id == self.target {
+                            self.heard_document(&paused);
+                        }
+                        let _ = self
+                            .client
+                            .call(
+                                session,
+                                &ContinueRequest {
+                                    request_id: &paused.request_id,
+                                },
+                                deadline,
+                            )
+                            .await;
+                    }
+                    Verdict::Refuse(report) => {
+                        // Recorded first, so that whoever sees the request
+                        // fail can already read why.
+                        if let Some(word) = report {
+                            self.block(&word, &paused.request.url);
+                        }
+                        // Ended before it leaves the browser. If this call
+                        // is lost, the request stays paused: it is never
+                        // sent.
+                        let _ = self
+                            .client
+                            .call(
+                                session,
+                                &FailRequest {
+                                    request_id: &paused.request_id,
+                                    error_reason: if document { ABORTED } else { BLOCKED },
+                                },
+                                deadline,
+                            )
+                            .await;
+                    }
                 }
             }
+            EventKind::LoadingFinished(done) if own => self.finished(&done.request_id).await,
+            EventKind::LoadingFailed(done) if own => self.forget(&done.request_id),
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
                 // The payload is the page's: only a known word is taken as
                 // the method, and the rest is an address like any other.
@@ -1587,6 +2299,248 @@ impl Page {
         }
     }
 
+    /// Notes a request the page of an observing tab made by itself, with
+    /// GET, to one of the tab's origins, from a script: the start of a
+    /// [`PageExchange`]. Only names are kept.
+    fn heard_request(&self, paused: &RequestPaused) {
+        let request = &paused.request;
+        let scripted = matches!(paused.resource_type.as_str(), "XHR" | "Fetch");
+        let Some(number) = paused.network_id.as_deref() else {
+            return;
+        };
+        if self.safe.is_none()
+            || !self.recording.load(Ordering::SeqCst)
+            || !scripted
+            || request.method != "GET"
+            || !self.origins.allows_reported(&request.url)
+        {
+            return;
+        }
+        let Some(origin) = origin_of(&request.url) else {
+            return;
+        };
+        let address = without_fragment(&request.url);
+        let (query, query_left_out) = crate::query_names(
+            address
+                .split_once('?')
+                .map(|(_, query)| query)
+                .unwrap_or_default(),
+        );
+        let names: BTreeSet<String> = request
+            .headers
+            .keys()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+        let credential_headers: BTreeSet<String> = names
+            .iter()
+            .filter(|name| {
+                CREDENTIAL_HEADER_WORDS
+                    .iter()
+                    .any(|word| name.contains(word))
+            })
+            .cloned()
+            .collect();
+        // A header the browser also sets is the page's when it holds what
+        // the browser would not have sent. The values are compared here and
+        // not kept.
+        let document = self.document.lock().ok().and_then(|held| held.clone());
+        let value = |name: &str| {
+            request
+                .headers
+                .iter()
+                .find(|(own, _)| own.eq_ignore_ascii_case(name))
+                .and_then(|(_, value)| value.as_str())
+        };
+        let browsers_own = |name: &str| match name {
+            "accept" => value(name) == Some("*/*"),
+            "referer" => document
+                .as_ref()
+                .is_some_and(|document| value(name) == Some(document.address.as_str())),
+            _ if BROWSER_DEFAULT_HEADERS.contains(&name) => {
+                document.as_ref().is_some_and(|document| {
+                    value(name).is_some()
+                        && value(name) == document.defaults.get(name).map(String::as_str)
+                })
+            }
+            _ => BROWSER_HEADERS.contains(&name),
+        };
+        let set_headers: BTreeSet<String> = names
+            .into_iter()
+            .filter(|name| !browsers_own(name))
+            .collect();
+        let exchange = PageExchange {
+            method: request.method.clone(),
+            origin,
+            path: crate::path_by_structure(&self.redact.redact(path_of(address))),
+            query: query.iter().map(|name| self.redact.redact(name)).collect(),
+            query_left_out,
+            credential_headers: credential_headers.into_iter().collect(),
+            set_headers: set_headers.into_iter().collect(),
+            status: 0,
+            content_type: String::new(),
+            fields: None,
+            names_withheld: false,
+        };
+        if let Ok(mut pending) = self.pending.lock() {
+            if pending.len() < EXCHANGES_KEPT {
+                pending.insert(
+                    number.to_owned(),
+                    Pending {
+                        exchange,
+                        answered: false,
+                    },
+                );
+                self.waiting.send_replace(pending.len());
+            } else {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Notes what the request of the tab's own document held of the
+    /// headers the browser sets by itself, and its address.
+    fn heard_document(&self, paused: &RequestPaused) {
+        if self.safe.is_none() || !self.recording.load(Ordering::SeqCst) {
+            return;
+        }
+        let defaults = paused
+            .request
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                let name = name.to_ascii_lowercase();
+                BROWSER_DEFAULT_HEADERS
+                    .contains(&name.as_str())
+                    .then(|| Some((name, value.as_str()?.to_owned())))
+                    .flatten()
+            })
+            .collect();
+        if let Ok(mut held) = self.document.lock() {
+            *held = Some(DocumentHeaders {
+                address: without_fragment(&paused.request.url).to_owned(),
+                defaults,
+            });
+        }
+    }
+
+    /// The head of the answer to a request of the page that is noted.
+    fn answered(&self, number: &str, response: &crate::protocol::ResponseDescription) {
+        if let Ok(mut pending) = self.pending.lock()
+            && let Some(one) = pending.get_mut(number)
+        {
+            one.exchange.status = response.status;
+            one.exchange.content_type = response
+                .mime_type
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            one.answered = true;
+        }
+    }
+
+    /// Forgets a request of the page that failed: it has no answer.
+    fn forget(&self, number: &str) {
+        if let Ok(mut pending) = self.pending.lock()
+            && pending.remove(number).is_some()
+        {
+            self.waiting.send_replace(pending.len());
+        }
+    }
+
+    /// The answer to a request of the page has arrived whole: its names
+    /// and kinds are read, and it is an exchange.
+    async fn finished(&self, number: &str) {
+        let taken = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|pending| pending.get(number).cloned());
+        let Some(Pending {
+            mut exchange,
+            answered: true,
+        }) = taken
+        else {
+            self.forget(number);
+            return;
+        };
+        let json =
+            exchange.content_type == "application/json" || exchange.content_type.ends_with("+json");
+        if json {
+            // The browser keeps no answer longer than the tab reads
+            // (`Network.enable`, below), so a longer one is not fetched at
+            // all, and the length is checked again here.
+            let deadline = Deadline::after(self.call_deadline);
+            let body = self
+                .client
+                .call(
+                    Some(&self.session),
+                    &GetResponseBody { request_id: number },
+                    deadline,
+                )
+                .await;
+            if let Some((fields, withheld)) = body
+                .ok()
+                .filter(|body| !body.base64_encoded && body.body.chars().count() <= self.max_read)
+                .and_then(|body| serde_json::from_str::<Json>(&body.body).ok())
+                .map(|json| fields_of(&json))
+            {
+                exchange.fields = Some(
+                    fields
+                        .into_iter()
+                        .map(|(name, kind)| (self.redact.redact(&name), kind))
+                        .collect(),
+                );
+                exchange.names_withheld = withheld;
+            }
+        }
+        if let Ok(mut exchanges) = self.exchanges.lock() {
+            if exchanges.len() < EXCHANGES_KEPT {
+                exchanges.push(exchange);
+            } else {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        self.forget(number);
+    }
+
+    /// The page's own requests answered whole, oldest first, taken out,
+    /// once none is awaiting its answer or the deadline has passed, with
+    /// how many were left out and how many were still awaited.
+    async fn take_exchanges(&self, deadline: Deadline) -> PageExchanges {
+        let mut waiting = self.waiting.subscribe();
+        let _ = tokio::time::timeout_at(deadline.at(), waiting.wait_for(|count| *count == 0)).await;
+        let awaited = *self.waiting.borrow();
+        PageExchanges {
+            exchanges: self
+                .exchanges
+                .lock()
+                .map(|mut exchanges| std::mem::take(&mut *exchanges))
+                .unwrap_or_default(),
+            dropped: self.dropped.swap(0, Ordering::SeqCst),
+            awaited,
+        }
+    }
+
+    /// The number of a request of the page whose answer has arrived whole,
+    /// when its body is to be read: the read is made off the tab's one
+    /// stream of events, so that the events after it are not held.
+    fn answer_to_read(&self, event: &Event) -> Option<String> {
+        match &event.kind {
+            EventKind::LoadingFinished(done)
+                if event.session.as_deref() == Some(self.session.as_str())
+                    && self
+                        .pending
+                        .lock()
+                        .is_ok_and(|pending| pending.contains_key(&done.request_id)) =>
+            {
+                Some(done.request_id.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// The requests this observing tab refused, oldest first, taken out.
     fn take_blocked(&self) -> Vec<RequestShape> {
         self.blocked
@@ -1598,19 +2552,30 @@ impl Page {
     /// Ends the tab: its events stop, and the browser is asked to close
     /// its page. Safe to call more than once.
     fn release(&self) {
+        // Ending the subscription ends the stream of the tab's events, and
+        // the task that hears them then marks the tab gone, on another
+        // thread and at once; so whether the tab is released yet is not
+        // read from its status.
+        self.status.send_replace(Status::Gone);
         self.client.unsubscribe(&self.session);
-        if self.status.send_replace(Status::Gone) == Status::Gone {
+        if self.released.swap(true, Ordering::SeqCst) {
             return;
         }
         self.browser.tabs.fetch_sub(1, Ordering::SeqCst);
+        self.browser.pages().remove(&self.target);
+        // The tab's own page first, then the windows it opened that are
+        // still there: with the page gone, nothing drives them.
+        let mut closing = vec![self.target.clone()];
+        closing.extend(self.browser.windows_of(&self.target));
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let client = self.client.clone();
-            let target = self.target.clone();
             let deadline = Deadline::after(self.call_deadline);
             runtime.spawn(async move {
-                let _ = client
-                    .call(None, &CloseTarget { target_id: &target }, deadline)
-                    .await;
+                for target in closing {
+                    let _ = client
+                        .call(None, &CloseTarget { target_id: &target }, deadline)
+                        .await;
+                }
             });
         }
     }
@@ -1689,13 +2654,153 @@ fn fetch_everything() -> FetchEnable<'static> {
     FetchEnable {
         patterns: vec![RequestPattern {
             url_pattern: "*",
+            resource_type: None,
             request_stage: "Request",
         }],
     }
 }
 
+/// Only the requests of documents: what a tab that may act holds, to keep
+/// itself on its origins.
+fn fetch_documents() -> FetchEnable<'static> {
+    FetchEnable {
+        patterns: vec![RequestPattern {
+            url_pattern: "*",
+            resource_type: Some("Document"),
+            request_stage: "Request",
+        }],
+    }
+}
+
+/// Watches the browser itself for windows its pages open, for as long as
+/// the browser's link lasts.
+///
+/// The browser is told, when it starts, to attach every new page and hold
+/// it before it runs. A page with no opener is let run when it is one the
+/// engine made, and never otherwise. A page with an opener is a window
+/// some page opened, also when the page asked for a window with no opener.
+/// The tab that opened it reports it at once. What becomes of it follows
+/// the tab's posture, and each way was measured (decision 0143):
+///
+/// - Opened from a tab that only observes, or from nothing the engine
+///   knows: it is closed while it is held, and never runs. It fetches
+///   nothing and gives its opener no window to use. The page's own scripts
+///   are left waiting, and the tab can no longer be sent anywhere: a
+///   `goto` ends at its deadline. The engine's reads of the page still
+///   answer, and the tab has reported `POPUP`. Only a person's gesture
+///   opens a window, and a tab that only observes never gives one.
+/// - Opened from a tab that may act: every request of it is set to be
+///   ended in the browser, and it is let run, so that the page that opened
+///   it goes on. The first page it asks for is reported and ended, and
+///   only then is it closed: a window closed while its first request was
+///   on its way let one in eight through. One that asks for nothing stays,
+///   with that lock on, until the tab that opened it goes.
+///
+/// Only the browser's own side can be set on a window that is held: its
+/// scripts answer nothing until it runs.
+pub(crate) async fn watch_windows(
+    browser: Weak<BrowserInner>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+    call_deadline: Duration,
+) {
+    while let Some(event) = events.recv().await {
+        let Some(browser) = browser.upgrade() else {
+            return;
+        };
+        let client = &browser.client;
+        let deadline = Deadline::after(call_deadline);
+        match event.kind {
+            EventKind::Attached(Attached {
+                session_id,
+                target_info,
+                waiting_for_debugger,
+            }) if event.session.is_none() => {
+                let Some(opener) = target_info.opener_id else {
+                    // The browser also announces a session the engine
+                    // attached itself; only one it holds a page on counts.
+                    if waiting_for_debugger && browser.holds(&target_info.target_id, &session_id) {
+                        let _ = client
+                            .call(Some(&session_id), &RunIfWaiting {}, deadline)
+                            .await;
+                    }
+                    continue;
+                };
+                let session = Some(session_id.as_str());
+                let close = CloseTarget {
+                    target_id: &target_info.target_id,
+                };
+                browser.report(&opener, POPUP, "");
+                let may_act = browser
+                    .pages()
+                    .get(&opener)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|page| page.safe.is_none());
+                let locked = may_act
+                    && client
+                        .call(session, &fetch_everything(), deadline)
+                        .await
+                        .is_ok();
+                if !locked {
+                    let _ = client.call(None, &close, deadline).await;
+                    continue;
+                }
+                browser.windows().insert(
+                    session_id.clone(),
+                    crate::browsers::Window {
+                        opener,
+                        target: target_info.target_id.clone(),
+                        asked: false,
+                    },
+                );
+                let _ = client.call(session, &RunIfWaiting {}, deadline).await;
+            }
+            EventKind::RequestPaused(paused) => {
+                let session = event.session.as_deref();
+                // The first page a window asks for is reported, and the
+                // window is closed once that request has been ended.
+                let first = session.and_then(|session| {
+                    let mut windows = browser.windows();
+                    let window = windows.get_mut(session)?;
+                    (!std::mem::replace(&mut window.asked, true))
+                        .then(|| (window.opener.clone(), window.target.clone()))
+                });
+                if let Some((opener, _)) = &first {
+                    browser.report(opener, POPUP, &paused.request.url);
+                }
+                let _ = client
+                    .call(
+                        session,
+                        &FailRequest {
+                            request_id: &paused.request_id,
+                            error_reason: ABORTED,
+                        },
+                        deadline,
+                    )
+                    .await;
+                if let Some((_, target)) = &first {
+                    let _ = client
+                        .call(None, &CloseTarget { target_id: target }, deadline)
+                        .await;
+                }
+            }
+            EventKind::Detached(detached) => {
+                browser.windows().remove(&detached.session_id);
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
     while let Some(event) = events.recv().await {
+        // An answer's body is read off this stream, each within the tab's
+        // own time limit for a call, so that the events after it wait for
+        // nothing.
+        if let Some(number) = page.answer_to_read(&event) {
+            let page = Arc::clone(&page);
+            tokio::spawn(async move { page.finished(&number).await });
+            continue;
+        }
         page.heard(event).await;
     }
     // The subscription ended: the tab was released, or the link closed.
@@ -1708,12 +2813,14 @@ async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
     });
 }
 
-/// Opens a tab on `about:blank` in the browser, in the posture given.
+/// Opens a tab on `about:blank` in the browser, in the posture given, for
+/// the origins given.
 pub(crate) async fn open_page(
     shared: &Arc<Shared>,
     browser: &Arc<BrowserInner>,
     env: &PageEnvironment,
     posture: Posture,
+    origins: &Origins,
 ) -> Result<Arc<Page>, BrowserError> {
     let client = browser.client.clone();
     let settings = &shared.settings;
@@ -1722,7 +2829,7 @@ pub(crate) async fn open_page(
         ClientError::Closed { dispatch, .. } => BrowserError::Disconnected { dispatch },
         ClientError::Timeout { dispatch } => BrowserError::Timeout { dispatch },
         ClientError::Protocol { message, .. } => {
-            BrowserError::Unexpected(shared.redact.redact(&cut(&message)))
+            BrowserError::Unexpected(shown(shared.redact.as_ref(), &message))
         }
         ClientError::Shape { method } => {
             BrowserError::Unexpected(format!("the reply of {method} has another shape"))
@@ -1732,6 +2839,15 @@ pub(crate) async fn open_page(
         .call(None, &CreateTarget { url: "about:blank" }, deadline)
         .await
         .map_err(lost)?;
+    // The browser holds every new page before it runs. This one is the
+    // engine's own, on `about:blank`: it is let run, and is locked below
+    // before it is sent anywhere.
+    if let Some(held_on) = browser.made(&created.target_id) {
+        client
+            .call(Some(&held_on), &RunIfWaiting {}, deadline)
+            .await
+            .map_err(lost)?;
+    }
     let attached = client
         .call(
             None,
@@ -1756,13 +2872,26 @@ pub(crate) async fn open_page(
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
         blocked: Mutex::new(Vec::new()),
+        pending: Mutex::new(BTreeMap::new()),
+        waiting: watch::Sender::new(0),
+        exchanges: Mutex::new(Vec::new()),
+        recording: AtomicBool::new(false),
+        dropped: AtomicUsize::new(0),
+        document: Mutex::new(None),
         safe: match posture {
             Posture::Act => None,
             Posture::Observe(safe) => Some(safe),
         },
+        origins: origins.clone(),
+        helper: helper_for(origins),
+        moves: Mutex::new(Moves::default()),
+        released: AtomicBool::new(false),
         browser: Arc::clone(browser),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);
+    browser
+        .pages()
+        .insert(page.target.clone(), Arc::downgrade(&page));
     // Listening starts before anything is switched on, so no event is missed.
     let events = client.subscribe(Some(&page.session));
     tokio::spawn(pump(Arc::clone(&page), events));
@@ -1792,11 +2921,13 @@ async fn prepare(
                 auto_attach: true,
                 wait_for_debugger_on_start: true,
                 flatten: true,
+                filter: None,
             },
             deadline,
         )
         .await?;
-        page.call(&NetworkEnable {}, deadline).await?;
+        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+            .await?;
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
@@ -1816,7 +2947,11 @@ async fn prepare(
         )
         .await?;
     } else {
-        page.call(&NetworkEnable {}, deadline).await?;
+        // A tab that may act holds only the requests of documents: that is
+        // where it is kept on the origins it was opened for.
+        page.call(&fetch_documents(), deadline).await?;
+        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+            .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }
     page.call(&PageEnable {}, deadline).await?;
@@ -1873,7 +3008,7 @@ async fn prepare(
     // The helper: in every document from now on, and in this one.
     page.call(
         &AddScriptOnNewDocument {
-            source: HELPER,
+            source: &page.helper,
             world_name: Some(WORLD),
         },
         deadline,
@@ -1891,7 +3026,7 @@ async fn prepare(
     let installed = page
         .call(
             &Evaluate {
-                expression: HELPER,
+                expression: &page.helper,
                 context_id: Some(world.execution_context_id),
                 return_by_value: true,
                 await_promise: false,
@@ -1918,7 +3053,10 @@ async fn prepare(
 /// sends no input to the page, so each of its errors says `NotSent`.
 pub trait Look {
     /// Sends the tab to an address and waits until its document has been
-    /// parsed, which the browser reports as an event.
+    /// parsed, which the browser reports as an event. An address on an
+    /// origin the tab was not opened for is refused before the browser
+    /// hears of it, and a redirect to one is ended in the browser: both
+    /// are [`BrowserError::ForeignOrigin`].
     fn goto(
         &self,
         address: &Address,
@@ -1927,7 +3065,9 @@ pub trait Look {
 
     /// The one rendered element the query matches, now. It does not wait:
     /// wait for [`Primitive::Visible`] first where the element may be
-    /// late.
+    /// late. This, and every method below, looks only at a page of an
+    /// origin the tab was opened for: on any other page it is
+    /// [`BrowserError::ForeignOrigin`].
     fn locate(
         &self,
         query: &Query,
@@ -2024,14 +3164,15 @@ macro_rules! looks {
     };
 }
 
-/// A tab that may act. Closed when dropped.
+/// A tab that may act, on the origins it was opened for. Closed when
+/// dropped.
 pub struct ActTab {
     pub(crate) page: Arc<Page>,
 }
 
 /// A tab that can read and cannot act: it has no method that acts, and the
-/// browser fails every request of its page that could change the system.
-/// Closed when dropped.
+/// browser fails every request of its page that could change the system
+/// and every move of the tab that its page starts. Closed when dropped.
 pub struct ObserveTab {
     pub(crate) page: Arc<Page>,
 }
@@ -2052,7 +3193,10 @@ impl ActTab {
     /// # Errors
     ///
     /// [`BrowserError::NotActionable`] and [`BrowserError::NotFound`]
-    /// before anything was sent. Every other error says through
+    /// before anything was sent, and [`BrowserError::ForeignOrigin`] when
+    /// the page is of an origin the tab was not opened for: the origin is
+    /// checked in the same call as the element, after it was located and
+    /// before any input is sent. Every other error says through
     /// [`BrowserError::dispatch`] whether input reached the page.
     pub async fn input(
         &self,
@@ -2064,12 +3208,15 @@ impl ActTab {
     }
 
     /// Sends one request from inside the page, with the page's own
-    /// session, once.
+    /// session, once, to an address on one of the tab's origins. A
+    /// redirect is not followed.
     ///
     /// # Errors
     ///
-    /// [`BrowserError::RequestFailed`] when the page could not complete
-    /// it; whether it was sent is then not known.
+    /// [`BrowserError::ForeignOrigin`] for an address on another origin;
+    /// nothing was sent. [`BrowserError::RequestFailed`] when the page
+    /// could not complete it, or the answer was a redirect; whether it was
+    /// sent is then not known.
     pub async fn fetch(
         &self,
         request: &PageRequest,
@@ -2092,13 +3239,29 @@ impl ActTab {
     }
 }
 
+impl ActTab {
+    /// What this tab refused since the last call, oldest first: a move of
+    /// the tab to an origin it was not opened for (`NAVIGATION`), a window
+    /// its page opened, which was closed before it fetched anything
+    /// (`POPUP`), and a download, for which no file was written
+    /// (`DOWNLOAD`); each with the address it was for, cut at the query. A
+    /// step that expected none of these has met something no rule covers.
+    #[must_use]
+    pub fn blocked(&self) -> Vec<RequestShape> {
+        self.page.take_blocked()
+    }
+}
+
 impl ObserveTab {
     pub(crate) fn new(page: Arc<Page>) -> Self {
         Self { page }
     }
 
     /// What this tab refused since the last call, oldest first: a request
-    /// whose method could change the system, by its method; a socket
+    /// whose method could change the system, by its method; a move of the
+    /// tab that its page started (`NAVIGATION`); a window its page opened,
+    /// closed before it fetched anything (`POPUP`); a download, for which
+    /// no file was written (`DOWNLOAD`); a socket
     /// (`WEBSOCKET`, `WEBTRANSPORT`, `PEERCONNECTION`), a shared worker
     /// (`SHAREDWORKER`), or a service worker (`SERVICEWORKER`) refused when
     /// the page made it; and a worker or frame that could not be locked
@@ -2110,5 +3273,175 @@ impl ObserveTab {
     #[must_use]
     pub fn blocked(&self) -> Vec<RequestShape> {
         self.page.take_blocked()
+    }
+
+    /// The requests its page made by itself since the last call, with GET,
+    /// from a script, to one of the tab's origins, and their answers, by
+    /// structure alone: oldest first, once no such request is awaiting its
+    /// answer, or when the deadline passes with what was answered by then.
+    /// A request of any other method is refused, and is in [`Self::blocked`].
+    ///
+    /// Nothing is recorded until [`Self::record_exchanges`] is called.
+    pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges {
+        self.page.take_exchanges(deadline).await
+    }
+
+    /// Starts recording the requests its page makes by itself, for
+    /// [`Self::exchanges`]. A tab whose exchanges nobody takes does not
+    /// record them, and fetches no answer of its page.
+    pub fn record_exchanges(&self) {
+        self.page.recording.store(true, Ordering::SeqCst);
+    }
+
+    /// Reads from inside the page the tab is on, with the page's own
+    /// session, once: a GET to `path` on the page's own origin, which must
+    /// be one of the tab's, with no header a caller chose and no body
+    /// (decision 0190). It takes no method: it cannot send another. A
+    /// redirect is not followed, and the answer is read as text up to the
+    /// tab's limit. The tab's guard still fails any request of the page
+    /// that could write, beneath this. No credential, cookie, or token of
+    /// the page is read: the browser sends the page's cookies itself, and
+    /// nothing else of the page is sent. What comes back passes the
+    /// redactor; no header of it is returned.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::ForeignOrigin`] when the page is on an origin the
+    /// tab was not opened for; nothing was sent.
+    /// [`BrowserError::TooLarge`] for an answer longer than the limit.
+    /// [`BrowserError::Redirected`] when the answer was a redirect.
+    /// [`BrowserError::RequestFailed`] when the page could not complete
+    /// the read. A read changes nothing, so
+    /// whether it was sent matters to no one: every error is `NotSent` or
+    /// as the base reports it.
+    pub async fn read_from_page(
+        &self,
+        path: &PagePath,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        self.page.read_from_page(path, deadline).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::PausedRequest;
+
+    fn held(
+        address: &str,
+        number: &str,
+        loader: Option<&str>,
+        follows: Option<&str>,
+    ) -> RequestPaused {
+        RequestPaused {
+            request_id: number.to_owned(),
+            request: PausedRequest {
+                url: address.to_owned(),
+                method: "GET".to_owned(),
+                headers: serde_json::Map::new(),
+            },
+            frame_id: "frame".to_owned(),
+            resource_type: "Document".to_owned(),
+            network_id: loader.map(str::to_owned),
+            redirected_request_id: follows.map(str::to_owned),
+        }
+    }
+
+    const ASKED: &str = "https://app.example.com/orders";
+    const BY_PAGE: &str = "https://app.example.com/orders/A-100/delete";
+
+    #[test]
+    fn the_goto_s_request_is_the_first_the_page_did_not_ask_for_and_its_redirects() {
+        // With no `goto` under way, every move is the page's.
+        let mut moves = Moves::default();
+        assert_eq!(
+            moves.mover(&held(ASKED, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+
+        // A `goto` begins. The page announces a move of its own first, and
+        // its request comes before the `goto`'s: it is still the page's.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.asked(&format!("{BY_PAGE}#now"));
+        moves.started(BY_PAGE, "L1", "differentDocument");
+        moves.started(ASKED, "L2", "differentDocument");
+        assert_eq!(
+            moves.mover(&held(BY_PAGE, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+        assert_eq!(
+            moves.mover(&held(ASKED, "2.0", Some("L2"), None)),
+            Mover::Goto
+        );
+        // A redirect of the `goto` is the `goto`'s, by its loader or by
+        // the request it follows; a redirect of the page's move is not.
+        let hop = "https://app.example.com/orders/";
+        assert_eq!(
+            moves.mover(&held(hop, "2.1", Some("L2"), Some("2.0"))),
+            Mover::Goto
+        );
+        assert_eq!(
+            moves.mover(&held(hop, "2.2", None, Some("2.1"))),
+            Mover::Goto
+        );
+        assert_eq!(
+            moves.mover(&held(hop, "1.1", Some("L1"), Some("1.0"))),
+            Mover::Page
+        );
+        // Only one move is the `goto`'s: a second that nobody announced is
+        // not let through on its account.
+        assert_eq!(
+            moves.mover(&held(ASKED, "3.0", Some("L3"), None)),
+            Mover::Page
+        );
+
+        // The browser's word of where a move started can be missing: the
+        // page's announcement alone still marks its request.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.asked(BY_PAGE);
+        assert_eq!(moves.mover(&held(BY_PAGE, "1.0", None, None)), Mover::Page);
+        assert_eq!(moves.mover(&held(ASKED, "2.0", None, None)), Mover::Goto);
+
+        // A move through the tab's history is never the `goto`'s.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.started(ASKED, "L1", "historyDifferentDocument");
+        assert_eq!(
+            moves.mover(&held(ASKED, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+
+        // What the page asks for is remembered up to a bound.
+        let mut moves = Moves::default();
+        for number in 0..1000 {
+            moves.asked(&format!("{ASKED}/{number}"));
+            moves.started(
+                &format!("{ASKED}/x{number}"),
+                &format!("L{number}"),
+                "restore",
+            );
+        }
+        assert_eq!(
+            (moves.asked.len(), moves.by_page.len()),
+            (Moves::KEPT, Moves::KEPT)
+        );
+    }
+
+    #[test]
+    fn the_helper_carries_the_tab_s_origins_and_as_it_stands_refuses_everything() {
+        assert_eq!(HELPER.matches(HELPER_ORIGINS).count(), 1);
+        let origins = Origins::of([&Address::new("https://app.example.com/orders").unwrap()]);
+        let helper = helper_for(&origins);
+        assert!(helper.contains(r#"const ALLOWED = ["https://app.example.com"];"#));
+        assert!(helper_for(&Origins::default()).contains("const ALLOWED = [];"));
     }
 }

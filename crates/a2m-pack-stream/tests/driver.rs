@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use a2m_core::{REDACTED, Value, Values};
 use a2m_provider::{Authority, Posture, Sent, StepOutcome};
-use common::{Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, text};
+use common::{
+    Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, signature_with, text,
+};
 use example_broker::client::Publish;
 use example_broker::faults::{Fault, FaultKind};
 use example_broker::model::{ChannelSpec, DeliveryOutcome, Op, PublishOutcome, Shape, body_digest};
@@ -55,20 +57,46 @@ fn ops(scene: &Scene) -> Vec<Op> {
 async fn a_retained_key_reads_the_same_five_times_and_takes_nothing() {
     let scene = Scene::start().await;
     let steps = &scene.binding("example_order_status_get").act;
-    let mut signatures = Vec::new();
+    let mut plain = Vec::new();
+    let mut acted = Vec::new();
     let mut results = Vec::new();
+    let mut means = Vec::new();
     for _ in 0..5 {
         let (handle, mut prepared) = scene.reading().await;
-        let values = done(
-            read(&handle, &mut prepared, steps, &key_arg("A-100"))
-                .await
-                .unwrap(),
-        );
-        signatures.push(signature_of(&steps[0].kind, &values));
-        results.push(values);
+        let StepOutcome::Done(observed) = read(&handle, &mut prepared, steps, &key_arg("A-100"))
+            .await
+            .unwrap()
+        else {
+            panic!("the value is held");
+        };
+        // How the read was done goes to the trace, and its `means` are in
+        // the signature: the same five times.
+        let acting = observed.acting().expect("how the step was done");
+        means.push(acting.means.clone());
+        plain.push(signature_of(&steps[0].kind, &observed.values));
+        acted.push(signature_with(
+            &steps[0].kind,
+            &observed.values,
+            Some(acting),
+        ));
+        results.push(observed.values);
         assert!(handle.release(prepared, false).await.complete);
     }
-    assert!(signatures.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(plain.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(acted.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_ne!(
+        plain[0], acted[0],
+        "the signature covers how the step was done"
+    );
+    assert!(means.windows(2).all(|pair| pair[0] == pair[1]));
+    let said: Vec<(&str, &str)> = means[0]
+        .iter()
+        .map(|detail| (detail.name.as_str(), detail.value.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [("protocol", "example-broker/1"), ("shape_check", "made")]
+    );
     assert!(results.windows(2).all(|pair| pair[0] == pair[1]));
     assert_eq!(text(&results[0], "status"), "draft");
     assert_eq!(text(&results[0], "order_id"), "A-100");
@@ -708,7 +736,7 @@ async fn a_publish_to_a_log_is_found_again_by_its_token() {
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-9")),
                 write.authority(),
             )
@@ -750,11 +778,33 @@ async fn a_publish_to_a_log_is_found_again_by_its_token() {
     );
     let mut other = input(&args);
     other.stamp = Some("tok-never");
+    // "Absent" is said of a range read whole from where the log ended
+    // before the publish, as the record recorded it; with nothing recorded
+    // the range has no beginning, and the scan cannot tell.
     let absent = handle
-        .act(&mut prepared, &binding.lookup[0], &other, Authority::Read)
+        .act_recorded(
+            &mut prepared,
+            &binding.lookup[0],
+            &other,
+            Authority::Read,
+            &Values::new().with("scan_from", 0_i64),
+        )
         .await
         .unwrap();
     assert!(matches!(absent, StepOutcome::Absent(_)));
+    let unknown = failed(
+        handle
+            .act(&mut prepared, &binding.lookup[0], &other, Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        unknown,
+        (
+            "policy".to_owned(),
+            "scan_inconclusive".to_owned(),
+            Sent::Answered
+        )
+    );
     assert_eq!(scene.broker.received().len(), 1);
     assert!(scene.broker.deliveries().is_empty());
 }
@@ -794,8 +844,33 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         ),
         ("rejected".to_owned(), "broker_refused", Sent::Answered)
     );
-    assert!(refused.failure.message().contains("The quota is used up"));
+    // The broker's words are its own, apart from the sentence, which is the
+    // product's; neither holds the secret.
+    let said = refused.failure.said().expect("what the broker said");
+    assert!(said.contains("The quota is used up"), "{said}");
+    assert!(!said.contains(PLANTED));
+    assert!(!refused.failure.message().contains("The quota is used up"));
     assert!(!refused.failure.message().contains(PLANTED));
+
+    // A secret that lies across the place where the broker's words are cut
+    // is redacted whole: no part of it is left at the cut.
+    scene.broker.set_fault(Fault::once(FaultKind::Refuse {
+        reason: format!("{}{PLANTED} and more", "x".repeat(110)),
+    }));
+    let cut = handle
+        .act(
+            &mut prepared,
+            notice,
+            &write.input(&args, None),
+            write.authority(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(cut.failure.code().as_str(), "broker_refused");
+    let said = cut.failure.said().expect("what the broker said");
+    assert!(!said.contains(&PLANTED[..6]), "{said}");
+    assert!(said.contains(REDACTED), "{said}");
+    assert!(!cut.failure.message().contains(&PLANTED[..6]));
 
     // Sent again by the caller's choice: one copy to whoever listens.
     let mut listener = scene.broker.client("outside").await.unwrap();
@@ -821,7 +896,11 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         received[0].outcome,
         PublishOutcome::Refused { .. }
     ));
-    assert!(matches!(received[1].outcome, PublishOutcome::Stored { .. }));
+    assert!(matches!(
+        received[1].outcome,
+        PublishOutcome::Refused { .. }
+    ));
+    assert!(matches!(received[2].outcome, PublishOutcome::Stored { .. }));
 }
 
 #[tokio::test]
@@ -1015,6 +1094,32 @@ async fn a_broker_that_cannot_be_reached_or_refuses_the_session_is_named() {
     );
 }
 
+/// Plain TCP goes only to a loopback address written as an IP address
+/// (decision 0197): a surface at a documentation address, or at a name
+/// that leads to the stand itself, is refused before any connection, and
+/// the stand saw nothing.
+#[tokio::test]
+async fn plain_tcp_to_an_address_that_is_not_a_loopback_ip_is_refused_before_any_connection() {
+    let mut scene = Scene::start().await;
+    let port = scene.broker.address().port();
+    for address in [format!("localhost:{port}"), format!("192.0.2.10:{port}")] {
+        scene.surface.surface.address = address.clone();
+        scene.destinations = a2m_provider::Destinations::new([address.clone()]);
+        let refused = scene.try_prepare(Posture::Live, None).await.unwrap_err();
+        assert_eq!(
+            (
+                refused.failure.class().to_string(),
+                refused.failure.code().as_str(),
+                refused.sent
+            ),
+            ("policy".to_owned(), "transport_refused", Sent::NotSent),
+            "{address}"
+        );
+    }
+    assert!(scene.broker.requests().is_empty());
+    assert!(scene.broker.truth().connections.is_empty());
+}
+
 #[tokio::test]
 async fn a_secret_in_what_the_broker_says_reaches_no_result() {
     let scene = Scene::start().await;
@@ -1100,4 +1205,1054 @@ async fn where_nothing_may_be_written_nothing_is_sent_or_taken() {
     assert!(scene.broker.received().is_empty());
     assert!(scene.broker.deliveries().is_empty());
     assert!(ops(&scene).iter().all(|op| *op == Op::Latest));
+}
+
+// ---- the audit of decision 0150 ----
+
+/// What the engine does with the values a step gives for reconcile: it
+/// stores them, in this form, before the committing step is sent, and
+/// reads them back in a run that is resumed.
+fn stored_and_read_again(for_reconcile: &Values) -> Values {
+    let stored = a2m_core::CanonicalJson::encode(for_reconcile).unwrap();
+    stored.decode().unwrap()
+}
+
+fn in_doubt() -> (String, String, Sent) {
+    (
+        "possible_commit".to_owned(),
+        "no_confirmation".to_owned(),
+        Sent::Unknown,
+    )
+}
+
+#[tokio::test]
+async fn a_take_whose_acknowledgement_is_lost_has_its_message_in_the_record() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let first = scene.broker.queue(WORK)[0].message.clone();
+
+    // The broker acknowledges, and the answer never arrives.
+    scene.broker.set_fault(Fault::once(FaultKind::AckThenDrop));
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    // Before the acknowledgement is sent, the engine holds the message.
+    let ledger_row = stored_and_read_again(&taken.for_reconcile);
+    let lost = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.input(&none, None),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The broker: the message was acknowledged and is gone.
+    let acknowledgements = scene.broker.acknowledgements();
+    assert_eq!(acknowledgements.len(), 1);
+    assert_eq!(acknowledgements[0].message, first.id);
+    let left = scene.broker.queue(WORK);
+    assert_eq!(left.len(), 1);
+    assert_ne!(left[0].message.id, first.id);
+
+    // The resume: the record is in doubt and has no identity, so no step is
+    // sent for it. What it returns is what the ledger holds, which is the
+    // message the broker gave up, whole.
+    assert_eq!(text(&ledger_row, "message_id"), first.id);
+    let message = record(&ledger_row, "message");
+    assert_eq!(text(message, "order_id"), first.body["order_id"]);
+    assert_eq!(text(message, "task"), first.body["task"]);
+    assert_eq!(text(record(message, "message_meta"), "id"), first.id);
+    assert_eq!(
+        record(message, "message_meta").get("key"),
+        first.key.as_deref().map(Value::from).as_ref()
+    );
+    // And no other message was taken: one delivery, and the queue as it was.
+    assert_eq!(scene.broker.deliveries().len(), 1);
+    assert_eq!(scene.broker.queue(WORK).len(), 1);
+}
+
+#[tokio::test]
+async fn a_message_too_large_to_record_is_given_back_and_never_acknowledged() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    // The queue holds one message, larger than the channel file allows.
+    // It still refuses a repeated token in the header the file declares.
+    let mut spec = ChannelSpec::new(WORK, Shape::Queue)
+        .key_field("order_id")
+        .dedupe_header(example_broker::SEED_DEDUPE_HEADER);
+    spec.max_body_bytes = 200_000;
+    scene.broker.declare_channel(spec);
+    let mut outside = scene.broker.client("outside").await.unwrap();
+    outside
+        .publish(
+            &Publish::new(
+                WORK,
+                json!({"order_id": "A-102", "task": "x".repeat(70_000)}),
+            )
+            .key("A-102"),
+        )
+        .await
+        .unwrap();
+
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let large = failed(read(&handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(
+        large,
+        (
+            "policy".to_owned(),
+            "take_too_large".to_owned(),
+            Sent::Answered
+        )
+    );
+    // Nothing was taken, so nothing is there to acknowledge.
+    let nothing = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.input(&none, None),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(nothing.2, Sent::NotSent);
+    handle.release(prepared, true).await;
+    assert!(scene.broker.acknowledgements().is_empty());
+    let truth = scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.channels[WORK]
+                .queue
+                .iter()
+                .all(|held| held.held_by.is_none())
+        })
+        .await
+        .unwrap();
+    assert_eq!(truth.channels[WORK].queue.len(), 1);
+}
+
+#[tokio::test]
+async fn a_scan_that_did_not_cover_the_log_never_says_absent() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_event_record");
+    let args = Values::new()
+        .with("key", "A-100")
+        .with("body.order_id", "A-100")
+        .with("body.event", "shipped");
+
+    // A publish lands, and its confirmation is lost.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenDrop));
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let lost = failed(
+        handle
+            .act(
+                &mut prepared,
+                &binding.act[1],
+                &write.input(&args, Some("tok-lost")),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The resume looks the record up. The broker's first look says the log
+    // holds more and gives no place to go on from: the scan has not covered
+    // the log, and says so; it never says the message is not there.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::EmptyLook { more: true }).on_channel(EVENTS));
+    let mut stamped = input(&args);
+    stamped.stamp = Some("tok-lost");
+    let (handle, mut prepared) = scene.reading().await;
+    let uncovered = handle
+        .act(&mut prepared, &binding.lookup[0], &stamped, Authority::Read)
+        .await;
+    assert!(
+        !matches!(uncovered, Ok(StepOutcome::Absent(_))),
+        "an uncovered log was reported as not holding the message"
+    );
+    let uncovered = failed(uncovered);
+    assert_eq!(
+        (uncovered.0.as_str(), uncovered.1.as_str()),
+        ("unknown_variant", "unexpected_reply")
+    );
+    handle.release(prepared, true).await;
+    // The same when a look says that was all, and the log's own end says
+    // otherwise.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::EmptyLook { more: false }).on_channel(EVENTS));
+    let (handle, mut prepared) = scene.reading().await;
+    let contradicted = failed(
+        handle
+            .act(&mut prepared, &binding.lookup[0], &stamped, Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        (contradicted.0.as_str(), contradicted.1.as_str()),
+        ("unknown_variant", "unexpected_reply")
+    );
+    handle.release(prepared, true).await;
+
+    // The broker holds the message, once. A look that covers the log finds
+    // it, and nothing was published again.
+    let held: Vec<_> = scene
+        .broker
+        .log(EVENTS)
+        .into_iter()
+        .filter(|message| {
+            message.headers.get("idempotency-token").map(String::as_str) == Some("tok-lost")
+        })
+        .collect();
+    assert_eq!(held.len(), 1);
+    let (handle, mut prepared) = scene.reading().await;
+    let found = done(
+        handle
+            .act(&mut prepared, &binding.lookup[0], &stamped, Authority::Read)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(text(&found, "event"), "shipped");
+    assert_eq!(scene.broker.received().len(), 1);
+}
+
+#[tokio::test]
+async fn a_refusal_the_protocol_does_not_define_leaves_a_write_in_doubt() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let refuse = |code: &str| code.to_owned();
+
+    // A publish is stored, and the broker answers with a code of no rule.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenRefuse {
+            code: refuse("replica_timeout"),
+        }));
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let args = status_args("A-100", "shipped");
+    let odd = failed(
+        handle
+            .act(
+                &mut prepared,
+                &scene.binding("example_order_status_set").act[0],
+                &write.input(&args, None),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(odd, in_doubt());
+    handle.release(prepared, true).await;
+    let received = scene.broker.received();
+    assert_eq!(received.len(), 1);
+    assert!(matches!(received[0].outcome, PublishOutcome::Stored { .. }));
+
+    // The same for an acknowledgement: it landed, and the answer has no rule.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::AckThenRefuse {
+            code: refuse("replica_timeout"),
+        }));
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap();
+    let odd = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.input(&none, None),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(odd, in_doubt());
+    handle.release(prepared, true).await;
+    assert_eq!(scene.broker.acknowledgements().len(), 1);
+
+    // A refusal the protocol does define is still the broker's own answer.
+    scene.broker.set_fault(Fault::once(FaultKind::Refuse {
+        reason: "The quota is used up.".to_owned(),
+    }));
+    let write = ledger.write("A-101").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let args = status_args("A-101", "shipped");
+    let refused = failed(
+        handle
+            .act(
+                &mut prepared,
+                &scene.binding("example_order_status_set").act[0],
+                &write.input(&args, None),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(
+        refused,
+        (
+            "rejected".to_owned(),
+            "broker_refused".to_owned(),
+            Sent::Answered
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_body_cannot_take_the_name_of_the_brokers_own_facts() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let mut outside = scene.broker.client("outside").await.unwrap();
+    outside
+        .publish(
+            &Publish::new(
+                WORK,
+                json!({
+                    "order_id": "A-102",
+                    "task": "ship",
+                    "message_meta": {"id": "forged", "key": "A-100", "position": 99, "headers": {}},
+                }),
+            )
+            .key("A-102"),
+        )
+        .await
+        .unwrap();
+    let (handle, mut prepared) = scene.reading().await;
+    let listed = failed(
+        read(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_order_work_list").act,
+            &Values::new(),
+        )
+        .await,
+    );
+    assert_eq!(
+        (listed.0.as_str(), listed.1.as_str()),
+        ("drift", "response_schema_mismatch")
+    );
+    handle.release(prepared, true).await;
+
+    // And the pack never sends one.
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let args = Values::new()
+        .with("key", "A-102")
+        .with("body.order_id", "A-102")
+        .with("body.message_meta", "mine");
+    let before = scene.broker.received().len();
+    let unsent = failed(
+        handle
+            .act(
+                &mut prepared,
+                &scene.binding("example_order_work_add").act[0],
+                &write.input(&args, Some("tok-1")),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(
+        unsent,
+        (
+            "input".to_owned(),
+            "value_out_of_range".to_owned(),
+            Sent::NotSent
+        )
+    );
+    assert_eq!(scene.broker.received().len(), before);
+}
+
+#[tokio::test]
+async fn a_fetch_that_hands_over_more_than_was_asked_is_a_stop() {
+    let scene = Scene::start().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::ExtraDelivery).on_channel(WORK));
+    let (handle, mut prepared) = scene.reading().await;
+    let more = failed(read(&handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(
+        (more.0.as_str(), more.1.as_str()),
+        ("unknown_variant", "unexpected_reply")
+    );
+    handle.release(prepared, true).await;
+    // Both messages were handed over, and both are back: the driver let
+    // the connection go, and neither was looked at or acknowledged.
+    assert_eq!(scene.broker.deliveries().len(), 2);
+    let truth = scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.channels[WORK]
+                .queue
+                .iter()
+                .all(|held| held.held_by.is_none())
+        })
+        .await
+        .unwrap();
+    assert_eq!(truth.channels[WORK].queue.len(), 2);
+    assert!(scene.broker.acknowledgements().is_empty());
+}
+
+#[tokio::test]
+async fn a_wait_that_saw_nothing_says_what_it_did_not_cover() {
+    let scene = Scene::start().await;
+    // Through the runtime's named subscription on a channel with no
+    // positions: what was published before the wait began is not covered.
+    let wait = &scene.binding("example_order_status_await").act;
+    let (handle, mut prepared) = scene.reading().await;
+    let nothing = done(
+        read(&handle, &mut prepared, wait, &key_arg("A-100"))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(nothing.get("arrived"), Some(&Value::Bool(false)));
+    assert_eq!(text(&nothing, "coverage"), "partial");
+    assert_eq!(text(&nothing, "limitation"), "starts_at_subscription");
+    handle.release(prepared, false).await;
+}
+
+#[tokio::test]
+async fn only_the_headers_a_channel_declares_reach_a_caller() {
+    let scene = Scene::start().await;
+    let mut outside = scene.broker.client("outside").await.unwrap();
+    outside
+        .publish(
+            &Publish::new(STATUS, json!({"order_id": "A-100", "status": "shipped"}))
+                .key("A-100")
+                .header("correlation_id", "r-1")
+                .header("authorization", "example-token-of-another-producer"),
+        )
+        .await
+        .unwrap();
+    let (handle, mut prepared) = scene.reading().await;
+    let read_ = done(
+        read(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_order_status_get").act,
+            &key_arg("A-100"),
+        )
+        .await
+        .unwrap(),
+    );
+    let headers = record(record(&read_, "message_meta"), "headers");
+    assert_eq!(text(headers, "correlation_id"), "r-1");
+    assert_eq!(headers.len(), 1, "{headers:?}");
+    assert!(!format!("{read_:?}").contains("example-token-of-another-producer"));
+}
+
+#[tokio::test]
+async fn a_connection_is_not_kept_after_a_failure() {
+    let scene = Scene::start().await;
+    let steps = &scene.binding("example_order_status_get").act;
+    let args = key_arg("A-100");
+    scene.broker.set_fault(Fault::once(FaultKind::RenameField {
+        from: "status".to_owned(),
+        to: "state".to_owned(),
+    }));
+    let (handle, mut prepared) = scene.reading().await;
+    let renamed = failed(read(&handle, &mut prepared, steps, &args).await);
+    assert_eq!(renamed.2, Sent::Answered);
+    // The engine did not mark the run's context as spoiled; the driver
+    // gives the connection up all the same.
+    handle.release(prepared, false).await;
+    let (handle, mut prepared) = scene.reading().await;
+    done(read(&handle, &mut prepared, steps, &args).await.unwrap());
+    handle.release(prepared, false).await;
+    let connections: std::collections::BTreeSet<String> = scene
+        .broker
+        .requests()
+        .into_iter()
+        .map(|request| request.connection)
+        .collect();
+    assert_eq!(connections.len(), 2, "{connections:?}");
+}
+
+// ---- the guard in a sandbox with test records ----
+
+#[tokio::test]
+async fn a_sandbox_with_test_records_lifts_the_guard_only_for_the_step_that_commits() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let test_records = Posture::Sandbox { test_records: true };
+    let none = Values::new();
+
+    // A hand-built step that changes the queue and is not marked `commits`:
+    // attaching a consumer to take from it. Refused by the driver, and the
+    // broker shows nothing taken.
+    let take = &scene.binding("example_order_work_take").act;
+    assert!(take[0].kind.as_str() == "subscribe" && !take[0].commits);
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(test_records, Some(write.fence))
+        .await
+        .unwrap();
+    let refused = failed(
+        handle
+            .act(&mut prepared, &take[0], &input(&none), Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        (refused.0.as_str(), refused.2),
+        ("policy", Sent::NotSent),
+        "{refused:?}"
+    );
+    handle.release(prepared, false).await;
+    assert!(scene.broker.deliveries().is_empty());
+    assert!(scene.broker.acknowledgements().is_empty());
+    assert_eq!(scene.broker.queue(WORK).len(), 2);
+
+    // A publish whose mark is taken off is refused before it reaches the
+    // driver, and the broker received nothing.
+    let binding = scene.binding("example_order_status_set");
+    let mut unmarked = binding.act[0].clone();
+    assert!(unmarked.commits);
+    unmarked.commits = false;
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(test_records, Some(write.fence))
+        .await
+        .unwrap();
+    let args = status_args("A-100", "shipped");
+    let refused = failed(
+        handle
+            .act(
+                &mut prepared,
+                &unmarked,
+                &write.input(&args, Some("tok-1")),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(refused.2, Sent::NotSent, "{refused:?}");
+    assert!(scene.broker.received().is_empty());
+
+    // The step marked `commits` is the one the guard is lifted for.
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &binding.act[0],
+                &write.input(&args, Some("tok-1")),
+                write.authority(),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(scene.broker.received().len(), 1);
+}
+
+// ---- what earlier steps recorded (decision 0162, point 1) ----
+
+/// How a step was done, as `(name, value)` pairs of its `means`.
+fn means_of(outcome: &StepOutcome) -> Vec<(String, String)> {
+    let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+    observed
+        .acting()
+        .expect("how the step was done")
+        .means
+        .into_iter()
+        .map(|detail| (detail.name, detail.value))
+        .collect()
+}
+
+fn mean<'a>(means: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    means
+        .iter()
+        .find(|(found, _)| found == name)
+        .map(|(_, value)| value.as_str())
+}
+
+#[tokio::test]
+async fn a_take_in_doubt_is_settled_by_a_look_at_the_queue_for_the_message_it_recorded() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_work_take");
+    let (take, look) = (&binding.act, &binding.read_back[0]);
+    let none = Values::new();
+    let first = scene.broker.queue(WORK)[0].message.clone();
+
+    // The broker acknowledges, and the answer never arrives.
+    scene.broker.set_fault(Fault::once(FaultKind::AckThenDrop));
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let ledger_row = stored_and_read_again(&taken.for_reconcile);
+    let lost = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.keyless(&none),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The resume is handed what the record's earlier steps recorded. The
+    // look finds the message gone from the queue the runtime owns: the
+    // acknowledgement landed, and the record is found.
+    let before = scene.broker.requests().len();
+    let (handle, mut prepared) = scene.reading().await;
+    let settled = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &write.keyless(&none),
+            Authority::Read,
+            &ledger_row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&settled), "look"), Some("whole_queue"));
+    let settled = done(settled);
+    assert_eq!(settled.get("acknowledged"), Some(&Value::Bool(true)));
+    assert_eq!(text(&settled, "message_id"), first.id);
+    handle.release(prepared, false).await;
+    // The broker: the look took nothing and acknowledged nothing.
+    let looked: Vec<Op> = scene.broker.requests()[before..]
+        .iter()
+        .map(|request| request.op)
+        .filter(|op| !matches!(op, Op::Hello))
+        .collect();
+    assert_eq!(looked, [Op::Describe, Op::Browse]);
+    assert_eq!(scene.broker.acknowledgements().len(), 1);
+    assert_eq!(scene.broker.deliveries().len(), 1);
+
+    // A take whose run ended before its acknowledgement left: the message
+    // went back to the queue, and the look says the record is absent.
+    let again = ledger.write("taken again").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(again.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(held) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let row = stored_and_read_again(&held.for_reconcile);
+    handle.release(prepared, true).await;
+    scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.channels[WORK]
+                .queue
+                .iter()
+                .all(|held| held.held_by.is_none())
+        })
+        .await
+        .unwrap();
+    let (handle, mut prepared) = scene.reading().await;
+    let absent = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &again.keyless(&none),
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(absent, StepOutcome::Absent(_)), "{absent:?}");
+    // A look that does not cover the queue never says the message is gone.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::EmptyLook { more: false }).on_channel(WORK));
+    let uncovered = failed(
+        handle
+            .act_recorded(
+                &mut prepared,
+                look,
+                &again.keyless(&none),
+                Authority::Read,
+                &row,
+            )
+            .await,
+    );
+    assert_eq!(
+        (uncovered.0.as_str(), uncovered.1.as_str()),
+        ("unknown_variant", "unexpected_reply")
+    );
+    handle.release(prepared, true).await;
+    assert_eq!(scene.broker.acknowledgements().len(), 1);
+    assert!(
+        scene
+            .broker
+            .queue(WORK)
+            .iter()
+            .any(|held| held.message.id == text(&row, "message_id"))
+    );
+
+    // Handed nothing recorded, the look has nothing to look for and sends
+    // nothing.
+    let before = scene.broker.requests().len();
+    let (handle, mut prepared) = scene.reading().await;
+    let nothing = failed(
+        handle
+            .act(&mut prepared, look, &again.keyless(&none), Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        nothing,
+        (
+            "input".to_owned(),
+            "nothing_recorded".to_owned(),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    assert!(
+        scene.broker.requests()[before..]
+            .iter()
+            .all(|request| request.op == Op::Hello)
+    );
+}
+
+#[tokio::test]
+async fn a_publish_in_doubt_is_found_by_a_scan_from_where_the_log_ended_before_it() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_event_record");
+    let args = Values::new()
+        .with("key", "A-100")
+        .with("body.order_id", "A-100")
+        .with("body.event", "shipped");
+    // Others have written to the log: it holds seven messages, positions 0
+    // to 6, and a scan from its start reads them two at a time.
+    let mut outside = scene.broker.client("outside").await.unwrap();
+    for n in 0..4 {
+        outside
+            .publish(
+                &Publish::new(
+                    EVENTS,
+                    json!({"order_id": "A-102", "event": format!("e{n}")}),
+                )
+                .key("A-102"),
+            )
+            .await
+            .unwrap();
+    }
+
+    // The position is read and recorded before the publish; the publish
+    // lands, and its confirmation is lost.
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let step = write.input(&args, Some("tok-lost"));
+    let StepOutcome::Done(marked) = handle
+        .act(&mut prepared, &binding.act[0], &step, Authority::Read)
+        .await
+        .unwrap()
+    else {
+        panic!("a position");
+    };
+    assert_eq!(marked.for_reconcile.get("scan_from"), Some(&Value::Int(7)));
+    let row = stored_and_read_again(&marked.for_reconcile);
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenDrop));
+    let lost = failed(
+        handle
+            .act(&mut prepared, &binding.act[1], &step, write.authority())
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The resume: the scan starts where the log ended before the publish,
+    // and one look finds the message.
+    let browses = |scene: &Scene, from: usize| {
+        scene.broker.requests()[from..]
+            .iter()
+            .filter(|request| request.op == Op::Browse)
+            .count()
+    };
+    let before = scene.broker.requests().len();
+    let mut stamped = input(&args);
+    stamped.stamp = Some("tok-lost");
+    let (handle, mut prepared) = scene.reading().await;
+    let found = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&found), "from"), Some("recorded"));
+    let found = done(found);
+    assert_eq!(
+        record(&found, "message_meta").get("position"),
+        Some(&Value::Int(7))
+    );
+    assert_eq!(browses(&scene, before), 1);
+
+    // Without what was recorded, the same scan starts at the log's start
+    // and reads it page by page.
+    let before = scene.broker.requests().len();
+    let from_start = handle
+        .act(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&from_start), "from"), Some("start"));
+    assert_eq!(browses(&scene, before), 4);
+
+    // A token that was never stored is absent from the place recorded to
+    // the log's end.
+    let mut other = input(&args);
+    other.stamp = Some("tok-never");
+    let absent = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &other,
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(absent, StepOutcome::Absent(_)));
+    handle.release(prepared, false).await;
+
+    // The broker stored the message once and was sent nothing again.
+    assert_eq!(scene.broker.received().len(), 5);
+    let stored: Vec<_> = scene
+        .broker
+        .log(EVENTS)
+        .into_iter()
+        .filter(|message| {
+            message.headers.get("idempotency-token").map(String::as_str) == Some("tok-lost")
+        })
+        .collect();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].position, Some(7));
+}
+
+// ---- a message delivered again after the engine restarts (decision 0197) ----
+
+/// Waits until the broker has seen every connection end, and so taken back
+/// what it had handed out on them.
+async fn connections_closed(scene: &Scene) {
+    scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.connections.is_empty()
+        })
+        .await
+        .unwrap();
+}
+
+/// The engine that took a message first is gone, with its marks: the
+/// message comes again with a count above one. A take asks the engine
+/// whether another record holds it. "Cannot tell" (and no answerer) stops
+/// as before; "held" stops and names the record; "not held" takes it, and
+/// its acknowledgement removes it, as the stand says.
+#[tokio::test]
+async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_record_holds_it() {
+    use a2m_provider::RecordedElsewhere;
+    use common::{Answering, Folder, take_asking};
+
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let first = scene.broker.queue(WORK)[0].message.id.clone();
+
+    // The first engine's record takes the message; the engine ends before
+    // its acknowledgement is sent, and the broker takes the message back.
+    let taker = ledger.write("first").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(taker.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    assert_eq!(text(&taken.for_reconcile, "message_id"), first);
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+
+    // A second engine, with no marks.
+    let other_folder = Folder::new("restarted-engine");
+    let other = common::registry(&other_folder);
+
+    // No answerer, and an answerer that cannot tell: nothing is taken.
+    let plain = ledger.write("plain").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(plain.fence))
+        .await
+        .unwrap();
+    let stopped = failed(read(&handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(
+        stopped,
+        (
+            "busy".to_owned(),
+            "message_may_be_held".to_owned(),
+            Sent::Answered
+        )
+    );
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    let unsure = ledger.write("unsure").await;
+    let answering = Answering::new(RecordedElsewhere::CannotTell);
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(unsure.fence))
+        .await
+        .unwrap();
+    let stopped =
+        failed(take_asking(&handle, &mut prepared, take, &unsure, answering.clone()).await);
+    assert_eq!(stopped.1, "message_may_be_held");
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    assert_eq!(
+        *answering.asked.lock().unwrap(),
+        [(
+            "message_id".to_owned(),
+            a2m_provider::recorded_digest(&Value::from(first.as_str()))
+        )]
+    );
+
+    // Another record holds it: stopped, and the record is named.
+    let blocked = ledger.write("blocked").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(blocked.fence))
+        .await
+        .unwrap();
+    let held = take_asking(
+        &handle,
+        &mut prepared,
+        take,
+        &blocked,
+        Answering::new(RecordedElsewhere::Held(taker.record)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(held.failure.code().as_str(), "message_may_be_held");
+    assert!(
+        held.failure
+            .message()
+            .contains(&taker.record.run.to_string()),
+        "{}",
+        held.failure.message()
+    );
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    assert!(scene.broker.acknowledgements().is_empty());
+
+    // No other record holds it: taken, and acknowledged once.
+    let free = ledger.write("free").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(free.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = take_asking(
+        &handle,
+        &mut prepared,
+        take,
+        &free,
+        Answering::new(RecordedElsewhere::NotHeld),
+    )
+    .await
+    .unwrap() else {
+        panic!("a message");
+    };
+    assert_eq!(text(&taken.for_reconcile, "message_id"), first);
+    handle
+        .act(
+            &mut prepared,
+            &take[2],
+            &free.input(&none, None),
+            free.authority(),
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let acknowledgements = scene.broker.acknowledgements();
+    assert_eq!(acknowledgements.len(), 1);
+    assert_eq!(acknowledgements[0].message, first);
+    assert!(
+        scene
+            .broker
+            .queue(WORK)
+            .iter()
+            .all(|held| held.message.id != first)
+    );
+    // The broker handed it out five times; only the last was taken.
+    let attempts: Vec<u32> = scene
+        .broker
+        .deliveries()
+        .iter()
+        .filter(|delivery| delivery.message == first)
+        .map(|delivery| delivery.attempt)
+        .collect();
+    assert_eq!(attempts, [1, 2, 3, 4, 5]);
 }

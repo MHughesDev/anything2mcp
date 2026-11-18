@@ -16,6 +16,10 @@ pub const CALLER_MISSING: FailureCode = FailureCode::fixed("caller_missing");
 /// The proxy could not read its input.
 pub const STDIO_READ_FAILED: FailureCode = FailureCode::fixed("stdio_read_failed");
 
+/// The engine may have had a tool call, and its answer was lost: the call
+/// may have started a run that writes. Class `possible_commit`.
+pub const ANSWER_LOST: FailureCode = FailureCode::fixed("answer_lost");
+
 /// JSON-RPC: the body or line is not JSON.
 pub const PARSE_ERROR: i64 = -32700;
 /// JSON-RPC: the message is not a request.
@@ -36,6 +40,57 @@ pub const CALLER_REFUSED: i64 = -32001;
 /// answered with something that is not an MCP message.
 pub const ENGINE_UNREACHABLE: i64 = -32000;
 
+/// The failure of a tool call whose answer was lost after the engine may
+/// have had it. It names no run, because the answer that named one is
+/// what was lost.
+pub(crate) fn answer_lost() -> Failure {
+    Failure::new(
+        FailureClass::PossibleCommit,
+        ANSWER_LOST,
+        "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
+        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs: call `a2m_action_run` with the action `run.list` and `since` the moment the call was sent, and do what that run's `next` says.",
+    )
+}
+
+/// What the proxy knows of a tool call whose answer was lost: whether it
+/// carried an idempotency key, the published tool it named when it named
+/// one, and when it was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LostCall {
+    pub(crate) keyed: bool,
+    pub(crate) tool: Option<String>,
+    /// Whole milliseconds since 1970 in UTC, a minute before the call was
+    /// sent, so that a clock a little apart from the engine's still finds
+    /// the run.
+    pub(crate) since: i64,
+}
+
+/// The same failure, with the exact next step: with a key, the same call
+/// again with the same key; without one, the caller's runs since the call
+/// was sent, by the exact call that lists them.
+pub(crate) fn answer_lost_for(call: &LostCall) -> Failure {
+    let fix = if call.keyed {
+        "Make the same call again, with the same idempotency key and nothing changed: it gives back the run the first call started, finished or not, and starts no other.".to_owned()
+    } else {
+        let mut input = serde_json::Map::new();
+        input.insert("since".to_owned(), serde_json::json!(call.since));
+        if let Some(tool) = &call.tool {
+            input.insert("tool".to_owned(), serde_json::json!(tool));
+        }
+        let listing = serde_json::json!({"action": "run.list", "input": input});
+        format!(
+            "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first: call `a2m_action_run` with {listing}, and do what that run's `next` says. A call that carries an idempotency key (`idempotency_key` of `a2m_tool_call`, or `{}` in the call's `_meta`) may be made again with the same key instead.",
+            crate::tools::KEY_META
+        )
+    };
+    Failure::new(
+        FailureClass::PossibleCommit,
+        ANSWER_LOST,
+        "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
+        fix,
+    )
+}
+
 pub(crate) fn input(
     code: FailureCode,
     message: impl Into<String>,
@@ -53,7 +108,7 @@ pub(crate) fn policy(
 }
 
 /// A failure as the `data` of a JSON-RPC error: its class, code, message,
-/// and next step.
+/// and next step. The proxy adds `retry_safe`.
 pub(crate) fn failure_data(failure: &Failure) -> serde_json::Value {
     serde_json::json!({
         "class": failure.class().to_string(),

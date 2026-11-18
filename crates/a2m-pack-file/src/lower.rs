@@ -13,15 +13,16 @@ use a2m_core::{
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, OperationView, Possible, ResolvedBinding, ResolvedView, Stage, SurfaceView,
+    Lowered, Lowering, OperationView, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
+    SurfaceView,
 };
 
 use crate::codes;
 use crate::kind::document_name;
 use crate::model::{
-    Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, READ, RecordSpec,
-    SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST, VERB_READ,
-    VERB_UPDATE, field_arg, key_arg,
+    Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, PlaceSpec, READ,
+    RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST,
+    VERB_READ, VERB_UPDATE, field_arg, key_arg,
 };
 
 /// A binding that names a document, a record kind, or a field the target
@@ -31,6 +32,8 @@ pub const BINDING_INVALID: LintCode = LintCode::fixed("file.binding_invalid");
 pub const STANDS_UNDECLARED: LintCode = LintCode::fixed("file.stands_undeclared");
 /// A write to a file beneath an application.
 pub const BENEATH_APPLICATION: LintCode = LintCode::fixed("file.beneath_application");
+/// A write to a file whose document does not say whether it may be open.
+pub const OPEN_UNDECLARED: LintCode = LintCode::fixed("file.open_undeclared");
 /// A write to a file that may be open, with no lock signal.
 pub const OPEN_WITHOUT_SIGNAL: LintCode = LintCode::fixed("file.open_without_signal");
 /// A write to a format with no patch editor.
@@ -278,6 +281,35 @@ impl Lowering for FileLowering {
         &self.step_kinds
     }
 
+    /// `save` is the one kind that saves, and it always does: it replaces
+    /// the file. `open` reads or probes the file and writes nothing, `locate`
+    /// finds a place in what was read, `set` builds the new bytes in memory,
+    /// and `read` reads values or confirms the file. Those never save.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == SAVE {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb: `update` and `create` replace the file with one that
+    /// holds the change, and write. A `delete` is `irreversible`: the row
+    /// removed is gone with the old file once the replace is made, and no
+    /// binding of this pack can declare how it is restored, because the pack
+    /// keeps no copy of the old file and a row written back would be a new
+    /// record, not the old one (decision 0161, point 10).
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb;
+        if *verb == VERB_DELETE {
+            EffectClass::Irreversible
+        } else if *verb == VERB_UPDATE || *verb == VERB_CREATE {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -401,6 +433,17 @@ impl Lowering for FileLowering {
                 return Ok(lowered);
             }
             unexpected("limit", &mut problems);
+            let rows = matches!(
+                record.place,
+                PlaceSpec::Rows | PlaceSpec::Table { .. } | PlaceSpec::Sheet { .. }
+            );
+            if record.key.is_empty() && rows {
+                problems.push(problem(
+                    binding.doc,
+                    format!("The record kind `{record_name}` states no key, so no one of its rows can be found: it can be listed, and not read by key or written. Which fields identify a row is still an open question of its draft."),
+                    "State `key:` in the record kind with the fields that identify one row, each of a type someone stated, and answer the questions of the drafted read by key.",
+                ));
+            }
             let key = bound.key(&mut problems);
             if *verb == VERB_READ {
                 unexpected("fields", &mut problems);
@@ -434,7 +477,7 @@ impl Lowering for FileLowering {
                     "Add `fields:` with each field to set and the input that holds its value.",
                 ));
             }
-            if change != Change::Update && record.key.is_empty() {
+            if change != Change::Update && record.key.is_empty() && !rows {
                 problems.push(problem(
                     binding.doc,
                     format!("The record kind `{record_name}` is one place with no key, so nothing can be added to it or removed from it."),
@@ -626,17 +669,38 @@ pub fn lint_rules() -> Vec<WriteRule> {
             summary: "A write to a file beneath an application is irreversible and has the owner's word in the authorization record.",
             check: |write, view| {
                 stands(write)?.get("beneath")?;
+                // The reference to the record, and not the key alone.
                 let authorized = view
                     .sources()
                     .file("target.yaml")
                     .and_then(|file| file.docs.first())
-                    .is_some_and(|target| target.get("authorization").is_some());
+                    .and_then(|target| target.text("authorization"))
+                    .is_some_and(|reference| !reference.trim().is_empty());
                 (write.operation.effect() != EffectClass::Irreversible || !authorized).then(|| {
                     (
                         "This binding writes a file that stands beneath an application.".to_owned(),
                         "Declare the operation `effect: irreversible`, and name the authorization record under `authorization` in `target.yaml`.",
                     )
                 })
+            },
+        },
+        WriteRule {
+            code: OPEN_UNDECLARED,
+            summary: "A binding that writes a file names a document that says whether an application may hold the file open.",
+            check: |write, _| {
+                // Absent is "not said", never "no": on most systems the pack
+                // cannot see that a program has the file open.
+                write
+                    .document
+                    .get("may_be_open")
+                    .and_then(Located::as_bool)
+                    .is_none()
+                    .then(|| {
+                        (
+                            "This binding writes a file, and its document does not say whether an application may hold the file open.".to_owned(),
+                            "Add `may_be_open: false` to the document when no application opens the file, or `may_be_open: true` with a `lock_signal`.",
+                        )
+                    })
             },
         },
         WriteRule {

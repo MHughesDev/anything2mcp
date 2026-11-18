@@ -20,9 +20,12 @@ use a2m_vault::MemoryKeyStore;
 use engine::{AppPack, Counted, Folder, START};
 use example_app::harness::TestApp;
 use serde_json::Value as Json;
+use tokio::sync::watch;
+use tokio::time::Instant;
 
 use crate::{
-    LocalSurface, OsUser, PresenceKind, PresencePrompt, PromptAnswer, PromptText, SurfaceParts,
+    Availability, LocalSurface, OsUser, PresencePrompt, PromptAnswer, PromptName, PromptText,
+    SurfaceParts,
 };
 
 pub(crate) const VERSION: Version = Version::new(0, 0, 1);
@@ -47,10 +50,18 @@ pub(crate) fn home(name: &str) -> (Folder, Paths) {
     (folder, paths)
 }
 
-/// A presence prompt that answers as the test set it, and counts.
+/// The answer of a person who passed the prompt. The test's prompt
+/// stands in for an operating system's, and says it is polkit.
+pub(crate) const PASSED: PromptAnswer = PromptAnswer::Present(PromptName::Polkit);
+
+/// A presence prompt that answers as the test set it, and counts. While
+/// it is held, an ask stays up as a prompt does that a person has not
+/// answered yet; like a real one it ends at its deadline as dismissed.
 pub(crate) struct TestPrompt {
     answer: Mutex<PromptAnswer>,
     asked: AtomicU32,
+    held: watch::Sender<bool>,
+    deadlines: Mutex<Vec<Instant>>,
 }
 
 impl TestPrompt {
@@ -58,6 +69,8 @@ impl TestPrompt {
         Arc::new(Self {
             answer: Mutex::new(answer),
             asked: AtomicU32::new(0),
+            held: watch::Sender::new(false),
+            deadlines: Mutex::new(Vec::new()),
         })
     }
 
@@ -68,17 +81,53 @@ impl TestPrompt {
     pub(crate) fn asked(&self) -> u32 {
         self.asked.load(Ordering::SeqCst)
     }
+
+    /// Keeps every ask up until [`release`](Self::release).
+    pub(crate) fn hold(&self) {
+        self.held.send_replace(true);
+    }
+
+    pub(crate) fn release(&self) {
+        self.held.send_replace(false);
+    }
+
+    /// Waits until `count` asks have been raised.
+    pub(crate) async fn raised(&self, count: u32) {
+        within("the prompt's raising", async {
+            while self.asked() < count {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+    }
+
+    /// The deadline each ask was given, in order.
+    pub(crate) fn deadlines(&self) -> Vec<Instant> {
+        self.deadlines.lock().unwrap().clone()
+    }
 }
 
 impl PresencePrompt for TestPrompt {
-    fn kind(&self) -> PresenceKind {
-        PresenceKind::OsPrompt
+    fn available(&self) -> BoxFuture<'_, Availability> {
+        Box::pin(async move {
+            match self.answer.lock().unwrap().clone() {
+                PromptAnswer::NotAvailable(why) => why,
+                _ => Availability::ready(PromptName::Polkit, "The prompt of a test."),
+            }
+        })
     }
 
-    fn ask(&self, _text: PromptText) -> BoxFuture<'_, PromptAnswer> {
+    fn ask(&self, _text: PromptText, deadline: Instant) -> BoxFuture<'_, PromptAnswer> {
         Box::pin(async move {
+            self.deadlines.lock().unwrap().push(deadline);
             self.asked.fetch_add(1, Ordering::SeqCst);
-            *self.answer.lock().unwrap()
+            let mut held = self.held.subscribe();
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(deadline) => return PromptAnswer::Dismissed,
+                _ = held.wait_for(|held| !*held) => {}
+            }
+            self.answer.lock().unwrap().clone()
         })
     }
 }
@@ -97,6 +146,15 @@ impl World {
     /// published, and a [`LocalSurface`] that asks `prompt` and waits
     /// `window` for an answer.
     pub(crate) async fn ready(prompt: Arc<dyn PresencePrompt>, window: Duration) -> Self {
+        Self::ready_with(prompt, window, |_| {}).await
+    }
+
+    /// The same, with the published plan changed by `change` first.
+    pub(crate) async fn ready_with(
+        prompt: Arc<dyn PresencePrompt>,
+        window: Duration,
+        change: fn(&mut a2m_core::Plan),
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let (folder, paths) = home("k");
         let clock: Arc<dyn Clock> =
@@ -117,9 +175,7 @@ impl World {
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
         builder.add_pack(&AppPack {
             hooks: Arc::new(engine::Hooks::default()),
-            discoverer: Arc::new(engine::WritingDiscoverer {
-                results: Mutex::new(Vec::new()),
-            }),
+            discoverer: Arc::new(engine::WritingDiscoverer::default()),
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
@@ -147,10 +203,9 @@ impl World {
             .await
             .unwrap();
         kernel.start_runner_loop(4).await.unwrap();
-        kernel
-            .publish_plan(&engine::plan(&app.url("")))
-            .await
-            .unwrap();
+        let mut plan = engine::plan(&app.url(""));
+        change(&mut plan);
+        kernel.publish_plan(&plan).await.unwrap();
         Self {
             app,
             kernel,

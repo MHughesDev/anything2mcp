@@ -11,11 +11,13 @@ publisher = "Anything2MCP"
 kind = "pack"
 
 # One request at a time on one link, and one run at a time on one device.
+# No `commit_steps`: `write_frame` saves only when it sends a write, and the
+# driver refuses a write frame that is not marked `commits`.
 [[modes]]
 name = "device"
 archetype = "device"
 verbs = ["read", "update", "submit"]
-steps = ["open", "write_frame", "read_frame", "expect"]
+steps = ["open", "build_frame", "write_frame", "read_frame", "expect"]
 rank = 60
 intent_window = 1
 session_reads = 1
@@ -29,7 +31,7 @@ session = true
 
 [points]
 driver = ["device"]
-discoverer = ["device_identity"]
+discoverer = ["device_identity", "device_register_map"]
 
 # Asks the device to identify itself, and nothing else.
 [[discoverers]]
@@ -41,6 +43,17 @@ sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 4096, depth = 1 }
 
+# Reads a register map a vendor published, given as a file in the project.
+# It sends no frame: nothing of the device is observed.
+[[discoverers]]
+name = "device_register_map"
+archetype = "device"
+surface_kinds = ["device_link"]
+kinds = ["device_register_map"]
+sources = ["published_description"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 1000000, depth = 1 }
+
 [[file_kinds]]
 name = "register"
 directory = "registers/"
@@ -48,6 +61,10 @@ surface_kinds = ["device_link"]
 
 [[finding_kinds]]
 name = "device_identity"
+surface_kinds = ["device_link"]
+
+[[finding_kinds]]
+name = "device_register_map"
 surface_kinds = ["device_link"]
 
 [[lint_rules]]
@@ -69,6 +86,14 @@ summary = "A register that can only be written is a command, and a command's haz
 finding_kind = "device_identity"
 file_kind = "register"
 
+[[drafting_rules]]
+finding_kind = "device_register_map"
+file_kind = "register"
+
+[[drafting_rules]]
+finding_kind = "device_register_map"
+file_kind = "operation"
+
 [[failure_codes]]
 class = "input"
 code = "value_out_of_range"
@@ -86,8 +111,24 @@ class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
+class = "policy"
+code = "device_serial_not_declared"
+
+[[failure_codes]]
+class = "policy"
+code = "discovery_identifies_only"
+
+[[failure_codes]]
+class = "policy"
+code = "frame_budget_exceeded"
+
+[[failure_codes]]
 class = "unknown_variant"
 code = "device_identity_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "physical_not_built"
 
 [[failure_codes]]
 class = "unknown_variant"
@@ -130,10 +171,21 @@ min = 10
 max = 60000
 doc = "How long a reply may take when a map states no pace."
 
+# Four frames a second at most. A person who knows the device can take
+# more may lower the gap.
 [[settings]]
 key = "min_gap_ms"
 type = "int"
-default = 50
+default = 250
 min = 0
 max = 60000
 doc = "The least time between two frames when a map states no pace."
+
+# Every frame counts: identification, reads, and writes.
+[[settings]]
+key = "max_frames_per_run"
+type = "int"
+default = 100
+min = 1
+max = 100000
+doc = "The most frames one run may send on one link."

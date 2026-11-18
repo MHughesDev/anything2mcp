@@ -27,11 +27,12 @@ use example_app::harness::TestApp;
 
 use crate::{
     Address, Browser, BrowserError, BrowserHealth, BrowserSettings, Browsers, By, Deadline,
-    Dispatch, LaunchReason, Look, PROFILE_ROOT, PageEnvironment, ProfileKey, Query, Visibility,
-    codes, test_support,
+    Dispatch, LaunchReason, Look, Origins, PROFILE_ROOT, PageEnvironment, ProfileKey, Query,
+    Visibility, codes, test_support,
 };
 
 mod acting;
+mod escapes;
 mod launching;
 mod looking;
 mod observing;
@@ -246,6 +247,17 @@ fn environment() -> PageEnvironment {
     PageEnvironment::default()
 }
 
+/// The origin of the test application, and the pages a test gives as
+/// `data:` addresses for the controls the application lacks.
+fn origins(app: &TestApp) -> Origins {
+    Origins::of([&Address::new(&app.url("/")).unwrap()]).with_data_pages()
+}
+
+/// Only the pages a test gives as `data:` addresses.
+fn data_pages() -> Origins {
+    Origins::default().with_data_pages()
+}
+
 /// The form of one line item of the test application.
 const FORM: &str = "/orders/A-100/items/L-101";
 
@@ -361,6 +373,10 @@ fn every_code_has_one_class_and_the_conversions_use_them() {
                 dispatch: Dispatch::Sent,
             },
             None,
+        ),
+        (
+            BrowserError::ForeignOrigin("https://other.example".to_owned()),
+            Some((FailureClass::Policy, codes::SURFACE_NOT_DECLARED)),
         ),
         (BrowserError::NotFound, None),
         (BrowserError::Ambiguous { count: 2 }, None),

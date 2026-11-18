@@ -147,37 +147,88 @@ pub(crate) fn int_from_display(text: &str, mark: DecimalMark) -> Result<i64, Fau
         .map_err(|_| Fault::range("the whole number is too large"))
 }
 
-/// The symbols that may stand beside a displayed amount of money.
+/// The currencies each symbol is written for, by ISO 4217 code. A symbol
+/// that is not here belongs to no currency this library reads: the cent
+/// sign counts hundredths, and the general currency sign names nothing.
+const SYMBOLS: [(char, &[&str]); 23] = [
+    (
+        '$',
+        &[
+            "USD", "CAD", "AUD", "NZD", "SGD", "HKD", "TWD", "MXN", "ARS", "CLP", "COP", "UYU",
+            "BSD", "BBD", "BMD", "BND", "BZD", "CUP", "DOP", "FJD", "GYD", "JMD", "KYD", "LRD",
+            "NAD", "SBD", "SRD", "TTD", "XCD",
+        ],
+    ),
+    (
+        '\u{A3}',
+        &["GBP", "EGP", "FKP", "GIP", "LBP", "SHP", "SSP", "SYP"],
+    ),
+    ('\u{A5}', &["JPY", "CNY"]),
+    ('\u{E3F}', &["THB"]),
+    ('\u{20A1}', &["CRC"]),
+    ('\u{20A6}', &["NGN"]),
+    ('\u{20A8}', &["PKR", "LKR", "NPR", "MUR", "SCR"]),
+    ('\u{20A9}', &["KRW", "KPW"]),
+    ('\u{20AA}', &["ILS"]),
+    ('\u{20AB}', &["VND"]),
+    ('\u{20AC}', &["EUR"]),
+    ('\u{20AD}', &["LAK"]),
+    ('\u{20AE}', &["MNT"]),
+    ('\u{20B1}', &["PHP"]),
+    ('\u{20B2}', &["PYG"]),
+    ('\u{20B4}', &["UAH"]),
+    ('\u{20B5}', &["GHS"]),
+    ('\u{20B8}', &["KZT"]),
+    ('\u{20B9}', &["INR"]),
+    ('\u{20BA}', &["TRY"]),
+    ('\u{20BC}', &["AZN"]),
+    ('\u{20BD}', &["RUB"]),
+    ('\u{20BE}', &["GEL"]),
+];
+
+/// Whether `ch` is a symbol written for `currency`.
+fn is_symbol_of(ch: char, currency: &str) -> bool {
+    SYMBOLS
+        .iter()
+        .any(|(symbol, codes)| *symbol == ch && codes.contains(&currency))
+}
+
+/// Whether `ch` is a currency symbol at all, of any currency or of none.
 fn is_currency_symbol(ch: char) -> bool {
     matches!(ch, '$' | '\u{A2}'..='\u{A5}' | '\u{E3F}' | '\u{20A0}'..='\u{20CF}')
 }
 
 /// Reads displayed money: an amount with the field's currency code, or one
-/// currency symbol, at either end, and a sign before either. Another
-/// currency's code stops.
+/// symbol of the field's currency, at either end, and a sign before either.
+/// Another currency's code or symbol stops: an amount shown in another
+/// currency is another value, however alike the digits.
 pub(crate) fn money_from_display(
     text: &str,
     currency: &str,
     mark: DecimalMark,
 ) -> Result<Decimal, Fault> {
+    const OTHER_CURRENCY: Fault =
+        Fault::unparsable("the text names a currency other than the field type's");
     let (negative, body) = signed(text.trim());
     let body = body.trim();
+    let own = |ch: char| is_symbol_of(ch, currency);
     let amount = if let Some(rest) = body.strip_prefix(currency) {
         rest
     } else if let Some(rest) = body.strip_suffix(currency) {
         rest
-    } else if let Some(rest) = body.strip_prefix(is_currency_symbol) {
+    } else if let Some(rest) = body.strip_prefix(own) {
         rest
-    } else if let Some(rest) = body.strip_suffix(is_currency_symbol) {
+    } else if let Some(rest) = body.strip_suffix(own) {
         rest
     } else {
         body
     }
     .trim();
-    if amount.chars().any(char::is_alphabetic) {
-        return Err(Fault::unparsable(
-            "the text names a currency other than the field type's",
-        ));
+    if amount
+        .chars()
+        .any(|ch| ch.is_alphabetic() || is_currency_symbol(ch))
+    {
+        return Err(OTHER_CURRENCY);
     }
     let value = decimal_from_display(amount, mark)?;
     if !negative {
@@ -323,6 +374,34 @@ mod tests {
                 money_from_display(text, "USD", point).unwrap_err().code,
                 VALUE_UNPARSABLE,
                 "{text}"
+            );
+        }
+        // A symbol is read only for a currency it is written for. A record
+        // whose currency changed is another value, not the same amount.
+        for (text, currency) in [
+            ("\u{A3}5.00", "EUR"),
+            ("\u{A5}5", "EUR"),
+            ("5.00 \u{20AC}", "USD"),
+            ("$5.00", "EUR"),
+            ("\u{A2}50", "USD"),
+            ("\u{A4}5.00", "USD"),
+            ("5.00\u{20A0}", "EUR"),
+        ] {
+            let fault = money_from_display(text, currency, point).unwrap_err();
+            assert_eq!(fault.code, VALUE_UNPARSABLE, "{text} as {currency}");
+            assert!(fault.what.contains("currency"), "{text}");
+        }
+        for (text, currency) in [
+            ("\u{A3}5.00", "GBP"),
+            ("\u{A5}5", "JPY"),
+            ("\u{A5}5", "CNY"),
+            ("$5", "CAD"),
+            ("5 \u{20B9}", "INR"),
+        ] {
+            assert_eq!(
+                money_from_display(text, currency, point).unwrap(),
+                d("5"),
+                "{text} as {currency}"
             );
         }
     }

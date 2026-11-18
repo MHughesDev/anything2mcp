@@ -9,9 +9,10 @@ use std::sync::Arc;
 use crate::codes::KERNEL_CODES;
 use crate::testing::{example_root, stand_set, surface_kind};
 use crate::{
-    CompileMode, Compiled, CompilerSet, Diagnostics, JsonSchema, Level, LowerContext, Lowered,
-    Lowering, Possible, ProgramField, RelPath, ResolvedBinding, SourceFile, SurfaceKindSpec,
-    TargetRoot, compile, lint_one, load, load_files,
+    CompileMode, Compiled, CompilerSet, DRAFT_VERSION, Diagnostic, Diagnostics, JsonSchema, Level,
+    LintRule, LowerContext, Lowered, Lowering, Possible, ProgramField, RelPath, ResolvedBinding,
+    ResolvedView, SourceFile, Stage, StepCommits, SurfaceKindSpec, TargetRoot, compile, lint_one,
+    load, load_files,
 };
 use a2m_core::{
     ApproveWrites, CaptureLevel, DecimalMark, DeclaredProgram, Digest, DriftRisk, EffectClass,
@@ -86,6 +87,14 @@ fn changed(case: &Case) -> Vec<(RelPath, Vec<u8>)> {
 }
 
 /// Everything the loader and the compiler say about `files`.
+/// The version a test compiles under: a draft's own, or a release.
+fn version_for(mode: CompileMode) -> Version {
+    match mode {
+        CompileMode::Draft => DRAFT_VERSION,
+        CompileMode::Publish => VERSION,
+    }
+}
+
 fn problems_with(
     files: &[(RelPath, Vec<u8>)],
     set: &CompilerSet,
@@ -94,7 +103,7 @@ fn problems_with(
     let root = TargetRoot::new("example");
     match load_files(&root, files, set) {
         Err(problems) => problems,
-        Ok(sources) => match compile(&sources, set, mode, VERSION) {
+        Ok(sources) => match compile(&sources, set, mode, version_for(mode)) {
             Ok(compiled) => compiled.warnings,
             Err(problems) => problems,
         },
@@ -221,6 +230,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Edit("types.yaml", "    currency: USD\n", ""),
         ),
         (
+            "kernel.built_in_type_redefined",
+            Case::Edit(
+                "types.yaml",
+                "types:\n",
+                "types:\n  untrusted_text:\n    base: text\n",
+            ),
+        ),
+        (
             "kernel.value_not_of_type",
             Case::Edit(
                 "tests/order_get.yaml",
@@ -247,6 +264,14 @@ fn cases() -> Vec<(&'static str, Case)> {
         (
             "kernel.unknown_step_kind",
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
+        ),
+        (
+            "kernel.acknowledged_where_read_back",
+            Case::Elsewhere("an_acknowledgement_is_evidence_only_for_an_irreversible_operation"),
+        ),
+        (
+            "kernel.acknowledged_with_lookup",
+            Case::Elsewhere("an_acknowledgement_is_evidence_only_for_an_irreversible_operation"),
         ),
         (
             "kernel.read_kind_not_registered",
@@ -377,6 +402,36 @@ fn cases() -> Vec<(&'static str, Case)> {
         (
             "kernel.plan_not_encodable",
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
+        ),
+        (
+            "kernel.draft_under_release_version",
+            Case::Elsewhere(
+                "what_a_faulty_caller_asks_for_a_draft_under_a_release_version_is_refused",
+            ),
+        ),
+        (
+            "kernel.file_too_large",
+            Case::Elsewhere("the_loader_reads_a_file_of_bounded_size_and_a_folder_once"),
+        ),
+        (
+            "kernel.scope_invalid",
+            Case::Edit(
+                UPSERT,
+                "description: >",
+                "permissions: {destinations: [\"*\"]}\ndescription: >",
+            ),
+        ),
+        (
+            "kernel.surface_of_another_pack",
+            Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
+        ),
+        (
+            "kernel.credential_suspected",
+            Case::Edit(
+                "tests/order_get.yaml",
+                "expect: {status: draft,",
+                "expect: {token: \"Example-Token-0001\", status: draft,",
+            ),
         ),
     ]
 }
@@ -575,6 +630,24 @@ fn files_with_other_line_endings_and_from_memory_compile_to_the_same_plan() {
         compile_files(&windows).encoded.bytes,
         from_disk.encoded.bytes
     );
+    // A carriage return that stands alone is a line ending too.
+    let old_style: Vec<(RelPath, Vec<u8>)> = unix
+        .iter()
+        .map(|(path, bytes)| {
+            let text = String::from_utf8(bytes.clone()).unwrap();
+            let text = if path.as_str().ends_with(".yaml") {
+                text.replace('\n', "\r")
+            } else {
+                text
+            };
+            (path.clone(), text.into_bytes())
+        })
+        .collect();
+    assert_ne!(old_style, unix);
+    assert_eq!(
+        compile_files(&old_style).encoded.bytes,
+        from_disk.encoded.bytes
+    );
     // Another version is another plan.
     let sources = load_files(&TargetRoot::new("anywhere"), &unix, &set).unwrap();
     let other = compile(&sources, &set, CompileMode::Publish, Version::new(1, 0, 1)).unwrap();
@@ -641,7 +714,9 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
     for (code, case) in &cases {
         if let Case::Elsewhere(test) = case {
             assert!(
-                test.starts_with("the_loader") || test.starts_with("what_a_faulty"),
+                test.starts_with("the_loader")
+                    || test.starts_with("what_a_faulty")
+                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation",
                 "{code}"
             );
             continue;
@@ -675,6 +750,38 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
         drafted.find("stand.path_not_rooted").unwrap().level,
         Level::Warning
     );
+}
+
+#[test]
+fn a_target_cannot_redefine_a_complete_built_in_type_and_may_complete_an_incomplete_one() {
+    let set = stand_set().unwrap();
+    // Without the refusal, this type would take the built-in's place and
+    // drop its untrusted mark from every drafted output that names it.
+    let unmarked = changed(&Case::Edit(
+        "types.yaml",
+        "types:\n",
+        "types:\n  untrusted_text:\n    base: text\n",
+    ));
+    for mode in [CompileMode::Draft, CompileMode::Publish] {
+        let problems = problems_with(&unmarked, &set, mode);
+        let found = problems
+            .find("kernel.built_in_type_redefined")
+            .unwrap_or_else(|| panic!("not refused:\n{problems}"));
+        assert_eq!(found.level, Level::Error);
+        assert_eq!(found.at.file.as_str(), "types.yaml");
+    }
+    // `money` needs a currency: a target's type of that name completes it.
+    let completed = changed(&Case::Edit(
+        "types.yaml",
+        "types:\n",
+        "types:\n  money:\n    base: money\n    currency: USD\n",
+    ));
+    let problems = problems_with(&completed, &set, CompileMode::Publish);
+    assert!(
+        problems.find("kernel.built_in_type_redefined").is_none(),
+        "{problems}"
+    );
+    assert!(!problems.has_errors(), "{problems}");
 }
 
 #[test]
@@ -948,6 +1055,20 @@ impl Lowering for Faulty {
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
     }
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        match kind.as_str() {
+            "fetch" => StepCommits::Never,
+            "save" => StepCommits::Always,
+            _ => StepCommits::AsDeclared,
+        }
+    }
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        match binding.field("fault").and_then(|fault| fault.as_text()) {
+            Some("sends") => EffectClass::Irreversible,
+            Some("changes") => EffectClass::Write,
+            _ => EffectClass::Read,
+        }
+    }
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -996,20 +1117,21 @@ impl Lowering for Faulty {
             payload: PackPayload::none(),
         };
         Ok(Lowered {
-            surface: SurfaceName::new(if fault == "surface" {
-                "nowhere"
-            } else {
-                "desk"
+            surface: SurfaceName::new(match fault {
+                "surface" => "nowhere",
+                // A surface of the kind another pack registered.
+                "foreign" => "desk",
+                _ => "bench",
             })
             .unwrap(),
-            act: vec![step(
-                if fault == "step_kind" {
-                    "other"
-                } else {
-                    "fetch"
-                },
-                false,
-            )],
+            act: vec![match fault {
+                "step_kind" => step("other", false),
+                // A kind that always saves, not marked as a save.
+                "unmarked" => step("save", false),
+                // A kind that never saves, marked as one.
+                "marked" => step("fetch", true),
+                _ => step("fetch", false),
+            }],
             confirm: vec![],
             read_back: if fault == "commit" {
                 vec![step("fetch", true)]
@@ -1034,9 +1156,22 @@ fn faulty_set(reads_a_kind_nobody_owns: bool) -> CompilerSet {
         } else {
             vec![]
         },
-        step_kinds: vec![StepKind::new("fetch").unwrap()],
+        step_kinds: vec![
+            StepKind::new("fetch").unwrap(),
+            StepKind::new("save").unwrap(),
+        ],
     };
     builder.lowering("faulty", Arc::new(lowering)).unwrap();
+    builder
+        .surface_kind(
+            "faulty",
+            SurfaceKindSpec::new(
+                SurfaceKind::new("bench").unwrap(),
+                "address",
+                JsonSchema::object().required("address", JsonSchema::text()),
+            ),
+        )
+        .unwrap();
     crate::testing::register_stand(&mut builder).unwrap();
     builder.build()
 }
@@ -1045,7 +1180,12 @@ fn faulty_operation(fault: &str) -> Vec<(RelPath, Vec<u8>)> {
     let text = format!(
         "operation: example_order_probe\neffect: read\nkey: order_id\ninputs:\n  order_id: {{type: identifier}}\noutputs:\n  status: {{type: order_status}}\nbindings:\n  - {{mode: faulty, fault: {fault}}}\ndescription: Looks at one order through the faulty mode of the tests.\n"
     );
-    let mut files = example_files();
+    // The faulty pack's own surface, beside the example's.
+    let mut files = changed(&Case::Edit(
+        "target.yaml",
+        "surfaces:\n",
+        "surfaces:\n  bench:\n    kind: bench\n    address: \"https://bench.example.com\"\n",
+    ));
     files.push((
         RelPath::new("operations/order_probe.yaml").unwrap(),
         text.into_bytes(),
@@ -1059,10 +1199,19 @@ fn what_a_faulty_lowering_returns_is_refused() {
     let draft = |fault: &str| problems_with(&faulty_operation(fault), &set, CompileMode::Draft);
     assert!(!draft("none").has_errors(), "{}", draft("none"));
     for (fault, code) in [
+        // The mode is one pack's and the surface's kind another's.
+        ("foreign", "kernel.surface_of_another_pack"),
         ("step_kind", "kernel.unknown_step_kind"),
         ("surface", "kernel.lowering_invalid"),
         ("commit", "kernel.lowering_invalid"),
         ("loose", "kernel.plan_not_encodable"),
+        // Whether a kind of step saves is the pack's word for the kind, and
+        // a step that says otherwise is refused, either way.
+        ("unmarked", "kernel.lowering_invalid"),
+        ("marked", "kernel.lowering_invalid"),
+        // A binding that writes or sends by what it does, under `read`.
+        ("changes", "kernel.effect_lower_than_derived"),
+        ("sends", "kernel.effect_lower_than_derived"),
     ] {
         let problems = draft(fault);
         let problem = problems
@@ -1070,6 +1219,13 @@ fn what_a_faulty_lowering_returns_is_refused() {
             .unwrap_or_else(|| panic!("{fault}: {problems}"));
         assert_eq!(problem.level, Level::Error);
     }
+    // A step marked as a save in a read reaches no plan by another road
+    // either: the effect is refused as well as the mark.
+    assert!(
+        draft("marked")
+            .find("kernel.effect_lower_than_derived")
+            .is_some()
+    );
     // A mode that reads a kind no enabled pack owns compiles nothing.
     let problems = problems_with(
         &faulty_operation("none"),
@@ -1452,6 +1608,25 @@ fn a_program_named_any_other_way_is_refused_with_a_file_a_line_and_a_fix() {
         Digest::of(b"example-helper")
     );
     refused(alone.leak(), 11, "no program");
+    // A path that steps back names another file than it reads as.
+    for stepping in [
+        "/opt/example/../../tmp/example-helper",
+        "/opt/./example-helper",
+        "C:\\example\\..\\example-helper.exe",
+    ] {
+        let replace = format!("{DESK_ADDRESS}    helper: '{stepping}'\n");
+        refused(replace.leak(), 11, "steps through");
+    }
+    // A program another machine serves is declared with its digest.
+    let share = "\\\\server\\share\\example-helper.exe";
+    let bare = format!("{DESK_ADDRESS}    helper: '{share}'\n");
+    refused(bare.leak(), 11, "network share");
+    let pinned = format!(
+        "{DESK_ADDRESS}    helper: '{share}'\n    helper_digest: {}\n",
+        Digest::of(b"example-helper")
+    );
+    let compiled = compiled_with(&[Case::Edit("target.yaml", DESK_ADDRESS, pinned.leak())]);
+    assert_eq!(compiled.plan.surfaces[0].programs[0].path, share);
 }
 
 /// The stand pack, with its surface kind reached by starting a program: the
@@ -1533,9 +1708,762 @@ fn where_the_address_is_a_program_each_environments_address_is_declared_too() {
                     path_key: "address".to_owned(),
                     digest_key: Some("digest".to_owned()),
                 }],
+                notices: Vec::new(),
             },
         )
         .err()
         .unwrap();
     assert_eq!(failure.code().as_str(), "registration_conflict");
+}
+
+// ---- what the safety audit found, each with the test that showed it ----
+
+const READ_CALL: &str =
+    "---\ncall: line_item_touch\npath: \"/orders/{order_id}/items/{item_code}\"\neffect: read\n";
+
+fn with_call(mut files: Vec<(RelPath, Vec<u8>)>) -> Vec<(RelPath, Vec<u8>)> {
+    let calls = files
+        .iter_mut()
+        .find(|(path, _)| path.as_str() == "calls/orders.yaml")
+        .unwrap();
+    calls.1.extend_from_slice(READ_CALL.as_bytes());
+    files
+}
+
+/// The route the audit gave: a call whose file says `read`, sent by the
+/// verb that writes, under an operation that declares `read`. It once
+/// compiled to a read tool whose step writes, with no intent recorded.
+#[test]
+fn a_write_never_compiles_as_a_read_whatever_a_target_file_says_of_its_call() {
+    let set = stand_set().unwrap();
+    let operation = |effect: &str, more: &str| {
+        format!(
+            "operation: example_line_item_touch\neffect: {effect}\n{more}inputs:\n  order_id: {{type: identifier, description: \"Order number shown in the application\"}}\n  item_code: {{type: identifier, description: \"Item code, such as L-101\"}}\noutputs:\n  length: {{type: length_ft_in}}\nbindings:\n  - mode: stand\n    verb: upsert\n    status: shadow\n    call: line_item_touch\n    read_back: {{call: line_item_get}}\ndescription: >\n  Touches one line item on an order, for a test of the compiler.\n  Prefer example_line_item_upsert to change one.\n"
+        )
+    };
+    let compile_with = |text: String| {
+        let mut files = with_call(example_files());
+        files.push((
+            RelPath::new("operations/line_item_touch.yaml").unwrap(),
+            text.into_bytes(),
+        ));
+        problems_with(&files, &set, CompileMode::Draft)
+    };
+    // Declared a read: refused, by the verb and by the step that saves.
+    let as_read = compile_with(operation("read", "key: [order_id, item_code]\n"));
+    let refusal = as_read.find("kernel.effect_lower_than_derived").unwrap();
+    assert_eq!(refusal.level, Level::Error);
+    assert_eq!(refusal.at.file.as_str(), "operations/line_item_touch.yaml");
+    // Declared a write with nothing to record: refused.
+    let unrecorded = compile_with(operation(
+        "write",
+        "key: [order_id, item_code]\ncommit_points: 0\n",
+    ));
+    assert!(
+        unrecorded.iter().any(
+            |problem| problem.code.as_str() == "kernel.commit_points_differ"
+                && problem.level == Level::Error
+                && problem.message.contains("at least once")
+        ),
+        "{unrecorded}"
+    );
+    // Declared what it is: it compiles, and its one `send` step commits
+    // although its call's file says `read`.
+    let honest = compile_with(operation("write", "key: [order_id, item_code]\n"));
+    assert!(!honest.has_errors(), "{honest}");
+    let mut files = with_call(example_files());
+    files.push((
+        RelPath::new("operations/line_item_touch.yaml").unwrap(),
+        operation("write", "key: [order_id, item_code]\n").into_bytes(),
+    ));
+    let sources = load_files(&TargetRoot::new("example"), &files, &set).unwrap();
+    let plan = compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION)
+        .unwrap()
+        .plan;
+    let touch = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_line_item_touch")
+        .unwrap();
+    assert_eq!(touch.commit_points, 1);
+    assert_eq!(
+        touch.bindings[0]
+            .act
+            .iter()
+            .filter(|step| step.commits)
+            .count(),
+        1
+    );
+
+    // A read states no commit point, and a call that writes is never the
+    // call of a step that only reads.
+    let counted = problems_of(&Case::Edit(
+        ORDER_GET,
+        "effect: read",
+        "effect: read\ncommit_points: 1",
+    ));
+    let refusal = counted.find("kernel.commit_points_differ").unwrap();
+    assert!(
+        refusal.message.contains("a read saves nothing"),
+        "{refusal}"
+    );
+    let fetched = problems_of(&Case::Edit(
+        UPSERT,
+        "read_back: {call: line_item_get}",
+        "read_back: {call: line_item_put}",
+    ));
+    assert!(
+        fetched.find("stand.fetch_of_a_write").is_some(),
+        "{fetched}"
+    );
+}
+
+#[test]
+fn a_permission_names_one_exact_address_or_one_name() {
+    let with = |permissions: &str| {
+        let replace = format!("permissions: {permissions}\ndescription: >");
+        problems_of(&Case::Edit(UPSERT, "description: >", replace.leak()))
+    };
+    for bad in [
+        "*",
+        "*.example.com",
+        "https://*",
+        "0.0.0.0",
+        "0.0.0.0/0",
+        "10.0.0.0/8",
+        "[::]",
+        "https://files.example.com/upload",
+        "https://user@files.example.com",
+        "files.example.com?x=1",
+        "files.example.com:0",
+        "files.example.com:99999",
+        "files..example.com",
+        "files example.com",
+        "://files.example.com",
+        "",
+    ] {
+        let problems = with(&format!("{{destinations: [\"{bad}\"]}}"));
+        let problem = problems
+            .find("kernel.scope_invalid")
+            .unwrap_or_else(|| panic!("`{bad}` was accepted:\n{problems}"));
+        assert_eq!(problem.level, Level::Error, "{bad}");
+        assert_eq!(problem.at.file.as_str(), UPSERT);
+    }
+    for (key, bad) in [
+        ("uploads", "../sheet"),
+        ("downloads", "/tmp/out"),
+        ("uploads", ""),
+    ] {
+        let problems = with(&format!("{{{key}: [\"{bad}\"]}}"));
+        assert!(
+            problems.find("kernel.scope_invalid").is_some(),
+            "{key}: {bad}"
+        );
+    }
+    let twice = with("{destinations: [\"files.example.com\", \"files.example.com\"]}");
+    assert!(
+        twice
+            .find("kernel.scope_invalid")
+            .unwrap()
+            .message
+            .contains("twice")
+    );
+    // What is exact is declared, and reaches the plan's manifest as written.
+    let compiled = compiled_with(&[Case::Edit(
+        UPSERT,
+        "description: >",
+        "permissions:\n  uploads: [order_sheet]\n  downloads: [receipt-out]\n  destinations: [\"files.example.com\", \"https://files.example.com:8443\", \"10.0.0.5\", \"[2001:db8::1]:443\"]\ndescription: >",
+    )]);
+    let manifest = &compiled
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_line_item_upsert")
+        .unwrap()
+        .manifest;
+    assert_eq!(manifest.destinations.len(), 4);
+    assert_eq!(manifest.uploads, ["order_sheet"]);
+    assert_eq!(manifest.downloads, ["receipt-out"]);
+}
+
+#[test]
+fn an_open_question_is_refused_wherever_it_stands_even_where_any_value_fits() {
+    for replace in [
+        "expect: {status: {open_question: \"Which status?\"}, total: \"125.00\", note: \"Call before delivery\"}",
+        "expect: {status: [draft, {open_question: \"Which status?\"}]}",
+        "expect: {lines: [{status: {deep: {open_question: \"Which status?\"}}}]}",
+    ] {
+        let problems = problems_of(&Case::Edit(
+            "tests/order_get.yaml",
+            "expect: {status: draft, total: \"125.00\", note: \"Call before delivery\"}",
+            replace,
+        ));
+        let problem = problems
+            .find("kernel.open_question")
+            .unwrap_or_else(|| panic!("{replace}:\n{problems}"));
+        assert_eq!(problem.level, Level::Error);
+        assert!(problem.message.contains("Which status?"), "{problem}");
+    }
+}
+
+/// A lint rule that quotes what it finds, as a pack's rule might: every
+/// text under a test's `expect`, once at the value and once at the start of
+/// the document.
+struct Echo;
+
+impl LintRule for Echo {
+    fn code(&self) -> a2m_core::LintCode {
+        a2m_core::LintCode::new("echo.said").unwrap()
+    }
+    fn level(&self, _: CompileMode) -> Level {
+        Level::Warning
+    }
+    fn summary(&self) -> &str {
+        "Says what a test expects."
+    }
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut said = Vec::new();
+        for doc in view.sources().docs_of("test") {
+            for entry in doc
+                .get("expect")
+                .map(|expect| expect.entries())
+                .unwrap_or_default()
+            {
+                let Some(text) = entry.value.as_text() else {
+                    continue;
+                };
+                for at in [&entry.value.at, &doc.at] {
+                    said.push(Diagnostic::error(
+                        self.code(),
+                        Stage::Lint,
+                        at,
+                        format!("The test expects `{text}`."),
+                        format!("Check `{text}`."),
+                    ));
+                }
+            }
+        }
+        said
+    }
+}
+
+#[test]
+fn a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic() {
+    let mut builder = CompilerSet::builder();
+    crate::testing::register_stand(&mut builder).unwrap();
+    builder.lint_rule("echo", Arc::new(Echo)).unwrap();
+    let set = builder.build();
+    let with = |expect: &str| {
+        let replace = format!("expect: {{{expect}, status: draft,");
+        let files = changed(&Case::Edit(
+            "tests/order_get.yaml",
+            "expect: {status: draft,",
+            replace.leak(),
+        ));
+        problems_with(&files, &set, CompileMode::Publish)
+    };
+    // A key that names a secret, in the forms the lint did not know: an
+    // error, and the value is in no message of any rule.
+    for (key, value) in [
+        ("refresh_token", "example-token-for-tests-0001"),
+        ("x-api-key", "example-key-for-tests-0002"),
+        ("passphrase", "example words for tests 0003"),
+        ("authorization", "bearer Example-Token-For-Tests-0004"),
+        ("remark", "Token Example-Token-For-Tests-0005"),
+    ] {
+        let problems = with(&format!("{key}: \"{value}\""));
+        let problem = problems
+            .find("kernel.credential_in_file")
+            .unwrap_or_else(|| panic!("{key}:\n{problems}"));
+        assert_eq!(problem.level, Level::Error, "{key}");
+        let told = format!("{problems} {}", problems.to_json());
+        assert!(!told.contains(value), "{key}: {told}");
+        assert!(told.contains("[not shown]"), "{key}: {told}");
+    }
+    // A key that often names a secret and sometimes names one's name: a
+    // warning under its own code, and never quoted where it stands.
+    for (key, value) in [
+        ("token", "Example-Token-0006"),
+        ("session_cookie", "Example=Cookie;0007"),
+        ("authorization", "Example Value 0008"),
+    ] {
+        let problems = with(&format!("{key}: \"{value}\""));
+        assert!(!problems.has_errors(), "{key}:\n{problems}");
+        let warning = problems.find("kernel.credential_suspected").unwrap();
+        assert_eq!(warning.level, Level::Warning);
+        assert!(!problems.to_string().contains(value), "{key}: {problems}");
+    }
+    // A fixture's recorded file is looked through as well, by line.
+    for recording in [
+        "GET /orders HTTP/1.1\nauthorization: Bearer Example-Token-For-Tests-0009\n\n",
+        "{\"header\": \"basic RXhhbXBsZTpUb2tlbjAwMTA=\"}",
+        "-----BEGIN EXAMPLE KEY-----\nexample\n",
+    ] {
+        let mut files = example_files();
+        files.push((
+            RelPath::new("fixtures/order_get/exchange.txt").unwrap(),
+            recording.as_bytes().to_vec(),
+        ));
+        let problems = problems_with(&files, &set, CompileMode::Publish);
+        let problem = problems
+            .find("kernel.credential_in_file")
+            .unwrap_or_else(|| panic!("{recording}:\n{problems}"));
+        assert_eq!(problem.at.file.as_str(), "fixtures/order_get/exchange.txt");
+        assert!(!problems.to_string().contains("0009"), "{problems}");
+    }
+    let mut files = example_files();
+    files.push((
+        RelPath::new("fixtures/order_get/exchange.txt").unwrap(),
+        b"GET /orders HTTP/1.1\naccept: application/json\nx-note: basic order data\n".to_vec(),
+    ));
+    assert!(!problems_with(&files, &set, CompileMode::Publish).has_errors());
+    // A secret written as a number under the word itself.
+    let pin = with("pin: 48210007");
+    assert!(pin.find("kernel.credential_suspected").is_some(), "{pin}");
+    // A name under such a key is a name: no report, and it is quoted only
+    // by a diagnostic that is not at its place.
+    let named = with("cookie: xsrf_cookie, token: input.order_id");
+    assert!(
+        named.find("kernel.credential_suspected").is_none(),
+        "{named}"
+    );
+    let quotes = named
+        .iter()
+        .filter(|problem| problem.message.contains("`xsrf_cookie`"))
+        .count();
+    assert_eq!(quotes, 1, "{named}");
+    // A number that is not under the word itself, and plain prose that
+    // starts with a scheme's name, are not credentials.
+    let plain =
+        with("token_ttl_ms: 60000, remark: \"Basic order data\", word: \"token authentication\"");
+    assert!(
+        plain.find("kernel.credential_suspected").is_none(),
+        "{plain}"
+    );
+    assert!(plain.find("kernel.credential_in_file").is_none(), "{plain}");
+    // What no rule knows is still quoted: the status of the order.
+    assert!(plain.to_string().contains("`draft`"), "{plain}");
+}
+
+/// A draft is never a published plan (decision 0161): compiled under a
+/// release version it is refused, and under the draft version it has bytes
+/// no published plan has.
+#[test]
+fn what_a_faulty_caller_asks_for_a_draft_under_a_release_version_is_refused() {
+    let set = stand_set().unwrap();
+    let sources = load_files(&TargetRoot::new("example"), &example_files(), &set).unwrap();
+    let problems = compile(&sources, &set, CompileMode::Draft, VERSION).unwrap_err();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.code.as_str() == "kernel.draft_under_release_version"),
+        "{problems}"
+    );
+    let draft = compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION).unwrap();
+    assert_ne!(draft.encoded.hash, compiled().encoded.hash);
+    assert_eq!(draft.plan.header.version, DRAFT_VERSION);
+}
+
+#[test]
+fn the_loader_reads_a_file_of_bounded_size_and_a_folder_once() {
+    let set = stand_set().unwrap();
+    // From memory: one byte over the limit of a target file.
+    let mut files = example_files();
+    let mut large = b"operation: example_large\n# ".to_vec();
+    large.resize(crate::LARGEST_TARGET_FILE + 1, b'x');
+    files.push((
+        RelPath::new("operations/large.yaml").unwrap(),
+        large.clone(),
+    ));
+    let problems = load_files(&TargetRoot::new("example"), &files, &set).unwrap_err();
+    let problem = problems.find("kernel.file_too_large").unwrap();
+    assert_eq!(problem.at.file.as_str(), "operations/large.yaml");
+    // A fixture's recorded file may be larger than a target file.
+    let mut files = example_files();
+    files.push((
+        RelPath::new("fixtures/order_get/recording.bin").unwrap(),
+        large.clone(),
+    ));
+    assert!(load_files(&TargetRoot::new("example"), &files, &set).is_ok());
+
+    // From disk: the same, without reading the whole file first.
+    let folder = scratch("large");
+    let root = folder.join("target");
+    copy_example(&root);
+    std::fs::write(root.join("operations").join("large.yaml"), &large).unwrap();
+    let problems = load(&TargetRoot::new(&root), &set).unwrap_err();
+    assert!(
+        problems.find("kernel.file_too_large").is_some(),
+        "{problems}"
+    );
+    std::fs::remove_file(root.join("operations").join("large.yaml")).unwrap();
+    assert!(load(&TargetRoot::new(&root), &set).is_ok());
+
+    // A link to a folder would have it read again, or without end.
+    #[cfg(unix)]
+    {
+        for (link, to) in [
+            (root.join("operations").join("again"), root.clone()),
+            (root.join("loop"), root.clone()),
+            (
+                root.join("operations").join("more"),
+                root.join("operations"),
+            ),
+        ] {
+            std::os::unix::fs::symlink(&to, &link).unwrap();
+            let problems = load(&TargetRoot::new(&root), &set).unwrap_err();
+            let problem = problems.find("kernel.path_outside_target").unwrap();
+            assert!(problem.message.contains("link to a folder"), "{problem}");
+            // One problem for the link, however deep it would have led.
+            assert_eq!(problems.len(), 1, "{problems}");
+            std::fs::remove_file(&link).unwrap();
+        }
+        // A link to a file inside the folder is read as that file.
+        std::os::unix::fs::symlink(
+            root.join("operations").join("order_get.yaml"),
+            root.join("operations").join("order_get_again.yaml"),
+        )
+        .unwrap();
+        let problems = load(&TargetRoot::new(&root), &set)
+            .and_then(|sources| compile(&sources, &set, CompileMode::Publish, VERSION).map(|_| ()))
+            .unwrap_err();
+        assert!(problems.find("kernel.path_outside_target").is_none());
+        assert!(
+            problems.find("kernel.name_defined_twice").is_some(),
+            "{problems}"
+        );
+    }
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn a_choice_whose_code_is_another_choices_label_is_refused_when_the_type_compiles() {
+    let problems = problems_of(&Case::Edit(
+        "types.yaml",
+        "codes: {draft: \"Draft\", released: \"Released\"}",
+        "codes: {draft: \"released\", released: \"Released\"}",
+    ));
+    assert!(problems.has_errors(), "{problems}");
+    let problem = problems
+        .iter()
+        .find(|problem| problem.message.contains("label of another choice"))
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert_eq!(problem.at.file.as_str(), "types.yaml");
+    // A code that is its own label is one choice.
+    let own = compiled_with(&[Case::Edit(
+        "types.yaml",
+        "codes: {draft: \"Draft\", released: \"Released\"}",
+        "codes: {draft: \"draft\", released: \"Released\"}",
+    )]);
+    assert!(
+        own.plan
+            .field_types
+            .iter()
+            .any(|ty| ty.name == "order_status")
+    );
+}
+
+/// What a binding offers as evidence (decision 0161): an acknowledgement
+/// alone only for an operation declared irreversible, which then needs no
+/// read-back.
+#[test]
+fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
+    let set = stand_set().unwrap();
+    // A second operation beside the example's, so that no pipeline of the
+    // example changes with it.
+    let with = |from: &[(&str, &str)]| {
+        let mut files = example_files();
+        let upsert = files
+            .iter()
+            .find(|(path, _)| path.as_str() == UPSERT)
+            .map(|(_, bytes)| String::from_utf8(bytes.clone()).unwrap())
+            .unwrap();
+        let mut text = upsert
+            .replace("example_line_item_upsert", "example_line_item_send")
+            .replace(
+                "Creates or updates one line item on an order.",
+                "Sends one line item of an order to the stand.",
+            );
+        for (old, new) in from {
+            assert!(text.contains(old), "{old}");
+            text = text.replace(old, new);
+        }
+        files.push((
+            RelPath::new("operations/line_item_send.yaml").unwrap(),
+            text.into_bytes(),
+        ));
+        files
+    };
+    let plan_of = |files: &[(RelPath, Vec<u8>)]| {
+        let sources = load_files(&TargetRoot::new("example"), files, &set).unwrap();
+        compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION)
+            .unwrap_or_else(|problems| panic!("{problems}"))
+            .plan
+    };
+    let binding_of = |plan: &a2m_core::Plan| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_line_item_send")
+            .unwrap()
+            .bindings[0]
+            .clone()
+    };
+    let read_back = "    read_back: {call: line_item_get}\n";
+    let acknowledged = "    evidence: acknowledged\n";
+    let irreversible = "effect: irreversible\nhazard: data_elsewhere";
+
+    let problems = problems_with(
+        &with(&[(read_back, acknowledged)]),
+        &set,
+        CompileMode::Draft,
+    );
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("irreversible"), "{problem}");
+
+    let binding = binding_of(&plan_of(&with(&[
+        (read_back, acknowledged),
+        ("effect: write", irreversible),
+    ])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(binding.read_back.is_empty());
+
+    // Decision 0193, finding F-1: a binding that reads its record back by
+    // its key is verified by that read, irreversible or not; the plan's
+    // check refuses the same.
+    let keeps_read_back = format!("{read_back}{acknowledged}");
+    let problems = problems_with(
+        &with(&[
+            (read_back, keeps_read_back.as_str()),
+            ("effect: write", irreversible),
+        ]),
+        &set,
+        CompileMode::Draft,
+    );
+    let problem = problems
+        .find("kernel.acknowledged_where_read_back")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("by its key"), "{problem}");
+    // With no key, the same binding may stand on the acknowledgement.
+    let binding = binding_of(&plan_of(&with(&[
+        (read_back, keeps_read_back.as_str()),
+        ("effect: write", irreversible),
+        ("key: [order_id, item_code]\n", ""),
+    ])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(!binding.read_back.is_empty());
+
+    // Decision 0199: a keyed binding that ends on the acknowledgement with
+    // no read-back and a lookup is warned of, by name, and still compiles:
+    // the engine asks the lookup only whether the record landed.
+    let with_lookup = format!("{acknowledged}    lookup: {{call: line_item_get}}\n");
+    let looked = with(&[
+        (read_back, with_lookup.as_str()),
+        ("effect: write", irreversible),
+    ]);
+    let problems = problems_with(&looked, &set, CompileMode::Publish);
+    let warned = problems
+        .find("kernel.acknowledged_with_lookup")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert_eq!(warned.level, Level::Warning, "{warned}");
+    assert!(
+        warned
+            .message
+            .contains("asks the lookup only whether the record landed")
+            && warned.fix.contains("name it `read_back:`"),
+        "{warned}"
+    );
+    let sources = load_files(&TargetRoot::new("example"), &looked, &set).unwrap();
+    let compiled = compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    assert!(
+        compiled
+            .warnings
+            .find("kernel.acknowledged_with_lookup")
+            .is_some()
+    );
+    let binding = binding_of(&compiled.plan);
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(binding.read_back.is_empty() && !binding.lookup.is_empty());
+    // Not without the lookup, and not with no key.
+    let problems = problems_with(
+        &with(&[(read_back, acknowledged), ("effect: write", irreversible)]),
+        &set,
+        CompileMode::Publish,
+    );
+    assert!(
+        problems.find("kernel.acknowledged_with_lookup").is_none(),
+        "{problems}"
+    );
+    let problems = problems_with(
+        &with(&[
+            (read_back, with_lookup.as_str()),
+            ("effect: write", irreversible),
+            ("key: [order_id, item_code]\n", ""),
+        ]),
+        &set,
+        CompileMode::Publish,
+    );
+    assert!(
+        problems.find("kernel.acknowledged_with_lookup").is_none(),
+        "{problems}"
+    );
+
+    // The response stands where the lowering prefers it.
+    let binding = binding_of(&plan_of(&with(&[(
+        read_back,
+        "    read_back: {call: line_item_get, prefer: response}\n",
+    )])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Response);
+}
+
+/// A binding's steps may read what the last read of the record gave and the
+/// record's key in the system (decision 0161), and nothing else new.
+#[test]
+fn a_bindings_steps_may_read_the_current_record_and_its_key() {
+    let set = stand_set().unwrap();
+    let with_args = |args: &str| {
+        let mut files = example_files();
+        for (path, bytes) in &mut files {
+            if path.as_str() == UPSERT {
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                *bytes = text
+                    .replace("args: {length: input.length}", args)
+                    .into_bytes();
+            }
+        }
+        files
+    };
+    let reads = with_args("args: {length: input.length, seen: current.length, id: record.key}");
+    let problems = problems_with(&reads, &set, CompileMode::Draft);
+    assert!(!problems.has_errors(), "{problems}");
+    let unknown = with_args("args: {length: input.length, seen: row.length}");
+    let problems = problems_with(&unknown, &set, CompileMode::Draft);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.code.as_str() == "kernel.expression_invalid"),
+        "{problems}"
+    );
+}
+
+/// A number a tool returns may reach the caller masked, as the text
+/// `[redacted]`; the output schema allows that text where it declares a
+/// number, so that a caller that checks the result never fails for it
+/// (decision 0161). An input's schema does not.
+#[test]
+fn a_tools_output_schema_allows_a_masked_number() {
+    let compiled = compiled();
+    let tool = compiled
+        .plan
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_line_item_upsert")
+        .unwrap();
+    let output = String::from_utf8(tool.output_schema.as_bytes().to_vec()).unwrap();
+    assert!(output.contains("[redacted]"), "{output}");
+    let input = String::from_utf8(tool.input_schema.as_bytes().to_vec()).unwrap();
+    assert!(!input.contains("[redacted]"), "{input}");
+}
+
+/// Decision 0193: a notice a pack registers for a surface kind stands on
+/// the compiled plan's surface exactly while the target file's field holds
+/// the word, and a door reads it from the compiler set.
+#[test]
+fn a_surface_carries_the_notice_its_kind_registers_while_its_field_says_so() {
+    use a2m_core::SurfaceNotice;
+    let set = |notice: bool| {
+        let mut builder = CompilerSet::builder();
+        let spec = crate::testing::surface_kind_spec();
+        let spec = if notice {
+            spec.with_notice("profile", "open", SurfaceNotice::UnencryptedCredentials)
+        } else {
+            spec
+        };
+        builder.surface_kind(crate::testing::PACK, spec).unwrap();
+        for part in &crate::testing::STAND_PARTS[1..] {
+            crate::testing::register_part(&mut builder, crate::testing::PACK, part).unwrap();
+        }
+        builder.build()
+    };
+    let with_profile = |profile: Option<&str>| {
+        let mut files = example_files();
+        for (path, bytes) in &mut files {
+            if path.as_str() == "target.yaml"
+                && let Some(profile) = profile
+            {
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                *bytes = text
+                    .replace(
+                        "    address: \"https://app.example.com\"\n",
+                        &format!(
+                            "    address: \"https://app.example.com\"\n    profile: {profile}\n"
+                        ),
+                    )
+                    .into_bytes();
+            }
+        }
+        files
+    };
+    let notices = |set: &CompilerSet, profile: Option<&str>| {
+        let sources = load_files(&TargetRoot::new("example"), &with_profile(profile), set).unwrap();
+        let plan = compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
+            .unwrap_or_else(|problems| panic!("{problems}"))
+            .plan;
+        set.surface_notices(&plan.surfaces[0])
+    };
+    let noticing = set(true);
+    assert_eq!(
+        notices(&noticing, Some("open")),
+        [SurfaceNotice::UnencryptedCredentials]
+    );
+    assert!(notices(&noticing, Some("closed")).is_empty());
+    assert!(notices(&noticing, None).is_empty());
+    // A kind that registers none gives none, whatever the field says.
+    assert!(notices(&set(false), Some("open")).is_empty());
+    // The field must be one of the kind's own, and not its address.
+    for key in ["address", "nowhere"] {
+        let mut builder = CompilerSet::builder();
+        let failure = builder
+            .surface_kind(
+                crate::testing::PACK,
+                crate::testing::surface_kind_spec().with_notice(
+                    key,
+                    "open",
+                    SurfaceNotice::UnencryptedCredentials,
+                ),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(failure.code().as_str(), "registration_conflict", "{key}");
+    }
+}
+
+/// The compiler set tells the key under which a surface of a kind states
+/// its address, as its pack registered it, and nothing for a kind no pack
+/// registers (decision 0199).
+#[test]
+fn the_set_tells_the_key_a_kind_states_its_address_under() {
+    let set = crate::testing::stand_set().unwrap();
+    assert_eq!(
+        set.address_key(&crate::testing::surface_kind()),
+        Some("address")
+    );
+    let unknown = a2m_core::SurfaceKind::new("nothing_registers_this").unwrap();
+    assert_eq!(set.address_key(&unknown), None);
+    assert_eq!(CompilerSet::kernel_only().address_key(&unknown), None);
+    // An address of blanks states no address.
+    let problems = problems_of(&Case::Edit(
+        "target.yaml",
+        "    address: \"https://app.example.com\"\n",
+        "    address: \" \"\n",
+    ));
+    let problem = problems
+        .find("kernel.missing_field")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(
+        problem.message.contains("does not state its address"),
+        "{problem}"
+    );
 }

@@ -24,8 +24,15 @@
 //! `sso_saml` auth providers and the sign-in window; signs of expiry;
 //! frames; platform profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
-//! identity by a stamp or a search; screen matching and the drafting
-//! rules.
+//! identity by a stamp or a search; setting a finding against existing
+//! screen models, and drafting a field that is set or a type from a
+//! snapshot.
+//!
+//! Its drafting rules turn a snapshot the web pack's discoverers took into
+//! a screen that reads one of the page's tables by its headings and a
+//! `list` read over it (decision 0183), and a screen of the values the page
+//! labels and a `get` read of them; a placeholder the discoverers matched
+//! into the page's path is each read's key (decision 0187).
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in
@@ -33,20 +40,26 @@
 //! design is `docs/architecture/crates/a2m-pack-web-ui.md`.
 
 pub mod codes;
+mod draft;
+mod draft_request;
 mod driver;
 mod lower;
 mod model;
+mod page_http;
+mod requests;
 mod screens;
 
 use std::sync::Arc;
 
-use a2m_core::{ControlName, Failure, Mode, Value};
+use a2m_core::{ControlName, Failure, FindingKind, Mode, Value};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_pack_web_browser::BrowserSettings;
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
 pub use a2m_pack_web_browser::SharedBrowsers;
 pub use lower::{GOTO, INVOKE, READ, SET, WAIT};
+pub use page_http::{PAGE_HTTP_MODE, REQUEST};
+pub use requests::REQUEST_KIND;
 pub use screens::{CONTROLS, PACK, SCREEN_KIND, WEB_SURFACE};
 
 /// The name of the mode this pack drives.
@@ -103,11 +116,18 @@ impl Pack for WebUiPack {
                 .and_then(Value::as_int)
                 .and_then(|number| usize::try_from(number).ok())
         };
-        let mut settings = BrowserSettings::default();
+        // The reviewed digests of the browser programs, from this pack's
+        // own settings; a value that cannot be read stops the pack.
+        let mut settings = BrowserSettings::default().with_pack_settings(cx.settings())?;
         if let Some(most) = setting("max_read_chars") {
             settings.max_read_chars = most;
         }
         let browsers = self.browsers.get_or_create(cx, settings)?;
+        let page_http = Mode::new(PAGE_HTTP_MODE)?;
+        to.driver(
+            page_http.clone(),
+            Arc::new(page_http::PageHttpDriver::new(browsers.clone())),
+        )?;
         to.driver(
             mode.clone(),
             Arc::new(driver::UiDriver::new(
@@ -122,10 +142,24 @@ impl Pack for WebUiPack {
                 surface_fields(),
             ))
             .file_kind(Arc::new(screens::ScreenKind::new()))
+            .file_kind(Arc::new(requests::RequestKind::new()))
             .lowering(Arc::new(lower::UiLowering::new(mode)))
+            .lowering(Arc::new(page_http::PageHttpLowering::new(page_http)))
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::CssUsed))
-            .lint_rule(Arc::new(screens::NoFingerprint));
+            .lint_rule(Arc::new(screens::NoFingerprint))
+            .drafting_rule(Arc::new(draft::TableScreenRule {
+                kind: FindingKind::new(draft::SCREEN_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft::TableReadRule {
+                kind: FindingKind::new(draft::SCREEN_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft_request::RequestEntryRule {
+                kind: FindingKind::new(draft_request::EXCHANGE_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft_request::RequestReadRule {
+                kind: FindingKind::new(draft_request::EXCHANGE_FINDING)?,
+            }));
         for control in CONTROLS {
             compiler = compiler.control(ControlName::new(control)?);
         }

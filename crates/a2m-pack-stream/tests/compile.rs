@@ -13,7 +13,9 @@ mod common;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use a2m_core::{Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values};
+use a2m_core::{
+    Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
+};
 use a2m_provider::{Manifest, ProviderName, ProviderSettings};
 use common::{Folder, Planted, compile, edited, plan, registry, registry_with};
 
@@ -112,6 +114,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert!(binding.act[0].commits && !binding.act[0].idempotent);
     assert_eq!(kinds(&binding.read_back), ["latest"]);
     assert!(binding.read_back[0].lookup && !binding.read_back[0].commits);
+    assert_eq!(binding.evidence, WriteEvidence::ReadBack);
 
     // A publish to a log is irreversible, and is found again by its stamp.
     let record = operation("example_order_event_record");
@@ -125,11 +128,30 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     );
     assert_eq!(kinds(&record.bindings[0].read_back), ["scan"]);
     assert_eq!(kinds(&record.bindings[0].lookup), ["scan"]);
+    // Where the log ends is read, and recorded, before the publish is sent:
+    // a scan of a resumed run starts there. A keyed publish to a log is
+    // read back by that scan for its token, so its evidence is the read.
+    assert_eq!(kinds(&record.bindings[0].act), ["position", "publish"]);
+    let commits: Vec<bool> = record.bindings[0]
+        .act
+        .iter()
+        .map(|step| step.commits)
+        .collect();
+    assert_eq!(commits, [false, true]);
+    assert_eq!(record.bindings[0].evidence, WriteEvidence::ReadBack);
 
     // A queue keeps nothing to read back; the broker refuses a repeat.
+    // Its evidence is the broker's confirmation alone, and the operation is
+    // irreversible; so is a notice to a topic, which keeps nothing.
     let add = operation("example_order_work_add");
     assert!(add.bindings[0].read_back.is_empty());
     assert!(add.bindings[0].act[0].idempotent);
+    assert_eq!(add.bindings[0].evidence, WriteEvidence::Acknowledged);
+    assert_eq!(add.effect, EffectClass::Irreversible);
+    let notice = operation("example_order_notice_send");
+    assert!(notice.bindings[0].read_back.is_empty());
+    assert_eq!(notice.bindings[0].evidence, WriteEvidence::Acknowledged);
+    assert_eq!(notice.effect, EffectClass::Irreversible);
 
     // A wait is two steps, and its limit is in the plan.
     let wait = operation("example_order_event_await");
@@ -149,6 +171,12 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         .collect();
     assert_eq!(commits, [false, false, true]);
     assert_eq!(take.commit_points, 1);
+    // Its evidence is the acknowledgement. Its one read is a look at the
+    // queue for the message it recorded, which settles a take in doubt.
+    assert_eq!(take.bindings[0].evidence, WriteEvidence::Acknowledged);
+    assert_eq!(take.effect, EffectClass::Irreversible);
+    assert_eq!(kinds(&take.bindings[0].read_back), ["taken"]);
+    assert!(take.bindings[0].read_back[0].lookup && !take.bindings[0].read_back[0].commits);
 
     // Every step names its channel by reference, never by an argument.
     for operation in &plan.operations {
@@ -287,6 +315,14 @@ fn a_publish_must_declare_what_its_channel_makes_of_it() {
         ),
         "stream.publish_effect",
     );
+    // To a queue as an ordinary write: its only evidence is the broker's
+    // confirmation. The pack refuses it before the kernel's own rule, that
+    // an acknowledged write is irreversible, is reached.
+    refused(
+        "operations/extra.yaml",
+        &publish("effect: write\n", "orders.work"),
+        "stream.publish_effect",
+    );
     // The token's header belongs to the ledger.
     let folder = Folder::new("token");
     let registry = registry(&folder);
@@ -338,4 +374,61 @@ fn the_settings_ceiling_bounds_every_wait() {
     let problems = compile(&registry, &common::fixture_root()).expect_err("over the ceiling");
     let found = problems.find("stream.channel_invalid").unwrap();
     assert!(found.message.contains("ceiling"), "{found}");
+}
+
+#[test]
+fn text_a_broker_returns_is_an_output_only_as_untrusted_text() {
+    let read = |outputs: &str, channel: &str| {
+        format!(
+            "operation: example_extra\neffect: read\ninputs: {{}}\noutputs: {outputs}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: list\n    channel: {channel}\n"
+        )
+    };
+    // The queue names no schema: a task is whatever a producer wrote.
+    let found = refused(
+        "operations/extra.yaml",
+        &read("{task: {type: text}}", "orders.work"),
+        "stream.untrusted_unmarked",
+    );
+    assert!(found.message.contains("`task`"), "{found}");
+    // A field the schema does not hold to listed texts is free text too.
+    refused(
+        "operations/extra.yaml",
+        &read("{order_id: {type: text}}", "orders.status"),
+        "stream.untrusted_unmarked",
+    );
+    // Marked untrusted, or held to an `enum` by the channel's schema, the
+    // same outputs compile.
+    for (outputs, channel) in [
+        ("{task: {type: broker_text}}", "orders.work"),
+        ("{status: {type: text}}", "orders.status"),
+    ] {
+        let folder = Folder::new("marked");
+        let registry = registry(&folder);
+        let root = edited(&folder, "operations/extra.yaml", &read(outputs, channel));
+        if let Err(problems) = compile(&registry, &root) {
+            panic!("{outputs} on {channel} does not compile:\n{problems}");
+        }
+    }
+}
+
+#[test]
+fn a_body_may_not_use_the_name_of_the_brokers_own_facts() {
+    refused(
+        "operations/extra.yaml",
+        "operation: example_extra\neffect: irreversible\nhazard: sends_outside\ninputs: {}\noutputs: {}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: publish\n    channel: orders.notices\n    body: {message_meta: '\"mine\"'}\n",
+        "stream.binding_invalid",
+    );
+}
+
+#[test]
+fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
+    // A publish that says `effect: read` is refused by what the pack says
+    // the verb does. (A take is held to `irreversible` by the pack's own
+    // rule, `stream.publish_effect`, first.)
+    let publish = "operation: example_extra\neffect: read\ninputs:\n  order_id: {type: identifier}\noutputs: {}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: publish\n    channel: orders.status\n    key: {order_id: input.order_id}\n    body: {order_id: input.order_id}\n";
+    refused(
+        "operations/extra.yaml",
+        publish,
+        "kernel.effect_lower_than_derived",
+    );
 }

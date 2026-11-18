@@ -44,7 +44,7 @@ anything2mcp/
     anything2mcp/         # the `anything2mcp` and `a2m` commands and the embeddable library facade
   bindings/
     python/               # pip package `anything2mcp`: ships the binary and a thin pure-Python SDK
-    typescript/           # npm package `anything2mcp`: launcher, platform packages, and a thin SDK
+    npm/                  # npm package `anything2mcp`: launcher, its TypeScript client, and platform packages
   web/console/            # admin console, approval page, sign-in page (TypeScript)
   plugins/                # plug-in protocol and examples
   profiles/               # platform profiles and detection rules, as data files
@@ -116,7 +116,7 @@ One name on every route ([decision 0056](../../decisions/0056-one-name-everywher
 
 **A name is held only by a published release.** A registry account, or a publisher configured in advance, reserves nothing. On the date publishing setup records, none of the three names was held: PyPI waits for the first run of the release workflow, and crates.io and npm each need one first publish from the owner's account. Until a row there says held, the name can be lost.
 
-**One binary is shipped.** `a2m` is a link to it, or the smallest launcher a route supports, on each install route ([decision 0063](../../decisions/0063-the-kernels-interfaces-as-the-crate-designs-settle-them.md)). The workspace builds two small binary targets from one module for convenience; the package build is where the link replaces the second target, because two shipped copies would count twice against the size target. The output names the product whatever name started it, and a test runs both names with the same arguments and compares. Which link or launcher each route uses, and its cost against the 30 ms budget for starting a command, is research brief 28 and hypothesis H-39.
+**One binary is shipped.** `a2m` is a link to it, or the smallest launcher a route supports, on each install route ([decision 0063](../../decisions/0063-the-kernels-interfaces-as-the-crate-designs-settle-them.md)). The workspace builds two small binary targets from one module for convenience; the package build is where the link replaces the second target, because two shipped copies would count twice against the size target. The output names the product whatever name started it, and a test runs both names with the same arguments and compares. On pip, `a2m` is a script of a few lines beside the binary that replaces itself with it, about 11 ms over the binary on Linux, and on Windows an `a2m.cmd` beside it that runs the program with every argument ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)); on npm both names are one launcher, about 43 ms, over the 30 ms budget for starting a command ([research note 21](../../research/21-wheel-and-npm-packaging.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). Other routes are hypothesis H-39; `a2m.cmd` is written and has not yet run on Windows.
 
 ## What is shipped
 
@@ -171,7 +171,7 @@ The way in is `pip install anything2mcp`.
 - **One wheel per platform, not per Python version.** The Python part is pure Python, so the wheel does not depend on the interpreter's version.
 - **The browser is not included,** as above.
 - **What it gives.** The `anything2mcp` command, the engine it starts, and `import anything2mcp`.
-- **Today.** `bindings/python/` holds a placeholder at version 0.0.1, built repeatably with a pinned build tool, that contains no working software and says so ([decision 0046](../../decisions/0046-the-pip-name-is-held-by-a-placeholder-published-on-a-version-tag.md)). Its only purpose is to hold the name. The wheel that carries the binary is package F1 of the [roadmap](../../plan/roadmap.md).
+- **Today.** `bindings/python/` builds the wheel with maturin 1.16.0 in its `bin` mode: the binary, the script `a2m` and the file `a2m.cmd`, and the package with a client that sends one action and returns the engine's answer, with one typed method per action generated from the OpenAPI document the engine serves ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). It is proven on Linux x86-64 only. The placeholder of [decision 0046](../../decisions/0046-the-pip-name-is-held-by-a-placeholder-published-on-a-version-tag.md) is no longer in the tree.
 
 ## The clients
 
@@ -190,7 +190,7 @@ print(run.status, run.summary)
 remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a company server
 ```
 
-- **Two transports.** Local: the client starts `anything2mcp bridge` and exchanges JSON messages with it; the bridge talks to the engine over the local channel ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md)). Remote: HTTPS to a server's REST interface, with OAuth or an API key.
+- **Two transports.** Local: the client speaks HTTP over the local channel itself, after checking that the channel belongs to the user ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)); the Python client does so on macOS and Linux, and on Windows by the named pipe, checking that the pipe's server runs as the user; the Node client does so on macOS and Linux, and on Windows only when the caller supplies that check, because Node's standard library cannot make it ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)). Remote: HTTPS to a server's REST interface, with OAuth or an API key.
 - **The same calls either way.** Code written against a laptop's engine runs unchanged against a company server.
 - **Generated.** Models and methods come from the action registry, through a recorded catalog, and from the OpenAPI document, so a client cannot drift from the engine. CI fails when a generated file differs from what the generator produces.
 - **Synchronous and asynchronous clients,** with few or no third-party dependencies.
@@ -203,7 +203,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - **Layout.** A small launcher package, `anything2mcp`, plus one package per platform that holds only the binary. The launcher lists the platform packages as optional dependencies, and each platform package declares its operating system and processor, so the package manager installs only the one that fits. This is the established pattern for native tools on npm ([Sentry's guide](https://blog.sentry.io/publishing-binaries-on-npm/)).
 - **No install script.** Many organizations disable install scripts. If the platform package is missing, for example because optional dependencies were skipped, the launcher explains the fix instead of downloading anything.
 - **What it gives.** The `anything2mcp` command and a TypeScript client with the same shape as the Python one.
-- **Today.** Not started; package 5.4.
+- **Today.** `bindings/npm/` holds the launcher, the template of the eight platform packages `@anything2mcp/<os>-<cpu>[-musl]`, and a script that assembles one from a built binary. Installing from a local registry was proven on Linux normally, with install scripts disabled, and with optional dependencies left out ([research note 21](../../research/21-wheel-and-npm-packaging.md)). The TypeScript client is in the launcher package, in `anything2mcp/client/`: no dependency, plain `.js` beside plain `.d.ts`, with the same typed methods generated from the same document ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)).
 
 ## The Rust crate
 
@@ -241,7 +241,7 @@ Publishing cannot be undone. A published version can be yanked, and never replac
 
 A bad release is yanked from each registry, the changelog says why, and a fixed version with a higher number supersedes it. Published versions are never overwritten and never deleted.
 
-**Today.** The workflow builds and checks the pip placeholder on every pull request that touches it, and publishes only from a tag or a manual start, through PyPI's trusted publishing in a GitHub environment named `pypi`. crates.io and npm offer trusted publishing only to a name that already exists, so each needs one first publish by the owner before the workflow can take over. Signing, the bill of materials, the other registries, and the standalone installers are package 5.5.
+**Today.** The workflow builds eight platform wheels and a source distribution with maturin on every pull request that touches the pip package, checks them together with `twine check` (it expects eight wheels and one source distribution), and publishes them only from a tag or a manual start, through one gated job and PyPI's trusted publishing in a GitHub environment named `pypi` ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). The package is the real pre-alpha software and no longer a placeholder. All eight wheels and the source distribution have been built and checked by the workflow on pull requests; it has never published. It also packs the eight npm platform packages, each with the binary taken from its wheel, and the launcher, checks the nine together, writes a list of the Rust dependencies in the binary for each target, and publishes to npm through a second gated job in a GitHub environment named `npm`, with npm's trusted publishing ([decision 0186](../../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)). The npm jobs have not run yet. The eight platform packages and the launcher must each be published once by the owner, in an npm organization named `anything2mcp`, before trusted publishing can take over. crates.io is blocked by `publish = false` in the workspace and by the `a2m-*` crates, none of which is published; that needs a decision of its own ([research note 21](../../research/21-wheel-and-npm-packaging.md)). crates.io and npm offer trusted publishing only to a name that already exists, so each needs one first publish by the owner before the workflow can take over. Signing, a bill of materials in a standard format with licence texts, the other registries, and the standalone installers are package 5.5.
 
 ## Updates
 
@@ -262,7 +262,7 @@ A tool that holds signed-in sessions to business systems must not talk to anyone
 ## Targets and open points
 
 - Wheel size under 25 MB with every first-party pack, and install time under 10 seconds on a normal connection. Both are targets until measured; package F4 measures them for hypothesis H-28.
-- To confirm with research brief 28, before package F1: that a maturin `bin` wheel can also carry the pure-Python package; the exact platform tags to publish; whether `dist` covers the npm and installer needs; the registries' current rules for short-lived publishing credentials; which link or launcher provides `a2m` on each route.
+- Research brief 28 is answered by [research note 21](../../research/21-wheel-and-npm-packaging.md): one `bin` wheel carries the package; eight platform tags; `dist` is not adopted for pip or npm and is weighed again for the standalone installers; npm and crates.io need each name to exist before trusted publishing. Still open: `a2m` from pip on Windows, and the start time of the npm launcher (H-39).
 - The exact entry-point group, and the shape of an extra that names a provider package.
 - Whether a provider written in Rust, outside this repository, is loaded as a process like any other plug-in. Almost certainly yes: one way in.
 - Whether the library facade publishes the `a2m-*` crates. That needs a decision record when embedding needs it.

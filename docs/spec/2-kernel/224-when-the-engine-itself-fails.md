@@ -27,6 +27,8 @@ Other sections cover what happens when the target system misbehaves, a session e
 | The key store or key service is unreachable | Sessions already in memory keep working | No session can be restored or saved; calls needing one wait, then fail | Automatic when it returns |
 | In the web pack, the browser crashes | Reads retry on a new browser. A write that had been sent is `possible_commit` | Continue | The browser is relaunched from the same profile, so the sign-in usually survives |
 | In the web pack, a tab hangs | The step times out with its declared class | Continue | The tab is closed; the browser is recycled after repeated hangs |
+| A provider's code panics in a step | The step fails by name: `unknown_variant` for a step that commits nothing, `possible_commit` for a save, because nothing says whether the write left. The driver's context is not used again | Continue | A save is reconciled on resume |
+| A call from the engine to the control plane is never answered | The engine gives the call up after its time limit. An intent that was not acknowledged sends nothing; a write whose record was not acknowledged is `possible_commit` | Continue | Resume reconciles first |
 | Memory runs short | No new browser work, or other memory-heavy subsystem work, is started; queued runs wait | `busy` with a retry time | In the web pack, the browser is recycled between runs once past a memory limit |
 | The engine process dies | Runs in flight are interrupted | The next client starts a new engine | Reconcile, then resume, as in section 208 |
 | The machine's clock jumps | Leases are unaffected; they are measured on a steady clock | Approvals and tokens are judged by the database's or issuer's clock, with a small tolerance | None needed |

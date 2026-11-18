@@ -81,23 +81,27 @@ pub(crate) fn is_currency_code(code: &str) -> bool {
 }
 
 /// The form in which two labels are compared: form C, with whitespace collapsed.
-fn label_form(label: &str) -> String {
+pub(crate) fn label_form(label: &str) -> String {
     text::collapse_space(&text::nfc(label))
 }
 
 /// The stored code for `given`, which may be a code or a label.
+///
+/// A text that is one choice's code and another choice's label stands for
+/// two choices, and stops: read back after a write, it could be the value
+/// that was meant or the one that was there before. The checker refuses
+/// such a code list when the expression is compiled; this is the same rule
+/// where the value is read, for a list that was not compiled here.
 fn code_for(given: &str, codes: &Value) -> Result<String, Fault> {
     const NO_SUCH_CHOICE: Fault = Fault::unparsable("the text is not one of the field's choices");
+    const TWO_CHOICES: Fault = Fault::unparsable("the text stands for two of the field's choices");
     let codes = codes.as_record().ok_or(BAD_RULE)?;
-    if codes.contains(given) {
-        return Ok(given.to_owned());
-    }
     let wanted = label_form(given);
-    let mut found = None;
+    let mut found = codes.contains(given).then_some(given);
     for (code, label) in codes.iter() {
-        if label_form(rule_text(label)?) == wanted {
+        if label_form(rule_text(label)?) == wanted && found != Some(code) {
             if found.is_some() {
-                return Err(Fault::unparsable("the text is the label of two choices"));
+                return Err(TWO_CHOICES);
             }
             found = Some(code);
         }
@@ -106,7 +110,7 @@ fn code_for(given: &str, codes: &Value) -> Result<String, Fault> {
 }
 
 fn bool_from_display(given: &str, true_text: &str, false_text: &str) -> Result<bool, Fault> {
-    let form = |label: &str| text::lower(&label_form(label));
+    let form = |label: &str| text::fold(&label_form(label));
     let given = form(given);
     if given == form(true_text) {
         Ok(true)
@@ -308,7 +312,7 @@ pub(crate) fn call(id: FnId, args: &[&Value]) -> Result<Value, Fault> {
             };
             Value::Text(match rule_text(arg(1)?)? {
                 CASE_SENSITIVE => spaced,
-                CASE_INSENSITIVE => text::lower(&spaced),
+                CASE_INSENSITIVE => text::fold(&spaced),
                 _ => return Err(BAD_RULE),
             })
         }
@@ -441,5 +445,28 @@ pub(crate) fn check_rule_text(param: crate::library::Param, literal: &str) -> Re
         P::Currency if is_currency_code(literal) => Ok(()),
         P::Currency => Err("a currency is a three-letter code in capitals".to_owned()),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Value, Values};
+
+    use super::code_for;
+    use crate::error::VALUE_UNPARSABLE;
+
+    /// The checker refuses such a list; the same rule holds where the value
+    /// is read, for a list the checker never saw.
+    #[test]
+    fn a_text_that_is_one_choices_code_and_anothers_label_stops_where_it_is_read() {
+        let codes = Value::Record(Values::new().with("A", "B").with("B", "C"));
+        assert_eq!(code_for("B", &codes).unwrap_err().code, VALUE_UNPARSABLE);
+        assert_eq!(code_for("A", &codes).unwrap(), "A");
+        assert_eq!(code_for("C", &codes).unwrap(), "B");
+        // A code that is its own label is one choice.
+        let own = Value::Record(Values::new().with("A", "A").with("B", "Bee"));
+        assert_eq!(code_for("A", &own).unwrap(), "A");
+        assert_eq!(code_for(" Bee", &own).unwrap(), "B");
+        assert_eq!(code_for("Z", &own).unwrap_err().code, VALUE_UNPARSABLE);
     }
 }

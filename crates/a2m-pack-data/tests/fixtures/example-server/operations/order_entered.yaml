@@ -1,0 +1,14 @@
+operation: example_order_entered
+title: Read an order's entered
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: sql
+    statement: order_entered
+description: >
+  Reads when one order was entered, a moment the store keeps with no zone.
+  Prefer example_order_submitted for a moment with its zone.

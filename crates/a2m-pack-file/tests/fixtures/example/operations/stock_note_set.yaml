@@ -1,0 +1,21 @@
+operation: example_stock_note_set
+title: Set the note of an item
+effect: write
+key: item_code
+commit_points: 1
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1002"}
+  note: {type: note, description: "A note about the item"}
+outputs:
+  note: {type: note}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: stock
+    record: stock
+    key: {item_code: input.item_code}
+    fields: {note: input.note}
+    read_back: {record: stock}
+description: >
+  Sets the note of one item in the stock file.

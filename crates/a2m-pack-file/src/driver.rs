@@ -3,9 +3,10 @@
 //! `set` builds the new bytes and proves nothing else changed; `save`
 //! replaces the file in one step; `read` gives the values found.
 //!
-//! The driver resolves no path. The surface's folder and every file in it
-//! come from the roots the pack was handed when it registered, through the
-//! one check that makes a `CheckedPath`.
+//! The driver resolves no path. The surface's folder comes from the roots
+//! the pack was handed when it registered, through the one check that makes
+//! a `CheckedPath`; a file is one name in that folder, and is the regular
+//! file under that name itself, never what a link at the name points to.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,20 +16,22 @@ use a2m_core::{
 };
 use a2m_expr::Normalizer;
 use a2m_provider::{
-    Access, BoxFuture, CheckedPath, Cleanup, Driver, DriverHealth, Observed, PrepareContext,
-    Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
+    PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
-use crate::edit::{self, Meant, Patch};
+use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
-    BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST, Format,
-    INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec, TRUNCATED, field_arg,
-    key_arg,
+    BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST,
+    FieldSpec, Format, INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec,
+    TRUNCATED, field_arg, key_arg,
 };
 use crate::open::{self, Content, OpenFile, RowAt, Table};
+use crate::place::{Folder, Named};
 use crate::save::{self, SaveJob};
 
 /// What the pack may read: the limits of `packs.file`.
@@ -106,7 +109,7 @@ struct Found {
 /// The file a binding is working on.
 struct Current {
     document: String,
-    path: CheckedPath,
+    path: Named,
     open: OpenFile,
     found: Option<Found>,
     /// The new bytes, once `set` has built and checked them.
@@ -117,12 +120,49 @@ struct Current {
 
 /// What `prepare` acquired.
 struct State {
-    folder: CheckedPath,
+    folder: Folder,
     documents: BTreeMap<String, Loaded>,
-    run: String,
+    /// What the run may do: a save is refused where nothing may be written.
+    posture: Posture,
     current: Option<Current>,
-    temporary: Vec<CheckedPath>,
 }
+
+/// How a step is done, for its trace record: the format of the file and
+/// the part of the work the step is, never a value.
+fn means_of(spec: &StepSpec, format: Option<Format>) -> Vec<Detail> {
+    let mut means = vec![Detail::new(
+        "format",
+        format.map_or("unknown", Format::as_str),
+    )];
+    let (name, value) = match spec {
+        StepSpec::Open { for_write } => ("open_for", if *for_write { "write" } else { "read" }),
+        StepSpec::Locate { expect, .. } => (
+            "expect",
+            match expect {
+                Expect::Present => "present",
+                Expect::Absent => "absent",
+                Expect::All => "all",
+            },
+        ),
+        StepSpec::Set { change, .. } => (
+            "change",
+            match change {
+                Change::Update => "update",
+                Change::Create => "create",
+                Change::Delete => "delete",
+            },
+        ),
+        StepSpec::Save => ("save", "temporary_file_then_rename"),
+        StepSpec::Confirm => ("confirm", "digest"),
+        StepSpec::One { .. } => ("read", "one"),
+        StepSpec::List { .. } => ("read", "list"),
+    };
+    means.push(Detail::new(name, value));
+    means
+}
+
+/// The root whose folder is the caller's project folder.
+const PROJECT_ROOT: &str = "project";
 
 /// The fields a `file` surface adds beside its folder.
 #[derive(Debug, Default, Deserialize)]
@@ -291,19 +331,15 @@ fn delimiter_of(spec: &DocumentSpec) -> u8 {
         .unwrap_or(b',')
 }
 
-/// The token of a temporary file's name: sixteen characters from the
-/// digest of the record's idempotency token, so that the name is fixed for
-/// the record and holds nothing a path could misread.
-fn token(stamp: &str) -> String {
-    Digest::of(stamp.as_bytes())
-        .to_string()
-        .chars()
-        .take(16)
-        .collect()
-}
-
 impl FileDriver {
-    fn folder(&self, surface: &SurfaceRef) -> Result<CheckedPath, StepFailure> {
+    /// The surface's folder. In the root `project` it is a folder of the
+    /// caller's project: the project folder of the request that started the
+    /// run, which the run's checked paths hold, and never the pack's root of
+    /// that name, which is the folder the engine was started in. A run with
+    /// no project folder stops by name. The manifest declares that the pack
+    /// reads the project and does not write it, so such a folder is for
+    /// reading alone.
+    fn folder(&self, surface: &SurfaceRef, paths: &CheckedPaths) -> Result<Folder, StepFailure> {
         let payload = &surface.surface.payload;
         let fields: SurfaceFields = if payload.is_none() {
             SurfaceFields::default()
@@ -315,18 +351,36 @@ impl FileDriver {
         let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
             .map_err(StepFailure::not_sent)?;
         let address = surface.surface.address.as_str();
+        if root.as_str() == PROJECT_ROOT {
+            let project = paths.project_folder().map_err(StepFailure::not_sent)?;
+            let folder = if address == "." {
+                project.clone()
+            } else {
+                project.join(address).map_err(StepFailure::not_sent)?
+            };
+            return Ok(Folder::reading(folder, project));
+        }
+        // A root may stand for the project folder of each request (decision
+        // 0193): it is resolved in this run's project folder, with every
+        // refusal of a root, and never in the folder the engine was started
+        // in. A run with no project folder stops by name.
         let under = |access| {
             if address == "." {
-                self.roots.folder(&root, access)
+                self.roots.folder_in(&root, access, paths)
             } else {
-                self.roots.check(&root, address, access)
+                self.roots.check_in(&root, address, access, paths)
             }
         };
         // A root the pack may write gives a folder it may write; a root it
         // may only read gives one it may only read.
-        under(Access::Write)
+        let folder = under(Access::Write)
             .or_else(|_| under(Access::Read))
-            .map_err(StepFailure::not_sent)
+            .map_err(StepFailure::not_sent)?;
+        let root = self
+            .roots
+            .folder_in(&root, Access::Read, paths)
+            .map_err(StepFailure::not_sent)?;
+        Ok(Folder::new(folder, &root))
     }
 
     async fn open(
@@ -340,23 +394,28 @@ impl FileDriver {
             .documents
             .get(document)
             .ok_or_else(|| plan_unreadable("a step names a document the surface does not have"))?;
-        let path = state
-            .folder
-            .join(&loaded.spec.file)
-            .map_err(StepFailure::not_sent)?;
-        if for_write
-            && let Some(sibling) = &loaded.spec.lock_sibling
-            && state
-                .folder
-                .join(sibling)
-                .map_err(StepFailure::not_sent)?
-                .exists()
-        {
-            return Err(StepFailure::not_sent(open::locked()));
+        if for_write {
+            // What the compiler refuses, the driver refuses too.
+            may_be_written(&loaded.spec)?;
         }
         let max_bytes = self.limits.max_bytes;
-        let reading = path.clone();
-        let bytes = tokio::task::spawn_blocking(move || open::read_file(&reading, max_bytes))
+        let folder = state.folder.clone();
+        let name = loaded.spec.file.clone();
+        let sibling = loaded.spec.lock_sibling.clone().filter(|_| for_write);
+        let read = move || {
+            let path = folder.file(&name)?;
+            if for_write {
+                folder.reached_by_no_link()?;
+            }
+            if let Some(sibling) = sibling
+                && folder.holds(&sibling)?
+            {
+                return Err(StepFailure::not_sent(open::locked()));
+            }
+            let bytes = open::read_file(&path, max_bytes)?;
+            Ok((path, bytes))
+        };
+        let (path, bytes) = tokio::task::spawn_blocking(read)
             .await
             .map_err(|_| StepFailure::not_sent(open::unavailable("could not be read")))??;
         let opened = open::parse(bytes, &loaded.spec, &self.limits.parse)?;
@@ -375,6 +434,22 @@ impl FileDriver {
             for_reconcile: Values::new().with(FILE_DIGEST, digest.to_string()),
             ..Observed::default()
         })
+    }
+}
+
+/// Whether a write to the document's file may begin: the document says
+/// whether an application may hold the file open, and, where one may, names
+/// the sign that it does. A plan that lacks either was not compiled by this
+/// pack's rules, and its write is refused here as it is there.
+fn may_be_written(spec: &DocumentSpec) -> Result<(), StepFailure> {
+    match (spec.may_be_open, &spec.lock_sibling) {
+        (None, _) => Err(plan_unreadable(
+            "a write to a document that does not say whether an application may hold its file open",
+        )),
+        (Some(true), None) => Err(plan_unreadable(
+            "a write to a document whose file may be held open, with no lock signal declared",
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -481,12 +556,34 @@ fn read_list(
     }
     let limit = limit as usize;
     let rows = (0..found.table.rows.len().min(limit))
-        .map(|row| values_of(loaded, record, &found.table, row, &current.open).map(Value::Record))
-        .collect::<Result<Vec<Value>, StepFailure>>()?;
+        .map(|row| values_of(loaded, record, &found.table, row, &current.open))
+        .collect::<Result<Vec<Values>, StepFailure>>()?;
+    // Each field also as one list of its values in the file's order: what
+    // an operation's list outputs are read from, since an output is one
+    // value or a list of values and never a record. A field named `rows`
+    // or `truncated` is the field's list.
+    let lists: Vec<(String, Value)> = record
+        .fields
+        .iter()
+        .map(|field| {
+            let list = rows
+                .iter()
+                .map(|row| row.get(&field.name).cloned().unwrap_or(Value::Null))
+                .collect();
+            (field.name.clone(), Value::List(list))
+        })
+        .collect();
+    let mut values = Values::new()
+        .with(
+            ROWS,
+            Value::List(rows.into_iter().map(Value::Record).collect()),
+        )
+        .with(TRUNCATED, found.table.rows.len() > limit);
+    for (name, list) in lists {
+        values.insert(name, list);
+    }
     Ok(Observed {
-        values: Values::new()
-            .with(ROWS, Value::List(rows))
-            .with(TRUNCATED, found.table.rows.len() > limit),
+        values,
         ..Observed::default()
     })
 }
@@ -517,6 +614,41 @@ fn intended_values(
         }
     }
     Ok(values)
+}
+
+/// Refuses text that a spreadsheet program would run as a formula when a
+/// person opens the delimited file. The value is never changed to make it
+/// safe: what is read back must be what was written. A field whose document
+/// says `may_begin_formula: true` may begin with a sign; nothing may begin
+/// with a tab or a line break. The message names the field and never the
+/// value.
+fn formula_guard(field: &FieldSpec, value: &Value, text: &str) -> Result<(), StepFailure> {
+    // A number is spelled by the pack itself: digits, a mark, and a sign.
+    if matches!(value, Value::Int(_) | Value::Decimal(_)) {
+        return Ok(());
+    }
+    let refused = |how: &str, next: &str| {
+        Err(StepFailure::not_sent(codes::failure(
+            codes::VALUE_BEGINS_FORMULA,
+            format!(
+                "The value for the field `{}` begins with {how}, so a spreadsheet program that opens the file would not keep it as text. Nothing was written.",
+                field.name
+            ),
+            next,
+        )))
+    };
+    match edit::leads_as_formula(text) {
+        None => Ok(()),
+        Some(Leads::Sign) if field.may_begin_formula => Ok(()),
+        Some(Leads::Sign) => refused(
+            "`=`, `+`, `-`, or `@`",
+            "Give a value that begins otherwise. If the column is free text that may begin so, and no spreadsheet program opens the file, mark the field `may_begin_formula: true` in the document.",
+        ),
+        Some(Leads::Control) => refused(
+            "a tab or a line break",
+            "Give a value that begins with neither.",
+        ),
+    }
 }
 
 #[allow(clippy::too_many_lines)] // one change after another, each a few lines; the order is the algorithm
@@ -589,6 +721,7 @@ fn set(
                         cells.push((line, *column));
                     }
                     let text = edit::spell(intended, &typing.plan)?.unwrap_or_default();
+                    formula_guard(field, intended, &text)?;
                     edit::csv_field(&text, existing.first() == Some(&b'"'), delimiter)
                 };
                 patches.push(Patch::over(span, literal));
@@ -665,6 +798,7 @@ fn set(
                             table.columns.get(*position),
                             edit::spell(value, &typing.plan)?,
                         ) {
+                            formula_guard(field, value, &text)?;
                             texts.push((*column, text));
                         }
                     }
@@ -741,8 +875,24 @@ impl FileDriver {
         &self,
         state: &mut State,
         document: &str,
-        input: &StepInput<'_>,
+        step: &Step,
     ) -> Result<Observed, StepFailure> {
+        // The driver's own guard. Live, the step the plan marks `commits`.
+        // In a sandbox with test records, that one step alone: the engine
+        // cannot see what a step not marked does there. Nowhere else.
+        let allowed = match state.posture {
+            Posture::Live => step.commits,
+            Posture::Sandbox { test_records } => test_records && step.commits,
+            _ => false,
+        };
+        if !allowed {
+            return Err(StepFailure::not_sent(Failure::new(
+                FailureClass::Policy,
+                a2m_provider::codes::READ_ONLY_POSTURE,
+                "A save was asked for where nothing may be written, or by a step that is not marked as the commit point, so the file was not replaced.",
+                "Run the operation live, or against a declared test record, with the save as the binding's commit point.",
+            )));
+        }
         let loaded = state
             .documents
             .get(document)
@@ -755,7 +905,8 @@ impl FileDriver {
         let (Some(bytes), Some(intended)) = (current.pending.take(), current.intended) else {
             return Err(out_of_order("a save with nothing set"));
         };
-        if current.path.access() != Access::Write {
+        may_be_written(&loaded.spec)?;
+        if current.path.folder().access() != Access::Write {
             return Err(StepFailure::not_sent(Failure::new(
                 FailureClass::Policy,
                 a2m_provider::codes::EFFECT_NOT_DECLARED,
@@ -763,20 +914,9 @@ impl FileDriver {
                 "Put the file in a root named `files` that the settings make writable.",
             )));
         }
-        let stamp = input.stamp.unwrap_or(&state.run);
-        let temporary = state
-            .folder
-            .join(&format!("{}.a2m-{}.tmp", loaded.spec.file, token(stamp)))
-            .map_err(StepFailure::not_sent)?;
-        let lock_signal = match &loaded.spec.lock_sibling {
-            Some(sibling) => Some(state.folder.join(sibling).map_err(StepFailure::not_sent)?),
-            None => None,
-        };
-        state.temporary.push(temporary.clone());
         let job = SaveJob {
             target: current.path.clone(),
-            temporary,
-            lock_signal,
+            lock_signal: loaded.spec.lock_sibling.clone(),
             bytes,
             before: current.open.digest,
             intended,
@@ -801,7 +941,7 @@ impl FileDriver {
             return Err(out_of_order("a confirm with nothing saved"));
         };
         let (path, max_bytes) = (current.path.clone(), self.limits.max_bytes);
-        let now = tokio::task::spawn_blocking(move || save::digest_at(&path, max_bytes))
+        let now = tokio::task::spawn_blocking(move || path.digest(max_bytes))
             .await
             .ok()
             .flatten();
@@ -830,7 +970,7 @@ impl Driver for FileDriver {
             if cx.surface.surface.kind != SURFACE_KIND {
                 return Err(plan_unreadable("the surface is not of the kind `file`"));
             }
-            let folder = self.folder(cx.surface)?;
+            let folder = self.folder(cx.surface, cx.paths)?;
             let section = cx.plan.packs.iter().find(|section| {
                 section.pack == PACK
                     && section.kind == DOCUMENT_KIND
@@ -851,9 +991,8 @@ impl Driver for FileDriver {
             Ok(Prepared::new(State {
                 folder,
                 documents,
-                run: cx.run.to_string(),
+                posture: cx.posture,
                 current: None,
-                temporary: Vec::new(),
             }))
         })
     }
@@ -880,10 +1019,17 @@ impl Driver for FileDriver {
                 .as_ref()
                 .map(|refers| refers.entry.as_str())
                 .ok_or_else(|| plan_unreadable("a step names no document"))?;
+            let means = means_of(
+                &spec,
+                state
+                    .documents
+                    .get(document)
+                    .map(|loaded| loaded.spec.format),
+            );
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
-            match spec {
+            let result = match spec {
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
-                StepSpec::Save => done(self.save(state, document, input).await?),
+                StepSpec::Save => done(self.save(state, document, step).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
                 other => {
                     let loaded = state.documents.get(document).ok_or_else(|| {
@@ -910,7 +1056,27 @@ impl Driver for FileDriver {
                         }
                     }
                 }
-            }
+            };
+            // How the step was done goes to its trace record: the means,
+            // which the signature covers, and what was measured, which it
+            // does not.
+            let measured = state
+                .current
+                .as_ref()
+                .filter(|current| current.document == document)
+                .map(|current| vec![Detail::new("bytes", current.open.bytes.len().to_string())])
+                .unwrap_or_default();
+            let acting = Capture::acting(&Acting { means, measured });
+            result.map(|outcome| match outcome {
+                StepOutcome::Done(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Done(observed)
+                }
+                StepOutcome::Absent(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Absent(observed)
+                }
+            })
         })
     }
 
@@ -925,18 +1091,65 @@ impl Driver for FileDriver {
 
     fn release<'a>(&'a self, prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
         Box::pin(async move {
-            // Only what this driver made: the temporary files it named.
-            if let Ok(state) = prepared.into_state::<State>() {
-                let _ = tokio::task::spawn_blocking(move || {
-                    for temporary in &state.temporary {
-                        if temporary.exists() {
-                            let _ = std::fs::remove_file(temporary.as_path());
-                        }
-                    }
-                })
-                .await;
-            }
+            // A save's temporary file is the contract's, and is removed by
+            // the save itself, while its name still holds the file it made:
+            // nothing is left for release to remove.
+            drop(prepared);
             Cleanup::complete()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Layout;
+
+    fn document(may_be_open: Option<bool>, lock_sibling: Option<&str>) -> DocumentSpec {
+        DocumentSpec {
+            surface: "price_files".to_owned(),
+            file: "stock.csv".to_owned(),
+            format: Format::Delimited,
+            delimiter: None,
+            line_ending: None,
+            layout: Layout::default(),
+            may_be_open,
+            lock_sibling: lock_sibling.map(str::to_owned),
+            records: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_write_to_a_document_that_does_not_say_whether_it_may_be_open_does_not_run() {
+        // The compiler refuses both; a plan that holds either all the same
+        // is refused by the driver before the file is read.
+        for spec in [document(None, None), document(None, Some("stock.csv.lock"))] {
+            let failure = may_be_written(&spec).unwrap_err();
+            assert_eq!(failure.failure.code(), &codes::PAYLOAD_UNREADABLE);
+            assert_eq!(failure.sent, a2m_provider::Sent::NotSent);
+        }
+        assert!(may_be_written(&document(Some(true), None)).is_err());
+        assert!(may_be_written(&document(Some(false), None)).is_ok());
+        assert!(may_be_written(&document(Some(true), Some("stock.csv.lock"))).is_ok());
+    }
+
+    #[test]
+    fn a_number_the_pack_spells_is_not_taken_for_a_formula() {
+        let field = |may_begin_formula| FieldSpec {
+            name: "note".to_owned(),
+            header: Some("note".to_owned()),
+            path: Vec::new(),
+            field_type: 0,
+            writable: true,
+            formula: false,
+            may_begin_formula,
+        };
+        assert!(formula_guard(&field(false), &Value::Int(-5), "-5").is_ok());
+        assert!(formula_guard(&field(false), &Value::from("-5"), "-5").is_err());
+        assert!(formula_guard(&field(true), &Value::from("-5"), "-5").is_ok());
+        // A declaration lets a sign through, and never a tab or a line break.
+        let stopped = formula_guard(&field(true), &Value::from("\t=1"), "\t=1").unwrap_err();
+        assert_eq!(stopped.failure.code(), &codes::VALUE_BEGINS_FORMULA);
+        assert!(!stopped.failure.message().contains("=1"));
     }
 }

@@ -741,10 +741,7 @@ impl Inner {
             )
             .await?;
         if let Some(expired) = moved {
-            let entry = self
-                .entry_of(expired.id)
-                .unwrap_or_else(|| Arc::new(AuthEntry::new(expired.provider.clone())));
-            self.perform(&expired, &entry, Work::Forget).await;
+            self.forget(&expired, expired.epoch).await;
         }
         Ok(())
     }
@@ -855,13 +852,35 @@ impl Inner {
             )
             .await?;
         if moved.is_none() {
-            // The session was ended while the work ran: nothing is kept.
-            let entry = self
-                .entry_of(row.id)
-                .unwrap_or_else(|| Arc::new(AuthEntry::new(row.provider.clone())));
-            self.perform(row, &entry, Work::Forget).await;
+            // The session moved on while the work ran, so what the work
+            // holds was never made the session's. It is dropped by the
+            // epoch it was held at, which leaves newer credentials alone.
+            // One case keeps it: other work made the session valid at that
+            // very epoch meanwhile, and the credentials held there now are
+            // the session's own.
+            let in_force = self.store.get(row.id).await?.is_some_and(|now| {
+                now.epoch == epoch
+                    && matches!(
+                        now.state,
+                        SessionState::Valid | SessionState::Suspect | SessionState::Renewing
+                    )
+            });
+            if !in_force {
+                self.forget(row, epoch).await;
+            }
         }
         Ok(())
+    }
+
+    /// Has the home runner drop the credentials it holds for the session at
+    /// `epoch` or an earlier one.
+    async fn forget(&self, row: &SessionRow, epoch: u64) {
+        let entry = self
+            .entry_of(row.id)
+            .unwrap_or_else(|| Arc::new(AuthEntry::new(row.provider.clone())));
+        let mut ended = row.clone();
+        ended.epoch = epoch;
+        self.perform(&ended, &entry, Work::Forget).await;
     }
 
     fn spawn_sign_in(
@@ -1107,7 +1126,15 @@ impl Inner {
         Ok(())
     }
 
-    async fn grant(&self, row: &SessionRow, req: &LeaseRequest) -> Result<SessionLease, Failure> {
+    /// Records a lease and makes it. `None` when the session was renewed or
+    /// ended after `row` was read: no lease is recorded or given for
+    /// credentials that are no longer the session's, and the call looks
+    /// again.
+    async fn grant(
+        &self,
+        row: &SessionRow,
+        req: &LeaseRequest,
+    ) -> Result<Option<SessionLease>, Failure> {
         let now = self.now();
         let event = SessionEvent {
             session: row.id,
@@ -1123,7 +1150,9 @@ impl Inner {
             decided: Some(req.decided),
         };
         let used = (req.purpose == Purpose::Run).then_some(now);
-        self.store.note(row.id, used, None, false, event).await?;
+        if !self.store.note(used, None, false, event).await? {
+            return Ok(None);
+        }
         let grant = SessionGrant {
             session: row.id,
             epoch: row.epoch,
@@ -1136,10 +1165,10 @@ impl Inner {
             purpose: req.purpose,
             profile: row.profile.clone(),
         };
-        Ok(match &self.local {
+        Ok(Some(match &self.local {
             Some(worker) => worker.bind(grant),
             None => SessionLease::new(grant, None),
-        })
+        }))
     }
 
     async fn lease(self: &Arc<Self>, req: LeaseRequest) -> Result<SessionLease, Failure> {
@@ -1161,12 +1190,18 @@ impl Inner {
             let probing = req.purpose == Purpose::Probe
                 && matches!(row.state, SessionState::Suspect | SessionState::Renewing);
             if probing {
-                return self.grant(&row, &req).await;
+                match self.grant(&row, &req).await? {
+                    Some(lease) => return Ok(lease),
+                    None => continue,
+                }
             }
             match call_rule(row.state) {
                 CallRule::Run => {
                     if req.purpose == Purpose::Probe {
-                        return self.grant(&row, &req).await;
+                        match self.grant(&row, &req).await? {
+                            Some(lease) => return Ok(lease),
+                            None => continue,
+                        }
                     }
                     let max_age = req
                         .entry
@@ -1235,7 +1270,9 @@ impl Inner {
                         self.restore(&row, &req.entry).await?;
                         continue;
                     }
-                    return self.grant(&row, &req).await;
+                    if let Some(lease) = self.grant(&row, &req).await? {
+                        return Ok(lease);
+                    }
                 }
                 CallRule::Wait => {
                     let refused = row.wants == Some(PersonReason::CredentialRefused);
@@ -1328,10 +1365,21 @@ impl Inner {
                     run: None,
                     decided: None,
                 };
-                self.store.note(row.id, None, None, false, event).await
+                // The store orders the restore against every change of the
+                // session: it is recorded only while the epoch is the one
+                // the state was saved at. When the session was renewed or
+                // ended while the restore ran, a revoke above all, what the
+                // restore brought back is dropped again.
+                if !self.store.note(None, None, false, event).await? {
+                    self.forget(row, row.epoch).await;
+                }
+                Ok(())
             }
             // The key store does not answer: the state may open later.
             WorkOutcome::Failed(failure) if failure.class() == FailureClass::Busy => Err(failure),
+            // The home runner knows the session ended or was renewed while
+            // the restore was on its way: the call looks at the record again.
+            WorkOutcome::Ended => Ok(()),
             _ => self.expire(row, "state_lost").await,
         }
     }
@@ -1426,7 +1474,13 @@ impl Inner {
                 run: None,
                 decided: None,
             };
-            return self.store.note(row.id, None, Some(now), true, event).await;
+            // Nothing is noted when the session was renewed or ended while
+            // the probe ran: the pass was about credentials that are gone.
+            return self
+                .store
+                .note(None, Some(now), true, event)
+                .await
+                .map(|_| ());
         }
         self.count(CHECKS_FAILED);
         let moved = self

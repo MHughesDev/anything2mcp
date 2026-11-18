@@ -31,6 +31,7 @@ mod name;
 mod pack;
 mod path;
 mod registry;
+mod replay;
 mod supervisor;
 
 /// The boxed future every async trait method of this crate returns. It is
@@ -44,8 +45,8 @@ pub use discover::{
 };
 pub use driver::{
     Authority, Capture, ChoiceReason, Deadline, Destinations, Driver, DriverHandle, DriverHealth,
-    Observed, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort, Sent, StepFailure,
-    StepInput, StepOutcome, SurfaceRef,
+    Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort,
+    RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef, recorded_digest,
 };
 pub use manifest::{
     ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,
@@ -56,13 +57,16 @@ pub use manifest::{
 };
 pub use name::{ActionName, DiscovererName, ProviderName, RootName, SubsystemKind};
 pub use pack::{CompilerRegistrations, Pack, PackContext, Registrar};
-pub use path::{Access, CheckedPath, CheckedPaths, Roots};
-pub use registry::{
-    FoundManifest, HostServices, ProviderListing, ProviderSettings, Registry, RegistryBuilder,
-    RegistryProblem, SurfaceKindEntry, current_platform,
+pub use path::{
+    Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, Roots, Temporary, resolved_path,
 };
+pub use registry::{
+    FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
+    RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,
+};
+pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe, LaunchSpec,
     Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, ProgramRef, Ran, ScopedSupervisor,
-    SubsystemId, SubsystemListing, Supervisor, SupervisorLimits,
+    SubsystemId, SubsystemListing, Supervisor, SupervisorLimits, is_engine_variable,
 };

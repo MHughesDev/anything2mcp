@@ -177,6 +177,61 @@ fn a_badly_formed_name_or_file_is_refused_with_the_line() {
         Manifest::parse(&program).unwrap_err().code(),
         &codes::PATH_NOT_ALLOWED
     );
+    // A pack has no folder of its own: a relative program path would be
+    // looked for in the engine's working folder.
+    let relative = manifest("alpha", "request", "").replace(
+        "[effects]",
+        "[effects]\nprocesses = [{ path = \"bin/tool\" }]",
+    );
+    assert_eq!(
+        Manifest::parse(&relative).unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED
+    );
+    let plugin = relative.replace(r#"kind = "pack""#, r#"kind = "plugin""#);
+    assert_ne!(
+        Manifest::parse(&plugin).unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED,
+        "a plug-in may name a program inside its own folder"
+    );
+    // A code that states the kernel's own bookkeeping is not a provider's
+    // to declare, whatever class it gives it.
+    for code in codes::KERNEL_ONLY {
+        let kernels = manifest(
+            "alpha",
+            "request",
+            &format!("\n[[failure_codes]]\nclass = \"busy\"\ncode = \"{code}\"\n"),
+        );
+        assert_eq!(
+            Manifest::parse(&kernels).unwrap_err().code(),
+            &codes::MANIFEST_INVALID,
+            "{code}"
+        );
+    }
+    // A step kind that always commits is one of the mode's step kinds.
+    let commits = manifest("alpha", "request", "").replace(
+        "steps = [\"fetch\", \"send\"]",
+        "steps = [\"fetch\", \"send\"]\ncommit_steps = [\"save\"]",
+    );
+    assert_eq!(
+        Manifest::parse(&commits).unwrap_err().code(),
+        &codes::MANIFEST_INVALID
+    );
+    // A step kind whose absence is authoritative is one of the mode's
+    // step kinds, and never one that always commits.
+    for absence in [
+        "absence_steps = [\"look\"]",
+        "commit_steps = [\"send\"]\nabsence_steps = [\"send\"]",
+    ] {
+        let declares = manifest("alpha", "request", "").replace(
+            "steps = [\"fetch\", \"send\"]",
+            &format!("steps = [\"fetch\", \"send\"]\n{absence}"),
+        );
+        assert_eq!(
+            Manifest::parse(&declares).unwrap_err().code(),
+            &codes::MANIFEST_INVALID,
+            "{absence}"
+        );
+    }
     let level = manifest("alpha", "request", "")
         .replace(r#"max_level = "discovered""#, r#"max_level = "approved""#);
     assert_eq!(
@@ -423,4 +478,89 @@ fn a_pack_setting_that_does_not_fit_its_schema_is_refused() {
             Availability::Misconfigured
         );
     }
+}
+
+#[test]
+fn a_pack_whose_manifest_is_refused_is_named_with_its_problem_and_registers_nothing() {
+    // A code of the contract declared under another class.
+    let refused = format!(
+        "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+        manifest("alpha", "request", "")
+    );
+    let pack = TestPack::with_manifest("alpha", refused);
+    let (registry, problems) = build(&[&pack], ProviderSettings::default());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].provider, Some(name("alpha")));
+    assert_eq!(problems[0].failure.code(), &codes::MANIFEST_INVALID);
+    assert!(
+        problems[0].failure.message().contains("manifest_invalid"),
+        "{:?}",
+        problems[0].failure
+    );
+    assert!(registry.listing().is_empty());
+    let named = registry.refused();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].name.as_deref(), Some("alpha"));
+    assert_eq!(named[0].version.as_deref(), Some("0.1.0"));
+    assert_eq!(named[0].problem, problems[0].failure);
+    assert_eq!(registry.archetype(&mode()), None);
+}
+
+/// Decision 0193, finding P-3: a refused manifest that says the name of a
+/// registered provider is not listed under that name.
+#[test]
+fn a_refused_provider_never_takes_a_registered_providers_name() {
+    let alpha = TestPack::new("alpha");
+    let pretends = TestPack::with_manifest(
+        "alpha",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+            manifest("alpha", "request", "")
+        ),
+    );
+    for packs in [[&alpha, &pretends], [&pretends, &alpha]] {
+        let (registry, problems) = build(&packs, ProviderSettings::default());
+        assert_eq!(registry.listing().len(), 1);
+        assert!(registry.listing()[0].registered);
+        assert_eq!(registry.archetype(&mode()), Some(Archetype::Request));
+        let refused = registry.refused();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].name, None);
+        assert_eq!(refused[0].version, None);
+        // Its problem is listed, and under no provider's name.
+        let of_refused: Vec<_> = problems
+            .iter()
+            .filter(|problem| problem.failure == refused[0].problem)
+            .collect();
+        assert_eq!(of_refused.len(), 1);
+        assert_eq!(of_refused[0].provider, None);
+        assert!(
+            problems
+                .iter()
+                .all(|problem| problem.provider.as_ref() != Some(&name("alpha"))),
+            "{problems:?}"
+        );
+    }
+    // Two refused manifests that say one name: the second is unnamed.
+    let other = TestPack::with_manifest(
+        "beta",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+            manifest("beta", "request", "")
+        ),
+    );
+    let again = TestPack::with_manifest(
+        "beta",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"busy\"\ncode = \"manifest_invalid\"\n",
+            manifest("beta", "request", "")
+        ),
+    );
+    let (registry, _) = build(&[&other, &again], ProviderSettings::default());
+    let names: Vec<_> = registry
+        .refused()
+        .iter()
+        .map(|one| one.name.clone())
+        .collect();
+    assert_eq!(names, [Some("beta".to_owned()), None]);
 }

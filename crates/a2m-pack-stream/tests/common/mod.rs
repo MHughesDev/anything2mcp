@@ -70,14 +70,15 @@ fn host(folder: &Folder, redact: Arc<dyn Redact>) -> HostServices {
     }
 }
 
-/// A registry that holds the stream pack and nothing else.
+/// A registry that holds the stream pack and nothing else, registered as a
+/// test registers it: with the test broker's protocol.
 pub fn registry_with(
     folder: &Folder,
     settings: ProviderSettings,
     redact: Arc<dyn Redact>,
 ) -> Registry {
     let mut builder = RegistryBuilder::new(settings, host(folder, redact));
-    a2m_pack_stream::register(&mut builder);
+    a2m_pack_stream::register_with_test_broker(&mut builder);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     registry
@@ -102,7 +103,7 @@ pub fn compile(registry: &Registry, root: &TargetRoot) -> Result<Compiled, Diagn
     let sources = a2m_files::load(root, set)?;
     // As a draft: the rules about tests of each tool are warnings. The
     // example target of this crate holds no offline fixtures.
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn plan(registry: &Registry) -> Plan {
@@ -144,12 +145,12 @@ pub fn edited(folder: &Folder, file: &str, text: &str) -> TargetRoot {
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, Digest, EffectClass, Environment, Epoch, Failure, OperationName, PrincipalId,
-    RecordKey, RunId, RunState, Sensitivity, TargetName, Timestamp, Value, Values, WorkspaceId,
+    Digest, EffectClass, Environment, Epoch, Failure, OperationName, PrincipalId, RecordKey, RunId,
+    RunState, Sensitivity, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DriverHandle, Posture, PrepareContext,
@@ -222,7 +223,18 @@ impl Scene {
         posture: Posture,
         fence: Option<Fence>,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.handle();
+        self.try_prepare_in(&self.registry, posture, fence).await
+    }
+
+    /// Prepared by the driver of `registry`: another engine's, when it is
+    /// not the scene's own.
+    pub async fn try_prepare_in(
+        &self,
+        registry: &Registry,
+        posture: Posture,
+        fence: Option<Fence>,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = registry.driver(&mode()).unwrap();
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -251,13 +263,7 @@ impl Scene {
 }
 
 pub fn input<'a>(args: &'a Values) -> StepInput<'a> {
-    StepInput {
-        args,
-        record: None,
-        key: None,
-        stamp: None,
-        deadline: Deadline::after(Duration::from_secs(20)),
-    }
+    StepInput::new(args, Deadline::after(Duration::from_secs(20)))
 }
 
 /// Carries out the steps of a list that reads, in order, each with the
@@ -277,6 +283,76 @@ pub async fn read(
         );
     }
     Ok(last.expect("a binding has a step"))
+}
+
+/// What a read returns through the engine: each output the operation
+/// declares, taken by its name from what the last step observed and
+/// normalized by its field type, as the engine's own shaping does. A value
+/// the step gave that no output declares is not returned; an output the
+/// step gave no value for stops the test, as it stops a read in the engine.
+pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    let mut out = Values::new();
+    for output in &operation.outputs {
+        let raw = observed
+            .get(&output.name)
+            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        let value = match output
+            .field_type
+            .and_then(|index| plan.field_types[index.get()].normalizer)
+        {
+            Some(index) => {
+                let normalizer =
+                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
+                // A list output is normalized value by value; the engine
+                // hands a normalizer the whole list (decision 0182).
+                match raw {
+                    Value::List(values) if matches!(output.ty, a2m_core::ValueType::List(_)) => {
+                        Value::List(values.iter().map(one).collect())
+                    }
+                    other => one(other),
+                }
+            }
+            None => raw.clone(),
+        };
+        assert!(
+            value.is_null() || value.has_type(&output.ty),
+            "the output `{}` is not a {}: {value:?}",
+            output.name,
+            output.ty.name()
+        );
+        out.insert(output.name.clone(), value);
+    }
+    out
+}
+
+/// A drafted target folder with the one judgment a drafted read can need
+/// answered as a person who knows the example's messages would: a key the
+/// broker does not name for a retained channel is the order's number. No
+/// read needs the channel's `role`, and no drafted file asks it.
+pub fn answer_keys(root: &Path) {
+    let channels = root.join("channels");
+    for entry in std::fs::read_dir(&channels).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("role:"), "{text}");
+        let answered: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.starts_with("key: {open_question") {
+                    "key:\n  field: \"order_id\"".to_owned()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, answered.join("\n") + "\n").unwrap();
+    }
 }
 
 pub fn done(outcome: StepOutcome) -> Values {
@@ -350,13 +426,21 @@ pub struct Write {
 
 impl Write {
     pub fn input<'a>(&'a self, args: &'a Values, stamp: Option<&'a str>) -> StepInput<'a> {
-        StepInput {
-            args,
-            record: Some(self.record),
-            key: Some(&self.key),
+        StepInput::new(args, Deadline::after(Duration::from_secs(20))).for_record(
+            self.record,
+            Some(&self.key),
             stamp,
-            deadline: Deadline::after(Duration::from_secs(20)),
-        }
+        )
+    }
+
+    /// The input of a step of a record that has no key in the system, such
+    /// as a take: the engine hands such a step no key (decision 0161).
+    pub fn keyless<'a>(&'a self, args: &'a Values) -> StepInput<'a> {
+        StepInput::new(args, Deadline::after(Duration::from_secs(20))).for_record(
+            self.record,
+            None,
+            None,
+        )
     }
 
     pub fn authority(&self) -> Authority<'_> {
@@ -437,23 +521,8 @@ impl Ledger {
                     fence
                 };
                 // The policy engine's stand-in: an approval, used once.
-                let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-                let now = tx.now();
-                tx.tables(Owner::Policy).execute(
-                    "INSERT INTO approvals
-                        (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                     VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                    &[
-                        approval.to_string().into(),
-                        workspace.to_string().into(),
-                        fence.run.to_string().into(),
-                        diff.to_string().into(),
-                        PrincipalId::from_bytes([9; 16]).to_string().into(),
-                        now.into(),
-                    ],
-                )?;
-                tx.ledger()
-                    .begin_writes(&fence, WriteClearance::Approval(approval))?;
+                let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+                tx.ledger().begin_writes(&fence, clearance)?;
                 Ok(fence)
             })
             .await
@@ -509,6 +578,16 @@ impl a2m_core::KeyedDigest for TestKey {
 /// The trace signature of one step that read `values`, as the engine's
 /// trace would hold them.
 pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
+    signature_with(kind, values, None)
+}
+
+/// The same, with how the step was done, as the engine puts a step's
+/// `acting` capture into its trace record.
+pub fn signature_with(
+    kind: &a2m_core::StepKind,
+    values: &Values,
+    acting: Option<a2m_telemetry::Acting>,
+) -> Digest {
     let mut trace = TraceBuilder::new(
         TraceIdentity {
             workspace: WorkspaceId::from_bytes([1; 16]),
@@ -532,7 +611,7 @@ pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
         begins: None,
         took: Duration::from_millis(3),
         locating: None,
-        acting: None,
+        acting,
         values: values
             .iter()
             .map(|(name, value)| {
@@ -543,4 +622,59 @@ pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
         artifacts: Vec::new(),
     });
     trace.finish().unwrap().signature
+}
+
+// ---- the engine's answer about another record (decision 0193) ----
+
+/// The pack's test control of the engine's answer to "does another record
+/// hold this value": one fixed answer, and every question it was asked.
+pub struct Answering {
+    answer: a2m_provider::RecordedElsewhere,
+    pub asked: std::sync::Mutex<Vec<(String, Digest)>>,
+}
+
+impl Answering {
+    pub fn new(answer: a2m_provider::RecordedElsewhere) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            asked: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl a2m_provider::OtherRecords for Answering {
+    fn holding<'a>(
+        &'a self,
+        name: &'a str,
+        value: Digest,
+    ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        self.asked.lock().unwrap().push((name.to_owned(), value));
+        let answer = self.answer;
+        Box::pin(async move { answer })
+    }
+}
+
+/// The first two steps of a take, for `write`'s record, its wait through
+/// the engine's answerer `others`, as the engine acts a step of a record.
+pub async fn take_asking(
+    handle: &DriverHandle,
+    prepared: &mut Prepared,
+    take: &[a2m_core::Step],
+    write: &Write,
+    others: Arc<Answering>,
+) -> Result<StepOutcome, StepFailure> {
+    let none = Values::new();
+    handle
+        .act(prepared, &take[0], &input(&none), Authority::Read)
+        .await?;
+    handle
+        .act_asking(
+            prepared,
+            &take[1],
+            &write.keyless(&none),
+            Authority::Read,
+            &Values::new(),
+            others,
+        )
+        .await
 }

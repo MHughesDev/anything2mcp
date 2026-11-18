@@ -22,6 +22,14 @@ codes! {
     PATH_NOT_ALLOWED = Input, "path_not_allowed";
     /// A file under a checked path could not be read or written.
     FILE_UNAVAILABLE = Input, "file_unavailable";
+    /// A file, or the folder that holds it, is not there.
+    PATH_MISSING = Input, "path_missing";
+    /// The engine's user may not write the file, or the file system is read
+    /// only.
+    PATH_DENIED = Input, "path_denied";
+    /// The run has no project folder, and a file of the project was asked
+    /// for.
+    PROJECT_FOLDER_MISSING = Input, "project_folder_missing";
     /// Two ready providers drive one mode and no setting names one.
     PROVIDER_AMBIGUOUS = Input, "provider_ambiguous";
     /// Nobody registered the mode.
@@ -46,6 +54,8 @@ codes! {
     INTENT_MISSING = Policy, "intent_missing";
     /// A step that commits was asked for where nothing may be written.
     READ_ONLY_POSTURE = Policy, "read_only_posture";
+    /// A launch names a variable that belongs to the engine.
+    ENGINE_VARIABLE_REFUSED = Policy, "engine_variable_refused";
     /// The provider is not ready here, now.
     PROVIDER_UNAVAILABLE = Busy, "provider_unavailable";
     /// A subsystem's queue is full.
@@ -58,6 +68,10 @@ codes! {
     SHUTTING_DOWN = Busy, "shutting_down";
     /// A program could not be started by the operating system.
     START_FAILED = Busy, "start_failed";
+    /// Another program holds the file, or a lock on it.
+    PATH_LOCKED = Busy, "path_locked";
+    /// The disk, or the user's share of it, is full.
+    DISK_FULL = Busy, "disk_full";
     /// A subsystem failed its handshake.
     HANDSHAKE_FAILED = UnknownVariant, "handshake_failed";
     /// A driver returned a failure code nothing declares.
@@ -66,6 +80,8 @@ codes! {
     UNEXPECTED_ABSENT = UnknownVariant, "unexpected_absent";
     /// A step of a kind its mode did not declare.
     STEP_KIND_UNKNOWN = UnknownVariant, "step_kind_unknown";
+    /// An offline test's fixture records no answer for a step.
+    FIXTURE_NO_ANSWER = UnknownVariant, "fixture_no_answer";
     /// A committing step returned values for reconcile, which is too late.
     RECONCILE_TOO_LATE = UnknownVariant, "reconcile_too_late";
     /// A discoverer made a finding of a kind or level it did not declare.
@@ -76,6 +92,30 @@ codes! {
     TIMEOUT = Transient, "timeout";
     /// A write was sent and nothing says whether it happened.
     NO_CONFIRMATION = PossibleCommit, "no_confirmation";
+}
+
+/// Codes that state the kernel's own bookkeeping about a run, a lease, or
+/// an approval, and never anything a system answered. The engine, the
+/// ledger, and the scheduler above and below this contract produce them,
+/// and some of their logic goes by the code alone. No provider may declare
+/// one, and the handle lets no driver return one, whatever class it gives.
+///
+/// The list is kept here because this contract is where a provider's codes
+/// are checked, and it cannot see the crates above it.
+pub const KERNEL_ONLY: &[&str] = &[
+    "blocked_by_parent",
+    "runner_lost",
+    "cannot_reconcile",
+    "reconcile_required",
+    "approval_missing",
+    "approval_stale",
+    "lease_superseded",
+];
+
+/// Whether the code is one of [`KERNEL_ONLY`].
+#[must_use]
+pub fn is_kernel_only(code: &FailureCode) -> bool {
+    KERNEL_ONLY.contains(&code.as_str())
 }
 
 pub(crate) fn failure(

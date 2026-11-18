@@ -752,3 +752,66 @@ async fn connections_can_be_dropped_and_a_reset_restores_the_seed_data() -> Outc
     assert!(fresh.received().is_empty());
     Ok(())
 }
+
+/// The broker can carry a write out and then lose or garble its answer, can answer a
+/// look with nothing while it holds messages, and can hand over more than was asked.
+#[tokio::test]
+async fn an_answer_can_be_lost_or_wrong_after_the_work_was_done() -> Outcome {
+    let broker = TestBroker::start().await?;
+
+    // Acknowledged, and the connection dropped before the answer.
+    let mut consumer = broker.client("consumer").await?;
+    let sub = consumer.subscribe(WORK).await?.subscription;
+    let first = consumer.fetch(&sub, 1, NOW).await?.remove(0);
+    broker.set_fault(Fault::once(FaultKind::AckThenDrop));
+    let lost = consumer.ack(&sub, &first.delivery).await;
+    assert!(matches!(lost, Err(ClientError::Closed)), "got {lost:?}");
+    let acknowledged = broker.acknowledgements();
+    assert_eq!(acknowledged.len(), 1);
+    assert_eq!(acknowledged[0].message, first.message.id);
+    assert_eq!(broker.queue(WORK).len(), 1);
+
+    // Acknowledged, and answered with a code the protocol does not have.
+    let mut consumer = broker.client("consumer").await?;
+    let sub = consumer.subscribe(WORK).await?.subscription;
+    let second = consumer.fetch(&sub, 1, NOW).await?.remove(0);
+    broker.set_fault(Fault::once(FaultKind::AckThenRefuse {
+        code: "replica_timeout".to_owned(),
+    }));
+    let odd = consumer.ack(&sub, &second.delivery).await;
+    assert_eq!(refused(odd), "replica_timeout");
+    assert_eq!(broker.acknowledgements().len(), 2);
+    assert!(broker.queue(WORK).is_empty());
+
+    // Stored, and answered with a code the protocol does not have.
+    broker.set_fault(Fault::once(FaultKind::StoreThenRefuse {
+        code: "replica_timeout".to_owned(),
+    }));
+    let odd = consumer.publish(&status("A-100", "shipped")).await;
+    assert_eq!(refused(odd), "replica_timeout");
+    let received = broker.received();
+    assert!(matches!(received[0].outcome, PublishOutcome::Stored { .. }) && received[0].answered);
+    assert_eq!(
+        broker
+            .retained(STATUS, "A-100")
+            .map(|m| m.body["status"].clone()),
+        Some(json!("shipped"))
+    );
+
+    // A look that returns nothing and says more is held; and one that says that was all.
+    broker.set_fault(Fault::once(FaultKind::EmptyLook { more: true }));
+    let look = consumer.browse(EVENTS, 5, None).await?;
+    assert!(look.messages.is_empty() && look.more);
+    broker.set_fault(Fault::once(FaultKind::EmptyLook { more: false }));
+    let look = consumer.browse(EVENTS, 5, None).await?;
+    assert!(look.messages.is_empty() && !look.more);
+    assert_eq!(broker.log(EVENTS).len(), 3);
+
+    // One message more than the fetch asked for.
+    let cursor = consumer.subscribe_with(EVENTS, None, Some(0), None).await?;
+    broker.set_fault(Fault::once(FaultKind::ExtraDelivery));
+    let handed = consumer.fetch(&cursor.subscription, 1, NOW).await?;
+    assert_eq!(handed.len(), 2);
+    assert_eq!(broker.applied_faults().len(), 6);
+    Ok(())
+}

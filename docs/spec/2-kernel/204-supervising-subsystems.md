@@ -15,10 +15,10 @@ It is the only way anything starts a process. A pack's driver, and the plug-in h
 
 ## Starting something
 
-1. **Identify it.** The program is found at a declared place and its digest is taken. A digest that matches no known release is not refused; it is recorded as unverified, and everything that passes through the subsystem carries that mark ([section 219](219-the-evidence-ladder.md)).
+1. **Identify it.** At every start, immediately before it, the program is found at a declared place, opened once, and its digest is taken through that handle; the file that is started is that same file wherever the operating system can start an open file, and otherwise the path is looked at once more before the start. Where digests were declared for the program, in a manifest, in a requirement's known digests, or in a published plan, a digest that is none of them is refused as `effect_not_declared` and nothing starts. Where none was declared, it is not refused; it is recorded as unverified, and everything that passes through the subsystem carries that mark ([section 219](219-the-evidence-ladder.md)).
 2. **Give the launch an identity.** A random run identifier, a random token, and a random owner mark, new for each launch. The token proves the subsystem at the handshake; the owner mark proves at stopping that a process belongs to this launch.
 3. **Hand them over privately.** Through a pipe the child inherits, or a file only the user can read that is deleted once read. Never on a command line, where other programs can see it.
-4. **Start it in a group the runtime can end as a whole.** A process group on POSIX systems; a job object on Windows, set to end with its owner.
+4. **Start it in a group the runtime can end as a whole.** A process group on POSIX systems; a job object on Windows, set to end with its owner, in which the child is placed before it runs anything.
 5. **Shake hands before any work.** The subsystem must return the run identifier, its own version, the limits it will honor, and, where it is attached to something, the identity of that thing. A subsystem attached to a different file, page, or document than expected is refused.
 
 Steps 1 to 4 hold for everything started. Step 5 holds for a subsystem that speaks the shared framing: a plug-in or a bridge. The handshake, the framing, and the request queue of a framed link are not built yet; the two links below are ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Two kinds of link cannot shake hands.

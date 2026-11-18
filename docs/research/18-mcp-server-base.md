@@ -153,6 +153,22 @@ In 2025-11-25 the handshake rule is: the server answers `initialize` with the cl
 5. **Handshake-era callers get fallbacks only.** No elicitation and no tasks for them, because a stateless server does not remember what they declared.
 6. **Declare only what is served.** `tools.listChanged` must not be declared until the notification can be sent.
 
+## The product, run against the same client libraries
+
+**2026-11-17.** A manual proof, not a CI test, owed since the spike ([decision 0131](../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)). The real program was run on Linux: `anything2mcp serve` on a temporary data directory, with one read tool, `example_order_get`, published over the test application, and each client library was given `anything2mcp bridge` as its stdio server. The libraries were installed as for the spike, in the same versions, and a small caller of the spike's shape was written for each and thrown away. A tee between client and bridge recorded what each sent first. Every run connected, listed the eleven built-in tools of the `use` toolset, called the read by name, and read the structured result, whose `result.customer` was the value the test application holds.
+
+| Client library | Mode | What it sent first | Revision used | Connected | Listed tools | Called the read | Read the structured result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Python, `mcp` 2.3.0 | `auto` | `server/discover`, naming 2026-07-28 | 2026-07-28 | yes | 11 | yes | yes |
+| Python, `mcp` 2.3.0 | `legacy` | `initialize`, asking for 2025-11-25 | 2025-11-25 | yes | 11 | yes | yes |
+| Python, `mcp` 2.3.0 | `2026-07-28` | `tools/list`, naming 2026-07-28 | 2026-07-28 | yes | 11 | yes | yes |
+| TypeScript, `@modelcontextprotocol/sdk` 1.32.2 | its only one | `initialize`, asking for 2025-11-25 | 2025-11-25 | yes | 11 | yes | yes |
+| TypeScript, `@modelcontextprotocol/client` 2.4.0 | `legacy` | `initialize`, asking for 2025-11-25 | 2025-11-25 | yes | 11 | yes | yes |
+| TypeScript, `@modelcontextprotocol/client` 2.4.0 | `auto` | `server/discover`, naming 2026-07-28 | 2026-07-28 | yes | 11 | yes | yes |
+| TypeScript, `@modelcontextprotocol/client` 2.4.0 | pinned to 2026-07-28 | `server/discover`, naming 2026-07-28 | 2026-07-28 | yes | 11 | yes | yes |
+
+One thing the libraries showed. The Python library wrote a line to its standard error on every run: the tool it called is not in the server's listing, so it could not check the structured content against an output schema. The default listing holds the built-in tools, and a published operation is found with the search tool and called by name; a client that validates results against the listing validates nothing for such a call. The result was returned all the same. Not run: any client that is not one of these two libraries; Windows and macOS; a write; progress and cancellation through the bridge with a client library, which `a2m-mcp` tests with raw messages over streams in memory and nothing tests through the program.
+
 ## Not verified
 
 - Any client that is not one of the two reference libraries: no desktop agent, no hosted agent.

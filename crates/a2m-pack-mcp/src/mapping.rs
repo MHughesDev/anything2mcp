@@ -24,6 +24,10 @@ pub(crate) const REVISION_HANDSHAKE: &str = "2025-11-25";
 pub(crate) const REVISION_NO_HANDSHAKE: &str = "2026-07-28";
 /// What a local server program's surface writes as its address.
 pub(crate) const LOCAL_ADDRESS: &str = "stdio";
+/// The surface field that accepts credentials over an unencrypted link to
+/// another machine (decision 0188), and the one word it takes.
+pub(crate) const UNENCRYPTED_CREDENTIALS: &str = "unencrypted_credentials";
+pub(crate) const ACCEPTED: &str = "accepted";
 
 /// The `mcp` surface kind: its address, and for a local server program the
 /// program by path and digest with its arguments and its environment.
@@ -41,9 +45,72 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
             .optional(
                 "revision",
                 JsonSchema::words(&[REVISION_HANDSHAKE, REVISION_NO_HANDSHAKE]),
-            ),
+            )
+            .optional(UNENCRYPTED_CREDENTIALS, JsonSchema::words(&[ACCEPTED])),
+    )
+    // A door shows a person that the surface sends a credential over an
+    // unencrypted link (decisions 0193 and 0194).
+    .with_notice(
+        UNENCRYPTED_CREDENTIALS,
+        ACCEPTED,
+        a2m_core::SurfaceNotice::UnencryptedCredentials,
     )
     .with_program("program", Some("digest"))
+}
+
+/// Words that name a credential when they end a variable's name. A copy of
+/// `CREDENTIAL_WORDS` in `a2m-pack-command` (`src/kind.rs`): the two packs
+/// cannot share the code, so the two rules are kept word for word the same.
+const CREDENTIAL_WORDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "apikey",
+    "credential",
+    "credentials",
+];
+
+/// Words that name a credential when `key` follows them. A copy of
+/// `CREDENTIAL_KEYS` in `a2m-pack-command`.
+const CREDENTIAL_KEYS: &[&str] = &[
+    "api",
+    "access",
+    "private",
+    "secret",
+    "signing",
+    "encryption",
+];
+
+/// Whether a variable's name says that it holds a credential. A copy of
+/// `names_a_credential` in `a2m-pack-command` (`src/kind.rs`), word for
+/// word the same rule. Only the end of the name counts.
+fn names_a_credential(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    match words.as_slice() {
+        [.., last] if CREDENTIAL_WORDS.contains(last) => true,
+        [.., before, "key"] => CREDENTIAL_KEYS.contains(before),
+        _ => false,
+    }
+}
+
+/// Why a variable may not be handed to a local server program, when it may
+/// not: it is one of the engine's own, or it is named for a credential. A
+/// credential for a local server goes through the session keeper, never
+/// through the environment.
+pub(crate) fn refused_variable(name: &str) -> Option<&'static str> {
+    if a2m_provider::is_engine_variable(name) {
+        Some("belongs to the engine, whose own variables are never handed to a program")
+    } else if names_a_credential(name) {
+        Some("is named for a credential, which never goes through a program's environment")
+    } else {
+        None
+    }
 }
 
 /// What an `mcp` surface states beside its address, as the compiler put it
@@ -69,9 +136,41 @@ pub(crate) struct SurfaceFields {
     /// The protocol revision the connection speaks.
     #[serde(default)]
     pub revision: Option<String>,
+    /// `accepted` when the surface accepts that its credentials cross an
+    /// unencrypted link to another machine.
+    #[serde(default)]
+    pub unencrypted_credentials: Option<String>,
+}
+
+/// Whether an address is plain `http` to an address that is not a loopback
+/// address written as an IP address. A name, `localhost` included, is not
+/// one: the machine's resolver decides where a name leads. The same rule as
+/// `plain_to_another_machine` in `a2m-pack-http` (`src/link.rs`), which this
+/// pack cannot share code with.
+pub(crate) fn plain_to_another_machine(address: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(address) else {
+        return address.starts_with("http://");
+    };
+    if url.scheme() != "http" {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default();
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    !bare
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 impl SurfaceFields {
+    /// Whether the surface accepts that its credentials cross an
+    /// unencrypted link to another machine.
+    pub(crate) fn accepts_unencrypted(&self) -> bool {
+        self.unencrypted_credentials.as_deref() == Some(ACCEPTED)
+    }
+
     /// Reads the fields of a surface of the plan.
     pub(crate) fn of(surface: &SurfacePlan) -> Result<Self, a2m_core::Failure> {
         if surface.payload.is_none() {
@@ -93,7 +192,9 @@ pub(crate) struct ToolEntry {
     pub effect: String,
     /// The mapped read tool that reads back what this tool wrote.
     pub read_back: Option<String>,
-    /// The members of the result that hold text the server's users wrote.
+    /// The members of a structured result that hold text and may be
+    /// passed on. A member that can hold text and is not named here, or
+    /// under `key` or `records`, is left out of what a step returns.
     pub untrusted_fields: Vec<String>,
     /// `structured` or `text`: where the result's values are.
     pub result: String,
@@ -108,8 +209,11 @@ pub(crate) struct ToolEntry {
     pub stamp: Option<String>,
     /// The arguments that take the parts of the record's key, in order.
     pub key_args: Vec<String>,
-    /// The reviewer's judgment of a tool whose input is one string: true
-    /// for free text, false for a key. Nothing when it was not reviewed.
+    /// What a reviewer found the server does with the text the tool is
+    /// given. `false`: it does not run it, so a tool whose whole input is
+    /// one string may be called. `true`: it runs it, as a command, a
+    /// query, or a prompt, so the tool is never called. Nothing when no one
+    /// has said: a tool whose whole input is one string is then not called.
     pub free_text: Option<bool>,
 }
 
@@ -315,6 +419,25 @@ impl FileKind for MappingKind {
             .unwrap_or_default()
     }
 
+    /// A mapping describes a write when any of its tools is mapped as
+    /// anything but `read`. The effect is a person's judgment of the tool.
+    /// An effect the drafter left as an open question states nothing: the
+    /// file does not compile until a person answers it, and a mapping alone
+    /// calls nothing. An effect that is some other word is not known to
+    /// read.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let Some(tools) = doc.get("tools") else {
+            return false;
+        };
+        tools.entries().iter().any(|entry| {
+            let effect = entry.value.get("effect");
+            let open = effect.is_some_and(|effect| {
+                matches!(effect.entries(), [only] if only.key.value == a2m_files::OPEN_QUESTION)
+            });
+            !open && effect.and_then(Located::as_text) != Some("read")
+        })
+    }
+
     fn expressions(&self, _doc: &Located<Doc>) -> Vec<ExprSite> {
         Vec::new()
     }
@@ -379,5 +502,105 @@ impl FileKind for MappingKind {
                     "Keep every value of a mapping text, a truth value, or a list of text.",
                 ))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use a2m_files::{
+        CompilerSet, DraftContext, DraftDoc, DraftValue, Drafter, DraftingRule, FileKind, RelPath,
+        TargetRoot, parse_yaml,
+    };
+
+    use super::MappingKind;
+    use crate::names::{self, Names};
+
+    #[test]
+    fn a_mapping_describes_a_write_when_a_tool_is_mapped_as_anything_but_read() {
+        let kind = MappingKind::new();
+        let file = RelPath::new("mappings/one.yaml").unwrap();
+        let writes = |effects: &[&str]| {
+            let mut text = String::from("surface: orders\ntools:\n");
+            for (n, effect) in effects.iter().enumerate() {
+                text.push_str(&format!("  t{n}:\n    effect: {effect}\n"));
+            }
+            let docs = parse_yaml(&file, &text).unwrap();
+            kind.writes(&docs[0])
+        };
+        assert!(!writes(&["read", "read"]));
+        assert!(writes(&["read", "write"]));
+        assert!(writes(&["irreversible"]));
+        assert!(writes(&["\"maybe\""]));
+        // What the drafter leaves for a person states no effect.
+        assert!(!writes(&["{open_question: \"Does it write?\"}"]));
+    }
+
+    /// A rule of this pack that drafts a tool mapped as a write.
+    struct DraftsAWrite(a2m_core::FindingKind);
+
+    impl DraftingRule for DraftsAWrite {
+        fn finding_kind(&self) -> a2m_core::FindingKind {
+            self.0.clone()
+        }
+        fn file_kind(&self) -> a2m_core::FileKindName {
+            names::MAPPING_KIND
+        }
+        fn draft(
+            &self,
+            _finding: &a2m_core::Finding,
+            _cx: &DraftContext<'_>,
+        ) -> Result<Vec<DraftDoc>, a2m_core::Failure> {
+            let tool = DraftValue::map(vec![("effect", DraftValue::text("write"))]);
+            Ok(vec![DraftDoc {
+                path: RelPath::new("mappings/orders.yaml")?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("orders")),
+                    ("tools", DraftValue::map(vec![("orders_delete", tool)])),
+                ]),
+            }])
+        }
+    }
+
+    #[test]
+    fn a_drafting_rule_that_drafts_a_write_is_refused_and_nothing_is_written() {
+        let found = Names::new().unwrap().upstream_tool;
+        let mut builder = CompilerSet::builder();
+        builder
+            .file_kind(names::PACK, Arc::new(MappingKind::new()))
+            .unwrap();
+        builder
+            .drafting_rule(names::PACK, Arc::new(DraftsAWrite(found.clone())))
+            .unwrap();
+        let set = builder.build();
+        let folder =
+            std::env::temp_dir().join(format!("a2m-pack-mcp-draft-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let finding = a2m_core::Finding::about(
+            a2m_core::Subject::File {
+                digest: a2m_core::Digest::of(b"tool"),
+                format: "mcp".to_owned(),
+                part: None,
+            },
+            found,
+            "{}",
+            a2m_core::Source::LiveSystem,
+            a2m_core::ProducedBy {
+                provider: "mcp".to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            a2m_core::Timestamp::from_unix_millis(1_000),
+        )
+        .build()
+        .unwrap();
+        let root = TargetRoot::new(&folder);
+        let report = Drafter::new(&set, &root).draft(&[finding]).unwrap();
+        assert!(report.written.is_empty(), "{report:?}");
+        assert_eq!(report.refused.len(), 1, "{report:?}");
+        assert!(!folder.join("mappings").join("orders.yaml").exists());
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

@@ -8,11 +8,17 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# HTTPS to identity services' token endpoints: rustls with the ring provider
-# and the platform's certificate verifier. Off by default, because switching
-# it on makes every HTTP client in the same build need a TLS provider
-# (decision 0084). Without it, a token endpoint must be a loopback address.
-tls = ["reqwest/rustls-no-provider", "dep:rustls"]
+# HTTPS: rustls with the ring provider stated in each client's own
+# configuration, the platform's certificate verifier, bundled roots where the
+# machine has none, and extra roots a person names (decisions 0084 and 0157).
+# Every HTTP client of the product is made by `tls::client_builder`, so no
+# process-wide provider is needed. Without it, an `https` address is refused.
+tls = [
+    "reqwest/rustls-no-provider",
+    "dep:rustls",
+    "dep:rustls-platform-verifier",
+    "dep:webpki-roots",
+]
 
 [dependencies]
 a2m-core = { path = "../a2m-core" }
@@ -21,12 +27,14 @@ a2m-telemetry = { path = "../a2m-telemetry" }
 a2m-vault = { path = "../a2m-vault" }
 reqwest.workspace = true
 rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+webpki-roots = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [dev-dependencies]

@@ -10,7 +10,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 | Layer | 7, Actions |
 | May depend on | Layers 1 to 6 |
 | Depends on | Every kernel crate below it except `a2m-expr`, `a2m-sources`, which it reaches through others. Outside: `serde`, `serde_json`, Tokio, and `toml` for settings files. Schemas are checked by `a2m-files`; no outside validator |
-| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles) |
+| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles). A second pass, after the crates above it were built, is [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md); the safety audit is [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md) |
 | Carries out | Spec sections [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md); the in-process half of [223](../../spec/2-kernel/223-the-runner-protocol.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
 
 ## Owns
@@ -22,7 +22,8 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 - The on-disk layout of [the technical reference](../../reference/technical-reference.md#on-disk-layout), as one pure function, so that the local channel, the runner journal, and the store agree on paths.
 - The in-process runner loop, and the in-process implementations of `Control` (from `a2m-engine`) and `KeeperWork` (from `a2m-auth`).
 - The only caller of the compiler in `a2m-files`: lint, compile, and draft. A plan, a type in `a2m-core`, is produced there and stored by `version.publish`; the engine receives it through `Control` and never sees the compiler.
-- The meaning of three tables: toolsets, the scout's stage results, and the outcomes of webhook deliveries. Their migrations, like every migration, live in `a2m-ledger`.
+- The meaning of three tables: toolsets, the scout's stage results, and the outcomes of webhook deliveries; of two more that say what a run was called with, its input and caller, and its source; and of two the scout keeps, its scouts and what each discoverer of a discovery run reported (migration `0014`). Their migrations, like every migration, live in `a2m-ledger`.
+- What a caller is shown of a value of a system: an exact number as its exact decimal text, a calendar day as text, a moment and a length of time as whole milliseconds. Inside the engine and in the store a value keeps its kind.
 - The recorded catalog: the list of actions with a digest, from which every face is generated and checked.
 - The scout pipeline, as the handler of `scout.run`.
 - Shortcuts, as data: a word and a fixed list of actions.
@@ -31,7 +32,7 @@ It must never: decide whether something may happen (that is `a2m-policy`); sign 
 
 ## Interface
 
-As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md)). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
+As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md), [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) for the second pass, and [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md) for the safety audit). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
 
 ```rust
 /// One action. Every face is generated from this and nothing else.
@@ -74,8 +75,18 @@ pub struct Request {
     pub input: serde_json::Value,      // an object, or null
     pub caller: Caller,                // Principal, client label, FrontDoor, toolset, is_agent
     pub idempotency_key: Option<String>,
-    pub project: Option<PathBuf>,      // checked against the allowed roots before any use
+    pub project: Option<PathBuf>,      // as stated; the dispatcher checks it before any handler
 }
+impl Request {
+    pub fn new(action: &str, input: serde_json::Value, caller: Caller) -> Request;
+    pub fn in_project(self, project: impl Into<PathBuf>) -> Request;
+    /// What every door calls with the `ProjectFolder` its mount put on the request.
+    pub fn in_project_folder(self, project: Option<&ProjectFolder>) -> Request;
+}
+/// The project folder a request works in, as a door's mount states it. A statement,
+/// never trusted: see "The project folder" below.
+pub struct ProjectFolder(/* a path */);
+impl ProjectFolder { pub fn new(path: impl Into<PathBuf>) -> Self; pub fn as_path(&self) -> &Path; }
 pub struct Response {
     pub ok: bool, pub action: String,
     pub result: Option<serde_json::Value>, pub error: Option<ErrorBody>,
@@ -98,7 +109,9 @@ impl Kernel {
     pub async fn open(prepared: Prepared, providers: ProviderRegistry,
                       problems: Vec<RegistryProblem>, person: Arc<dyn PersonSurface>) -> Kernel;
     pub async fn verify_caller(&self, credential: CallerCredential) -> Result<Principal, Failure>;
-    pub fn status_only_caller(&self) -> Principal;       // for a stopped engine's status
+    pub fn status_only_caller(&self) -> Principal;       // nobody: a principal of no installation
+    /// Behind the `testing` feature: a second person of this workspace, who holds nothing.
+    pub fn second_person(&self, id: [u8; 16]) -> Result<Principal, Failure>;
     pub async fn dispatch(&self, request: Request) -> Response;
     pub fn health(&self) -> Health;                      // state, and every impaired part
     pub async fn recheck(&self) -> Health;
@@ -110,8 +123,36 @@ impl Kernel {
     pub fn paths(&self) -> &Paths;
     pub fn redact(&self) -> Arc<dyn Redact>;
     pub fn telemetry(&self) -> &Telemetry;
+    /// A page of a run's events after a sequence number, at most EVENTS_PAGE (200),
+    /// redacted. Only for a run the caller started. Not an action.
+    pub async fn events(&self, caller: &Principal, run: RunId, after: u64, limit: u32)
+        -> Result<RunEvents, Failure>;
+    /// The same, waiting until an event is appended, the run ends, the run comes to
+    /// rest while this waits, or `wait` passes.
+    pub async fn next_events(&self, caller: &Principal, run: RunId, after: u64, limit: u32,
+                             wait: Duration) -> Result<RunEvents, Failure>;
+    /// The same, from what the follower last saw: answered at once when whether the run
+    /// is settled has changed since, although no event says so. What a follower uses.
+    pub async fn next_events_from(&self, caller: &Principal, run: RunId, seen: Followed,
+                                  limit: u32, wait: Duration) -> Result<RunEvents, Failure>;
+    /// The scheduler's jobs waiting or leased, and the runs resting for a person.
+    pub async fn runs_in_hand(&self) -> Result<RunsInHand, Failure>;
     pub async fn close(self, why: CloseReason);
 }
+pub struct RunsInHand { pub working: u64, pub waiting_for_person: u64 }
+/// Re-exported from the ledger: an idempotency key, 1 to 200 printable
+/// characters with no space, checked by `CallerKey::new`; and CALLER_KEY_LONGEST.
+pub use CallerKey;
+/// The last event's number a follower was given, and whether the run was settled then.
+pub struct Followed { pub after: u64, pub settled: Option<bool> }
+impl From<u64> for Followed {}            // nothing known of the run
+impl RunEvents { pub const fn followed(&self) -> Followed; }
+impl RunsInHand { pub const fn any(&self) -> bool; }
+pub struct RunEvents { pub run: RunId, pub events: Vec<RunEventView>, pub last: u64,
+                       pub state: RunState, pub working: bool, pub ended: bool }
+impl RunEvents { pub const fn settled(&self) -> bool; }   // ended, or resting with no job
+pub struct RunEventView { pub seq: u64, pub lease: u64, pub at: Timestamp, pub kind: String,
+                          pub detail: serde_json::Value }
 impl Prepared {
     pub fn redact(&self) -> Arc<dyn Redact>;
     pub fn telemetry(&self) -> Telemetry;
@@ -128,16 +169,70 @@ pub trait PersonSurface: Send + Sync {
     fn ask_sign_in(&self, ask: SignInAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>>;
     fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>>;
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer>;   // the keeper's asks
+    /// Whether the surface has a page for a person's act. Default false: the act is
+    /// refused `policy`/`person_required` before anything is pinned, as before.
+    fn shows_person_acts(&self) -> bool { false }
+    /// A person's act an agent asked for: show it on a page; the link goes into the
+    /// caller's `needs_person` result. Default: refused `policy`/`person_required`.
+    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>>;
+    /// What the presence prompt can do here, for `doctor.run`. Raises no prompt.
+    fn presence(&self) -> BoxFuture<'_, PresenceReport> { /* not_available, unknown */ }
     fn return_address(&self) -> Option<String> { None }
+}
+pub struct PresenceReport { pub kind: &'static str, pub reason: &'static str,
+                            pub message: String, pub fix: String }
+/// Proof that a person was present: the kind of check, whose it is, when, and the
+/// prompt that answered. Copy. Whoever uses one checks it.
+impl PresenceProof {
+    pub const fn new(check: PresenceCheck, principal: PrincipalId, at: Timestamp) -> Self;
+    pub const fn naming(self, prompt: &'static str) -> Self;   // a word; another shape is not kept
+    pub const fn for_act(self, act: PersonActId) -> Self;      // given for one person's act
+    pub const fn check / principal / at / prompt / act(&self);
+    /// Its person is `person`, and it is at most PRESENCE_WINDOW_MS (120,000) old.
+    pub fn checked(&self, person: PrincipalId, now: Timestamp) -> Result<(), &'static str>;
 }
 pub struct ApprovalDesk { /* not Clone; no public constructor; reached by no action */ }
 impl ApprovalDesk {
     pub async fn waiting(&self, run: RunId) -> Result<WaitingApproval, Failure>;
+    /// What the waiting run would change, from the stored diff whose hash `waiting`
+    /// reports: at most PREVIEW_RECORDS (100) records from `offset`, each value cut to
+    /// PREVIEW_VALUE_CHARS (400), every text redacted.
+    pub async fn preview(&self, run: RunId, offset: usize) -> Result<ApprovalPreview, Failure>;
     pub async fn approve(&self, run: RunId, diff_hash: Digest, approver: PrincipalRef,
                          channel: Channel, proof: PresenceProof) -> Result<ApprovalId, Failure>;
+    /// Records the decline and ends the run as `expired`, in one transaction.
     pub async fn decline(&self, run: RunId, by: Option<PrincipalRef>, channel: Channel)
                          -> Result<(), Failure>;
+    /// A person's act that waits on a page (decision 0163): what will be done.
+    pub fn person_act(&self, act: PersonActId) -> Result<PersonActAsk, Failure>;
+    /// Carries it out once, as the person, with a proof given for it; the response
+    /// is what it came to. A proof of another act, person, or time does nothing.
+    pub async fn carry_out(&self, act: PersonActId, proof: PresenceProof) -> Result<Response, Failure>;
+    pub fn decline_act(&self, act: PersonActId, by_person: bool);
 }
+pub struct PersonActId(/* 16 random bytes, shown as 32 hexadecimal characters */);
+impl PersonActId { pub const fn from_bytes(b: [u8; 16]) -> Self; pub fn parse(t: &str) -> Option<Self>; }
+pub struct PersonActAsk { pub act: PersonActId, pub person: PrincipalId, pub action: ActionName,
+    pub summary: String, pub input: Vec<ShownField>, pub details: Vec<String>,
+    pub surfaces: Vec<ActSurface>, pub warnings: Vec<ActWarning>,   // a publish's; not repeated in `details` (0199)
+    pub asked_through: String, pub expires_at: Timestamp }
+pub struct ShownField { pub name: String, pub value: String, pub cut: bool }
+pub const ACTS_WAITING: usize;   // 16
+pub const ACTS_KEPT: usize;      // 64
+pub const SHOWN_VALUE_CHARS: usize; // 400
+/// What `init` writes (section 220 gives it no action): the project file, AGENTS.md,
+/// .gitignore, and targets/, each new and never through a link; what is there is kept.
+pub mod init { pub fn init_project(folder: &Path) -> Result<InitReport, Failure>;
+               pub struct InitReport { pub written: Vec<&'static str>, pub kept: Vec<&'static str> }
+               pub const PROJECT_FILE_TEXT, GUIDANCE_TEXT, GITIGNORE_TEXT: &str; }
+pub struct ApprovalPreview { pub run: RunId, pub diff_hash: Digest, pub tool: String,
+    pub target: String, pub environment: String, pub create: u32, pub update: u32,
+    pub unchanged: u32, pub total: usize, pub offset: usize, pub records: Vec<PreviewRecord> }
+impl ApprovalPreview { pub const fn complete(&self) -> bool; }
+pub struct PreviewRecord { pub operation: String, pub key: String, pub action: &'static str,
+    pub fields: Vec<PreviewField> }
+pub struct PreviewField { pub name: String, pub current: Option<String>, pub proposed: String,
+    pub changes: bool, pub cut: bool }
 
 pub struct Paths { /* installation_config, config, data, store, blobs, profiles, journal, logs, runtime, cache */ }
 impl Paths { pub fn resolve(env: &Env) -> Result<Paths, Failure>; pub fn under(home: &Path) -> Paths; }
@@ -166,10 +261,24 @@ pub fn mcp_tools(registry: &ActionRegistry, toolset: BuiltInToolset) -> Vec<McpT
 pub fn mcp_tool(def: &ActionDef) -> McpToolFace;
 pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace>;
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace>;
-impl McpResultFace { pub fn of(response: &Response) -> McpResultFace; }
+impl McpResultFace {
+    pub fn of(response: &Response) -> McpResultFace;
+    /// For a caller on `toolset`: `next` names `a2m_action_run` where the toolset
+    /// does not list the following action's own tool.
+    pub fn of_in(response: &Response, registry: &ActionRegistry, toolset: BuiltInToolset) -> McpResultFace;
+}
 pub const SHORTCUTS: &[Shortcut];
+impl Shortcut {
+    /// The steps to carry out on this engine: those before the first action that is
+    /// not built, that action, and the sentence to print when it stops early.
+    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun;
+}
+pub struct ShortcutRun { pub steps: Vec<ShortcutStep>, pub stops_before: Option<&'static str>,
+                         pub note: Option<String> }
 pub const PROCESS_COMMANDS: &[&str];
 ```
+
+A `CommandArg` carries `stdin_for`: for a flag, the field that standard input fills when the flag is given. The command then reads standard input to its end, removes one line ending from the end, sends the text as that field, and does not send the flag. Today only `--stdin` of `secret.set` has it, for `value`. The kernel never reads standard input.
 
 ### The dispatcher
 
@@ -179,9 +288,68 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 220): the second is `input` / `not_found`.
 3. **Health.** The action's `needs` against the kernel's state. A write in `degraded`, or anything but a `Nothing` action in `stopped`, returns `busy` / `engine_degraded` with the reason.
 4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one. The one exception: a `Nothing` action in a `stopped` kernel, which has no store to record a decision in; it reports on the engine and shows no data of any system.
-5. **Person.** For an action with `PersonNeed::Presence`, `confirm_presence` on the role's surface. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt.
-6. **Run.** The handler. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
-7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Not built: marking text that came from a target as untrusted, and keeping a large result as a blob with its reference.
+5. **Person.** For an action with `PersonNeed::Presence`, and for one with `PresenceWhenLoosening` when the call loosens: a caller marked as an agent is handed to the person surface's page for a person's act (below); any other caller is asked `confirm_presence` on the role's surface. Releasing a kill switch loosens; an action that has not said how its loosening is told (`config.set`, `provider.enable`, neither built) is asked for on every call. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt. The proof that comes back is checked: it must be this caller's, and at most two minutes old by the kernel's clock. A handler is given the proof in `Call::presence` and never asks itself.
+6. **Run.** The handler. It is given the effect class and hazard the decision was made for (`Call::decided`); `tool.call` refuses, with `busy`, `tool_changed`, a tool that has another by the time it looks. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
+7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Every strict output schema admits `next`, and the MCP rendering of a success puts it into the structured content as `action`, `tool`, `args`, and `when`. Not built: marking text that came from a target as untrusted outside the scout's report, which keeps it under `untrusted`; and keeping a large result as a blob with its reference.
+
+### A person's act an agent asks for
+
+[Decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md). Every caller of a served engine is an agent, so a person's act is shown to the person instead of refused:
+
+- **The ask.** The dispatcher hands the act to `Kernel::ask_person` (module `acts`): the caller must act for a person (`Principal::person`), or it is `policy`, `person_required`; an act not built is `action_not_built`. The act waits in memory under sixteen random bytes, with its input, the caller, and the project folder as it was checked, for `policy.approval_window_minutes`, at most `ACTS_WAITING` at once. For `version.publish` the drafts are compiled at the version they will be stored as, and `version` and `plan_hash` are pinned into the input; a lint failure is answered then, with no page. `PersonSurface::ask_person_act` is given exactly what will be done (`PersonActAsk`, every value redacted and cut) and gives the link.
+- **The answer.** `exit` person needed; a result `state: needs_person`, `act`, `action`, `link`, `person`, `expires_at`; `next` is the same call. Every output schema of a person's act, and of `publish.request`, admits that result: the output is either the action's own or this. The same call while the act waits gives the same page; once it was answered or its window ended, what became of it is given back, for the window, the newest `ACTS_KEPT`.
+- **The press.** `ApprovalDesk::carry_out` checks that the proof was given for this act (`PresenceProof::for_act`), is the person's the act waits for, and is of now; marks the act as being carried out, so a second press finds nothing; decides the act again, recorded, for the person (the same principal, not an agent, client `person page`); looks at the project folder again; runs the handler with the proof; and keeps what it came to. `version.publish` refuses `stale`, `drafts_changed`, when the drafts compile to another plan than the one pinned. A proof that fails changes nothing, and the act goes on waiting.
+- **Decline and silence.** `ApprovalDesk::decline_act` keeps the act as declined (`policy`, `approval_refused`); nothing is done.
+
+### Runs that wait for a person
+
+- **Whose a run is.** `run.get`, `run.resume`, and `run.cancel` answer for a run only to the person who started it, or to a caller proved to act for that person (`Principal::person`). Anyone else is told `input`, `not_found`, whatever role they hold: a run acts under its person's session. `trace.show` is bound to the workspace alone, because reading a run's evidence is what the auditor's role is for and the dispatcher's decision was that the caller holds it. A resume never changes what was kept of the run's caller: the guard asks about the caller that started the run, and `run.resume` first asks the policy engine, and records the answer, whether whoever resumes may use the run's tool.
+- **A run whose call cannot be read.** A run whose row in `actions_run_calls` is missing, or whose caller does not parse, is never run with an empty input and a caller made up for it. It ends as `failed` with `busy`, `run_call_unreadable`, or as `cancelled` where the ledger allows no other end; with a record in doubt it stops, and no reconcile is queued, which would end the same way.
+- **Waiting for a run.** `tool.call` and `run.resume` wait until the run has ended, or rests or has stopped with no job of the scheduler waiting or leased for it. The run's row and its unfinished job are read in one transaction: a job is unfinished from the transaction that queues it to the one that records how it ended, so nothing a runner does between its claim and the end of its work is taken for rest. After an approval, one `run.resume` completes the write.
+- **Telling the person.** Only `tool.call` and `run.resume` tell a run's person that it waits, and once for one diff of one run: the link is kept in memory and given again. `run.get` asks nobody anything; it shows the kept link. A run that a person approved at the desk and nobody has resumed is reported with `approved: true`, no link, and `run.resume` as the next step, and is not marked as needing a person.
+- **A decline.** `ApprovalDesk::decline` records the decline through the policy engine and ends the run as `expired` in the same transaction, with the failure `policy`, `approval_refused`. `run.get` reports it; nobody is asked again; the same call again is a new run.
+- **The refusal to write without a person** is a recorded decision. A `need` event of the run carries its identifier, the word `approval`, and the diff's hash.
+- **A kill switch** met when work is submitted or resumed is answered `policy`, `kill_switch_on`, by the policy engine, which records the refusal. The scheduler's `busy`, `on_hold` is not passed on.
+
+### Idempotency keys and the run list
+
+What a caller needs after a lost answer ([decision 0160](../../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)).
+
+- **A key.** `tool.call` takes one in its field `idempotency_key`, or beside its input in `Request::idempotency_key`, where the REST door puts its `Idempotency-Key` header and the MCP door the `anything2mcp/idempotency_key` of a call's `_meta`. Both may be given only when they are the same key. The dispatcher checks it before anything is decided: 1 to 200 printable ASCII characters, no space (`input`, `idempotency_key_invalid`). Another action given a key answers with a warning that it was not used.
+- **What a key means.** A call that carries a key is the same call as the first one made with it by the same person in the same workspace: it is given back the run that call started, unfinished or finished, its stored result shown and redacted as any result is, marked `repeated: true`, and no other run is started. The same key with another tool, environment, input, or source is `input`, `idempotency_key_reused`, and starts nothing. The version of the tool is not part of what is compared: the same call after a publish still gives back its run. A key holds for as long as its run is kept; it leaves with the run when retention purges it.
+- **How it is kept.** The ledger's table `caller_idempotency` (migration `0013`) holds the workspace's keyed digest of the key, never the key: a key is the caller's own text and may hold anything. The key is held, with the digest of the call, in the transaction that keeps the run's call, before the run is admitted; it is bound to the run once the scheduler admits it; it is let go when nothing was admitted. A key held with no run, left by a call that stopped in between, is bound to the run that call was admitted as, when there is one, before another is started. Two calls with one key are one at a time in memory from the look at the key to the binding.
+- **`run.list`.** A page of the caller's own runs, newest first: only the person who started a run, or a caller proved to act for that person, sees it, whatever role is held; an auditor reads other people's runs through `trace.show` and the audit log. Filters: `state` (a list), `tool`, `target`, `since` (whole milliseconds, by the store's clock, when the run was opened), `idempotency_key`. At most 100 a page, 20 by default; `after`, the last run of the previous page, starts the next, and the result says `complete`. Each entry: `run_id`, `tool`, `target`, `status`, `created_at`, `started_at`, `ended_at`, `in_doubt` (read from the ledger, yes when it cannot be read), `waits_for_person`, the failure's class and code, and `next`. REST serves it at `GET /api/v1/runs`.
+
+### The project folder
+
+A local command works in a project folder. The mount of a front door puts a `ProjectFolder`, a type of this crate, on each request, as an extension beside the caller, from what the client end stated; the door hands it to `Request::in_project_folder`. Nothing a caller writes in a path, a query, a body, or a tool's arguments sets it, so a caller of an MCP tool cannot state one. The client end of the local channel can, and it runs as the person: whoever can run it can state any folder. So before the handler runs the dispatcher takes the folder only when all of this holds, with every link followed:
+
+- this engine serves one machine, the path is a full one, and it names a folder that exists;
+- the folder neither holds nor lies inside the engine's own settings, data, runtime, or cache folders;
+- it is not the home folder or a folder above it, does not lie inside a hidden folder of the home folder, and neither holds nor lies inside a folder the operating system gives programs for their data (the `XDG_*` folders, `Library` on macOS, `APPDATA`, `LOCALAPPDATA`, and `PROGRAMDATA` on Windows). The folder for temporary files is excepted from the last two, because on one operating system it lies inside such a folder and is nobody's own. This is what keeps a browser's profile and a key folder from being a project (rule 5);
+- it holds a project file, `anything2mcp.toml`, that is a file and not a link, is at most 1 MiB, and loads as a settings file by itself;
+- nobody but the engine's user or the administrator may change the folder or its project file: the owner of each, and of what a link at its path leads to, is one of the two; the mode lets no other account write; and a group may write only when it is the user's primary group. Inside the folder for temporary files, every folder between it and the project is held to the same rule, which is what keeps the excuse from the rule above safe. This is a copy of the client's rule (`kept_by` of `a2m-local`), which this crate cannot depend on. On Windows the owner and the access list are not read yet, and the rule refuses nothing there;
+- it is inside what the setting `files.allowed_roots` allows. The word `<project>`, the default, allows any folder that passed the checks above: the local engine serves commands run in many projects, so the folder it was started in would be the wrong bound. A full path allows the folders inside it; a list without the word allows only those; an entry that is neither allows nothing.
+
+A folder that fails is not handed on: `Call::project_folder` then answers `input`, `path_not_allowed` with the reason, and an action that needs no project is served all the same. What is handed on is the folder as it was resolved, never the path as it was stated. Every check compares paths in one form, the one the operating system gives a resolved path (a place that does not exist yet is resolved up to its nearest folder that does). On Windows that form is the verbatim one, `\\?\C:\...`, and the folder is handed on in the ordinary form, `C:\...` (`\\?\UNC\server\share\...` as `\\server\share\...`), wherever that names the same folder; a path with a part the ordinary form would read otherwise, such as a device name or a trailing dot, is handed on as resolved. That is the form the provider's `resolved_path` gives, the one in which every root holds its folder; the rule for it is written once, there. A handler reaches every file through a checked path under the folder, as before. What remains: a program that runs as the person and writes a project file into a folder of theirs makes that folder a project; such a program can read the folder itself.
+
+### A source for a pipeline
+
+`tool.call` takes `source_file`, a path inside the project folder of the request, or `source_rows`, a list of records for a small input. A source file is read only from the project's `sources` folder, as in `sources/items.csv`: not from its target files, its project file, another folder, or a path with a hidden part. The dispatcher resolves the path through a checked root made from the project folder, which follows a link only while it stays inside the project; what stands at the name must be a file, not a link, a folder, or a device. It is read once, off the async threads, at most the smaller of `files.max_upload_bytes` and the engine's source limit, and its bytes are stored as a blob; rows are stored as the bytes of a JSON document, at most 256 KiB. The blob's name is part of the digest that makes a run the same run. The runner hands the stored bytes to every job of the run, so the engine is never given a path and a resume reads the same bytes. A tool that reads a source and is given none, or the other way about, is `input`, `schema_invalid`. Not built: rows for a source that another reader than `json` reads, which needs `a2m-engine` to take rows.
+
+### The protected settings and what is in force
+
+Whether something may happen is the policy engine's to decide, so a setting about it is in force only as far as the policy engine decides by it. `Kernel::open` opens the policy engine with the built-in set of the profile, `BuiltIn::local(user, workspace)` or `BuiltIn::server()`, with the installation's policy settings carried into it by `BuiltIn::with_settings`; the policy engine keeps them in force under any set published later, which can only tighten them ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)). The module `bounds` says how each protected setting is put in force:
+
+| Setting | In force through | A value other than the default |
+| --- | --- | --- |
+| `policy.approve_writes`, `policy.max_records_per_run`, `policy.approval_window_minutes`, `policy.agent_effect_ceiling`, `policy.writes_outside_tests`, `policy.two_person_irreversible` | The policy engine's settings | In force |
+| `policy.approve_writes` = `named_approver` on one machine, or a word the policy engine has not | Nothing | Stops the kernel |
+| `policy.pre_approval` | The policy engine's settings, and the guard: with it off, a write is never begun on a pre-approval | In force |
+| `policy.preview_freshness_seconds` | The engine's freshness window | In force |
+| `files.allowed_roots` | The dispatcher's check of a stated project folder | In force |
+
+"Stops the kernel" means: the policy part is impaired with `policy`, `setting_not_in_force`, which names the setting, the value it was given, where it was set, and the value in force; the kernel is `stopped`; `engine.status` and `doctor.run` give the reason; and `config.show` marks the setting `in_force: false` with a warning. A limit is never reported that is not kept: one test per setting changes it and sees the policy engine's decision change. The presets `cautious` and `ci` run. The question "may this write proceed without a person" also says whether every record of the run is a declared test record of its environment, when that environment is a test one. The question "may this write proceed without a person" carries the run's record count, from the ledger, and the tool's hazard, from the plan.
 
 The `Response` is the same structure for every face: `ok`, `action`, `result`, `error`, `warnings`, `next`, the recorded decision, and an exit class (succeeded, failed, malformed, person needed). A run that failed carries both a result, which names the run, and an error; a run that rests waiting for a person carries a result and the exit class `person_needed`. Each face renders it without branching on its content: the command face as the [output contract](../../reference/technical-reference.md#command-output-contract), the MCP face as structured content, REST as JSON with a status code.
 
@@ -216,9 +384,15 @@ loop {
 }
 ```
 
-Slots are a count given to `start_runner_loop`, offered for every registered mode. The keeper's work does not take a slot in one process: it runs on the keeper's own worker (`InProcessWork` of `a2m-auth`), so a run waiting for a renewal can never hold the slot the renewal needs. In one process the lease is at least 100 seconds, and a job the engine gives back with a full lease left stops with `busy` / `lease_too_short` ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+Slots are a count given to `start_runner_loop`, offered for every registered mode. The keeper's work does not take a slot in one process: it runs on the keeper's own worker (`InProcessWork` of `a2m-auth`), so a run waiting for a renewal can never hold the slot the renewal needs. In one process the lease is at least ten minutes: the engine sends a save only when the lease leaves time for the whole binding, each step at its time limit, and counts a step that states none as thirty seconds, so ten minutes covers a binding of nineteen such steps. A job the engine gives back with a full lease left stops with `busy` / `lease_too_short` ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+
+A job of a tool that writes names what it must hold alone: one key for every surface a write of the tool may be made on, of the kind its mode declares, from `Engine::exclusive_needs` and `ResourceKey::held_alone`. The scheduler takes all of a job's keys in the transaction that leases it, or none, so two jobs never wait for each other; a second write on the same surface stays queued until the first job has ended. A read names none. A system job that reaches this loop is ended as stopped with `busy`, `system_job_not_carried`, never as done: in one process the keeper's work, a sign-out and a forget included, is a call on the keeper's own worker that is waited for to its answer, so none is queued and none can be lost on the way.
+
+After a claim the store could not answer, the loop waits for the kernel's wake notice or thirty seconds and tries again. That is an interval between tries and not a wait for a condition: the store gives no notice that it can be asked again.
 
 The list is the spine's, in its order. The engine opens nothing itself: no store, no policy engine, no compiler.
+
+The engine gives up a `Control` call that does not answer in time and drops its future. Every call below is one transaction of the store, which commits or not as a whole whoever still waits for it. What follows a commit is a notice in memory, given by a guard as the call ends, however it ends. `Moved` to the state the run is already in is no move. The runner fills a job for a run that was worked on before from the ledger alone: its records, their stored values, and, from the run's `need` events, what was recorded before each commit point.
 
 | `Control` asks for | In process, answered by |
 | --- | --- |
@@ -227,9 +401,9 @@ The list is the spine's, in its order. The engine opens nothing itself: no store
 | A session lease | The keeper in `a2m-auth` |
 | A record lock | `a2m-ledger`, which owns the lock table and its rules, under the job's lease number; when the lock is held, `a2m-sched` queues the wait |
 | A rate budget | `a2m-sched` |
-| The approval check for a diff hash | `a2m-policy` |
+| The approval check for a diff hash | `a2m-policy`. A refusal of "write without a person", a kill switch or a policy engine that could not decide, stops the run; only a plain denial goes on to a person's approval |
 | Recording an intent, and its token | `a2m-ledger`, in one transaction that also checks the approval policy recorded; the reply is the token the driver's handle requires |
-| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. Each event is also published to `events()` subscribers. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
+| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. After every write the kernel's notice that a run changed is given, which wakes whoever waits in `next_events` or for a run to rest. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
 
 In one process `KeeperWork` is `a2m-auth`'s `InProcessWork` over the keeper's own worker; this crate supplies its two halves, the way to a person and the probe. Submitting a keeper job to `a2m-sched` addressed to a session's home runner is for a runner on another machine and is not built. When the keeper needs a person, to sign in or to give consent on a link, it asks through the keeper's own interface in `a2m-auth`, and this crate answers by calling the role's `PersonSurface::ask_session` with the keeper's own request: a link to open in the person's own browser, a code to enter, or a notice. `ask_sign_in` gives the link that goes into the result of a run that rests at `needs_login`.
 
@@ -244,34 +418,49 @@ Rust faces are derived at run time from the `Registry`. Code in other languages 
 | REST route | `a2m-api`, when its router is built | `Registry`: `POST /api/v1/actions/<noun>.<verb>`, and the `rest_alias` routes |
 | OpenAPI document | `a2m-api` | `Registry` |
 | SDK methods | A code-generation task in `xtask`, written to `bindings/` | The recorded catalog |
-| Reference pages for `docs.get` | The same task | The recorded catalog and the documents |
+| Reference pages for `docs.get` | The same task | The recorded catalog and the documents. The guides in `guides/*.md` are built into the binary and served first, by the name on their first line; each ends with whether every action it names is built, read from the registry as it is asked for ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)) |
 
 Two checks hold this. **Parity:** a test enumerates the live command tree, MCP tool list, router, and SDK method list, and compares each with the registry, failing on anything extra or missing; process commands and shortcuts are the only words allowed beside the nouns. **Recorded catalog:** the build writes the catalog with its digest; the engine compares the digest at start, and CI fails when the checked-in SDKs were generated from another digest.
 
 ### The scout
 
-`scout.run` is long-running. It is a run of its own kind, with a `run_id`, and each stage stores its result before the next begins, so a stopped scout continues from the last finished stage.
+As built ([decision 0170](../../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md) for identify and the stages, [decision 0171](../../decisions/0171-the-scouts-report-is-hashed-data-with-the-systems-words-kept-apart.md) for the report). The handlers are in `handlers/scout.rs` and `handlers/scout_report.rs`.
 
-| # | Stage | Done by | Touches the target |
+- **Identify** (`target.probe`, and the first stage of a scout). For each declared surface: what the registry says (kind, archetype, provider, whether its kind keeps a session, each discoverer that suits it with its declared kinds, sources, highest level, and bounds), then one `Discover` job of a run of its own, submitted as `discover.run` submits it. The engine runs every discoverer that suits the surface in that one job, within its declared bounds. A surface with no provider or no suitable discoverer is reported as `no_provider` or `no_discoverer`, and nothing runs for it. The run's control keeps, beside the findings, what each discoverer reported (`actions_discovery_results`), so that a run's findings and the bounds each discoverer reached are known.
+- **`auth.detect`.** The same identify, and per surface claims for a person to confirm: whether its kind keeps a session, the mode and provider `auth.yaml` declares for it, and what its probe met. Nothing is recommended that the files do not declare; the method and identity mode are then named in `unknown`.
+- **A scout** is a row of `actions_scouts`, by person and target, not a ledger run; its system work is ordinary runs. It is kept by its project folder too: the digest of the folder it was made in is stored with its first stage, and `scout.run` continues, and `scout.report` reads, only a scout of the call's project (audit finding A3; a column of `actions_scouts` would be the cleaner home, and is the ledger's migration to make). `scout.run` continues the newest unfinished scout of the target by the same person in the same project, or starts one (`fresh: true` always starts one). Each stage is stored in `actions_scout_stages`, already redacted, with the hash of the stage before it as its input, before the next begins. The scout waits for a discovery to its end, as long as its discoverers may take by their manifests, and for a trial to its end or `TRIAL_BOUND` (two minutes from its submission), whatever `wait_seconds` says: a call never leaves a run it started in hand behind it, so an engine that runs inside a command and ends with it leaves no job claimed for a lease to wait out. `wait_seconds` is looked at between trials, after one new trial at least; when it has passed, the try stage is not stored and the call answers `state: working`, with `next` the same call ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)).
+
+| # | Stage | As built | Touches the target |
 | --- | --- | --- | --- |
-| 0 | Consent and budget | `decide` with the target's consent record; `authoring.scout.budget` split across stages | No |
-| 1 | Identify | One `Discover` job per declared surface, running the probe the registry holds for it and `auth.detect` | Yes, on a runner, read only |
-| 2 | Discover | One `Discover` job per surface and suitable discoverer, within its bounds | Yes, on a runner, in the sandbox |
-| 3 | Compare | The comparison in `a2m-provider`; each difference is a finding or an open question in `a2m-ledger` | No |
-| 4 | Draft | The drafter in `a2m-files`, with the drafting rules the registry gathered | No |
-| 5 | Check | `a2m-files` lints and compiles each draft; a failure is kept and marked | No |
-| 6 | Try | For each drafted read that is safe by enforcement or by the system's own contract, five `draft.try` runs in the sandbox; the trace signatures and results compared | Yes, on a runner, read only |
-| 7 | Report | Found, drafted, proven, open, and what to look at first, in a fixed order, hashed | No |
+| 0 | Consent and budget | The project the scout is kept by; what is true of consent: none is recorded, and none is recorded on a person's behalf, with who asked, an agent or a person (audit finding A4); the dispatcher's recorded decision. The budget settings are not kept, and the stage says so | No |
+| 1 | Identify | As above. Drafts that do not compile are reported, and the scout goes on | Yes, in the sandbox, read only |
+| 2 | Discover | The findings of stage 1's runs, by discoverer, with what each reported; each text the system gave under `untrusted` | No: the job of stage 1 ran them |
+| 3 | Compare | The drafter over a copy of the target's folder in the engine's cache folder, read through checked paths, so no link is followed, at most 4,096 files and 64 MiB, and removed after; what a stopped engine left there is removed when the next one opens (audit finding A5); a file it would write where the target holds one a person wrote is a difference and an open question. The comparison of each pack's rule (section 218, roadmap E3) is not built | No |
+| 4 | Draft | The drafter in the target's folder: new files and its own unchanged drafts only, never a write. Its open questions go to the unknowns ledger, each asked once | No |
+| 5 | Check | The drafts compiled in draft mode | No |
+| 6 | Try | Each drafted read operation, with its first example or with no input when it needs none, five times one after another, as runs of its own whose digest names the scout, the plan, and the try, so that each is submitted once and a continuation finds it again, ended or not. A try that does not complete ends the read's tries: the read is `failed`, tried and not proven, with the failure's class and code; one that does not end within `TRIAL_BOUND` is cancelled, and the read is `not_ended`. `proven` when all five completed with one result, at `executed`. A read that states no example of its one key input is tried last, with the first item of the one list output of the key's name that a read proven earlier in the same scout, on the same surface, answered (`key_from_list`); the key is stored only in the trial's own stored call, and the report says `input_from`, never the value. Anything else that needs an input it gives no example of is not tried. Off when `authoring.scout.try_reads` is off | Yes, in the sandbox, read only |
+| 7 | Report | `content`, hashed; the runs beside it; a plain rendering that quotes nothing the system said | No |
 
-A surface that needs a sign-in is reported as `needs_login`; the others carry on, and the next `scout.run` on the target resumes that surface from where it stopped. A stage that hits a limit records which. No stage has a branch that a setting can turn into a write: a `Discover` job runs inside the engine's sandbox, where a discoverer is given only what `SandboxPort` in `a2m-provider` offers and no intent token exists.
+Stages 3 to 6 need a project that holds the target's folder, and say so without one. `authoring.scout.run` set to `off` refuses `scout.run` with `policy`, `scout_off`. `scout.report` gives the newest finished scout's report by the caller's person, and warns when a newer one has not finished. No stage has a branch that a setting can turn into a write: a `Discover` job and a `Try` job run in the engine's sandbox, where a discoverer is given only what `SandboxPort` in `a2m-provider` offers and no intent token exists; a trial is of a read only.
+
+Not built: a probe at an address with no declared surface, which needs a discovery job that names an address and no plan; a budget for a whole scout; stage 6 comparing trace signatures as well as results.
+
+### Promoting a first binding, and removing a draft
+
+[Decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md), in `handlers/promote.rs` and `handlers/drafts.rs`.
+
+- **`binding.promote`** takes a `draft` binding that is its operation's first, with no `verified` binding beside it. It compiles the drafts; refuses a shadow binding (`action_not_built`: the shadow comparison is not built), a retired one, one beside a verified binding, and a mode with two bindings (`binding_not_promotable`); runs the offline tests and refuses, listing them, unless every test of the operation runs and passes and there is one (`promotion_unproven`); and, for a read, refuses unless the caller's completed trial of it is named by `run_id` or the newest finished scout of the target in this project proved it at `executed`. It rewrites the binding's `status` in the operation's file to `verified`, the value on its line or a new line after `mode`, checks by compiling that the operation is otherwise the same plan, writes it through the checked path as `draft.write` does, and records an audit entry with the evidence. A binding already verified is answered `promoted: false`. For an operation that writes it is a person's act: the dispatcher asks nothing (`loosens` is false for it, since the effect is known only once compiled), and the handler hands an agent to `ask_person` and asks a caller at a terminal for presence; the person's press runs it again with the proof.
+- **The publish page** lists each binding of the plan that is `verified` where the current version holds none verified for the same operation and mode (`Kernel::first_to_act`).
+- **`draft.delete`** removes one file of the target's folder by a checked `RelPath` with no hidden part: never a top-level file of the target (`target.yaml`, `auth.yaml`, `types.yaml`), a name no file kind claims, a link, a folder, or a device. A published version's sources are held in the store with its plan, and no path reaches them. It answers with the removed file's digest and the lint of what is left.
+- **The gate stays whole.** `version.publish` does not publish only the operations that have tests: an operation with no offline test refuses the publish with `publish_gates_not_passed`, naming the files, with `test.run` and `draft.delete` as the fix; `test.run` lists each under `missing` with both as `next`.
 
 ## Used by, and uses
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `events`, `approvals`, `Paths`, `PersonSurface` to implement |
-| `a2m-mcp` | `Registry` for tool lists, `dispatch`, `events` for progress |
-| `a2m-api` | `Registry` for routes and OpenAPI, `dispatch`, `events`, `approvals`, `PersonSurface` to implement |
+| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `runs_in_hand` for its idle stop, `Paths`, `PersonSurface` to implement, and the `ApprovalDesk` it is handed: `waiting`, `preview`, `approve`, `decline` |
+| `a2m-mcp` | `Registry` for tool lists, `dispatch` (`tool.search` with `full` for the published tools), `next_events` for progress |
+| `a2m-api` | `Registry` for routes and OpenAPI, `dispatch`, `next_events` for an event stream, `PersonSurface` to implement |
 | `a2m-runner` | `Paths`, `KernelSettings` for its own group; not the `Kernel`, which a runner on another machine does not open |
 | `anything2mcp` | `Registry::build`, the settings loader, `Kernel::open`, `start_runner_loop`, `Shortcut`s for the command line |
 
@@ -283,7 +472,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | `a2m-auth` | The keeper: status, sign-in requests, `perform` on the loop |
 | `a2m-files` | Lint, compile, the drafter; this crate is their only caller |
 | `a2m-provider` | The provider registry, contributed actions' handlers, the checked-path type, the comparison |
-| `a2m-sched` | `submit`, `claim`, `complete`, waits for a held lock, budgets |
+| `a2m-sched` | `submit`, `claim`, `finish`, `unfinished_job` for whoever waits for a run, waits for a held lock, budgets |
 | `a2m-engine` | `run`, `reconcile`, `discover` |
 
 ## State
@@ -293,8 +482,10 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | The registry and the recorded catalog | Memory, frozen at build; the digest in the store |
 | Health and its cause | Memory; each change an audit event |
 | Toolsets | A table in the store, owned by this crate |
-| Scout stage results | A table in the store, owned by this crate: run, stage, input hash, result reference |
+| Scout stage results | Tables in the store, owned by this crate: each scout (`actions_scouts`), each finished stage with its input hash and its result (`actions_scout_stages`), and what each discoverer of a discovery run reported (`actions_discovery_results`) |
 | Webhook delivery outcomes | A table in the store, owned by this crate, beside the outbox the events are written to |
+| What a run was called with | Two tables in the store, owned by this crate: the stored input and the caller's verified facts (`actions_run_calls`), and the stored source (`actions_run_sources`) |
+| Which runs a person approved and nobody resumed yet; the link a run's person was last given | Memory, the newest 1024 runs of each; gone with the process. They shape what a reader is told and decide nothing |
 | Large results | Blobs in the store, by content hash; on one machine also written under the project's `.anything2mcp/out/` by the engine, with a name the engine chose |
 
 ## Failures
@@ -309,10 +500,26 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | `input` | `settings_invalid` | An unknown key, a wrong type, or a file that is not TOML, with the file and line |
 | `input` | `action_registry_invalid` | A duplicate action name, or a provider's action outside its name space |
 | `policy` | Any code `decide` returns | Refused by policy, passed through unchanged |
-| `policy` | `person_required` | A person's act was asked for by a caller that cannot give one |
+| `policy` | `person_required` | A person's act was asked for by a caller that acts for no person, or the surface has no page for it |
+| `stale` | `drafts_changed` | The drafts of a publish a person was shown compile to another plan by the time they press |
+| `policy` | `scout_off` | `scout.run` was called and `authoring.scout.run` is `off` |
+| `input` | `binding_not_promotable` | `binding.promote` was asked for a binding that is not a drafted first binding, or whose status cannot be rewritten by rule |
+| `input` | `promotion_unproven` | `binding.promote` found an offline test of the operation missing or not passing, or no trial that proved the read |
+| `policy` | `approval_refused` | What `run.get` reports for a run a person declined, or whose approval window ended; and what the desk answers to a proof of presence that is not the approver's or not of now |
+| `policy` | `kill_switch_on` | A kill switch covers the work a call would start or resume |
+| `policy` | `approval_stale` | The desk was asked to show a stored diff that is not the one the run waits on |
+| `input` | `file_unavailable` | A source file that is missing, unreadable, or larger than a source may be |
 | `policy` | `caller_not_verified` | A credential this engine does not accept |
 | `policy` | `setting_protected` | A layer loosened a protected setting, or set a key it may not |
 | `policy` | `setting_locked` | A higher layer changed a key the installation file locks |
+| `policy` | `setting_not_in_force` | A protected setting is set to a value the policy engine does not work by; the kernel is stopped |
+| `policy` | `presence_required` | A proof of presence that is another person's, or not of now, handed to the dispatcher |
+| `input` | `idempotency_key_invalid` | A key that is not 1 to 200 printable characters, or two different keys on one request |
+| `input` | `idempotency_key_reused` | A key the caller gave before with another call |
+| `busy` | `run_call_unreadable` | What a run was called with is missing from the store or cannot be read; the run is not carried out |
+| `busy` | `tool_changed` | A tool was published again, with another effect, between the decision about a call and the call |
+| `busy` | `system_job_not_carried` | The in-process runner loop was handed a job that is not a run's |
+| `busy` | `store_unavailable` | A change was made and its audit entry could not be written |
 | `busy` | `engine_degraded` | The health state forbids the action |
 | `busy` | `lease_too_short` | A step may take longer than a job's lease lasts |
 | `busy` | `queue_full` and the scheduler's other codes | Passed through from `a2m-sched` |
@@ -328,18 +535,67 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | A write never runs in `degraded` or `stopped` | `a_stopped_store_serves_status_and_nothing_else`, `without_a_key_store_the_kernel_is_degraded_and_writes_nothing` |
 | The registry equals the action catalog, in names, roles, and listing | `the_registry_holds_exactly_the_actions_of_the_catalog`, which reads the catalog document |
 | An empty file is a complete configuration; a layer that may only tighten never loosens; every value names its layer | `tests/settings.rs` |
-| The scout never obtains a write token | Not built |
+| The scout never obtains a write token, and no step that saves reaches a system | `a_scout_drafts_reads_by_rule_tries_them_and_never_writes`, which asks the stand's driver what reached it; `a_scout_identifies_reports_the_same_twice_and_writes_nothing`, which asks the test application |
+| The same system in the same state gives the same report, by hash; a stopped scout continues where it stopped | The same two tests |
+| Each trial of a scout is submitted once; a call never leaves a trial it started in hand; a trial that fails ends its read's tries, by name; a read by key takes its key from a list proven in the same scout, and the key is in no report and no draft | `a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list`; through the product, `first_hour.rs`, with an engine served and with one inside each command |
+| A scout is kept by its project; no consent is recorded on a person's behalf | `a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person` |
+| The compare stage's copy follows no link, is bounded, and does not outlive its engine | `the_compare_copy_follows_no_link_out_of_the_project`, `a_link_swapped_in_after_the_listing_is_not_read`, `the_compare_copy_is_bounded`, `a_scouts_copy_left_in_the_cache_is_removed_when_the_next_engine_opens` |
+| A first binding is made verified only on its evidence, by a rewrite of its status alone; a write's promote is a person's act; a draft is removed only by its checked path | `a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_its_path` |
 | A keeper job always has a slot | Holds by construction in one process: the keeper's work takes no slot. Not tested |
+| A decline ends the run, and the caller is told | `a_decline_ends_the_run_as_expired_and_the_caller_is_told` |
+| After an approval, one `run.resume` completes the write | `one_resume_after_an_approval_completes_the_write_every_time_under_load`: three hundred runs, with readers running beside them |
+| Reading a run asks nobody anything | `reading_a_run_asks_nobody_and_an_approved_run_says_so` |
+| The desk shows only the diff a waiting run carries, bounded and redacted | `the_desk_shows_the_change_a_waiting_run_would_make_and_no_other` |
+| A source reaches the engine as stored bytes, never as a path, and a resume reads the same bytes | `a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes`, which asks the test application what was written |
+| A write refused for want of approval is a recorded decision | `a_write_refused_for_want_of_approval_is_recorded_as_a_decision` |
+| A kill switch is one refusal wherever it is met | `a_kill_switch_is_one_refusal_wherever_it_is_met` |
+| A result that carries `next` fits its action's output schema | `a_result_shows_exact_numbers_as_text_and_carries_its_next_step` |
+| A pipeline over a source runs from a file of the project to verified records | `a_sheet_is_entered_row_by_row_from_a_file_of_the_project` |
+| What was recorded before a commit point is handed back on resume | `a_key_assigned_before_the_commit_point_is_handed_back_when_the_run_is_resumed`: after a lost answer the record is read by the assigned code, not looked up again |
+| A record still `planned` can be recorded as failed | `lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_is_settled` |
+| A stated project folder is checked before any handler sees it | `a_stated_project_folder_is_checked_before_any_handler_sees_it` |
+| The count of work in hand follows a run from queued to its end, and a run that rests for a person | `the_kernel_says_how_much_work_it_has_in_hand` |
+| A run is read, resumed, and cancelled only by its person, and a resume keeps what was kept of its caller | `another_persons_run_is_not_read_resumed_or_cancelled_and_a_resume_keeps_its_caller` |
+| A run whose stored call cannot be read is never run | `a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run`, which asks the test application |
+| The desk and the dispatcher take a proof of presence only of the person it is used for, and of now; an approval's audit entry says what the proof said | `the_desk_takes_a_proof_only_of_the_approver_and_of_now_and_records_what_it_says`, `the_dispatcher_takes_a_proof_of_presence_only_of_its_caller_and_of_now` |
+| A protected setting is in force or the kernel is stopped with its name | `a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_shown_as_in_force`, `the_limits_the_settings_show_are_the_limits_the_policy_engine_keeps`, and the tests of `bounds` |
+| A pre-approved write needs no person only where `policy.pre_approval` allows it | `a_pre_approved_write_needs_no_person_only_where_the_setting_allows_it` |
+| A write the policy engine cannot decide is stopped | `a_write_the_policy_engine_cannot_decide_is_stopped_and_no_approval_carries_it` |
+| A project folder holds a project file, is inside the allowed roots, and is no program's own folder; a source file is read only from `sources` | The tests of `project`; `a_stated_project_folder_is_checked_before_any_handler_sees_it`; `a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes` |
+| An act that is a person's when it loosens is asked for by the dispatcher | `an_act_that_is_a_persons_when_it_loosens_is_asked_for_by_the_dispatcher` |
+| The tool that is run is the one the decision was made for; a debug print of a call shows no value | `a_tool_that_is_not_the_one_the_decision_was_made_for_is_not_run` |
+| A caller made without a credential holds nothing | `the_caller_a_stopped_engine_answers_to_is_nobody_and_holds_nothing` |
+| Two writes on one surface are one at a time | `two_writes_on_one_surface_are_one_at_a_time_by_the_scheduler` |
+| A write binding of six steps at the default limit fits the lease | `a_write_whose_binding_has_six_steps_at_the_default_limit_fits_the_lease` |
+| A follower is woken when its run comes to rest | `a_follower_is_woken_when_its_run_comes_to_rest_and_not_when_it_already_rests` |
+| The same key gives back one run, unfinished or finished, and one write | `the_same_key_gives_back_one_run_and_one_write_finished_or_not`, which asks the test application |
+| A key given with another call is refused; another person's key is theirs; a key is checked | `a_key_given_with_another_call_is_refused_and_another_persons_key_is_theirs` |
+| `run.list` shows only the caller's runs, filtered, paged, and marked | `the_run_list_shows_only_the_callers_runs_filtered_paged_and_marked`, `a_run_whose_write_is_in_doubt_is_marked_in_the_list` |
+| A project folder or file another account may change is refused | `a_project_folder_or_file_that_others_may_change_is_refused` (Linux and macOS) |
+| A person's act an agent asks for is carried out once, from its page, by a proof given for it, as the person; a proof of another ask, another person, or another time does nothing; a publish rests on the plan the person was shown | `a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_persons_proof`, `a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_its_window`; through the real page in `a2m-local` |
+| A draft is read and written only inside its target's folder, never through a link, and a file that does not read as its kind is not written; a trial and a test publish nothing | `an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone`, which asks the file system |
+| A discovery runs in the sandbox, stores what it finds, and writes nothing | `a_discovery_runs_in_the_sandbox_stores_its_findings_and_writes_nothing`, which asks the test application |
+| `init` writes a project that loads, and keeps what is there | `init_writes_a_project_that_loads_and_keeps_what_is_there` |
+| A `Control` call dropped at a wait leaves nothing half-done | By construction: one transaction a call, and a guard for the notice. Not tested with a dropped call |
 
 ## Build order
 
 1. Done: `ActionDef`, `ActionRegistry::build`, and the catalog test. Every action of the catalog is defined as data; one that is not built answers `input` / `action_not_built`.
 2. Done: `Kernel::prepare` and `Kernel::open` with the store, the vault, policy, the keeper, the scheduler, and the engine; the runner loop; `InProcessControl`; the three health states; `Paths`; the settings loader (package 1.4a). Not built: the evidence-space check; a session's probe; the keeper's work for a runner on another machine.
 3. Done: the dispatcher with validation, the health check, the decision, the person need, and redaction; every face as data (`command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, `McpResultFace`). Not built: the live parity test, which needs the role crates; the untrusted mark; large results as blobs.
-4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk`, the vault and policy rows of health.
+4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk` with its preview and a decline that ends the run, the vault and policy rows of health.
 5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
-6. Not built: the scout, `discover.run`, `test.run`.
-7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
+6. Done ([decision 0164](../../decisions/0164-the-authoring-actions-served-through-the-engine.md)): `discover.run`, a `Discover` job per surface whose stored call names the surface and the focus, which the runner turns into the job's tool and input; `finding.list`, `finding.describe`, `unknown.list`; `test.run` as far as the schema and lint gate, with every offline test listed as not run, because no replay of a fixture through a driver exists below this crate. Done since ([decision 0170](../../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md), [decision 0171](../../decisions/0171-the-scouts-report-is-hashed-data-with-the-systems-words-kept-apart.md)): `target.probe`, `auth.detect`, `scout.run`, `scout.report`, and the `add` shortcut through to the report. Not built: what "The scout" names as not built.
+7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.probe`, `auth.detect`, `scout.run`, `scout.report`, `target.list` (the project's targets and the published ones), `target.status`, `draft.read`, `draft.write`, `draft.delete`, `draft.lint`, `draft.try` (drafted reads), `test.run` (the lint gate and the offline tests of reads), `publish.request`, `version.publish`, `binding.promote` (a drafted first binding), `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.list`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data, and `Shortcut::on` says where one stops on this engine. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
+9. Done (the safety audit, [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)): whose a run is; the protected settings and what is in force; the bounds of a project folder and of a source file; the checked proof of presence; a run whose call cannot be read; presence when an act loosens; what a job holds alone; the in-process lease; `next_events` at rest; `tool.search` by kind; `McpResultFace::of_in`; `PersonSurface::presence`. Done since (decision 0159): `next_events_from` and `Followed`, so that a run that came to rest between a follower's two calls is told at once; the guides served by `docs.get`. Done since (decision 0145): every policy setting is carried into the policy engine; `policy.explain` answers only in the caller's workspace; a record's mode is read from the ledger's row. Done since (decision 0160): `run.list`; idempotency keys on `tool.call`; the owner rule of a project folder. Done since ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)): the page on which a person carries out a person's act an agent asked for (sections 222 and 503), with `ApprovalDesk::person_act`, `carry_out`, `decline_act`, and `PersonSurface::ask_person_act`.
+10. Done ([decision 0176](../../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)), `src/tests/pass_two.rs`: `Control::acknowledged` through `Store::store_acknowledged`, held to the diff the engine writes; `Control::keep_capture`, a blob of the short class and a `need` event of the run that names it; `Control::project_folder`, kept with the run's stored call; a run's failure rebuilt with `run_failure`, `said` shown as `{"by": "system", "text": ...}` apart from the sentence in the result, in the MCP face's error, and through `said_line`; `not_read_back` from the ledger's tally; `PreviewRecord::not_read_back`; a call given an unfinished earlier run back by rule 6 marked `earlier_run`; a provider whose manifest was refused listed by `provider.list` as `refused`.
+11. Done ([decision 0177](../../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)): `test.run` runs each offline test of a read through `Engine::run_offline` against a `Replay` of its fixture (`src/offline.rs`), and compares the result with the test's after normalization. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): the offline test of a write, in a throwaway ledger of its own with the test's one clearance, compared with the request its fixture recorded; a pipeline's source from its fixture folder; the publish gate in `version.publish` and `publish.request` (`offline::run_gates`, `GATES`, `publish_gates_not_passed`), with the gates' evidence stored with the version and listed on the person's page.
+12. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): the scout's try stage and `plan_to_observe` compile what can compile (`compile_what_can`), leaving out the drafts that hold an open question and naming them; a tried read keeps its result's shape, never its values; a question and the compiler's messages about drafts are carried under `untrusted` in the report and in `unknown.list`. A key for a try taken from a list read in the same run: built since (decision 0189, step 14), kept only in the trial's own stored call.
+13. Done ([decision 0185](../../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)), `src/tests/pass_two.rs`: the runner's snapshot gives a record the values recorded before its save only from `need` events after its current intent (`RecordRow::intent_seq`), so a reconcile is given the values of the attempt in doubt; `RecordSnapshot::intent_at` and `sent_by`, the time the ledger recorded what followed the send; `RunSnapshot::approved`, the stored diff read back; a job stopped with `possible_commit`, `cannot_reconcile` ends as resting, so the scheduler does not queue another reconcile at once and read the system again and again: the run rests `stopped` for a person; `PreviewRecord::bindings` and `binding_later` (`BINDING_LATER`, and `MAY_NOT_BE_READ_BACK` for a record that may be written by an acknowledged binding); what the system said, kept whole by the failure, cut for display only in `said_json` (with `cut`) and `said_line`, at `SAID_LONGEST` characters and never inside a redaction mark.
+14. Done ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)): the scout's try stage, each trial made once and waited for to its end; a key for a try from a list read in the same scout; a scout kept by its project and stage 0 without consent made up (audit findings A3, A4); the compare copy through checked paths, bounded, and cleared at open (A5); `binding.promote` for a drafted first binding; `draft.delete`; the bindings that act first, on the publish page; `missing` with `draft.delete` for an operation with no test. Not built: promoting a `shadow` binding, which needs the shadow comparison. Adopted from decision 0193: the scout drafts with the redactor (`Drafter::with_redact`) and stores each question with the system's words apart (`open.stored()`), and the report and `unknown.list` show the pack's sentence as `text` and only the quoted words under `untrusted` (`StoredQuestion::read`); `said_line` is `said_quoted` of `a2m-core`; `trace.show` passes every `said` through its `said_neutral`.
+15. Done ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)): `fixture.record` for reads (`src/fixture.rs`: a trial recorded through `Control::step_observed`, every value redacted and scrubbed by `Scrubber`'s fixed rules, the test run in memory and again from the files written, nothing written where a type has no rule); the publish gate passes a write only by a test that sent its save against a recorded request, and `sent: 0` names a test of the path where nothing is sent (AC-2); the gate tests the bytes the plan was compiled from, held once and tied to the plan's source digest, and its evidence names both (AC-3); the publish page carries each surface's kind, addresses, and notices and every lint warning (`PersonActAsk::surfaces`, `warnings`; AC-1), the approval page each record's surface notices (`PreviewRecord::notices`), `ApprovalPreview::write`, and `PreviewField::now_cannot_be_read`; the page's gate line counts offline tests only and says live ones are excused (AC-4); fixture values marked `untrusted` in `test.run` (A-5); a fixture folder reached part by part, never through a link, at most 256 entries and 64 MiB (A-2); a run's project folder checked again at every lease (A-4); `InProcessControl::other_records` over the store, counting only records whose write may have landed; `ActionContext::paths`, the call's own project folder; a scout kept by its row's `project` (migration 0018); `network.proxy` refused at load while no proxy is built. `target.add` stating a surface from an address: built since (step 16).
+16. Done ([decision 0199](../../decisions/0199-the-halves-left-for-each-other-are-joined.md)): `target.add` given `address` and `kind` writes the target file with one surface of the kind, under the key `CompilerSet::address_key` gives, and one test environment, compiled as a draft before anything is written, a refusal naming the compiler's errors; an address with no kind is refused with the kinds the enabled packs offer, never guessed. The first hour has no hand step. A publish's surfaces and warnings are handed in `PersonActAsk::surfaces` and `warnings` alone, no longer also as lines of `details`. `fixture.record` scrubs each item of a list by the list's field type, so a list of choices keeps declared codes; a code the read observed is not looked for in the files written, since another code may stand for it. Tests: `a_target_is_added_to_a_project_and_its_first_file_is_linted`, `a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices` (the stand's list read and read of choices), `a_records_preview_carries_the_notices_its_surface_kind_registers`. Not proven: a candidate whose recorded value was masked answering `CannotTell` through the real store: a masked value is never sent as an argument (`argument_masked`), so the test application's steps cannot land one, and a step that records a value it does not send needs a hook in the engine's test helper.
+8. Done (the second pass): a source through `tool.call` and the runner; `tool.search` in full; `Kernel::events` and `next_events`; values shown as themselves. Not built: inline rows for a source that is not read as JSON; a call by a published tool's own name in one dispatch, which the MCP endpoint can have by dispatching `tool.call` and reading `input`, `not_found` with no result as an unknown tool.
 
 ## Open points
 
@@ -349,4 +605,13 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 - An action a provider adds has no summary, role, or listing of its own: the provider contract gives a name, two schemas, and an effect. Such an action is given the role `Builder` for a read and `Admin` otherwise, and is not listed.
 - `browser.install` is a row of the catalog and so an action of the kernel, which names a kind of program. It belongs to the pack that drives one, as an action that pack adds.
 - A word may be both a noun and a shortcut or process command (`run`, `test`, `docs`, `doctor`, `publish`, `runner`). The command face must take the bare word as the shortcut or process command and the word with a verb as the action.
-- The run's caller at guard is the caller who started or last resumed it, kept by this crate. A reconcile job the scheduler queues by itself is decided as the person who started the run.
+- The run's caller at guard is the caller who started it, kept by this crate when the run was made and never rewritten. A reconcile job the scheduler queues by itself is decided as that caller.
+- That a run was approved and not yet resumed is known to a reader only while the engine that recorded the approval runs. After a restart `run.get` shows the run as waiting, and a resume completes it all the same.
+- `Kernel::events`, `run.get`, `run.resume`, and `run.cancel` serve a run only to its person. A console that follows other people's runs needs a decision of its own; `trace.show` already serves an auditor.
+- The installation's settings folder is one the user can write when `A2M_HOME` is set, which puts everything under one directory, and on Windows when `PROGRAMDATA` is not set. The installation file may loosen and lock, so on those two layouts whoever can write the user's files sets the bounds the other layers are held to. A real installation sets neither.
+- `policy.explain` explains a decision by its identifier and does not check its workspace: `a2m-policy` gives the explanation no workspace to compare. One installation is one workspace today.
+- A presence proof can be made by any crate, because the crate that raises the prompt is above this one. The desk and the dispatcher check whose it is and when it was made; what it is worth rests on the person surface the product crate mounts.
+- A caller's `is_agent` is what the front door states. Every caller of the local channel, and every MCP and SDK caller, is an agent (`caller_is_agent` true): the product no longer takes a header's word that a person is at a terminal ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)). In one process the flag is the process's own view of its terminal: a claim, not a proof. A person is established only by the presence prompt. So a person's act (publishing a version, changing a protected setting) asked for through a served engine goes to the person surface's page, where a press raises the presence prompt and carries the act out once ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)). In this crate the flag changes four things: a caller marked as an agent is never asked for presence, and its person's act is shown to its person on a page instead; it is written into the caller's facts of a run and from there into every policy request about the run (`caller_is_agent`), where the policy engine's guardrail on approving and a pre-approval rule's condition read it; and it is part of the decision recorded for each dispatch. `is_agent: false` is never taken as proof of a person: every act that needs one asks the person surface for a proof and checks it.
+- A response to a call refused by a kill switch carries the decision about the action, an allow, and not the policy engine's recorded refusal of the work.
+- The mode each intent was stored for is read from the record's row in the ledger, so a record in doubt is read through the binding that wrote it after a restart too (decision 0145). What was recorded before a commit point is read from the ledger and survives one.
+- A record that reconcile verified has no outputs and no assigned key in the ledger; the engine reads it once more on resume ([decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md), point 18).

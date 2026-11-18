@@ -8,8 +8,27 @@ pub(crate) const PACK: &str = "data";
 /// The pack's version, as its manifest states it.
 pub(crate) const PACK_VERSION: &str = "0.0.1";
 
-/// The surface kind the pack serves.
+/// The surface kind of a store in a file.
 pub(crate) const DATABASE: SurfaceKind = SurfaceKind::fixed("database");
+/// The surface kind of a store on a server.
+#[cfg(feature = "postgres")]
+pub(crate) const DATABASE_SERVER: SurfaceKind = SurfaceKind::fixed("database_server");
+
+/// The surface kinds the pack serves in this build.
+pub(crate) fn surface_kinds() -> Vec<SurfaceKind> {
+    vec![
+        DATABASE,
+        #[cfg(feature = "postgres")]
+        DATABASE_SERVER,
+    ]
+}
+
+/// Whether a surface kind is one the pack serves in this build.
+pub(crate) fn is_database(kind: &SurfaceKind) -> bool {
+    surface_kinds().contains(kind)
+}
+/// The mode the pack drives, as a target file writes it.
+pub(crate) const PACK_MODE: &str = "sql";
 /// The file kind the pack owns.
 pub(crate) const STATEMENT: FileKindName = FileKindName::fixed("statement");
 /// The folder of the file kind.
@@ -48,7 +67,7 @@ pub(crate) struct Names {
 impl Names {
     pub(crate) fn new() -> Result<Self, Failure> {
         Ok(Self {
-            mode: Mode::new("sql")?,
+            mode: Mode::new(PACK_MODE)?,
             table: FindingKind::new("table")?,
         })
     }
@@ -79,10 +98,17 @@ pub mod codes {
         DENIED_BY_STORE = Policy, "denied_by_store";
         /// A statement declared a read tried to change data.
         READ_STATEMENT_WROTE = Policy, "read_statement_wrote";
+        /// A statement is not one plain read or one keyed write: it attaches
+        /// a file, changes a setting or the schema, ends a transaction, is
+        /// several statements, or is a read that returns no column.
+        STATEMENT_NOT_ALLOWED = Policy, "statement_not_allowed";
         /// A table, column, parameter, or trigger differs from the plan.
         SCHEMA_CHANGED = Drift, "schema_changed";
         /// A key matched more than one row.
         KEY_NOT_UNIQUE = Drift, "key_not_unique";
+        /// A read of one record by its key gave a record with another key,
+        /// or does not return the key.
+        READ_NOT_BY_KEY = Drift, "read_not_by_key";
         /// A write changed no row: the record is gone or its key changed.
         CHANGED_SINCE_PREVIEW = Stale, "changed_since_preview";
         /// A write changed no row: the version guard did not hold.
@@ -93,8 +119,14 @@ pub mod codes {
         VALUE_KIND_UNSUPPORTED = UnknownVariant, "value_kind_unsupported";
         /// A statement's result holds more text than the limit allows.
         RESULT_TOO_LARGE = UnknownVariant, "result_too_large";
+        /// The store's catalog holds more tables than one read takes, so
+        /// what a write reaches cannot be shown.
+        CATALOG_TOO_LARGE = UnknownVariant, "catalog_too_large";
         /// An argument is missing, or is a list or a record.
         VALUE_NOT_BINDABLE = Input, "value_not_bindable";
+        /// The embedded store's file was replaced by another file at its
+        /// name after the run was prepared.
+        STORE_FILE_REPLACED = Drift, "store_file_replaced";
     }
 
     /// The store's connection ended before `commit` was sent. The provider
@@ -116,6 +148,39 @@ pub mod codes {
 
     /// The class of [`CONNECTION_LOST`] and [`TIMEOUT`].
     pub const TRANSIENT: FailureClass = FailureClass::Transient;
+
+    /// The server store is not on this machine, and this build makes no
+    /// encrypted link to one: no unencrypted link is ever made.
+    #[cfg(feature = "postgres")]
+    pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
+    /// The identity the lease signs in as is a superuser, bypasses row
+    /// security, may replicate or make roles, or owns tables of the schema.
+    #[cfg(feature = "postgres")]
+    pub const IDENTITY_IS_ADMINISTRATOR: FailureCode =
+        FailureCode::fixed("identity_is_administrator");
+    /// The session's credential is not a user and a password, which is all a
+    /// server store is signed in with.
+    #[cfg(feature = "postgres")]
+    pub const CREDENTIAL_NOT_CARRIED: FailureCode = FailureCode::fixed("credential_not_carried");
+    /// A connection, or the server it reaches, does not lead where the plan's
+    /// surface names: another address, port, database, schema, `search_path`,
+    /// link mode, or role. It is closed and never used, and nothing is sent.
+    #[cfg(feature = "postgres")]
+    pub const CONNECTION_LEADS_ELSEWHERE: FailureCode =
+        FailureCode::fixed("connection_leads_elsewhere");
+    /// The server store's address is not among the run's destinations.
+    #[cfg(feature = "postgres")]
+    pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
+
+    /// The codes only a build with the server store returns, with their class.
+    #[cfg(feature = "postgres")]
+    pub const SERVER: &[(FailureClass, &str)] = &[
+        (FailureClass::Policy, "link_not_encrypted"),
+        (FailureClass::Policy, "identity_is_administrator"),
+        (FailureClass::Input, "credential_not_carried"),
+        (FailureClass::Policy, "connection_leads_elsewhere"),
+        (FailureClass::Policy, "surface_not_declared"),
+    ];
 }
 
 /// The lint codes the pack reports.

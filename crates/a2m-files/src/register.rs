@@ -10,14 +10,15 @@ use std::fmt;
 use std::sync::Arc;
 
 use a2m_core::{
-    ControlName, Failure, FailureClass, FileKindName, Finding, FindingKind, IdentityStrategy,
-    LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding, FindingKind,
+    IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName,
+    SurfaceNotice, SurfacePlan, ValueType, Verb, WriteEvidence,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
 use crate::doc::{Doc, Located, Place};
 use crate::draft::{DraftContext, DraftDoc};
-use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FOLDERS, KERNEL_OWNER};
+use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FOLDERS, KERNEL_OWNER, OPERATION, SOURCE};
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
 
@@ -104,6 +105,36 @@ pub trait FileKind: Send + Sync {
         docs: &[Located<Doc>],
         cx: &KindContext<'_>,
     ) -> Result<CompiledSection, Diagnostics>;
+    /// Whether a document of this kind describes something that changes the
+    /// system: a request that writes, an action that saves, a statement that
+    /// is not a query. The drafter asks this of every document it is about
+    /// to write, and writes none for which the answer is yes: a write is
+    /// written by the developer, never drafted.
+    ///
+    /// A kind that has entries of both sorts answers from the document. One
+    /// that does not answer is taken to describe no write, so a pack whose
+    /// kind can describe one must say so here.
+    fn writes(&self, _doc: &Located<Doc>) -> bool {
+        false
+    }
+}
+
+/// Whether a step of one kind saves in the system. A pack states it once
+/// for each kind of step its lowering emits, and the compiler holds every
+/// lowered step to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepCommits {
+    /// A step of this kind never saves. One that is marked `commits` is
+    /// refused.
+    Never,
+    /// A step of this kind always saves. One that is not marked `commits`
+    /// is refused, so it can never run with no intent recorded.
+    Always,
+    /// A step of this kind saves when the pack's own files say that what it
+    /// refers to does, such as a request whose endpoint is declared a
+    /// write. The lowering's mark stands, and the compiler has no second
+    /// opinion of it.
+    AsDeclared,
 }
 
 /// Whether an identity strategy can be carried out by a binding.
@@ -150,6 +181,37 @@ pub trait Lowering: Send + Sync {
     fn reads(&self) -> &[(FileKindName, SurfaceKind)];
     /// Every kind its steps may carry; the mode's driver must know each.
     fn step_kinds(&self) -> &[StepKind];
+    /// Whether a step of `kind` saves in the system. Stated once for the
+    /// kind, whatever a target's files say; a lowered step marked otherwise
+    /// does not compile. A lowering that does not say leaves every kind
+    /// [`StepCommits::AsDeclared`], and the compiler then has only the
+    /// lowering's own mark on each step.
+    fn commits(&self, _kind: &StepKind) -> StepCommits {
+        StepCommits::AsDeclared
+    }
+    /// The least effect class an operation with this binding can have, by
+    /// what the binding does: `write` for a verb that changes a record,
+    /// `irreversible` for one that deletes, sends, or cannot be undone. The
+    /// compiler refuses an operation that declares less. A lowering that
+    /// does not say claims nothing, and the operation's effect is then held
+    /// only to its steps' `commits` marks.
+    fn least_effect(&self, _binding: &ResolvedBinding<'_>) -> EffectClass {
+        EffectClass::Read
+    }
+    /// What a write binding offers as the evidence that its write landed
+    /// (spec section 208). `acknowledged` is for a binding that has nothing
+    /// to read back and nothing to compare, such as a queue take or a call
+    /// of an irreversible tool: the compiler then holds the operation to
+    /// `irreversible`, and the engine ends its record `acted`, never
+    /// verified. The default is `response` where the lowering prefers the
+    /// save's answer, and `read_back` otherwise.
+    fn evidence(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if lowered.prefer_response {
+            WriteEvidence::Response
+        } else {
+            WriteEvidence::ReadBack
+        }
+    }
     /// The fields this mode adds to a binding: an object schema. The kernel
     /// owns `mode`, `verb`, `status`, and `precondition`; everything else in
     /// a binding, `read_back` included, is checked against this.
@@ -213,6 +275,24 @@ pub struct SurfaceKindSpec {
     /// compiler copies what a surface states under them into
     /// `SurfacePlan::programs`, and refuses a path that is not absolute.
     pub programs: Vec<ProgramField>,
+    /// The notices a surface of this kind carries for a door to show, each
+    /// when one of its fields holds one word ([`SurfaceKindSpec::with_notice`]).
+    pub notices: Vec<NoticeField>,
+}
+
+/// A notice a surface carries when one of its own fields holds one word:
+/// so a pack names, as data, what a door must show, and a door asks
+/// [`CompilerSet::surface_notices`] (decision 0193). The notice and its
+/// words are the kernel's closed list; the field is the target file's,
+/// which a caller's input never sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeField {
+    /// The key of the surface's field, one of the kind's own fields.
+    pub key: String,
+    /// The word that field holds for the notice to stand.
+    pub word: String,
+    /// The notice.
+    pub notice: SurfaceNotice,
 }
 
 impl SurfaceKindSpec {
@@ -224,7 +304,20 @@ impl SurfaceKindSpec {
             address_key: address_key.to_owned(),
             fields,
             programs: Vec::new(),
+            notices: Vec::new(),
         }
+    }
+
+    /// Adds a notice a surface of this kind carries while its own field
+    /// `key` holds `word`, such as `unencrypted_credentials: accepted`.
+    #[must_use]
+    pub fn with_notice(mut self, key: &str, word: &str, notice: SurfaceNotice) -> Self {
+        self.notices.push(NoticeField {
+            key: key.to_owned(),
+            word: word.to_owned(),
+            notice,
+        });
+        self
     }
 
     /// Adds a field that names a program by its absolute path, and the
@@ -296,6 +389,38 @@ impl fmt::Debug for CompilerSet {
 }
 
 impl CompilerSet {
+    /// Whether a drafting rule of `pack` may write files of `kind`: a read
+    /// operation or a source, which the kernel owns and any pack may draft,
+    /// or a kind the pack itself registered. Never another kernel kind: a
+    /// drafted `target.yaml` or `auth.yaml` would widen what the target
+    /// reaches, and a drafted pipeline or test would stand for a person's
+    /// judgment. A kind nobody has registered yet is not refused here.
+    ///
+    /// A file kind is registered for a surface kind, so two packs may each
+    /// register a kind of one name, each for its own surfaces (a screen of
+    /// a web application and a screen of a desktop application): each may
+    /// then draft files of that name. A pack that registered the name for
+    /// no surface kind, while others did, may not (decision 0203).
+    pub(crate) fn may_draft(&self, pack: &str, kind: &FileKindName) -> bool {
+        if KERNEL_FILE_KINDS.contains(&kind.as_str()) {
+            return kind.as_str() == OPERATION || kind.as_str() == SOURCE;
+        }
+        let mut owners = self
+            .file_kinds
+            .iter()
+            .filter(|((name, _), _)| name == kind)
+            .map(|(_, owner)| owner.pack.as_str())
+            .peekable();
+        owners.peek().is_none() || owners.any(|owner| owner == pack)
+    }
+
+    /// Whether `pack` registered the file kind `kind` for some surface kind.
+    pub(crate) fn owns_kind(&self, pack: &str, kind: &FileKindName) -> bool {
+        self.file_kinds
+            .iter()
+            .any(|((name, _), owner)| name == kind && owner.pack == pack)
+    }
+
     /// A builder that holds nothing yet.
     #[must_use]
     pub fn builder() -> CompilerSetBuilder {
@@ -311,6 +436,49 @@ impl CompilerSet {
     /// The surface kinds registered, in order of name.
     pub fn surface_kinds(&self) -> impl Iterator<Item = &SurfaceKind> {
         self.surface_kinds.keys()
+    }
+
+    /// The key under which a surface of `kind` states its address, as its
+    /// pack registered it ([`SurfaceKindSpec::address_key`]). `None` for a
+    /// kind no pack registers. A caller that writes a surface from an
+    /// address asks here and holds no pack's knowledge of its own
+    /// (decision 0199).
+    #[must_use]
+    pub fn address_key(&self, kind: &SurfaceKind) -> Option<&str> {
+        self.surface_kinds
+            .get(kind)
+            .map(|spec| spec.item.address_key.as_str())
+    }
+
+    /// The notices a surface of the plan carries for a door to show, in
+    /// the order of the closed list, each once: those its kind's pack
+    /// registered ([`SurfaceKindSpec::with_notice`]) whose field the
+    /// surface's own fields, as the compiler kept them, hold with the word.
+    /// Nothing for a kind no pack registers, or a surface whose fields
+    /// cannot be read. The surface's fields are the target file's; nothing
+    /// a caller sends reaches them (decision 0193).
+    #[must_use]
+    pub fn surface_notices(&self, surface: &SurfacePlan) -> Vec<SurfaceNotice> {
+        let Some(spec) = self.surface_kinds.get(&surface.kind) else {
+            return Vec::new();
+        };
+        if spec.item.notices.is_empty() {
+            return Vec::new();
+        }
+        let Ok(Some(fields)) = surface.payload.decode::<Option<serde_json::Value>>() else {
+            return Vec::new();
+        };
+        SurfaceNotice::ALL
+            .iter()
+            .copied()
+            .filter(|notice| {
+                spec.item.notices.iter().any(|field| {
+                    field.notice == *notice
+                        && fields.get(&field.key).and_then(serde_json::Value::as_str)
+                            == Some(field.word.as_str())
+                })
+            })
+            .collect()
     }
 
     /// The modes that have a lowering, in order of name.
@@ -476,6 +644,17 @@ impl CompilerSetBuilder {
                 "The surface kind `{}` names a program by the key `{}`, which its fields do not list.",
                 spec.kind,
                 crate::schema::shown(key)
+            )));
+        }
+        if let Some(field) = spec
+            .notices
+            .iter()
+            .find(|field| !keys.contains(&field.key.as_str()) || field.key == spec.address_key)
+        {
+            return Err(conflict(format!(
+                "The surface kind `{}` gives a notice by the key `{}`, which is not one of its own fields other than its address.",
+                spec.kind,
+                crate::schema::shown(&field.key)
             )));
         }
         self.set.surface_kinds.insert(
@@ -646,7 +825,11 @@ impl CompilerSetBuilder {
     /// # Errors
     ///
     /// `registration_conflict` when a rule from the same kind of finding to
-    /// the same kind of file is already registered.
+    /// the same kind of file is already registered; when the file kind is
+    /// one of the kernel's other than `operation` and `source`, which are
+    /// the two a draft may be made of; and when the file kind is one another
+    /// pack registered. The drafter checks the owner again when it drafts,
+    /// since a kind may be registered after its rule.
     pub fn drafting_rule(
         &mut self,
         pack: &str,
@@ -654,6 +837,12 @@ impl CompilerSetBuilder {
     ) -> Result<&mut Self, Failure> {
         check_pack(pack)?;
         let key = (rule.finding_kind(), rule.file_kind());
+        if !self.set.may_draft(pack, &key.1) {
+            return Err(conflict(format!(
+                "A drafting rule of `{pack}` writes `{}` files, which are not its own and are not operations or sources.",
+                key.1
+            )));
+        }
         if let Some(first) = self.set.drafting_rules.get(&key) {
             return Err(conflict(format!(
                 "A drafting rule from `{}` findings to `{}` files is registered by `{}` and again by `{pack}`.",

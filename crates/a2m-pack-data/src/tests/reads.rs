@@ -7,9 +7,9 @@ use a2m_core::{FailureClass, Secret, Value};
 use a2m_provider::{Posture, Sent, StepOutcome};
 use a2m_vault::Redactor;
 use example_db::faults::Fault;
-use example_db::schema::Table;
+use example_db::schema::{READ_THAT_WRITES, Table};
 
-use super::{Scene, failed, inputs, values};
+use super::{Scene, failed, inputs, project_of, values};
 use crate::names::codes;
 
 fn text<'a>(values: &'a a2m_core::Values, name: &str) -> &'a str {
@@ -163,7 +163,12 @@ async fn five_runs_of_one_read_do_the_same_thing() {
     }
     assert!(seen.windows(2).all(|pair| pair[0] == pair[1]));
     let (_, means) = &seen[0];
-    let shown = format!("{means:?}");
+    // The trace's own fields: a detail does not print what it holds.
+    let shown: String = means
+        .iter()
+        .flatten()
+        .map(|detail| format!("{}={};", detail.name, detail.value))
+        .collect();
     assert_eq!(means.len(), 3);
     assert!(
         shown.contains("line_item_by_key") && shown.contains("read_only"),
@@ -177,23 +182,47 @@ async fn five_runs_of_one_read_do_the_same_thing() {
 }
 
 #[tokio::test]
-async fn a_statement_declared_a_read_that_writes_is_refused_by_the_store() {
-    let scene = Scene::new();
+async fn a_statement_declared_a_read_that_writes_is_refused_and_nothing_is_written() {
+    // The compiler refuses it: stand case 2, a statement that returns rows
+    // as a read does and changes one.
+    let problems = super::compile::errors_after(
+        &["statements", "orders.yaml"],
+        "      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version\n      FROM order_lines WHERE order_id = ?\n    params: [{name: order_id, type: identifier}]\n    returns: one_or_none\n",
+        &format!(
+            "      {READ_THAT_WRITES}\n    params: [{{name: order_id, type: identifier}}, {{name: item_code, type: identifier}}]\n    returns: one_or_none\n"
+        ),
+    );
+    let problem = problems
+        .find("data.statement_invalid")
+        .expect("a read that writes");
+    assert_eq!(problem.at.file.as_str(), "statements/orders.yaml");
+    assert!(problem.message.contains("changes data"), "{problem}");
+
+    // The driver refuses it again, in a plan the compiler did not make,
+    // before anything is sent.
+    let mut scene = Scene::new();
+    scene.alter("line_of_order", |statement| {
+        statement.text = READ_THAT_WRITES.to_owned();
+        statement.params.push(crate::model::Param {
+            name: "item_code".to_owned(),
+            field_type: None,
+            key: true,
+        });
+    });
     let before = scene.db.data_version().unwrap();
     let mut run = scene.prepare(Posture::Live).await;
-    let touched = run
-        .steps(
-            &scene.binding("example_line_item_touch").act,
-            &inputs(&[("order_id", "A-100"), ("item_code", "L-101")]),
-            None,
-        )
-        .await;
+    let act = &scene.binding("example_order_line_get").act;
+    let key = a2m_core::Values::new()
+        .with("order_id", "A-100")
+        .with("item_code", "L-101");
+    run.step(&act[0], &a2m_core::Values::new()).await.unwrap();
+    let touched = run.step_with(&act[1], &key, None).await;
     assert_eq!(
         failed(touched),
         (
             FailureClass::Policy,
             codes::READ_STATEMENT_WROTE,
-            Sent::Answered
+            Sent::NotSent
         )
     );
     // The connection is still good for a real read.
@@ -395,4 +424,65 @@ async fn a_value_that_cannot_be_bound_stops_the_step_unsent() {
         )
     );
     run.release().await;
+}
+
+#[tokio::test]
+async fn a_database_file_is_of_the_project_of_the_request_that_started_the_run() {
+    let scene = Scene::new();
+    // A second project, with its own file of the same name and another
+    // value in it.
+    let other = example_db::harness::TestDb::start().unwrap();
+    other
+        .someone_else(
+            "UPDATE customers SET name = 'Example Customer Two' WHERE customer_id = 'C-001'",
+            &[],
+        )
+        .unwrap();
+    let act = &scene.binding("example_customer_get").act;
+    let wanted = inputs(&[("customer_id", "C-001")]);
+    let fence = || a2m_ledger::Fence {
+        run: a2m_core::RunId::from_bytes([7; 16]),
+        epoch: a2m_core::Epoch::new(1),
+    };
+    let mut names = Vec::new();
+    for project in [
+        scene.db.path().parent().unwrap(),
+        other.path().parent().unwrap(),
+    ] {
+        let handle = scene.handle();
+        let prepared = scene
+            .try_prepare_with(&handle, Posture::Live, fence(), &project_of(project))
+            .await
+            .unwrap();
+        let mut run = super::Run {
+            plan: &scene.plan,
+            handle,
+            prepared: Some(prepared),
+            wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: a2m_core::Values::new(),
+        };
+        let found = values(run.steps(act, &wanted, None).await.unwrap());
+        names.push(text(&found, "name").to_owned());
+        run.release().await;
+    }
+    assert_eq!(names, ["Example Customer One", "Example Customer Two"]);
+
+    // A run whose request had no project folder stops by name, and opens
+    // nothing: the folder the engine was started in is never used.
+    let handle = scene.handle();
+    let Err(stopped) = scene
+        .try_prepare_with(
+            &handle,
+            Posture::Live,
+            fence(),
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+    else {
+        panic!("no project folder");
+    };
+    assert_eq!(stopped.sent, Sent::NotSent);
+    assert_eq!(stopped.failure.class(), FailureClass::Input);
+    assert_eq!(stopped.failure.code().as_str(), "project_folder_missing");
 }

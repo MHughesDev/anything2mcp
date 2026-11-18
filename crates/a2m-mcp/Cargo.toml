@@ -17,12 +17,16 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
+# The engine's shared test helper, included by path, stops and starts the
+# test's clock; that needs this feature even when this crate is built alone.
+tokio = { workspace = true, features = ["test-util"] }
 a2m-actions = { path = "../a2m-actions", features = ["testing"] }
 a2m-auth = { path = "../a2m-auth" }
 a2m-engine = { path = "../a2m-engine" }
 a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger" }
 a2m-provider = { path = "../a2m-provider" }
+a2m-sources = { path = "../a2m-sources" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 a2m-vault = { path = "../a2m-vault" }
 example-app = { path = "../../targets/example-app" }

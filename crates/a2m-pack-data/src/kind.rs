@@ -2,9 +2,10 @@
 //! compilation into the pack's section of the plan.
 //!
 //! A statement's text is a constant of the plan. A hand-written text is
-//! copied as it stands; a `form: table` statement is written here, from
-//! identifiers of the file quoted by the dialect's rule. No value from a
-//! tool input is ever placed in either.
+//! copied as it stands, once its form is held to one plain read; a
+//! `form: table` statement is written here, from identifiers of the file
+//! quoted by the dialect's rule. No value from a tool input is ever placed
+//! in either.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,11 +19,14 @@ use a2m_files::{
 use crate::model::{
     Access, Column, Does, Isolation, Param, Returns, SECTION_FORMAT, Section, Statement, Stored,
 };
-use crate::names::{DATABASE, FOLDER, STATEMENT, lint};
+use crate::names::{FOLDER, STATEMENT, lint};
+use crate::shape;
 use crate::store::{Opener, STORES, opener};
 
 /// The longest a statement may be given, in milliseconds: ten minutes.
 const LONGEST_MS: u64 = 600_000;
+/// The name of the parameter that carries the version a guard compares.
+const GUARD_PARAM: &str = "version";
 
 /// The file kind.
 pub(crate) struct StatementKind {
@@ -68,7 +72,7 @@ impl StatementKind {
                 .optional("surface", JsonSchema::surface())
                 .required("records", JsonSchema::map_of(record))
                 .required("statements", JsonSchema::map_of(statement)),
-            kinds: vec![DATABASE],
+            kinds: crate::names::surface_kinds(),
             max_rows,
         }
     }
@@ -265,17 +269,17 @@ impl TableForm<'_> {
         Ok(fields)
     }
 
-    /// The key predicate and the guard, with their parameters. There is no
-    /// table-form update or delete without the full key.
-    fn by_key(&self, params: &mut Vec<Param>) -> Result<(String, bool), Diagnostic> {
+    /// The full key predicate, with its parameters. There is no table-form
+    /// statement that finds a row any other way.
+    fn key_predicate(&self, params: &mut Vec<Param>) -> Result<Vec<String>, Diagnostic> {
         if self.record.key.is_empty() {
             return Err(self.invalid(
                 &self.body.at,
                 format!(
-                    "The record `{}` declares no key, so a row of it cannot be updated or deleted by key.",
+                    "The record `{}` declares no key, so a row of it cannot be read, updated, or deleted by key.",
                     self.record_name
                 ),
-                "Declare the record's key, or leave the write out.",
+                "Declare the record's key, or leave the statement out.",
             ));
         }
         let mut predicate = Vec::new();
@@ -286,7 +290,7 @@ impl TableForm<'_> {
             predicate.push(format!(
                 "{} = {}",
                 self.quoted(&field.column, &self.body.at)?,
-                self.store.placeholder()
+                self.store.placeholder(params.len() + 1)
             ));
             params.push(Param {
                 name: field.name.clone(),
@@ -294,6 +298,38 @@ impl TableForm<'_> {
                 key: true,
             });
         }
+        Ok(predicate)
+    }
+
+    /// The read of one record by its full key: every field's column and the
+    /// version, from the record's table, where the key is the one bound.
+    fn read_by_key(&self) -> Result<Written, Diagnostic> {
+        let table = self.quoted(&self.record.table, &self.body.at)?;
+        let columns = self.record.columns();
+        let mut selected = Vec::new();
+        for column in &columns {
+            selected.push(self.quoted(&column.column, &self.body.at)?);
+        }
+        let mut params = Vec::new();
+        let predicate = self.key_predicate(&mut params)?;
+        Ok(Written {
+            text: format!(
+                "SELECT {} FROM {table} WHERE {}",
+                selected.join(", "),
+                predicate.join(" AND ")
+            ),
+            params,
+            does: Does::Read,
+            guarded: false,
+            returns: Returns::OneOrNone,
+            columns,
+        })
+    }
+
+    /// The key predicate and the guard, with their parameters. There is no
+    /// table-form update or delete without the full key.
+    fn by_key(&self, params: &mut Vec<Param>) -> Result<(String, bool), Diagnostic> {
+        let mut predicate = self.key_predicate(params)?;
         let guard = self.body.get("guard");
         let guarded = match guard.and_then(Located::as_text) {
             Some("none") => false,
@@ -308,13 +344,26 @@ impl TableForm<'_> {
                         "Add `version:` to the record with the column the store changes on every write, or use `guard: none`.",
                     ));
                 };
+                // The guard's value is the step argument `version`. A field
+                // of that name among the parameters would be bound to the
+                // same argument, and the guard would compare the wrong value.
+                if params.iter().any(|param| param.name == GUARD_PARAM) {
+                    return Err(self.invalid(
+                        guard.map_or(&self.body.at, |guard| &guard.at),
+                        format!(
+                            "The guard's parameter is named `{GUARD_PARAM}`, and the statement also takes a field of the record `{}` with that name.",
+                            self.record_name
+                        ),
+                        "Give the field another name under `fields`; its `column` stays as it is.",
+                    ));
+                }
                 predicate.push(format!(
                     "{} = {}",
                     self.quoted(version, &self.body.at)?,
-                    self.store.placeholder()
+                    self.store.placeholder(params.len() + 1)
                 ));
                 params.push(Param {
-                    name: "version".to_owned(),
+                    name: GUARD_PARAM.to_owned(),
                     field_type: None,
                     key: false,
                 });
@@ -342,7 +391,6 @@ impl TableForm<'_> {
     /// guarded, and what it returns.
     fn write(&self) -> Result<Written, Diagnostic> {
         let table = self.quoted(&self.record.table, &self.body.at)?;
-        let placeholder = self.store.placeholder();
         let mut params = Vec::new();
         let as_param = |field: &Field| Param {
             name: field.name.clone(),
@@ -365,8 +413,9 @@ impl TableForm<'_> {
                 let mut assignments = Vec::new();
                 for field in set {
                     assignments.push(format!(
-                        "{} = {placeholder}",
-                        self.quoted(&field.column, &self.body.at)?
+                        "{} = {}",
+                        self.quoted(&field.column, &self.body.at)?,
+                        self.store.placeholder(params.len() + 1)
                     ));
                     params.push(as_param(field));
                 }
@@ -408,10 +457,13 @@ impl TableForm<'_> {
                     .filter_map(|name| self.record.field(name))
                     .filter(|field| !set.iter().any(|given| given.name == field.name))
                     .collect();
+                let placeholders: Vec<String> = (1..=columns.len())
+                    .map(|position| self.store.placeholder(position))
+                    .collect();
                 let mut text = format!(
                     "INSERT INTO {table} ({}) VALUES ({})",
                     columns.join(", "),
-                    vec![placeholder; columns.len()].join(", ")
+                    placeholders.join(", ")
                 );
                 if missing.is_empty() {
                     return Ok(Written {
@@ -461,6 +513,31 @@ impl TableForm<'_> {
     }
 }
 
+/// Refuses a statement whose words are not those of one plain read or one
+/// keyed write. The driver makes the same refusal before it runs one.
+fn held_to_its_form(
+    text: &str,
+    does: Does,
+    at: &Place,
+    dialect: shape::Dialect,
+) -> Result<(), Diagnostic> {
+    shape::check_in(text, does, dialect).map_err(|wrong| {
+        problem(
+            &lint::STATEMENT_INVALID,
+            at,
+            wrong.message().to_owned(),
+            match dialect {
+                shape::Dialect::Embedded => {
+                    "Write a read as one `SELECT` with `?` for each parameter, and quote a table or a column whose name is one of the refused words."
+                }
+                shape::Dialect::Server => {
+                    "Write a read as one `SELECT` with `$1`, `$2`, ... for the parameters in order, and quote a table or a column whose name is one of the refused words."
+                }
+            },
+        )
+    })
+}
+
 impl StatementKind {
     fn statement(
         &self,
@@ -503,6 +580,46 @@ impl StatementKind {
             keys.iter()
                 .find_map(|key| body.get(key).map(|found| (*key, found)))
         };
+        if reads && body.text("form") == Some("table") {
+            // The read of one record by its key, which the pack writes: the
+            // only read a write may be read back with.
+            if let Some((key, found)) = extra(&[
+                "text", "params", "returns", "max_rows", "verb", "set", "guard", "hazard",
+            ]) {
+                return Err(invalid(
+                    &found.at,
+                    format!(
+                        "The statement `{name}` is a read the pack writes from its record, and `{key}` does not belong to one."
+                    ),
+                    "Remove the key: a `form: table` read returns the record's fields, by its key.",
+                ));
+            }
+            let form = TableForm {
+                record,
+                record_name,
+                body,
+                store,
+            };
+            let written = form.read_by_key()?;
+            held_to_its_form(&written.text, written.does, &body.at, store.dialect())?;
+            return Ok(Statement {
+                surface: surface.to_owned(),
+                record: record_name.to_owned(),
+                by_key: true,
+                access: Access::ReadOnly,
+                text: written.text,
+                does: written.does,
+                guarded: false,
+                params: written.params,
+                timeout_ms,
+                columns: written.columns,
+                returns: written.returns,
+                max_rows: 1,
+                table: None,
+                hazard_declared: false,
+                isolation,
+            });
+        }
         if reads {
             if let Some((key, found)) = extra(&["form", "verb", "set", "guard", "hazard"]) {
                 return Err(invalid(
@@ -522,6 +639,14 @@ impl StatementKind {
                     "Add the three keys; `params: []` for a statement with no parameter.",
                 ));
             };
+            // One plain read, by its words. The store proves that it only
+            // reads; this refuses what a read-only connection does not stop.
+            held_to_its_form(
+                text,
+                Does::Read,
+                body.get("text").map_or(&body.at, |text| &text.at),
+                store.dialect(),
+            )?;
             let mut declared: Vec<Param> = Vec::new();
             for param in params.items() {
                 let param_name = param.text("name").unwrap_or_default();
@@ -561,6 +686,8 @@ impl StatementKind {
             };
             return Ok(Statement {
                 surface: surface.to_owned(),
+                record: record_name.to_owned(),
+                by_key: false,
                 access: Access::ReadOnly,
                 text: text.to_owned(),
                 does: Does::Read,
@@ -607,8 +734,11 @@ impl StatementKind {
             returns,
             columns,
         } = form.write()?;
+        held_to_its_form(&text, does, &body.at, store.dialect())?;
         Ok(Statement {
             surface: surface.to_owned(),
+            record: record_name.to_owned(),
+            by_key: false,
             access: Access::ReadWrite,
             text,
             does,
@@ -663,6 +793,17 @@ impl FileKind for StatementKind {
         Vec::new()
     }
 
+    /// A statements file describes a write when any of its statements is
+    /// not plainly `effect: read`. A statement whose effect is missing, or
+    /// is an open question, is not known to read.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("statements")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .any(|entry| entry.value.text("effect") != Some("read"))
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],
@@ -673,12 +814,12 @@ impl FileKind for StatementKind {
         for doc in docs {
             let surface = cx
                 .surface_of(doc)
-                .filter(|surface| *surface.kind == DATABASE);
+                .filter(|surface| crate::names::is_database(surface.kind));
             let Some(surface) = surface else {
                 problems.push(problem(
                     &lint::SURFACE_INVALID,
                     doc.get("surface").map_or(&doc.at, |surface| &surface.at),
-                    "A statements file lives on a surface of the kind `database`, and the target declares none that this file names.".to_owned(),
+                    "A statements file lives on a surface of the kind `database` or `database_server`, and the target declares none that this file names.".to_owned(),
                     "Add `surface:` with the name of a `database` surface of `target.yaml`.",
                 ));
                 continue;

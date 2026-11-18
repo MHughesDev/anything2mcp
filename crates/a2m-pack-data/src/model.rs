@@ -11,7 +11,7 @@ use a2m_core::ValueType;
 use serde::{Deserialize, Serialize};
 
 /// The version of the section's shape.
-pub(crate) const SECTION_FORMAT: u16 = 1;
+pub(crate) const SECTION_FORMAT: u16 = 2;
 
 /// Whether a transaction may change data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +135,12 @@ pub(crate) struct Param {
 pub(crate) struct Statement {
     /// The surface it runs on.
     pub surface: String,
+    /// The record kind it reads or writes, by its name in the file.
+    pub record: String,
+    /// Whether it is the read of one record by its full key that the pack
+    /// wrote itself. Only such a read is a read-back, and the driver holds
+    /// the record it returns to the key it was asked for.
+    pub by_key: bool,
     /// Whether it may change data.
     pub access: Access,
     /// The statement, a constant of the plan. Nothing is ever placed in it.
@@ -179,6 +185,15 @@ pub(crate) struct SurfaceFields {
     /// The named root the store's file is in.
     #[serde(default)]
     pub root: Option<String>,
+    /// A server store's port.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// A server store's database.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// The one schema of a server store that statements are read in.
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 /// The pack's details of one step. Which fields are set depends on the

@@ -420,6 +420,72 @@ async fn a_foreign_link_carries_bytes_both_ways_and_stop_ends_the_group() {
     assert!(rest.is_empty());
 }
 
+/// A group whose leader has exited is ended completely, whatever the leader
+/// left. First a program that starts a child and exits at once: the leader
+/// is gone and its child is left in the group, holding the pipe. Then a
+/// program stopped in the very moment it ends by itself, the end of its pipe
+/// seen and nothing more, as a browser that was asked to close is stopped:
+/// on macOS such a leader is in the middle of its exit, so the group answers
+/// that nothing in it can be signalled while the leader cannot be waited for
+/// yet. That moment is not hit every time, so it is tried many times.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_group_whose_leader_has_exited_is_ended_completely_whatever_it_left() {
+    use a2m_core::SubsystemState;
+    use a2m_provider::ForeignPipe;
+    use tokio::io::AsyncReadExt;
+
+    let supervisor = supervisor();
+    let shell = |script: &str| LaunchSpec {
+        program: ProgramRef {
+            path: "/bin/sh".into(),
+            digest: None,
+        },
+        args: vec!["-c".into(), script.into()],
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("browser").unwrap(),
+        place: None,
+    };
+    let pipe = ForeignPipe {
+        child_reads_fd: 3,
+        child_writes_fd: 4,
+        windows_argument: "--io-pipes={read},{write}".to_owned(),
+    };
+
+    // The child inherits the pipe and would sleep for ten minutes.
+    let mut link = supervisor
+        .start_foreign(shell("/bin/sleep 600 & exit 0"), pipe.clone())
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    while supervisor.list()[0].state != SubsystemState::Exited {
+        assert!(started.elapsed() < WITHIN, "the leader never exited");
+        tokio::task::yield_now().await;
+    }
+    let cleanup = supervisor.stop(link.id).await;
+    assert!(cleanup.complete, "{cleanup:?}");
+    // The child held the pipe, so the end of the pipe is the end of the child.
+    let mut rest = Vec::new();
+    tokio::time::timeout(WITHIN, link.from_child.read_to_end(&mut rest))
+        .await
+        .expect("the child the leader left was not ended")
+        .unwrap();
+
+    for _ in 0..50 {
+        let mut link = supervisor
+            .start_foreign(shell("exit 0"), pipe.clone())
+            .await
+            .unwrap();
+        let mut rest = Vec::new();
+        link.from_child.read_to_end(&mut rest).await.unwrap();
+        let cleanup = supervisor.stop(link.id).await;
+        assert!(cleanup.complete, "{cleanup:?}");
+    }
+    assert!(supervisor.list().is_empty());
+    assert!(supervisor.leftovers().is_empty());
+}
+
 /// A process that is not in the program's group holds the program's output
 /// pipe open after the program has ended: here one that left the group, and
 /// on a system that cannot make a pipe already marked close-on-exec it
@@ -493,4 +559,298 @@ async fn a_holder_of_the_output_outside_the_group_neither_delays_a_run_nor_spoil
     );
     assert_eq!(verdict, (Exit::Code(0), true, true));
     assert!(again.expect("the second run waited").is_ok());
+}
+
+/// Has a copy of the stand's program, kept somewhere else, report to the
+/// stand: the program looks for the stand beside itself unless it is told.
+fn record_with(stand: &Stand, spec: &mut LaunchSpec) {
+    spec.env.set.push((
+        example_cli::CONTROL_ENV.to_owned(),
+        stand
+            .root()
+            .join(example_cli::CONTROL_FOLDER)
+            .into_os_string(),
+    ));
+}
+
+/// The scoped supervisor of a pack whose manifest is `declares`.
+fn scoped_for(folder: &Folder, declares: String) -> a2m_provider::ScopedSupervisor {
+    let pack = TestPack::with_manifest("alpha", declares);
+    let mut builder =
+        RegistryBuilder::new(ProviderSettings::default(), host(folder, Roots::none()));
+    builder.add_pack(&pack);
+    let (_registry, problems) = builder.build();
+    assert!(problems.is_empty(), "{problems:?}");
+    pack.context
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap()
+        .supervisor()
+        .clone()
+}
+
+/// The audit's finding: a requirement's known digests were compared when
+/// the registry was built and never again, so a program replaced at its
+/// path afterwards was started all the same. They are compared at every
+/// start, on the file that is started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_required_program_replaced_after_the_registry_was_built_is_not_started() {
+    let stand = Stand::start().unwrap();
+    let folder = Folder::new("required");
+    // The program the pack requires: a copy of the stand's, at a place of
+    // its own, with the digest a publisher would list.
+    let name = stand.program().file_name().unwrap();
+    let required = folder.path().join(name);
+    std::fs::copy(stand.program(), &required).unwrap();
+    let reviewed = std::fs::read(&required).unwrap();
+    let digest = Digest::of(&reviewed);
+    // TOML literal strings, so that a path of any operating system is taken as written.
+    let declares = manifest(
+        "alpha",
+        "request",
+        &format!(
+            "\n[[requirements]]\nname = \"example-runtime\"\ndetect = {{ paths = ['{}'] }}\nknown_digests = [\"sha256:{digest}\"]\nmissing = \"Install it.\"\n",
+            required.display()
+        ),
+    );
+    let scoped = scoped_for(&folder, declares);
+    let mut spec = spec(&stand, &["version"]);
+    spec.program.path.clone_from(&required);
+    record_with(&stand, &mut spec);
+
+    let finished = scoped.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0));
+    assert!(finished.verified, "a known digest was declared and found");
+    assert_eq!(finished.program_digest, digest);
+    let before = stand.control().invocations().unwrap().len();
+
+    // The program is replaced, as an update or an attacker would: a new
+    // file takes the name. The registry is not built again.
+    let mut other = reviewed.clone();
+    other.extend_from_slice(b"\nnot the reviewed program\n");
+    let incoming = folder.path().join("incoming");
+    std::fs::write(&incoming, &other).unwrap();
+    std::fs::rename(&incoming, &required).unwrap();
+    let failure = scoped.run(spec.clone(), one_shot(60)).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.class(), failure.failure.code(), failure.ran),
+        (
+            FailureClass::Policy,
+            &codes::EFFECT_NOT_DECLARED,
+            Ran::NotStarted
+        )
+    );
+    // The stand is asked: nothing was started.
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+
+    // Changed in place, with the same length: refused too.
+    let mut same_length = reviewed.clone();
+    let last = same_length.len() - 1;
+    same_length[last] ^= 0xff;
+    std::fs::write(&required, &same_length).unwrap();
+    let failure = scoped.run(spec.clone(), one_shot(60)).await.unwrap_err();
+    assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+
+    // The reviewed program back at its place starts again.
+    std::fs::remove_file(&required).unwrap();
+    std::fs::copy(stand.program(), &required).unwrap();
+    let finished = scoped.run(spec, one_shot(60)).await.unwrap();
+    assert!(finished.verified);
+    assert_eq!(stand.control().invocations().unwrap().len(), before + 1);
+}
+
+/// A declared path that is a link: the link is resolved at every start, the
+/// file it leads to is the one digested, and repointing it to another
+/// program is seen.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_repointed_between_two_starts_does_not_start_another_program() {
+    let stand = Stand::start().unwrap();
+    let folder = Folder::new("repointed");
+    let name = stand.program().file_name().unwrap();
+    let reviewed = folder.path().join(name);
+    std::fs::copy(stand.program(), &reviewed).unwrap();
+    let digest = Digest::of(&std::fs::read(&reviewed).unwrap());
+    let other = folder.path().join("other-program");
+    let mut bytes = std::fs::read(&reviewed).unwrap();
+    bytes.extend_from_slice(b"\nanother program\n");
+    std::fs::write(&other, bytes).unwrap();
+    let link = folder.path().join("current");
+    std::os::unix::fs::symlink(&reviewed, &link).unwrap();
+
+    let supervisor = supervisor();
+    let mut spec = spec(&stand, &["version"]);
+    spec.program = ProgramRef {
+        path: link.clone(),
+        digest: Some(digest),
+    };
+    record_with(&stand, &mut spec);
+    let finished = supervisor.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert!(finished.verified);
+    let before = stand.control().invocations().unwrap().len();
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    let failure = supervisor.run(spec, one_shot(60)).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.code(), failure.ran),
+        (&codes::EFFECT_NOT_DECLARED, Ran::NotStarted)
+    );
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+}
+
+/// On Linux a program is started from the very handle it was digested
+/// through. The system names a process after the last part of the path it
+/// was started by, which for an open file is the handle's number; the
+/// program itself still sees the name it was asked for by.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn on_linux_a_program_is_started_from_the_handle_it_was_digested_through() {
+    if !std::path::Path::new("/proc/self/fd").is_dir() {
+        // Without the process file system a program is started by its path.
+        return;
+    }
+    let supervisor = supervisor();
+    let spec = LaunchSpec {
+        program: ProgramRef {
+            path: "/bin/sh".into(),
+            digest: None,
+        },
+        args: vec![
+            "-c".into(),
+            "read started_by < /proc/$$/comm; echo \"$started_by\"; echo \"$0\"".into(),
+        ],
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    let finished = supervisor.run(spec, one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0), "{finished:?}");
+    let stdout = String::from_utf8(finished.stdout).unwrap();
+    let mut lines = stdout.lines();
+    let started_by = lines.next().unwrap();
+    assert!(
+        started_by.parse::<u32>().is_ok(),
+        "the program was started by a path and not from its handle: {started_by:?}"
+    );
+    assert_eq!(lines.next(), Some("/bin/sh"));
+}
+
+/// A file that starts with `#!` is handed to an interpreter by name, so it
+/// cannot be started from a handle. It is digested like any program, and
+/// started by its path after a last look that the path still leads to the
+/// file that was digested.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_script_is_digested_and_started_by_its_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let folder = Folder::new("script");
+    let script = folder.path().join("report");
+    let text = b"#!/bin/sh\necho \"ran as $0\"\n";
+    std::fs::write(&script, text).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let supervisor = supervisor();
+    let mut spec = LaunchSpec {
+        program: ProgramRef {
+            path: script.clone(),
+            digest: Some(Digest::of(text)),
+        },
+        args: Vec::new(),
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    let finished = supervisor.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0), "{finished:?}");
+    assert!(finished.verified);
+    assert_eq!(
+        String::from_utf8(finished.stdout).unwrap().trim(),
+        format!("ran as {}", script.display())
+    );
+    // Another digest than the script's: nothing runs.
+    spec.program.digest = Some(Digest::of(b"another script"));
+    let failure = supervisor.run(spec, one_shot(60)).await.unwrap_err();
+    assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
+}
+
+/// The variable the parent test sets in the child test process: the test
+/// crate may not call `set_var`, which is unsafe, so it starts itself.
+const ENGINE_VARIABLE_FOR_TEST: &str = "A2M_SOMETHING";
+
+#[test]
+fn a_name_of_the_engine_is_known_in_any_letter_case() {
+    assert!(a2m_provider::is_engine_variable("A2M_HOME"));
+    assert!(a2m_provider::is_engine_variable("a2m_vault_passphrase"));
+    assert!(a2m_provider::is_engine_variable("A2m_x"));
+    assert!(!a2m_provider::is_engine_variable("A2M"));
+    assert!(!a2m_provider::is_engine_variable("EXAMPLE_A2M_X"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_that_names_a_variable_of_the_engine_is_refused_and_nothing_starts() {
+    let stand = Stand::start().unwrap();
+    let supervisor = supervisor();
+    for (pass, set) in [
+        (vec!["a2m_vault_passphrase".to_owned()], Vec::new()),
+        (
+            Vec::new(),
+            vec![("A2M_HOME".to_owned(), OsString::from("elsewhere"))],
+        ),
+    ] {
+        let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+        launch.env.pass = pass;
+        launch.env.set.extend(set);
+        let refused = supervisor.run(launch, one_shot(60)).await.unwrap_err();
+        assert_eq!(refused.ran, Ran::NotStarted);
+        assert_eq!(refused.failure.class(), FailureClass::Policy);
+        assert_eq!(refused.failure.code(), &codes::ENGINE_VARIABLE_REFUSED);
+    }
+    assert!(stand.control().invocations().unwrap().is_empty());
+}
+
+/// Starts this test binary again with an engine variable set, running only
+/// the test below, which does its work only then.
+#[test]
+fn a_variable_of_the_engine_does_not_reach_a_program() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "the_program_started_while_a_variable_of_the_engine_is_set",
+            "--nocapture",
+        ])
+        .env(ENGINE_VARIABLE_FOR_TEST, "engine-value-for-tests")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("1 passed"),
+        "the inner test did not run: {text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_program_started_while_a_variable_of_the_engine_is_set() {
+    if std::env::var_os(ENGINE_VARIABLE_FOR_TEST).is_none() {
+        return;
+    }
+    let stand = Stand::start().unwrap();
+    let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+    launch.env.pass = vec!["PATH".to_owned()];
+    let finished = supervisor().run(launch, one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0));
+    let started = stand.control().invocations().unwrap().pop().unwrap();
+    assert!(
+        !started
+            .env
+            .keys()
+            .any(|name| name.to_ascii_uppercase().starts_with("A2M_")),
+        "{:?}",
+        started.env.keys().collect::<Vec<_>>()
+    );
 }

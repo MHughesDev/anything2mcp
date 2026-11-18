@@ -1,6 +1,7 @@
 //! The failure codes this pack produces. Each belongs to exactly one class,
 //! and each is declared in the pack's manifest. `timeout`,
-//! `connection_lost`, and `no_confirmation` are the provider contract's own.
+//! `connection_lost`, and `no_confirmation` are the provider contract's own;
+//! the TLS failures are the session keeper's, in `a2m_auth::tls`.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
@@ -10,6 +11,9 @@ use a2m_provider::StepFailure;
 pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
 /// `stale`: the version sent with a write is no longer the record's.
 pub const VERSION_CONFLICT: FailureCode = FailureCode::fixed("version_conflict");
+/// `stale`: a write that sends a record's version as a precondition, in a
+/// pass that read no version for the record. Nothing is sent.
+pub const VERSION_NOT_READ: FailureCode = FailureCode::fixed("version_not_read");
 /// `drift`: the body of an accepted answer does not fit the declared shape.
 pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
 /// `unknown_variant`: a status the endpoint does not declare.
@@ -20,6 +24,10 @@ pub const RESPONSE_TOO_LARGE: FailureCode = FailureCode::fixed("response_too_lar
 pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
 /// `policy`: a request, or a redirect, that leaves the declared surfaces.
 pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
+/// `policy`: a request that would carry the session's credential over
+/// plain `http` to an address that is not a loopback address, from a
+/// surface that does not accept it. Nothing is sent (decision 0188).
+pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
 /// `input`: a value that cannot stand in one segment of a path.
 pub const PATH_VALUE_REFUSED: FailureCode = FailureCode::fixed("path_value_refused");
 /// `input`: a step this driver cannot carry out as the plan wrote it.
@@ -31,22 +39,35 @@ pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
 pub const AUTH_SCHEME_NOT_BUILT: FailureCode = FailureCode::fixed("auth_scheme_not_built");
 /// `input`: a published description that cannot be read.
 pub const DESCRIPTION_UNREADABLE: FailureCode = FailureCode::fixed("description_unreadable");
+/// `input`: a published description that is larger, deeper, or wider once
+/// its references are followed than the import reads.
+pub const DESCRIPTION_TOO_LARGE: FailureCode = FailureCode::fixed("description_too_large");
 
 /// Every code of this pack with its one class, as the manifest declares
 /// them. A test holds the two lists together.
 pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Rejected, "app_validation_error"),
     (FailureClass::Stale, "version_conflict"),
+    (FailureClass::Stale, "version_not_read"),
     (FailureClass::Drift, "response_schema_mismatch"),
     (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::UnknownVariant, "response_too_large"),
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "surface_not_declared"),
+    (FailureClass::Policy, "link_not_encrypted"),
     (FailureClass::Input, "path_value_refused"),
     (FailureClass::Input, "step_not_usable"),
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "auth_scheme_not_built"),
     (FailureClass::Input, "description_unreadable"),
+    (FailureClass::Input, "description_too_large"),
+    // The TLS failures of `a2m_auth::tls`, passed on as they are.
+    (FailureClass::Input, "tls_setup_failed"),
+    (FailureClass::UnknownVariant, "certificate_untrusted"),
+    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
+    (FailureClass::UnknownVariant, "certificate_expired"),
+    (FailureClass::UnknownVariant, "certificate_not_verified"),
+    (FailureClass::UnknownVariant, "tls_handshake_failed"),
 ];
 
 pub(crate) fn failure(
@@ -71,6 +92,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     ))
 }
 
+#[cfg(not(feature = "tls"))]
 pub(crate) fn tls_not_enabled() -> Failure {
     failure(
         FailureClass::Input,
@@ -86,6 +108,19 @@ pub(crate) fn surface_not_declared(what: &str) -> Failure {
         SURFACE_NOT_DECLARED,
         format!("{what} is not one of the addresses this run may reach."),
         "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.",
+    )
+}
+
+/// A write whose endpoint sends the record's version, in a pass that read
+/// none for the record. Nothing was sent.
+pub(crate) fn version_not_read(endpoint: &str) -> Failure {
+    failure(
+        FailureClass::Stale,
+        VERSION_NOT_READ,
+        format!(
+            "The endpoint `{endpoint}` sends the record's version with a write, and no version of the record was read in this pass; nothing was sent."
+        ),
+        "Preview the change again, so that the record is read before it is written.",
     )
 }
 

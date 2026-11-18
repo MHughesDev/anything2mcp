@@ -28,7 +28,7 @@ use crate::manifest::{KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
 use crate::name::{ActionName, ProviderName};
 use crate::pack::{Collected, Pack, PackContext, Registrar};
 use crate::path::Roots;
-use crate::supervisor::{ProgramRef, ScopedSupervisor, Supervisor};
+use crate::supervisor::{Allowed, ScopedSupervisor, Supervisor};
 
 /// What the product crate gives the registry to hand on to packs.
 #[derive(Clone)]
@@ -134,7 +134,7 @@ pub struct RegistryBuilder {
     settings: ProviderSettings,
     host: HostServices,
     pending: Vec<Pending>,
-    unnamed: Vec<Failure>,
+    unnamed: Vec<RefusedProvider>,
 }
 
 impl fmt::Debug for RegistryBuilder {
@@ -169,11 +169,14 @@ fn availability(manifest: &Manifest) -> (Availability, String) {
         );
     }
     for needed in &manifest.requirements {
+        // A place written for another operating system is not an absolute
+        // path here; it would be looked for in the engine's own working
+        // folder, and is passed over.
         let found = needed
             .paths
             .iter()
             .map(Path::new)
-            .find(|path| path.is_file());
+            .find(|path| path.is_absolute() && path.is_file());
         let Some(found) = found else {
             return (Availability::ComponentMissing, needed.missing.clone());
         };
@@ -213,7 +216,11 @@ impl RegistryBuilder {
         let manifest = match Manifest::parse(pack.manifest()) {
             Ok(manifest) => Arc::new(manifest),
             Err(failure) => {
-                self.unnamed.push(failure);
+                self.unnamed.push(RefusedProvider::of(
+                    pack.manifest(),
+                    ProviderKind::Pack,
+                    failure,
+                ));
                 return;
             }
         };
@@ -271,20 +278,21 @@ impl RegistryBuilder {
         (pending.availability, pending.fix) = availability(&manifest);
 
         // What the pack may start: the programs its manifest names, and the
-        // places it looks for the programs it requires.
-        let mut declared: Vec<ProgramRef> = manifest
+        // places it looks for the programs it requires, each with the
+        // digests declared for it. They are checked at every start.
+        let mut declared: Vec<Allowed> = manifest
             .effects
             .processes
             .iter()
-            .map(|program| ProgramRef {
+            .map(|program| Allowed {
                 path: PathBuf::from(&program.path),
-                digest: program.digest,
+                digests: program.digest.into_iter().collect(),
             })
             .collect();
         for needed in &manifest.requirements {
-            declared.extend(needed.paths.iter().map(|path| ProgramRef {
+            declared.extend(needed.paths.iter().map(|path| Allowed {
                 path: PathBuf::from(path),
-                digest: None,
+                digests: needed.known_digests.clone(),
             }));
         }
         let supervisor = ScopedSupervisor::new(
@@ -319,7 +327,11 @@ impl RegistryBuilder {
     /// host that would start it is not built, so it registers nothing.
     pub fn add_plugin(&mut self, found: &FoundManifest) {
         match Manifest::parse(&found.text) {
-            Err(failure) => self.unnamed.push(failure),
+            Err(failure) => self.unnamed.push(RefusedProvider::of(
+                &found.text,
+                ProviderKind::Plugin,
+                failure,
+            )),
             Ok(manifest) => {
                 let mut problems = Vec::new();
                 if manifest.provider.kind != ProviderKind::Plugin {
@@ -357,8 +369,25 @@ impl RegistryBuilder {
             settings,
             host,
             mut pending,
-            unnamed,
+            mut unnamed,
         } = self;
+        // A refused manifest's name is its own unchecked word. One that
+        // says the name of a provider that is listed, or of a refused one
+        // named before it, is kept unnamed, so that its problem is never
+        // listed under a name another provider holds (decision 0193).
+        let mut taken: BTreeSet<String> = pending
+            .iter()
+            .map(|one| one.manifest.provider.name.as_str().to_owned())
+            .collect();
+        for refused in &mut unnamed {
+            if let Some(name) = refused.name.take() {
+                if taken.insert(name.clone()) {
+                    refused.name = Some(name);
+                } else {
+                    refused.version = None;
+                }
+            }
+        }
         // Name order, so that the order of the calls changes nothing.
         pending.sort_by(|a, b| {
             (&a.manifest.provider.name, &a.manifest.digest)
@@ -547,10 +576,13 @@ impl RegistryBuilder {
         let mut actions = BTreeMap::new();
         let mut discoverers = Vec::new();
         let mut problems: Vec<RegistryProblem> = unnamed
-            .into_iter()
-            .map(|failure| RegistryProblem {
-                provider: None,
-                failure,
+            .iter()
+            .map(|refused| RegistryProblem {
+                provider: refused
+                    .name
+                    .as_deref()
+                    .and_then(|name| ProviderName::new(name).ok()),
+                failure: refused.problem.clone(),
                 registered: false,
             })
             .collect();
@@ -752,6 +784,7 @@ impl RegistryBuilder {
                 compiler,
                 choices: settings.mode_providers,
                 host,
+                refused: unnamed,
             }),
         };
         (registry, problems)
@@ -793,6 +826,47 @@ struct Inner {
     compiler: CompilerSet,
     choices: BTreeMap<Mode, ProviderName>,
     host: HostServices,
+    refused: Vec<RefusedProvider>,
+}
+
+/// A provider whose manifest was refused, so that nothing of it is
+/// registered and it has no listing: kept so that `provider.list` names it
+/// with its problem, never leaving it out unseen. Its name and version are
+/// read from the manifest's text as far as they can be, and are the
+/// manifest's own words, unchecked. A name that another provider holds,
+/// listed or refused before it, is not kept: such a provider is unnamed,
+/// and its problem is never listed under another's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedProvider {
+    /// The name its manifest gives, when the text says one.
+    pub name: Option<String>,
+    /// The version its manifest gives, when the text says one.
+    pub version: Option<String>,
+    /// A pack compiled in, or a plug-in found on the machine.
+    pub kind: ProviderKind,
+    /// Why its manifest was refused.
+    pub problem: Failure,
+}
+
+impl RefusedProvider {
+    fn of(text: &str, kind: ProviderKind, problem: Failure) -> Self {
+        let table = toml::from_str::<toml::Table>(text).ok();
+        let said = |field: &str| {
+            table
+                .as_ref()
+                .and_then(|table| table.get("provider"))
+                .and_then(|provider| provider.get(field))
+                .and_then(toml::Value::as_str)
+                .filter(|text| text.len() <= 64 && text.chars().all(|c| c.is_ascii_graphic()))
+                .map(str::to_owned)
+        };
+        Self {
+            name: said("name"),
+            version: said("version"),
+            kind,
+            problem,
+        }
+    }
 }
 
 /// One immutable snapshot of everything that is registered. Cheap to
@@ -963,6 +1037,8 @@ impl Registry {
             mode: mode.clone(),
             archetype: entry.archetype,
             steps: candidate.decl.steps.iter().cloned().collect(),
+            commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
+            absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
             codes: candidate.codes.clone(),
             choice: ProviderChoice {
                 provider: candidate.provider.clone(),
@@ -974,6 +1050,45 @@ impl Registry {
         };
         Ok(DriverHandle::new(
             Arc::clone(driver),
+            Arc::new(facts),
+            Arc::clone(&self.inner.host.redact),
+        ))
+    }
+
+    /// A handle on `driver` in place of the driver of the provider chosen
+    /// for `mode`, with that provider's facts: its step kinds, the kinds that
+    /// commit, its failure codes, and its choice. The handle checks every
+    /// step against them as it would the provider's own driver. For an
+    /// offline test, whose driver is a [`crate::Replay`] of recorded
+    /// answers: nothing of the provider's own driver is used.
+    ///
+    /// # Errors
+    ///
+    /// As [`Registry::driver`]: `input`/`mode_unknown`,
+    /// `input`/`provider_ambiguous`.
+    pub fn replay_driver(
+        &self,
+        mode: &Mode,
+        driver: Arc<dyn Driver>,
+    ) -> Result<DriverHandle, Failure> {
+        let (entry, candidate, reason) = self.chosen(mode)?;
+        let facts = HandleFacts {
+            mode: mode.clone(),
+            archetype: entry.archetype,
+            steps: candidate.decl.steps.iter().cloned().collect(),
+            commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
+            absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
+            codes: candidate.codes.clone(),
+            choice: ProviderChoice {
+                provider: candidate.provider.clone(),
+                version: candidate.version,
+                digest: candidate.digest,
+                reason,
+            },
+            supervisor: candidate.supervisor.clone(),
+        };
+        Ok(DriverHandle::new(
+            driver,
             Arc::new(facts),
             Arc::clone(&self.inner.host.redact),
         ))
@@ -1062,8 +1177,16 @@ impl Registry {
             .map(|entry| &entry.listing.name)
     }
 
+    /// Every provider whose manifest was refused, with why, in the order
+    /// they were added. Nothing of them is registered.
+    #[must_use]
+    pub fn refused(&self) -> &[RefusedProvider] {
+        &self.inner.refused
+    }
+
     /// Every provider: what it declares, whether it can work here, and
-    /// what is wrong with it. In order of name.
+    /// what is wrong with it. In order of name. A provider whose manifest
+    /// was refused has no listing; see [`Registry::refused`].
     #[must_use]
     pub fn listing(&self) -> Vec<ProviderListing> {
         self.inner

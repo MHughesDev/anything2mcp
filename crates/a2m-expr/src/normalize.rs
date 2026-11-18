@@ -262,8 +262,8 @@ impl FieldRule {
             true_text,
             false_text,
         } = self
-            && crate::text::lower(&crate::text::collapse_space(true_text))
-                == crate::text::lower(&crate::text::collapse_space(false_text))
+            && crate::text::fold(&crate::text::collapse_space(true_text))
+                == crate::text::fold(&crate::text::collapse_space(false_text))
         {
             return Err(ExprError::invalid(
                 "the labels for true and false are the same",

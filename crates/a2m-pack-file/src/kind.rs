@@ -4,13 +4,14 @@
 use a2m_core::{FileKindName, LintCode, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
-    KindContext, Located, Stage,
+    KindContext, Located, Stage, UNTRUSTED_TEXT,
 };
 
 use crate::model::{
     DOCUMENT_KIND, DocumentSpec, FieldSpec, Format, Layout, PlaceSpec, RecordSpec, SECTION_FORMAT,
     SURFACE_KIND, Section,
 };
+use crate::place::is_one_name;
 
 /// A document that states something the pack cannot carry out.
 pub const DOCUMENT_INVALID: LintCode = LintCode::fixed("file.document_invalid");
@@ -31,6 +32,7 @@ fn field_schema() -> JsonSchema {
         .required("type", JsonSchema::field_type())
         .optional("writable", JsonSchema::bool())
         .optional("formula", JsonSchema::bool())
+        .optional("may_begin_formula", JsonSchema::bool())
 }
 
 fn record_schema() -> JsonSchema {
@@ -110,16 +112,6 @@ impl Default for DocumentKind {
 
 fn invalid(at: &Located<Doc>, message: impl Into<String>, fix: &str) -> Diagnostic {
     Diagnostic::error(DOCUMENT_INVALID, Stage::Lower, &at.at, message, fix)
-}
-
-/// Whether the text is one file name: no folder, no step out, no drive, no
-/// placeholder.
-fn is_one_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains(['/', '\\', ':', '{', '}', '*', '?'])
-        && !name.chars().any(char::is_control)
 }
 
 fn texts(doc: Option<&Located<Doc>>) -> Option<Vec<String>> {
@@ -209,6 +201,15 @@ fn record_of(
         let path = texts(field.get("path")).unwrap_or_default();
         let formula = field.get("formula").and_then(Located::as_bool) == Some(true);
         let writable = field.get("writable").and_then(Located::as_bool) == Some(true);
+        let may_begin_formula =
+            field.get("may_begin_formula").and_then(Located::as_bool) == Some(true);
+        if may_begin_formula && format != Format::Delimited {
+            problems.push(invalid(
+                field,
+                "`may_begin_formula` is about delimited text, which a spreadsheet program opens as cells.",
+                "Remove `may_begin_formula`.",
+            ));
+        }
         if columns && (header.is_none() || !path.is_empty()) {
             problems.push(invalid(
                 field,
@@ -250,6 +251,7 @@ fn record_of(
             field_type: u32::try_from(field_type.index.get()).unwrap_or(u32::MAX),
             writable,
             formula,
+            may_begin_formula,
         });
     }
     if fields.is_empty() {
@@ -266,13 +268,8 @@ fn record_of(
             "Declare one field, and remove `key`.",
         ));
     }
-    if columns && key.is_empty() {
-        problems.push(invalid(
-            record,
-            "The rows of a table, a sheet, or delimited text are told apart by a key.",
-            "Add `key:` with the fields that identify one row.",
-        ));
-    }
+    // Rows with no key can be listed, and nothing else: the lowering
+    // refuses a read by key and every write over them.
     for name in &key {
         let known = fields.iter().find(|field| &field.name == name);
         if known.is_none_or(|field| field.writable || field.formula) {
@@ -280,6 +277,29 @@ fn record_of(
                 record,
                 format!("The key field `{name}` is a declared field that is neither writable nor a formula."),
                 "Name declared fields under `key`, and do not mark them `writable`.",
+            ));
+        }
+    }
+    // `untrusted_text` is what a drafted field holds until someone states
+    // its type. A key and a written value are of a type someone stated.
+    for entry in record
+        .get("fields")
+        .map(Located::entries)
+        .unwrap_or_default()
+    {
+        if entry.value.text("type") != Some(UNTRUSTED_TEXT) {
+            continue;
+        }
+        let name = &entry.key.value;
+        let writable = entry.value.get("writable").and_then(Located::as_bool) == Some(true);
+        if key.contains(name) || writable {
+            problems.push(invalid(
+                &entry.value,
+                format!(
+                    "The field `{name}` is of the type `{UNTRUSTED_TEXT}`, which a drafted field holds until someone states its type; a {} is of a type someone stated.",
+                    if writable { "written field" } else { "key field" }
+                ),
+                "State the field's type: a number, a date, a decimal, an identifier, or a text type of the target's.",
             ));
         }
     }
@@ -392,7 +412,7 @@ fn document_of(
             headers: list("headers"),
             keys: list("keys"),
         },
-        may_be_open: doc.get("may_be_open").and_then(Located::as_bool) == Some(true),
+        may_be_open: doc.get("may_be_open").and_then(Located::as_bool),
         lock_sibling,
         records,
     })
@@ -426,6 +446,37 @@ impl FileKind for DocumentKind {
 
     fn expressions(&self, _doc: &Located<Doc>) -> Vec<ExprSite> {
         Vec::new()
+    }
+
+    /// A document describes a write when it marks a field `writable`, or
+    /// states how the file is held open (`may_be_open`, `lock_signal`),
+    /// which only a write needs. A value that is not plainly `false` counts:
+    /// an open question is not known to be no. The drafter writes none of
+    /// these.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let writable = doc
+            .get("records")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|record| {
+                record
+                    .value
+                    .get("fields")
+                    .map(Located::entries)
+                    .unwrap_or_default()
+            })
+            .any(|field| {
+                field
+                    .value
+                    .get("writable")
+                    .is_some_and(|value| value.as_bool() != Some(false))
+            });
+        writable
+            || doc
+                .get("may_be_open")
+                .is_some_and(|value| value.as_bool() != Some(false))
+            || doc.get("lock_signal").is_some()
     }
 
     fn compile(

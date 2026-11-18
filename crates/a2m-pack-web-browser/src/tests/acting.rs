@@ -15,7 +15,7 @@ async fn a_form_is_filled_and_saved_and_the_stand_stored_exactly_one_write() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("acting");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &origins(&app)).await);
     must(
         tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
             .await,
@@ -115,7 +115,7 @@ async fn a_form_is_filled_and_saved_and_the_stand_stored_exactly_one_write() {
 async fn each_control_takes_its_own_input_and_an_element_that_cannot_is_refused() {
     let stand = Stand::with_browser("controls");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &data_pages()).await);
     let page = page_of(
         "<!doctype html><title>Controls</title>\
          <select aria-label=Colour><option value=r>Red<option value=g>Green</select>\
@@ -230,7 +230,9 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     let stand = Stand::with_browser("killed");
     let clerk = profile("clerk");
     let browser = stand.open(&clerk).await;
-    let tab = Arc::new(must(browser.acting_tab(&environment()).await));
+    let tab = Arc::new(must(
+        browser.acting_tab(&environment(), &origins(&app)).await,
+    ));
     must(
         tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
             .await,
@@ -320,7 +322,7 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     let fresh = stand.open(&clerk).await;
     assert_ne!(fresh.subsystem(), browser.subsystem());
     assert_eq!(stand.supervisor.list().len(), 1);
-    let again = must(fresh.acting_tab(&environment()).await);
+    let again = must(fresh.acting_tab(&environment(), &origins(&app)).await);
     must(
         again
             .goto(&Address::new(&app.url(FORM)).unwrap(), soon())

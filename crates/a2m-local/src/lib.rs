@@ -7,11 +7,14 @@
 //! Windows, with HTTP/1.1 over it. The service it carries is composed by
 //! the product crate; this crate knows neither the REST router nor the MCP
 //! endpoint. [`EngineLock`] proves one engine per user and data directory.
+//! [`Connector::connect_or_start`] starts the engine on demand, detached,
+//! as a [`Launch`] says, under the start lock.
 //!
 //! It also holds [`LocalSurface`], the person surface on one machine: the
 //! only holder of the approval desk, a page on a short-lived loopback
-//! listener, and the presence prompt. Nothing reached through the channel
-//! can approve.
+//! listener, and the presence prompt: polkit on a Linux desktop,
+//! LocalAuthentication on macOS, and Windows Hello on Windows. Nothing
+//! reached through the channel can approve.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 7.
@@ -22,18 +25,21 @@ mod connector;
 mod lock;
 mod os;
 mod presence;
+mod start;
 mod surface;
 
 pub use channel::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, Channel, ChannelControl, ClientLabel, HELLO_PATH,
     IdleHolds, IdlePolicy, LOCAL_API, LOCAL_API_HEADER, OsUser, Peer, StopReason,
 };
-pub use connector::{Connector, Link};
-pub use lock::{ENGINE_LOCK_NAME, EngineLock};
+pub use connector::{Connector, HELLO_PATIENCE, Link};
+pub use lock::{ENGINE_LOCK_NAME, EngineLock, LockPlace};
+pub use os::{Kept, kept_by};
 pub use presence::{
-    NoPrompt, PresenceKind, PresencePrompt, PromptAnswer, PromptText, presence_available,
-    system_prompt,
+    Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
+    PromptText, presence_available, system_prompt,
 };
+pub use start::{ENGINE_LOG_NAME, Launch, START_LOCK_NAME, STARTED_LINE, Started};
 pub use surface::{LocalSurface, SurfaceParts};
 
 #[cfg(test)]
@@ -44,6 +50,10 @@ pub use surface::{LocalSurface, SurfaceParts};
 )]
 mod tests {
     mod channel;
+    mod local_authentication;
+    #[cfg(target_os = "linux")]
+    mod polkit;
     mod surface;
+    mod windows_hello;
     mod world;
 }

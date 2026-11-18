@@ -186,13 +186,11 @@ impl DraftingRule for CommandFromFinding {
             Some(Some(parts)) => {
                 for part in parts {
                     let typed = |place: &str| {
-                        let place = place.to_ascii_lowercase();
-                        if place.contains("whole number") || place.contains("integer") {
+                        let lower = place.to_ascii_lowercase();
+                        if lower.contains("whole number") || lower.contains("integer") {
                             DraftValue::text("integer")
                         } else {
-                            cx.open_question(&format!(
-                                "What type is `<{place}>` of the command `{listed}`? A text param also needs an anchored `pattern`."
-                            ))
+                            cx.open_question_quoting("What type is the value that the usage line of the command writes in the place quoted? The first quoted words are the command, the second the place. A text param also needs an anchored `pattern`.", &[listed, place])
                         }
                     };
                     let mut param = |name: String, ty: DraftValue, optional: bool| {
@@ -236,19 +234,22 @@ impl DraftingRule for CommandFromFinding {
                 }
                 DraftValue::List(args)
             }
-            Some(None) => cx.open_question(&format!(
-                "What are the arguments of the command `{listed}`? Its usage line is in a form the drafter does not read."
-            )),
-            None => cx.open_question(&format!(
-                "What are the arguments of the command `{listed}`? Its own help was not read."
-            )),
+            Some(None) => cx.open_question_quoting(
+                "What are the arguments of the quoted command? Its usage line is in a form the drafter does not read.",
+                &[listed],
+            ),
+            None => cx.open_question_quoting(
+                "What are the arguments of the quoted command? Its own help was not read.",
+                &[listed],
+            ),
         };
 
         let mut command = vec![(
             "effect",
-            cx.open_question(&format!(
-                "Does the command `{listed}` read, write, or do something that cannot be taken back? Its help does not say, and its name proves nothing."
-            )),
+            cx.open_question_quoting(
+                "Does the quoted command read, write, or do something that cannot be taken back? Its help does not say, and its name proves nothing.",
+                &[listed],
+            ),
         )];
         if !params.is_empty() {
             command.push(("params", DraftValue::Map(params)));
@@ -256,9 +257,10 @@ impl DraftingRule for CommandFromFinding {
         command.push(("args", args));
         command.push((
             "output",
-            cx.open_question(&format!(
-                "What does the command `{listed}` print? Its output was not seen, because the command was not run."
-            )),
+            cx.open_question_quoting(
+                "What does the quoted command print? Its output was not seen, because the command was not run.",
+                &[listed],
+            ),
         ));
 
         Ok(vec![DraftDoc {

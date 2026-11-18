@@ -1,22 +1,27 @@
 name: Release
 
-# Builds the pip package whenever it changes, and publishes it to PyPI in two
-# cases only: a version tag is pushed, or this workflow is started by hand with
-# the version to publish typed in. PyPI's trusted publisher names this file, so
-# it must stay .github/workflows/release.yml (docs/plan/publishing-setup.md).
-# Publishing cannot be undone; RELEASING.md has the steps.
+# Builds the pip package (one wheel per platform, each holding the binary, and
+# a source distribution) and the npm packages (a platform package per platform,
+# holding the binary taken from that platform's wheel, and the launcher)
+# whenever either changes, and publishes them in two cases only: a version tag
+# is pushed, or this workflow is started by hand with the version to publish
+# typed in. PyPI's and npm's trusted publishers name this file, so it must
+# stay .github/workflows/release.yml (docs/plan/publishing-setup.md).
+# Each registry has its own publish job, its own GitHub environment, and no
+# stored token. Publishing cannot be undone; RELEASING.md has the steps.
 
 on:
   pull_request:
     paths:
       - "bindings/python/**"
+      - "bindings/npm/**"
       - ".github/workflows/release.yml"
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       publish_version:
-        description: "Version to publish to PyPI, exactly as in bindings/python/pyproject.toml. Leave empty to build and check without publishing."
+        description: "Version to publish to PyPI and npm, exactly as in bindings/python/pyproject.toml. Leave empty to build and check without publishing."
         required: false
         default: ""
         type: string
@@ -29,10 +34,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  pip-package:
-    name: Build the pip package
+  decide:
+    name: Decide whether this run publishes
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
       publish: ${{ steps.decide.outputs.publish }}
     steps:
@@ -42,6 +47,17 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Hold the three places that state the version to one number
+        run: |
+          python3 - <<'PY'
+          import json, sys, tomllib
+          pip = tomllib.load(open("bindings/python/pyproject.toml", "rb"))["project"]["version"]
+          rust = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
+          npm = json.load(open("bindings/npm/anything2mcp/package.json"))["version"]
+          print("pip", pip, "| Cargo", rust, "| npm", npm)
+          if not pip == rust == npm:
+              sys.exit("::error::The pip package, the Cargo workspace, and the npm launcher state different versions.")
+          PY
       - name: Decide whether this run publishes, and refuse a version that is not the one on main
         id: decide
         env:
@@ -70,36 +86,270 @@ jobs:
           fi
           echo "This run publishes version $version."
           echo "publish=true" >> "$GITHUB_OUTPUT"
-      - name: Install the build tools
+
+  wheels:
+    name: Wheel for ${{ matrix.target }}
+    needs: decide
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # Rust's floors for each Mac processor; the wheel's tag follows.
+      MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.target, 'aarch64') && '11.0' || '10.12' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `try` marks a wheel that the machine which built it can install
+          # and run. The others are built and their metadata checked.
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, manylinux: "2014", try: true }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: "2014", try: true }
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl, manylinux: musllinux_1_2, try: false }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, manylinux: musllinux_1_2, try: false }
+          - { runner: macos-latest, target: x86_64-apple-darwin, manylinux: auto, try: false }
+          - { runner: macos-latest, target: aarch64-apple-darwin, manylinux: auto, try: true }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, manylinux: auto, try: true }
+          - { runner: windows-11-arm, target: aarch64-pc-windows-msvc, manylinux: auto, try: true }
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v1.51.0. maturin is a build tool only;
+      # nothing of it is in the wheel (decision 0135).
+      - name: Build the wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          working-directory: bindings/python
+          maturin-version: "1.16.0"
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        if: matrix.try
+        with:
+          python-version: "3.13"
+      - name: Install the wheel into a clean environment and run the command and the import
+        if: matrix.try
+        shell: bash
         run: |
-          python3 -m venv "$RUNNER_TEMP/tools"
-          "$RUNNER_TEMP/tools/bin/pip" install --quiet build==1.6.1 twine==7.0.0
-      - name: Build, with file times taken from the commit so the result is repeatable
-        run: |
-          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          export SOURCE_DATE_EPOCH
-          "$RUNNER_TEMP/tools/bin/python" -m build --outdir dist bindings/python
-          sha256sum dist/*
-      - name: Check the metadata
-        run: |
-          "$RUNNER_TEMP/tools/bin/twine" check --strict dist/*
-      - name: Install the wheel into a clean environment and import it
-        run: |
-          python3 -m venv "$RUNNER_TEMP/try"
-          "$RUNNER_TEMP/try/bin/pip" install --quiet dist/*.whl
-          "$RUNNER_TEMP/try/bin/python" -c "import anything2mcp, importlib.metadata as m; print('anything2mcp', m.version('anything2mcp'))"
+          python -m venv "$RUNNER_TEMP/try"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin="$RUNNER_TEMP/try/Scripts"; exe=".exe"; else bin="$RUNNER_TEMP/try/bin"; exe=""; fi
+          "$bin/pip" install --quiet bindings/python/dist/*.whl
+          "$bin/anything2mcp$exe" --version
+          "$bin/python" -c "import anything2mcp, importlib.metadata as m; print('anything2mcp', m.version('anything2mcp'), anything2mcp.binary_path())"
       # Pinned by commit; this is v7.0.2.
-      - name: Keep the built files for the publish job
+      - name: Keep the wheel for the publish job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: pip-package
-          path: dist/
+          name: pip-wheel-${{ matrix.target }}
+          path: bindings/python/dist/
+          if-no-files-found: error
+
+  source:
+    name: Source distribution
+    needs: decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v1.51.0.
+      - name: Build the source distribution
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          working-directory: bindings/python
+          maturin-version: "1.16.0"
+          command: sdist
+          args: --out dist
+      # Pinned by commit; this is v7.0.2.
+      - name: Keep the source distribution for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pip-source
+          path: bindings/python/dist/
+          if-no-files-found: error
+
+  pip-package:
+    name: Check the whole pip package
+    needs: [wheels, source]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: pip-*
+          merge-multiple: true
+          path: dist
+      - name: Check the metadata of every file, and that all nine are there
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --quiet twine==7.0.0
+          ls -l dist
+          sha256sum dist/*
+          "$RUNNER_TEMP/tools/bin/twine" check --strict dist/*
+          wheels=$(ls dist/*.whl | wc -l)
+          sources=$(ls dist/*.tar.gz | wc -l)
+          if [ "$wheels" != 8 ] || [ "$sources" != 1 ]; then
+            echo "::error::Expected 8 wheels and 1 source distribution; found $wheels and $sources."
+            exit 1
+          fi
+
+  npm-platform:
+    name: npm package for ${{ matrix.platform }}
+    needs: [decide, wheels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The wheel of the same target holds the binary (decision 0186), so
+          # no runner but this one is needed: packing is the same on all.
+          - { platform: linux-x64, target: x86_64-unknown-linux-gnu, exe: "" }
+          - { platform: linux-arm64, target: aarch64-unknown-linux-gnu, exe: "" }
+          - { platform: linux-x64-musl, target: x86_64-unknown-linux-musl, exe: "" }
+          - { platform: linux-arm64-musl, target: aarch64-unknown-linux-musl, exe: "" }
+          - { platform: darwin-x64, target: x86_64-apple-darwin, exe: "" }
+          - { platform: darwin-arm64, target: aarch64-apple-darwin, exe: "" }
+          - { platform: win32-x64, target: x86_64-pc-windows-msvc, exe: ".exe" }
+          - { platform: win32-arm64, target: aarch64-pc-windows-msvc, exe: ".exe" }
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pip-wheel-${{ matrix.target }}
+          path: wheel
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Take the binary out of the wheel, put it in the platform package, and pack it
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          wheel=$(ls wheel/*.whl)
+          member=$(unzip -Z1 "$wheel" | grep -E "\.data/scripts/anything2mcp${EXE//./\\.}\$")
+          if [ "$(echo "$member" | wc -l)" != 1 ]; then
+            echo "::error::Expected exactly one anything2mcp${EXE} in the wheel; found: $member"
+            exit 1
+          fi
+          mkdir -p binary packed
+          unzip -p "$wheel" "$member" > "binary/anything2mcp${EXE}"
+          node bindings/npm/scripts/assemble-platform.js --platform "$PLATFORM" --binary "binary/anything2mcp${EXE}" --out "package/$PLATFORM"
+          (cd "package/$PLATFORM" && npm pack --pack-destination "$GITHUB_WORKSPACE/packed")
+          ls -l packed
+          sha256sum "binary/anything2mcp${EXE}"
+      # Pinned by commit; this is v7.0.2.
+      - name: Keep the packed file for the check and publish jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: npm-package-${{ matrix.platform }}
+          path: packed/
+          if-no-files-found: error
+
+  npm-launcher:
+    name: npm launcher package
+    needs: decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Pack the launcher
+        run: |
+          mkdir packed
+          npm pack --pack-destination packed ./bindings/npm/anything2mcp
+          ls -l packed
+      # Pinned by commit; this is v7.0.2.
+      - name: Keep the packed file for the check and publish jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: npm-package-launcher
+          path: packed/
+          if-no-files-found: error
+
+  npm-package:
+    name: Check the whole npm set
+    needs: [npm-platform, npm-launcher]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: npm-package-*
+          merge-multiple: true
+          path: npm-dist
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Check that the nine packed files agree, hold what they should, and install and run
+        run: |
+          ls -l npm-dist
+          sha256sum npm-dist/*
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          node bindings/npm/scripts/check-set.js --dir npm-dist --version "$version" --install
+
+  bill-of-materials:
+    name: Bill of materials of the Rust dependencies
+    needs: decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: List the crates each binary is built from, with licences, as Cargo.lock fixes them
+        run: |
+          mkdir bom
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+                        x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            # Normal dependencies only: what is compiled into the program, not
+            # what builds it or tests it. Crates of this workspace have a path
+            # and are left out; every other line is a third-party crate.
+            cargo tree --locked --package anything2mcp --edges normal --target "$target" \
+              --no-dedupe --prefix none --format '{p} | {l} | {r}' \
+              | grep -v ' (/' | sort -u > "bom/$target.txt"
+            test -s "bom/$target.txt"
+          done
+          cat bom/*.txt | sort -u > bom/all-targets.txt
+          wc -l bom/*.txt
+      # Pinned by commit; this is v7.0.2.
+      - name: Keep the lists with the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bill-of-materials
+          path: bom/
           if-no-files-found: error
 
   publish-pypi:
     name: Publish to PyPI
-    needs: pip-package
-    if: needs.pip-package.outputs.publish == 'true'
+    needs: [decide, pip-package]
+    if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Add required reviewers to this environment in the repository's settings to
@@ -113,7 +363,66 @@ jobs:
       # Pinned by commit; this is v8.0.2.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: pip-package
+          pattern: pip-*
+          merge-multiple: true
           path: dist
       # Pinned by commit; this is v1.14.3.
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
+
+  publish-npm:
+    name: Publish to npm
+    needs: [decide, npm-package]
+    if: needs.decide.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Add required reviewers to this environment in the repository's settings to
+    # make GitHub ask a person before every publish.
+    environment: npm
+    permissions:
+      # The short-lived credential that npm's trusted publishing exchanges, and
+      # that provenance is signed with. No token is stored anywhere.
+      id-token: write
+    steps:
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: npm-package-*
+          merge-multiple: true
+          path: npm-dist
+      # Pinned by commit; this is v7.1.0. No registry-url: that would write a
+      # token placeholder into .npmrc, and none is used.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Use an npm that can publish with a short-lived credential
+        run: |
+          # Trusted publishing needs npm 11.5.1 or later and Node 22.14 or later.
+          npm install --global npm@11.5.1
+          node --version
+          npm --version
+      - name: Publish the eight platform packages, then the launcher, skipping any version already there
+        run: |
+          set -euo pipefail
+          publish() {
+            file="$1"
+            name=$(tar -xzOf "$file" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')
+            version=$(tar -xzOf "$file" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+            if seen=$(npm view "$name@$version" version 2>"$RUNNER_TEMP/view.err"); then
+              if [ "$seen" = "$version" ]; then
+                echo "$name@$version is already published; skipping it."
+                return 0
+              fi
+            elif ! grep -q E404 "$RUNNER_TEMP/view.err"; then
+              cat "$RUNNER_TEMP/view.err"
+              echo "::error::Could not tell whether $name@$version is published."
+              exit 1
+            fi
+            echo "Publishing $name@$version."
+            npm publish "$file" --access public --provenance
+          }
+          # Platform packages first, so the launcher never names one that is not there.
+          for file in npm-dist/anything2mcp-*-*.tgz; do
+            case "$file" in npm-dist/anything2mcp-[0-9]*.tgz) continue ;; esac
+            publish "$file"
+          done
+          publish npm-dist/anything2mcp-[0-9]*.tgz

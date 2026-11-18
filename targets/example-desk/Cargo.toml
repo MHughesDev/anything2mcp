@@ -1,0 +1,22 @@
+[package]
+name = "example-desk"
+description = "Test stand: a desktop program's accessibility tree, published on an accessibility bus of the test's own, with labelled values, a table, a nameless control, two controls of one name, a password field, a late value, and a save button nobody may press."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The stand publishes its tree over AT-SPI, which is Linux's interface. On
+# Windows and macOS it builds and says it is not built there. `service` is
+# the part of the bus crate that exports objects; the workspace's other user
+# of the crate only calls.
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio.workspace = true
+zbus = { workspace = true, features = ["service"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

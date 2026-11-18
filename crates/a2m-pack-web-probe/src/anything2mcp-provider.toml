@@ -80,6 +80,10 @@ class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
+class = "policy"
+code = "address_looks_like_an_action"
+
+[[failure_codes]]
 class = "input"
 code = "focus_invalid"
 
@@ -126,3 +130,10 @@ default = 20
 min = 1
 max = 500
 doc = "The most pages one discovery looks at before it stops and says so."
+
+[[settings]]
+key = "browser_digests"
+type = "list"
+default = []
+scope = "installation"
+doc = "The digests of the browser programs a person has reviewed. When the list is not empty, a browser with another digest is closed."

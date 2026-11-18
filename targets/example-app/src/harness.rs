@@ -90,6 +90,11 @@ struct DeliveryWrites {
 }
 
 #[derive(Deserialize)]
+struct Seen {
+    seen: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct TrapWrites {
     writes: BTreeMap<String, u64>,
 }
@@ -103,8 +108,33 @@ struct Faults {
 #[derive(Debug)]
 pub struct TestApp {
     base: String,
+    /// The `https` address of the same application, when it was started
+    /// with [`TestApp::start_tls`].
+    #[cfg(feature = "tls")]
+    secure: Option<String>,
     http: reqwest::Client,
     server: JoinHandle<()>,
+}
+
+/// A client builder for the harness's own requests, and for a test that
+/// acts as a user over plain HTTP. With the feature `tls` on, its TLS
+/// configuration states its provider and trusts nothing, so that a client is
+/// made without a provider installed for the process.
+pub fn client_builder() -> reqwest::ClientBuilder {
+    #[cfg(feature = "tls")]
+    let builder = {
+        // With no configuration, reqwest is handed something it does not
+        // know, and `build` returns an error instead of stopping the process.
+        match crate::tls::plain_client_config() {
+            Some(config) => reqwest::Client::builder().tls_backend_preconfigured(config),
+            None => reqwest::Client::builder().tls_backend_preconfigured(()),
+        }
+    };
+    #[cfg(not(feature = "tls"))]
+    let builder = reqwest::Client::builder();
+    // No client of the workspace takes a proxy from the environment
+    // (decision 0197): the harness asks the application on this machine.
+    builder.no_proxy()
 }
 
 impl TestApp {
@@ -125,9 +155,50 @@ impl TestApp {
         });
         Ok(Self {
             base: format!("http://{address}"),
-            http: reqwest::Client::new(),
+            #[cfg(feature = "tls")]
+            secure: None,
+            http: client_builder().build()?,
             server,
         })
+    }
+
+    /// Starts a new application that is served on two free local ports: over
+    /// TLS, with `server`'s certificate, at [`TestApp::secure_url`], and over
+    /// plain HTTP at [`TestApp::url`], where the harness asks what it stored.
+    /// Both serve one application with one store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a port could not be bound.
+    #[cfg(feature = "tls")]
+    pub async fn start_tls(
+        server: std::sync::Arc<rustls::ServerConfig>,
+    ) -> Result<Self, HarnessError> {
+        let plain = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(HarnessError::Start)?;
+        let secure = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(HarnessError::Start)?;
+        let address = plain.local_addr().map_err(HarnessError::Start)?;
+        let secure_address = secure.local_addr().map_err(HarnessError::Start)?;
+        let task = tokio::spawn(async move {
+            let _ = crate::tls::serve_both(plain, secure, server).await;
+        });
+        Ok(Self {
+            base: format!("http://{address}"),
+            secure: Some(format!("https://{secure_address}")),
+            http: client_builder().build()?,
+            server: task,
+        })
+    }
+
+    /// The `https` address of a path, for an application started with
+    /// [`TestApp::start_tls`]; the plain address for one that was not.
+    #[cfg(feature = "tls")]
+    #[must_use]
+    pub fn secure_url(&self, path: &str) -> String {
+        format!("{}{path}", self.secure.as_deref().unwrap_or(&self.base))
     }
 
     /// The address of a path in this application, such as `/api/orders`.
@@ -333,6 +404,56 @@ impl TestApp {
         Ok(self.ask::<TrapWrites>("/__control/traps").await?.writes)
     }
 
+    /// Every request the application received outside the control
+    /// interface, as `"GET /orders"`, in the order they came, **but for a
+    /// browser's own request for the site's icon**. A browser asks for
+    /// `/favicon.ico` by itself, some time after a page it loaded, and no
+    /// page, script, or driver makes it; a test that takes the list before
+    /// an act and again after it, to show the act sent nothing, must not
+    /// fail because the browser chose that moment. [`TestApp::seen_all`]
+    /// leaves nothing out.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn seen(&self) -> Result<Vec<String>, HarnessError> {
+        let mut seen = self.seen_all().await?;
+        seen.retain(|line| line != "GET /favicon.ico");
+        Ok(seen)
+    }
+
+    /// What the application has heard that it had not heard when `before`
+    /// was taken: the requests in [`TestApp::seen`] now whose line is not
+    /// one of `before`'s. A test uses it to show that an act it expects to
+    /// be refused sent nothing of its own. A page loaded earlier may still
+    /// be making the requests it makes by itself (its script's own reads),
+    /// and such a late repeat of an earlier request is not something the
+    /// refused act sent; comparing the two lists for equality would fail
+    /// on it. The act under test must be one whose request, had it been
+    /// sent, would differ from every earlier one, as a refused key's does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn heard_since(&self, before: &[String]) -> Result<Vec<String>, HarnessError> {
+        Ok(self
+            .seen()
+            .await?
+            .into_iter()
+            .filter(|line| !before.contains(line))
+            .collect())
+    }
+
+    /// Every request the application received outside the control
+    /// interface, the browser's own request for the site's icon included.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
+        Ok(self.ask::<Seen>("/__control/seen").await?.seen)
+    }
+
     /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step
     /// when it is on, as a person would, and returns the value for a `Cookie` header
     /// that carries the new session.
@@ -341,7 +462,7 @@ impl TestApp {
     ///
     /// Returns an error if the application did not give a session.
     pub async fn session_cookie(&self) -> Result<String, HarnessError> {
-        let client = reqwest::Client::builder()
+        let client = client_builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
         let form = format!("username={USERNAME}&password={PASSWORD}");

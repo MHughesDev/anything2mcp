@@ -4,28 +4,32 @@
 //! 308). The pack registers one mode, `file`, of the artifact archetype;
 //! the surface kind `file`, a folder inside a named root; the file kind
 //! `documents/`, which names one file and its record kinds; a driver; a
-//! discoverer of file layouts; and the rule that drafts a document from
-//! one.
+//! discoverer of file layouts; and the rules that draft a document and the
+//! reads over it from one.
 //!
 //! A file is read once, parsed through `a2m-sources` with the position of
 //! every value, and written only by patching the bytes of the places
 //! named, proving that nothing else changed, and replacing the old file
 //! with the new one in one call of the operating system. Delimited text
 //! and JSON are written; a workbook is read. No input chooses which file is
-//! opened, and the pack resolves no path: every file is a `CheckedPath`
-//! from the roots its manifest declares.
+//! opened, and the pack resolves no path: a surface's folder is a
+//! `CheckedPath` from the roots its manifest declares, and a file is one
+//! checked name in it, taken as the name itself and never as what a link at
+//! the name points to (decision 0149).
 //!
 //! The product crate registers the pack with
 //! `RegistryBuilder::add_pack(&a2m_pack_file::pack())`.
 
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod edit;
 mod kind;
 mod lower;
 mod model;
 mod open;
+mod place;
 mod save;
 
 use std::sync::Arc;
@@ -34,11 +38,15 @@ use a2m_core::{Failure, FailureClass, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar};
 
-pub use discover::{FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound, TableFound};
-pub use driver::FileLimits;
-pub use kind::{DOCUMENT_INVALID, FORMAT_NOT_BUILT, document_schema};
+pub use discover::{
+    CellKind, ColumnFound, FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound,
+    TableFound,
+};
+pub use driver::{FileDriver, FileLimits};
+pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
-    BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_WITHOUT_SIGNAL, STANDS_UNDECLARED,
+    BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_UNDECLARED, OPEN_WITHOUT_SIGNAL,
+    STANDS_UNDECLARED,
 };
 pub use model::{
     BEFORE_DIGEST, DEFAULT_ROOT, DOCUMENT_KIND, FILE_DIGEST, Format, INTENDED_DIGEST, MODE, PACK,
@@ -87,7 +95,8 @@ impl Pack for FilePack {
             ))
             .file_kind(Arc::new(kind::DocumentKind::new()))
             .lowering(Arc::new(lower::FileLowering::new(mode)))
-            .drafting_rule(Arc::new(discover::DocumentFromLayout::new()?));
+            .drafting_rule(Arc::new(draft::DocumentFromLayout::new()?))
+            .drafting_rule(Arc::new(draft::ReadsFromLayout::new()?));
         for rule in lower::lint_rules() {
             compiler = compiler.lint_rule(Arc::new(rule));
         }

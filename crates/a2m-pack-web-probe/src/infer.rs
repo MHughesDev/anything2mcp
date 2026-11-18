@@ -46,6 +46,19 @@ pub struct Exchange {
     pub status: Option<u16>,
     /// What came back.
     pub answer: Answer,
+    /// For a request the page made by itself: the path of the page that
+    /// made it. `None` for the request of a document the tab was sent to.
+    pub made_by: Option<String>,
+    /// The names of the request's headers that carry a credential or an
+    /// anti-forgery token. Never their values.
+    pub credential_headers: Vec<String>,
+    /// For a request the page made by itself: the names of the request's
+    /// headers its script set, which a read made again from inside the
+    /// page would not send. Never their values (decision 0195).
+    pub set_headers: Vec<String>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// or one whose name is not a plain name.
+    pub query_left_out: bool,
 }
 
 impl Exchange {
@@ -55,9 +68,41 @@ impl Exchange {
         self.status.is_some() && self.answer != Answer::Refused
     }
 
-    /// The exchange as the `found` of an `exchange` finding.
+    /// The exchange as the `found` of an `exchange` finding. A request the
+    /// page made by itself also names the page, as `made_by`, the names of
+    /// the headers that carried a credential, as `credential_headers`, the
+    /// names of the headers its script set, as `set_headers`, and whether
+    /// an entry of its query was left out, as `query_left_out`.
     #[must_use]
     pub fn found(&self) -> Json {
+        let mut found = self.found_of_a_document();
+        if let (Some(page), Json::Object(fields)) = (&self.made_by, &mut found) {
+            fields.insert("made_by".to_owned(), Json::from(page.as_str()));
+            fields.insert(
+                "credential_headers".to_owned(),
+                Json::Array(
+                    self.credential_headers
+                        .iter()
+                        .map(|name| Json::from(name.as_str()))
+                        .collect(),
+                ),
+            );
+            fields.insert(
+                "set_headers".to_owned(),
+                Json::Array(
+                    self.set_headers
+                        .iter()
+                        .map(|name| Json::from(name.as_str()))
+                        .collect(),
+                ),
+            );
+            fields.insert("query_left_out".to_owned(), Json::Bool(self.query_left_out));
+            return Json::Object(crate::shape::sorted(fields.clone()));
+        }
+        found
+    }
+
+    fn found_of_a_document(&self) -> Json {
         object([
             ("format", Json::from("1")),
             ("method", Json::from(self.method.as_str())),
@@ -510,4 +555,153 @@ pub fn infer_endpoints(exchanges: &[Exchange], tier_two: bool) -> Vec<Endpoint> 
         (&a.method, &a.origin, a.template()).cmp(&(&b.method, &b.origin, b.template()))
     });
     endpoints
+}
+
+/// Requests a page made by itself that are one read by key: the requests,
+/// of one method and origin, answered with one status and one shape, whose
+/// paths differ in exactly one segment, made by pages whose paths differ in
+/// exactly one segment too, where each page's segment is its request's
+/// (decision 0190). Request matching, as screen matching joins pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedRequests {
+    /// The request's path, with the segment that differs as a placeholder.
+    pub pattern: String,
+    /// The path of the page that makes it, with its segment as the same
+    /// placeholder.
+    pub page: String,
+    /// The requests, by their place in the input, in order of path.
+    pub members: Vec<usize>,
+}
+
+/// Request matching over the exchanges of one capture: only those a page
+/// made by itself, answered, with a JSON answer. A request that two groups
+/// would hold is in neither; a group of fewer than two is none. In order of
+/// the first request of each. The placeholder is named from the segment
+/// before it in the request's path, as one record of it (`orders` gives
+/// `order_id`), and the page's placeholder takes the same name.
+#[must_use]
+pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
+    fn split(path: &str) -> Option<Vec<&str>> {
+        let rest = path.strip_prefix('/')?;
+        let segments: Vec<&str> = rest.split('/').collect();
+        (!rest.is_empty() && segments.iter().all(|segment| crate::screen::plain(segment)))
+            .then_some(segments)
+    }
+    type Key = (
+        String,
+        String,
+        u16,
+        String,
+        usize,
+        Vec<String>,
+        usize,
+        Vec<String>,
+    );
+    let mut groups: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
+    for (at, one) in exchanges.iter().enumerate() {
+        let (Some(page), Some(status), Answer::Json(shape)) =
+            (&one.made_by, one.status, &one.answer)
+        else {
+            continue;
+        };
+        let (Some(request), Some(made_by)) = (split(&one.path), split(page)) else {
+            continue;
+        };
+        // The segment that varies is the page's key and the request's: the
+        // same text at a place of each.
+        for (hole, value) in request.iter().enumerate() {
+            for (page_hole, _) in made_by.iter().enumerate().filter(|(_, own)| *own == value) {
+                let blank = |segments: &[&str], at: usize| -> Vec<String> {
+                    segments
+                        .iter()
+                        .enumerate()
+                        .map(|(place, segment)| {
+                            if place == at {
+                                String::new()
+                            } else {
+                                (*segment).to_owned()
+                            }
+                        })
+                        .collect()
+                };
+                groups
+                    .entry((
+                        one.origin.clone(),
+                        one.method.clone(),
+                        status,
+                        shape.to_json().to_string(),
+                        hole,
+                        blank(&request, hole),
+                        page_hole,
+                        blank(&made_by, page_hole),
+                    ))
+                    .or_default()
+                    .push(at);
+            }
+        }
+    }
+    // Two requests with one value at the varying place are one request
+    // seen twice, not two records.
+    groups.retain(|(_, _, _, _, hole, _, _, _), members| {
+        let values: BTreeSet<&str> = members
+            .iter()
+            .filter_map(|at| {
+                exchanges[*at]
+                    .path
+                    .trim_start_matches('/')
+                    .split('/')
+                    .nth(*hole)
+            })
+            .collect();
+        values.len() >= 2
+    });
+    let mut held: BTreeMap<usize, u32> = BTreeMap::new();
+    for members in groups.values() {
+        for at in members {
+            *held.entry(*at).or_default() += 1;
+        }
+    }
+    let mut out: Vec<MatchedRequests> = groups
+        .into_iter()
+        .filter_map(|((_, _, _, _, hole, _, page_hole, _), members)| {
+            let mut members: Vec<usize> = members
+                .into_iter()
+                .filter(|at| held.get(at) == Some(&1))
+                .collect();
+            if members.len() < 2 {
+                return None;
+            }
+            members.sort_by(|a, b| exchanges[*a].path.cmp(&exchanges[*b].path));
+            let first = &exchanges[members[0]];
+            let request: Vec<&str> = first.path.trim_start_matches('/').split('/').collect();
+            let page: Vec<&str> = first
+                .made_by
+                .as_deref()?
+                .trim_start_matches('/')
+                .split('/')
+                .collect();
+            let name = crate::screen::placeholder(&request, hole);
+            let fill = |segments: &[&str], at: usize| -> String {
+                let parts: Vec<String> = segments
+                    .iter()
+                    .enumerate()
+                    .map(|(place, segment)| {
+                        if place == at {
+                            format!("{{{name}}}")
+                        } else {
+                            (*segment).to_owned()
+                        }
+                    })
+                    .collect();
+                format!("/{}", parts.join("/"))
+            };
+            Some(MatchedRequests {
+                pattern: fill(&request, hole),
+                page: fill(&page, page_hole),
+                members,
+            })
+        })
+        .collect();
+    out.sort_by_key(|group| group.members.iter().min().copied());
+    out
 }

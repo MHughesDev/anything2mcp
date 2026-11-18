@@ -28,6 +28,8 @@ Some of these file kinds are the kernel's and the rest arrive with packs ([secti
 
 A surface's `kind` is a surface kind its pack registers; a binding's `mode` is a mode its pack registers. A name nobody registered does not compile.
 
+The folder is read as it stands and nothing outside it is read. A link that leaves the folder is refused, and so is a link to a folder, which would have the same files read again under another name. A target file holds at most 1 MiB and a fixture's recorded file at most 16 MiB. The drafter writes only regular files inside the folder, never through a link and never over a file a person wrote or changed ([`a2m-files`](../../architecture/crates/a2m-files.md)).
+
 **Target.** Declares the surfaces and how they relate, so a large system with several services is one target.
 
 ```yaml

@@ -41,6 +41,67 @@ pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
 
 /// A step may take longer than a job's lease lasts. Class `busy`.
 pub const LEASE_TOO_SHORT: FailureCode = FailureCode::fixed("lease_too_short");
+/// What a run was called with is missing from the store or cannot be read.
+pub const RUN_CALL_UNREADABLE: FailureCode = FailureCode::fixed("run_call_unreadable");
+/// The in-process runner loop was handed a job that is not a run's.
+pub const SYSTEM_JOB_NOT_CARRIED: FailureCode = FailureCode::fixed("system_job_not_carried");
+/// A protected setting is set to a value this build cannot put in force.
+pub const SETTING_NOT_IN_FORCE: FailureCode = FailureCode::fixed("setting_not_in_force");
+/// A published tool changed between the decision about a call and the call.
+pub const TOOL_CHANGED: FailureCode = FailureCode::fixed("tool_changed");
+/// An idempotency key that is not 1 to 200 printable characters, or two
+/// different keys on one request. Class `input`. The same code the store
+/// and the REST door answer with.
+pub const IDEMPOTENCY_KEY_INVALID: FailureCode = a2m_ledger::IDEMPOTENCY_KEY_INVALID;
+/// An idempotency key the caller already gave with another call: another
+/// tool, environment, input, or source. Class `input`.
+pub const IDEMPOTENCY_KEY_REUSED: FailureCode = FailureCode::fixed("idempotency_key_reused");
+
+/// The drafts of a publish a person was shown changed before they pressed:
+/// they compile to another plan. Class `stale`.
+pub const DRAFTS_CHANGED: FailureCode = FailureCode::fixed("drafts_changed");
+
+/// A publish whose offline tests did not all run and pass: a version is
+/// published only when they do (spec section 403, decision 0180). Class
+/// `input`: the target's files are what a caller corrects.
+pub const PUBLISH_GATES_NOT_PASSED: FailureCode = FailureCode::fixed("publish_gates_not_passed");
+
+/// The setting `authoring.scout.run` is `off`, and `scout.run` was called.
+/// Class `policy`.
+pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
+
+/// An offline test asked for something that would store, lease, or clear
+/// a write; its control plane holds nothing and refuses (decision 0177).
+pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");
+
+/// `fixture.record` met an observed value that no scrubbing rule covers,
+/// and wrote nothing (decision 0196). Class `input`.
+pub const FIXTURE_NO_SCRUB_RULE: FailureCode = FailureCode::fixed("fixture_no_scrub_rule");
+/// The read `fixture.record` runs did not complete in the sandbox, or gave
+/// nothing to record; nothing was written. Class `input`.
+pub const FIXTURE_READ_FAILED: FailureCode = FailureCode::fixed("fixture_read_failed");
+/// The test `fixture.record` made does not pass against its scrubbed
+/// fixture, or an observed value would be in a file; nothing was written.
+/// Class `input`.
+pub const FIXTURE_NOT_REPLAYED: FailureCode = FailureCode::fixed("fixture_not_replayed");
+
+/// A binding `binding.promote` may not make verified: not a drafted first
+/// binding of its operation, or one whose file cannot be rewritten by rule
+/// (decision 0189). Class `input`.
+pub const BINDING_NOT_PROMOTABLE: FailureCode = FailureCode::fixed("binding_not_promotable");
+
+/// A promotion whose evidence is missing: an offline test of the operation
+/// that is missing or did not pass, or a read no trial proved at
+/// `executed` (decision 0189). Class `input`.
+pub const PROMOTION_UNPROVEN: FailureCode = FailureCode::fixed("promotion_unproven");
+
+pub(crate) fn stale(
+    code: FailureCode,
+    message: impl Into<String>,
+    next: impl Into<String>,
+) -> Failure {
+    Failure::new(FailureClass::Stale, code, message, next)
+}
 
 pub(crate) fn input(
     code: FailureCode,

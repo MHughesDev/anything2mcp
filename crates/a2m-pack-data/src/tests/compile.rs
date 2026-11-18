@@ -26,17 +26,24 @@ fn copy(from: &Path, to: &Path) {
 
 /// Compiles a copy of the fixtures in which `file` had `from` replaced by
 /// `to`, and gives the errors.
-fn errors_after(file: &[&str], from: &str, to: &str) -> Diagnostics {
+pub(crate) fn errors_after(file: &[&str], from: &str, to: &str) -> Diagnostics {
+    errors_after_all(&[(file, from, to)])
+}
+
+/// The same, after several replacements.
+pub(crate) fn errors_after_all(edits: &[(&[&str], &str, &str)]) -> Diagnostics {
     let folder = Folder::new("compile");
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
     let root = folder.path().join("example");
     copy(&fixtures(), &root);
-    let path = file.iter().fold(root.clone(), |path, part| path.join(part));
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace("\r\n", "\n");
-    assert!(text.contains(from), "the fixture no longer holds `{from}`");
-    std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    for (file, from, to) in edits {
+        let path = file.iter().fold(root.clone(), |path, part| path.join(part));
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert!(text.contains(from), "the fixture no longer holds `{from}`");
+        std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    }
     let Err(problems) = compile_folder(&registry, &root) else {
         panic!("it must not compile");
     };
@@ -94,6 +101,16 @@ fn the_fixtures_compile_twice_to_the_same_bytes() {
         "INSERT INTO \"shipments\" (\"order_id\", \"carrier\", \"external_ref\") VALUES (?, ?, ?) RETURNING \"shipment_id\""
     );
     assert_eq!(insert.returns, Returns::AssignedKey);
+    // The read of a record by its key is the pack's own text too: every
+    // field's column and the version, where the full key is the one bound.
+    let by_key = &section.statements["line_item_by_key"];
+    assert_eq!(
+        by_key.text,
+        "SELECT \"order_id\", \"item_code\", \"description\", \"quantity\", \"length_in\", \"unit_price\", \"row_version\" FROM \"order_lines\" WHERE \"order_id\" = ? AND \"item_code\" = ?"
+    );
+    assert!(by_key.by_key && by_key.access == Access::ReadOnly);
+    assert_eq!(by_key.returns, Returns::OneOrNone);
+    assert!(!section.statements["shipment_by_key"].by_key);
 
     // A read is three steps and commits nothing; a write has one commit
     // point, its last step, and reads back in a transaction of its own.
@@ -233,4 +250,217 @@ fn a_write_compiles_only_where_the_store_stands_alone() {
         .collect();
     assert!(files.contains(&"operations/line_item_update.yaml"));
     assert!(!files.contains(&"operations/line_item_get.yaml"));
+}
+
+/// The hand-written read of a customer by its key, in place of the one the
+/// pack writes; `predicate` is what follows `FROM customers`.
+fn hand_written_customer_read(predicate: &str, params: &str) -> Diagnostics {
+    errors_after(
+        &["statements", "orders.yaml"],
+        "  customer_by_key:\n    effect: read\n    form: table\n    record: customer\n",
+        &format!(
+            "  customer_by_key:\n    effect: read\n    record: customer\n    text: SELECT customer_id, name, credit_limit_cents, notes FROM customers {predicate}\n    params: {params}\n    returns: one_or_none\n"
+        ),
+    )
+}
+
+#[test]
+fn a_write_is_read_back_only_by_the_read_the_pack_wrote_for_its_record() {
+    // A read that picks some row, with no key at all.
+    let problems = hand_written_customer_read("ORDER BY customer_id DESC LIMIT 1", "[]");
+    let problem = problems
+        .find("data.read_back_invalid")
+        .expect("a read-back that is not by key");
+    assert_eq!(
+        problem.at.file.as_str(),
+        "operations/customer_credit_update.yaml"
+    );
+    assert!(problem.fix.contains("form: table"), "{problem}");
+    // A hand-written read with the key's own parameter: its text is not
+    // the pack's, so what it selects is not known, and it is refused too.
+    let problems = hand_written_customer_read(
+        "WHERE customer_id = ?",
+        "[{name: customer_id, type: identifier}]",
+    );
+    assert!(
+        problems.find("data.read_back_invalid").is_some(),
+        "{problems:#?}"
+    );
+    // The pack's own read of another record.
+    let problems = errors_after(
+        &["operations", "customer_credit_update.yaml"],
+        "read_back: customer_by_key",
+        "read_back: line_item_by_key",
+    );
+    assert!(
+        problems.find("data.read_back_invalid").is_some(),
+        "{problems:#?}"
+    );
+    // A record with no key has no read by key.
+    let problems = errors_after(
+        &["statements", "orders.yaml"],
+        "    table: customers\n    key: [customer_id]\n",
+        "    table: customers\n    key: []\n",
+    );
+    assert!(
+        problems.find("data.statement_invalid").is_some(),
+        "{problems:#?}"
+    );
+}
+
+#[test]
+fn a_hand_written_read_is_one_plain_select() {
+    let refused = |text: &str, params: &str| {
+        let problems = errors_after(
+            &["statements", "orders.yaml"],
+            "      SELECT shipment_id, order_id, carrier, external_ref\n      FROM shipments WHERE shipment_id = ?\n    params: [{name: shipment_id, type: integer}]\n",
+            &format!("      {text}\n    params: {params}\n"),
+        );
+        let problem = problems
+            .find("data.statement_invalid")
+            .unwrap_or_else(|| panic!("`{text}` must not compile: {problems:#?}"));
+        assert_eq!(problem.at.file.as_str(), "statements/orders.yaml");
+        assert!(problem.at.line > 1 && !problem.fix.is_empty(), "{problem}");
+    };
+    let one = "[{name: shipment_id, type: integer}]";
+    refused("ATTACH ? AS other", one);
+    refused("DETACH other", "[]");
+    refused("PRAGMA query_only = 0", "[]");
+    refused("VACUUM INTO ?", one);
+    refused("CREATE TABLE made_here (x)", "[]");
+    refused("COMMIT", "[]");
+    refused(
+        "SELECT shipment_id FROM shipments WHERE shipment_id = ?; DELETE FROM shipments",
+        one,
+    );
+    refused("SELECT load_extension(?) AS carrier", one);
+    refused("SELECT file AS carrier FROM pragma_database_list", "[]");
+    refused(
+        "DELETE FROM shipments WHERE shipment_id = ? RETURNING shipment_id",
+        one,
+    );
+}
+
+#[test]
+fn a_field_named_as_the_guards_parameter_is_refused() {
+    // The guard's value is the step argument `version`. A field of that
+    // name in the same statement would be bound to the same argument, and
+    // the guard would compare the new value of the field, not the version
+    // the caller saw.
+    let problems = errors_after_all(&[
+        (
+            &["statements", "orders.yaml"],
+            "      length: {column: length_in, type: length_inches}\n",
+            "      version: {column: length_in, type: length_inches}\n",
+        ),
+        (
+            &["statements", "orders.yaml"],
+            "    set: [length, unit_price]\n",
+            "    set: [version, unit_price]\n",
+        ),
+    ]);
+    let problem = problems
+        .find("data.statement_invalid")
+        .expect("a field named as the guard's parameter");
+    assert!(problem.message.contains("`version`"), "{problem}");
+    assert!(!problem.fix.is_empty());
+}
+
+#[test]
+fn a_write_never_compiles_as_a_read_and_a_delete_never_as_a_plain_write() {
+    // An update declared as a read: refused by the kernel, from what the
+    // pack says the verb does, whatever the operation's file says.
+    let problems = errors_after(
+        &["operations", "customer_credit_update.yaml"],
+        "effect: write",
+        "effect: read",
+    );
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .expect("a write declared as a read");
+    assert_eq!(
+        problem.at.file.as_str(),
+        "operations/customer_credit_update.yaml"
+    );
+    // A delete cannot be undone, so `write` is too little for it.
+    let problems = errors_after(
+        &["operations", "line_item_delete.yaml"],
+        "effect: irreversible",
+        "effect: write",
+    );
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .expect("a delete declared as a plain write");
+    assert!(problem.fix.contains("irreversible"), "{problem}");
+}
+
+/// Compiles a copy of the fixtures after one replacement, and gives the plan.
+fn plan_after(file: &[&str], from: &str, to: &str) -> a2m_core::Plan {
+    let folder = Folder::new("compile");
+    let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
+    let root = folder.path().join("example");
+    copy(&fixtures(), &root);
+    let path = file.iter().fold(root.clone(), |path, part| path.join(part));
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(text.contains(from), "the fixture no longer holds `{from}`");
+    std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    match compile_folder(&registry, &root) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("it must compile: {problems:#?}"),
+    }
+}
+
+fn evidence_of(plan: &a2m_core::Plan, operation: &str) -> a2m_core::WriteEvidence {
+    plan.operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap()
+        .bindings[0]
+        .evidence
+}
+
+#[test]
+fn an_append_with_no_key_states_the_stores_count_as_its_evidence_and_every_other_write_is_read_back()
+ {
+    // The assigned-key insert keeps the read-back it names.
+    let plan = plan_after(
+        &["operations", "shipment_create.yaml"],
+        "    verb: create\n",
+        "    verb: create\n",
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_shipment_create"),
+        a2m_core::WriteEvidence::ReadBack
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_line_item_update"),
+        a2m_core::WriteEvidence::ReadBack
+    );
+    // The same insert with no read-back: `irreversible`, identity `none`.
+    let plan = plan_after(
+        &["operations", "shipment_create.yaml"],
+        "    read_back: shipment_read_back\n",
+        "",
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_shipment_create"),
+        a2m_core::WriteEvidence::Acknowledged
+    );
+}
+
+#[test]
+fn a_keyed_write_with_no_read_back_is_refused_by_the_pack_and_the_fix_names_the_read() {
+    let problems = errors_after(
+        &["operations", "line_item_update.yaml"],
+        "    read_back: line_item_by_key\n",
+        "",
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| { problem.fix.contains("read the pack writes by key") }),
+        "{problems:#?}"
+    );
 }

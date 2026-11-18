@@ -14,6 +14,10 @@ name = "http"
 archetype = "request"
 verbs = ["read", "list", "search", "create", "update", "upsert", "delete", "submit", "call"]
 steps = ["request", "validate", "extract", "probe"]
+# No `commit_steps`: no step kind of this mode always saves. A `request`
+# saves exactly when its endpoint is marked `write`, and the lowering marks
+# it `commits` then; the driver refuses an endpoint that writes from a step
+# not so marked.
 rank = 20
 session_reads = 8
 session_writes = 1
@@ -79,9 +83,18 @@ code = "http.signed_endpoint"
 level = "error"
 summary = "No `http` binding names an endpoint whose requests the front end computes or signs."
 
+[[lint_rules]]
+code = "http.unencrypted_credentials"
+level = "warning"
+summary = "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
+
 [[drafting_rules]]
 finding_kind = "described_operation"
 file_kind = "endpoint"
+
+[[drafting_rules]]
+finding_kind = "described_operation"
+file_kind = "operation"
 
 [[failure_codes]]
 class = "rejected"
@@ -90,6 +103,10 @@ code = "app_validation_error"
 [[failure_codes]]
 class = "stale"
 code = "version_conflict"
+
+[[failure_codes]]
+class = "stale"
+code = "version_not_read"
 
 [[failure_codes]]
 class = "drift"
@@ -112,6 +129,10 @@ class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
+class = "policy"
+code = "link_not_encrypted"
+
+[[failure_codes]]
 class = "input"
 code = "path_value_refused"
 
@@ -130,6 +151,35 @@ code = "auth_scheme_not_built"
 [[failure_codes]]
 class = "input"
 code = "description_unreadable"
+
+[[failure_codes]]
+class = "input"
+code = "description_too_large"
+
+# The session keeper's TLS failures, which the driver passes on (decision 0157).
+[[failure_codes]]
+class = "input"
+code = "tls_setup_failed"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_untrusted"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_name_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_expired"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_not_verified"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "tls_handshake_failed"
 
 [effects]
 network = "surfaces"

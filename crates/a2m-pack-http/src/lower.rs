@@ -11,12 +11,13 @@
 //! `extract` of the save's own answer.
 
 use a2m_core::{
-    FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes;
@@ -38,6 +39,8 @@ pub const PROBE: StepKind = StepKind::fixed("probe");
 
 const READ_VERBS: &[&str] = &["read", "list", "search"];
 const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "delete", "submit", "call"];
+/// The verbs whose writes cannot be taken back, whatever reads them back.
+const IRREVERSIBLE_VERBS: &[&str] = &["delete", "submit"];
 
 /// How long a step may take when the target states no `request` timeout.
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
@@ -173,7 +176,13 @@ impl<'a> Lower<'a, '_> {
     /// The `request` step of one endpoint: a value for every placeholder of
     /// its path, and one for each `query` and `body` entry the binding
     /// writes. `from_inputs` is the binding's own doc, or its `read_back`.
-    fn request(&mut self, found: &Found<'_>, part: &Located<Doc>, with_body: bool) -> Step {
+    fn request(
+        &mut self,
+        found: &Found<'_>,
+        part: &Located<Doc>,
+        with_body: bool,
+        version_from: Option<String>,
+    ) -> Step {
         let scalar = |ty: &ValueType| {
             matches!(
                 ty,
@@ -246,7 +255,10 @@ impl<'a> Lower<'a, '_> {
             }
         }
 
-        let mut payload = RequestStep::default();
+        let mut payload = RequestStep {
+            version_from,
+            ..RequestStep::default()
+        };
         for entry in part.get("query").map(Located::entries).unwrap_or_default() {
             match self.cx.expr(&entry.value, None) {
                 Ok(index) => {
@@ -395,6 +407,50 @@ impl<'a> Lower<'a, '_> {
         step
     }
 
+    /// The endpoint whose read of the record supplies the version a write
+    /// sends as its precondition: the one the record is read back through,
+    /// which must say where the version is read. Without it the write could
+    /// only ever go out with no precondition, and the driver refuses that.
+    fn version_reader(
+        &mut self,
+        found: &Found<'_>,
+        reader: Option<&Found<'_>>,
+        names_read_back: bool,
+    ) -> Option<String> {
+        found.template.version.send.as_ref()?;
+        match reader {
+            Some(reader) if reader.template.version.read.is_some() => Some(reader.name.to_owned()),
+            Some(reader) => {
+                self.refuse(
+                    "version_invalid",
+                    Stage::Analyze,
+                    reader.at,
+                    format!(
+                        "The endpoint `{}` sends the record's version with a write, and the record is read back through `{}`, which reads no version.",
+                        found.name, reader.name
+                    ),
+                    "Add `version: {read: ...}` to the endpoint the record is read back through, with the field or the header that holds the version.",
+                );
+                None
+            }
+            // An endpoint that is not in the catalog is refused by name already.
+            None if names_read_back => None,
+            None => {
+                self.refuse(
+                    "version_invalid",
+                    Stage::Analyze,
+                    found.at,
+                    format!(
+                        "The endpoint `{}` sends the record's version with a write, and the binding names no `read_back` endpoint that reads it.",
+                        found.name
+                    ),
+                    "Name a `read_back` endpoint that declares `version: {read: ...}`.",
+                );
+                None
+            }
+        }
+    }
+
     fn validate(&self, found: &Found<'_>) -> Step {
         self.step(
             VALIDATE,
@@ -532,6 +588,54 @@ impl Lowering for HttpLowering {
         &self.step_kinds
     }
 
+    /// A `request` sends a read and a write alike, and which it is is the
+    /// `effect` of the endpoint it names: the lowering marks it as the
+    /// commit point exactly for a verb that writes, which it binds only to
+    /// an endpoint marked `write`, and the driver refuses an endpoint that
+    /// writes from a `request` not so marked. Every
+    /// other kind reads an answer already held, or is a discoverer's safe
+    /// request, and never saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == REQUEST {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// A verb that reads is a read: the lowering binds it only to an
+    /// endpoint marked `read`. `delete` and `submit` cannot be taken back,
+    /// and are `irreversible`. Any other verb that writes is a write when
+    /// the binding names how the record is read back, and `irreversible`
+    /// when it names nothing: what was written could then never be found
+    /// again.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb.as_str();
+        if READ_VERBS.contains(&verb) {
+            EffectClass::Read
+        } else if IRREVERSIBLE_VERBS.contains(&verb) {
+            EffectClass::Irreversible
+        } else if binding.field("read_back").is_some() {
+            EffectClass::Write
+        } else {
+            EffectClass::Irreversible
+        }
+    }
+
+    /// A `submit` whose binding names no `read_back` has nothing to read
+    /// the record back through: the endpoint's own answer is the only
+    /// evidence there can be. Every other write keeps what the default
+    /// says; a write with a `read_back` always keeps it.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if binding.verb.as_str() == "submit" && binding.field("read_back").is_none() {
+            WriteEvidence::Acknowledged
+        } else if lowered.prefer_response {
+            WriteEvidence::Response
+        } else {
+            WriteEvidence::ReadBack
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -601,7 +705,16 @@ impl Lowering for HttpLowering {
             );
         }
 
-        let mut act = lower.request(&found, binding.doc, !reads);
+        // The endpoint a write's record is read back through. It also
+        // supplies the version a write sends as its precondition.
+        let read_back = binding.field("read_back").filter(|_| !reads);
+        let reader = read_back.and_then(|part| lower.endpoint(part));
+        let version_from = if reads {
+            None
+        } else {
+            lower.version_reader(&found, reader.as_ref(), read_back.is_some())
+        };
+        let mut act = lower.request(&found, binding.doc, !reads, version_from);
         let mut lowered = Lowered {
             surface: SurfaceName::new(&found.template.surface).map_err(|_| {
                 Diagnostics::from(problem(
@@ -635,13 +748,13 @@ impl Lowering for HttpLowering {
             act.idempotent = found.template.idempotency_header.is_some();
             lowered.act = vec![act];
             lowered.confirm = vec![lower.validate(&found)];
-            if let Some(read_back) = binding.field("read_back") {
+            if let Some(read_back) = read_back {
                 lowered.prefer_response = read_back.text("prefer") == Some("response");
                 if lowered.prefer_response {
                     let extract = lower.extract(&found, binding.doc);
                     lowered.confirm.push(extract);
                 }
-                if let Some(reader) = lower.endpoint(read_back) {
+                if let Some(reader) = reader {
                     if reader.template.writes {
                         lower.refuse(
                             "effect_mismatch",
@@ -667,7 +780,7 @@ impl Lowering for HttpLowering {
                         );
                     }
                     let mut steps = vec![
-                        lower.request(&reader, read_back, false),
+                        lower.request(&reader, read_back, false, None),
                         lower.validate(&reader),
                         lower.extract(&reader, read_back),
                     ];

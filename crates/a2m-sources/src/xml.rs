@@ -44,7 +44,52 @@ pub(crate) struct Attributes<'a> {
 }
 
 impl<'a> Attributes<'a> {
+    /// The attributes written in `raw`, after checking that every one is a
+    /// name, an equals sign, and a quoted value whose characters the format
+    /// defines, and that none is named twice. An attribute that is written
+    /// any other way is never passed over: a reader that did would take the
+    /// attributes after it as absent, and read their defaults.
+    fn checked(raw: &'a str) -> Result<Self, &'static str> {
+        const BROKEN: &str = "a tag's attributes are not each a name and a quoted value";
+        let mut names: Vec<&str> = Vec::new();
+        let mut rest = raw.trim_start();
+        while !rest.is_empty() {
+            let equals = rest.find('=').ok_or(BROKEN)?;
+            let name = rest.get(..equals).ok_or(BROKEN)?.trim_end();
+            if name.is_empty()
+                || name.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
+            {
+                return Err(BROKEN);
+            }
+            if names.contains(&name) {
+                return Err("a tag names one attribute twice");
+            }
+            names.push(name);
+            let after = rest.get(equals + 1..).ok_or(BROKEN)?.trim_start();
+            let quote = after
+                .chars()
+                .next()
+                .filter(|c| matches!(c, '"' | '\''))
+                .ok_or(BROKEN)?;
+            let value_end = after.get(1..).ok_or(BROKEN)?.find(quote).ok_or(BROKEN)?;
+            let value = after.get(1..=value_end).ok_or(BROKEN)?;
+            if value.contains('<') {
+                return Err(BROKEN);
+            }
+            unescape(value)
+                .map_err(|()| "an attribute names a character the format does not define")?;
+            let following = after.get(value_end + 2..).ok_or(BROKEN)?;
+            if !following.is_empty() && !following.starts_with(|c: char| c.is_whitespace()) {
+                return Err(BROKEN);
+            }
+            rest = following.trim_start();
+        }
+        Ok(Self { raw })
+    }
+
     /// The value of the attribute with exactly that name, prefix included.
+    /// Nothing only when the tag does not carry the attribute: the list was
+    /// checked when the tag was read.
     pub(crate) fn get(&self, name: &str) -> Option<Cow<'a, str>> {
         let mut rest = self.raw;
         loop {
@@ -62,9 +107,21 @@ impl<'a> Attributes<'a> {
         }
     }
 
-    /// Whether an attribute is written as true: `1` or `true`.
-    pub(crate) fn flag(&self, name: &str) -> bool {
-        matches!(self.get(name).as_deref(), Some("1" | "true"))
+    /// Whether an attribute is written as true: `1` or `true`. One that is
+    /// absent, or written `0` or `false`, is not.
+    ///
+    /// # Errors
+    ///
+    /// `source_malformed` for any other value: what is neither true nor
+    /// false is never read as false.
+    pub(crate) fn flag(&self, name: &str) -> Result<bool, Failure> {
+        match self.get(name).as_deref() {
+            Some("1" | "true") => Ok(true),
+            None | Some("0" | "false") => Ok(false),
+            Some(_) => Err(malformed(format!(
+                "the attribute `{name}` of a part of the package is neither true nor false"
+            ))),
+        }
     }
 }
 
@@ -122,6 +179,9 @@ fn local(name: &str) -> &str {
 pub(crate) struct Xml<'a> {
     text: &'a str,
     at: usize,
+    /// The elements that are open, outermost first, by the name each was
+    /// written with.
+    open: Vec<&'a str>,
 }
 
 impl<'a> Xml<'a> {
@@ -135,7 +195,11 @@ impl<'a> Xml<'a> {
         let text = std::str::from_utf8(bytes)
             .map_err(|_| encoding("a part of the package is not UTF-8"))?;
         let at = if text.starts_with('\u{feff}') { 3 } else { 0 };
-        Ok(Self { text, at })
+        Ok(Self {
+            text,
+            at,
+            open: Vec::new(),
+        })
     }
 
     fn rest(&self) -> &'a str {
@@ -155,6 +219,9 @@ impl<'a> Xml<'a> {
         loop {
             let rest = self.rest();
             if rest.is_empty() {
+                if !self.open.is_empty() {
+                    return Err(bad("an element is not closed", self.at));
+                }
                 return Ok(None);
             }
             let start = self.at;
@@ -193,10 +260,14 @@ impl<'a> Xml<'a> {
                 ));
             } else if rest.starts_with("</") {
                 self.at += 2;
-                let name = self.until(">", "a closing tag is not closed")?;
-                return Ok(Some(Event::Close {
-                    name: local(name.trim_end()),
-                }));
+                let name = self.until(">", "a closing tag is not closed")?.trim_end();
+                if self.open.pop() != Some(name) {
+                    return Err(bad(
+                        "a closing tag does not close the element that is open",
+                        start,
+                    ));
+                }
+                return Ok(Some(Event::Close { name: local(name) }));
             } else {
                 self.at += 1;
                 // A `>` may stand inside a quoted attribute value.
@@ -229,11 +300,14 @@ impl<'a> Xml<'a> {
                 if name.is_empty() {
                     return Err(bad("a tag has no name", start));
                 }
+                let attributes = Attributes::checked(inside.get(name_end..).unwrap_or(""))
+                    .map_err(|problem| bad(problem, start))?;
+                if !closed {
+                    self.open.push(name);
+                }
                 return Ok(Some(Event::Open {
                     name: local(name),
-                    attributes: Attributes {
-                        raw: inside.get(name_end..).unwrap_or(""),
-                    },
+                    attributes,
                     closed,
                 }));
             }
@@ -320,5 +394,89 @@ mod tests {
         let mut xml = Xml::new(b"<a><b></a").unwrap();
         xml.next().unwrap();
         assert_eq!(xml.skip().unwrap_err().code(), &SOURCE_MALFORMED);
+    }
+
+    /// Reads a part to its end, or to the first thing that breaks the format.
+    fn read_all(part: &[u8]) -> Result<usize, Failure> {
+        let mut xml = Xml::new(part)?;
+        let mut events = 0;
+        while xml.next()?.is_some() {
+            events += 1;
+        }
+        Ok(events)
+    }
+
+    #[test]
+    fn an_attribute_that_is_not_well_formed_is_refused_and_never_taken_as_absent() {
+        // Each of these once read as a tag whose later attributes were
+        // absent, so a hidden row was read as shown.
+        for part in [
+            &b"<row r=\"3\" hidden=1 spans=\"1:2\"/>"[..],
+            b"<row hidden=1/>",
+            b"<row r=3 hidden=\"1\"/>",
+            b"<row r=\"3\" hidden=\"&yes;\"/>",
+            b"<row r=\"3\"hidden=\"1\"/>",
+            b"<row r=\"3\" hidden/>",
+            b"<row r=\"3\" hidden=\"1/>",
+            b"<row r=\"3\" r=\"4\"/>",
+            b"<row =\"3\"/>",
+            b"<row r=\"a<b\"/>",
+        ] {
+            let failure = read_all(part).unwrap_err();
+            assert_eq!(
+                failure.code(),
+                &SOURCE_MALFORMED,
+                "{}",
+                String::from_utf8_lossy(part)
+            );
+        }
+        // What the format allows is read as before.
+        assert_eq!(read_all(b"<row r = '3'\n hidden=\"1\"  />").unwrap(), 1);
+        assert_eq!(read_all(b"<a k=\"x &gt; y\" x:k='\"'></a>").unwrap(), 2);
+    }
+
+    #[test]
+    fn a_flag_is_true_or_false_and_nothing_else() {
+        let flag = |part: &'static [u8]| {
+            let mut xml = Xml::new(part).unwrap();
+            let Some(Event::Open { attributes, .. }) = xml.next().unwrap() else {
+                panic!("an element opens");
+            };
+            attributes.flag("hidden")
+        };
+        assert!(flag(b"<row hidden=\"1\"/>").unwrap());
+        assert!(flag(b"<row hidden=\"true\"/>").unwrap());
+        assert!(!flag(b"<row hidden=\"0\"/>").unwrap());
+        assert!(!flag(b"<row hidden=\"false\"/>").unwrap());
+        assert!(!flag(b"<row/>").unwrap());
+        for part in [
+            &b"<row hidden=\"yes\"/>"[..],
+            b"<row hidden=\"\"/>",
+            b"<row hidden=\"TRUE\"/>",
+        ] {
+            assert_eq!(flag(part).unwrap_err().code(), &SOURCE_MALFORMED);
+        }
+    }
+
+    #[test]
+    fn a_closing_tag_closes_the_element_that_is_open() {
+        for part in [
+            &b"<a><b></a></b>"[..],
+            b"<a></b>",
+            b"</a>",
+            b"<a><b/></a></a>",
+            b"<x:a></a>",
+            b"<a><b>",
+            b"<a>text",
+        ] {
+            let failure = read_all(part).unwrap_err();
+            assert_eq!(
+                failure.code(),
+                &SOURCE_MALFORMED,
+                "{}",
+                String::from_utf8_lossy(part)
+            );
+        }
+        assert_eq!(read_all(b"<x:a><b></b ><c/></x:a>").unwrap(), 5);
     }
 }

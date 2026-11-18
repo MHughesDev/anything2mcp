@@ -1,8 +1,9 @@
 //! The engine in this process: the settings, the kernel, the provider
 //! registry with every first-party pack, and the in-process runner loop.
 //!
-//! This is the library facade for a host that embeds the engine, and what
-//! a one-shot command opens. The order is fixed: settings, the store and
+//! This is the library facade for a host that embeds the engine, what a
+//! one-shot command opens, and what the local engine serves. The order is
+//! fixed: settings, the store and
 //! the vault ([`Kernel::prepare`]), the provider registry (built from the
 //! redactor and telemetry the first step made), the rest of the kernel
 //! ([`Kernel::open`]), and the runner loop.
@@ -15,7 +16,8 @@ use a2m_actions::{
     ActionRegistry, Caller, CallerCredential, CloseReason, FrontDoor, Kernel, KernelParts, Paths,
     PersonSurface, Principal, Request, Response, Settings, Sources, StorePlace,
 };
-use a2m_core::{Failure, FailureClass, NoSecrets, Secret};
+use a2m_core::{Digest, Failure, FailureClass, NoSecrets, Secret};
+use a2m_local::EngineLock;
 use a2m_provider::{
     Access, HostServices, ProviderSettings, RegistryBuilder, RootName, Roots, Supervisor,
     SupervisorLimits,
@@ -33,6 +35,46 @@ use crate::packs;
 /// installation's settings choose the passphrase route. It is read once at
 /// start and never shown.
 pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
+
+/// The warning a client gives when the engine that answers it was started
+/// with other settings variables than its own (decision 0192).
+pub const SETTINGS_DIFFER: &str = "settings_differ";
+
+/// The settings variables of an environment, `A2M_<GROUP>__<KEY>`: what
+/// an engine started with them loads, and what a later client's own are
+/// compared with. The passphrase's variable is none of them.
+#[must_use]
+pub fn settings_variables(
+    environment: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    environment
+        .iter()
+        .filter(|(name, _)| {
+            name.as_str() != PASSPHRASE_VARIABLE
+                && name
+                    .strip_prefix("A2M_")
+                    .is_some_and(|rest| rest.contains("__"))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+/// What a client is told when the engine that answered it was started
+/// with other settings variables: each name, never a value; the engine
+/// serves with its own, and is not restarted, since it may have runs in
+/// hand. `None` when nothing differs, or the engine named none.
+#[must_use]
+pub fn settings_warning(differing: Option<Vec<String>>) -> Option<String> {
+    let names = differing.filter(|names| !names.is_empty())?;
+    let listed = names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{SETTINGS_DIFFER}: The engine that answered was started with other settings variables than this client has ({listed}); it serves with its own, and this client's are not used. To use them, stop the engine with `anything2mcp engine stop` once no run is in hand, and run the command again."
+    ))
+}
 
 /// The name of the file, in the data directory, that keeps the salt of the
 /// passphrase route. The salt is not a secret.
@@ -132,6 +174,9 @@ pub struct Engine {
     project: Option<PathBuf>,
     /// Why the runner loop is not running, when it is not.
     runner_problem: Option<Failure>,
+    /// The engine lock, held for as long as the kernel is open, when this
+    /// engine took it. The local engine's channel holds its own.
+    lock: Option<EngineLock>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -146,11 +191,25 @@ impl std::fmt::Debug for Engine {
 /// project's file, the environment, the flags, and every first-party
 /// pack's manifest, whose settings are the schema of its group.
 fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
-    let mut sources = Sources::read(
+    let mut sources = sources_of(
         &options.paths,
         options.project.as_deref(),
-        options.environment.clone(),
+        &options.environment,
     )?;
+    for (key, value) in &options.flags {
+        sources = sources.with_flag(key, value);
+    }
+    Ok(sources)
+}
+
+/// The same with no flags: the files, the project's file, the
+/// environment, and every first-party pack's manifest.
+fn sources_of(
+    paths: &Paths,
+    project: Option<&Path>,
+    environment: &BTreeMap<String, String>,
+) -> Result<Sources, Failure> {
+    let mut sources = Sources::read(paths, project, environment.clone())?;
     for pack in packs::first_party() {
         // A manifest that does not parse is reported by the registry
         // builder, as a named problem of that pack; the settings loader
@@ -159,10 +218,22 @@ fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
             sources = sources.with_pack(Arc::new(manifest));
         }
     }
-    for (key, value) in &options.flags {
-        sources = sources.with_flag(key, value);
-    }
     Ok(sources)
+}
+
+/// The settings an engine of these paths, this project, and this
+/// environment would load: what a client reads before it starts one.
+pub(crate) fn settings_of(
+    paths: &Paths,
+    project: Option<&Path>,
+    environment: &BTreeMap<String, String>,
+) -> Result<Settings, Failure> {
+    Settings::load(&sources_of(paths, project, environment)?)
+}
+
+/// Loads the settings of a process from its sources.
+pub(crate) fn load_settings(options: &EngineOptions) -> Result<Settings, Failure> {
+    Settings::load(&sources(options)?)
 }
 
 fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
@@ -176,14 +247,28 @@ fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
     }
 }
 
-/// The named roots the packs may be given: the project folder, under the
-/// names `project` and `files`, and two folders of the data directory the
-/// engine owns.
-fn roots(paths: &Paths, project: Option<&Path>, place: StorePlace) -> Roots {
+/// The named roots the packs may be given: the project folder of each
+/// request, under the names `project` and `files`, and two folders of the
+/// data directory the engine owns.
+///
+/// `project` and `files` stand for `<project>`, the default of
+/// `files.allowed_roots`, and are bound to no folder: each run resolves
+/// them in the checked project folder of the request that started it
+/// (`Roots::add_project`, decision 0193). So an engine that serves every
+/// project's requests (`serve`, and one started on demand) resolves a
+/// request of project B in B, whichever project started it, and never in
+/// the folder it was started in (sections 502 and 224, decisions 0192 and
+/// 0194); an engine a command runs inside itself gives each request its
+/// own project folder too. A run whose request came with no project folder
+/// is refused `input`/`project_folder_missing`, unsent. The engine's own
+/// folders are ordinary roots, bound once.
+fn roots(paths: &Paths, place: StorePlace) -> Roots {
     let mut roots = Roots::none();
-    if let Some(project) = project {
-        root(&mut roots, ROOT_PROJECT, project, false);
-        root(&mut roots, ROOT_FILES, project, false);
+    for name in [ROOT_PROJECT, ROOT_FILES] {
+        if let Ok(name) = RootName::new(name) {
+            // The names are the host's own and distinct: nothing refuses.
+            let _ = roots.add_project(name, Access::Write);
+        }
     }
     // A store in memory leaves nothing behind, so the engine's own folders
     // are made only beside a store on disk or when they exist already.
@@ -250,31 +335,6 @@ fn passphrase_failure(message: &str, fix: &str) -> Failure {
     )
 }
 
-/// Reads the salt of the passphrase route, or makes and keeps a new one.
-fn salt(paths: &Paths, random: &dyn RandomSource) -> Result<PassphraseSalt, Failure> {
-    let file = paths.data.join(SALT_FILE);
-    let unusable = || {
-        passphrase_failure(
-            "The salt of the vault's passphrase cannot be read or kept in the data directory.",
-            "Make the data directory writable, and run `anything2mcp doctor`.",
-        )
-    };
-    match std::fs::read(&file) {
-        Ok(bytes) => {
-            let bytes: [u8; PassphraseSalt::LENGTH] =
-                bytes.as_slice().try_into().map_err(|_| unusable())?;
-            Ok(PassphraseSalt::from_bytes(bytes))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let made = PassphraseSalt::generate(random)?;
-            std::fs::create_dir_all(&paths.data).map_err(|_| unusable())?;
-            std::fs::write(&file, made.as_bytes()).map_err(|_| unusable())?;
-            Ok(made)
-        }
-        Err(_) => Err(unusable()),
-    }
-}
-
 /// This machine's key store, as the installation's settings choose it.
 /// Never fails: a store that cannot be reached is one that does not
 /// answer, and the kernel opens degraded and says why.
@@ -294,7 +354,15 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
                 ),
             );
         };
-        let salt = match salt(&options.paths, options.random.as_ref()) {
+        // The vault makes the salt once, under a lock beside the file, so two
+        // commands that start together on a new installation end with one
+        // salt and one root (decision 0138).
+        let salt = match PassphraseSalt::load_or_create(
+            &options.paths.data.join(SALT_FILE),
+            options.random.as_ref(),
+        )
+        .await
+        {
             Ok(salt) => salt,
             Err(failure) => return no_key_store(name, failure),
         };
@@ -310,7 +378,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         };
     }
     let name = "the operating system's key store";
-    let installation = match InstallationName::new("local") {
+    let installation = match InstallationName::new(installation_name(&options.paths)) {
         Ok(installation) => installation,
         Err(failure) => return no_key_store(name, failure),
     };
@@ -338,8 +406,39 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
     }
 }
 
+/// The name of this installation's entry in the operating system's key
+/// store: one entry for each data directory, so that two installations on
+/// one machine, such as a test's home and the person's own, never share a
+/// root key, and one that replaces its root leaves the other's alone. The
+/// name carries a digest of the data directory's path, as the pipe's name
+/// does of the runtime directory's.
+fn installation_name(paths: &Paths) -> String {
+    let data = std::fs::canonicalize(&paths.data).unwrap_or_else(|_| paths.data.clone());
+    let digest = Digest::of(data.to_string_lossy().as_bytes()).to_string();
+    format!("local-{}", &digest[..16])
+}
+
+/// Takes the engine lock off the async threads, so that no second engine,
+/// a `serve` or another command, opens the store while this one runs.
+async fn take_lock(paths: &Paths) -> Result<EngineLock, Failure> {
+    let paths = paths.clone();
+    tokio::task::spawn_blocking(move || EngineLock::take(&paths))
+        .await
+        .map_err(|_| {
+            Failure::new(
+                FailureClass::Busy,
+                a2m_local::codes::CHANNEL_UNAVAILABLE,
+                "The engine lock could not be taken: the task that took it stopped.",
+                "Run the command again.",
+            )
+        })?
+}
+
 impl Engine {
-    /// Opens the engine in this process and starts its runner loop.
+    /// Opens the engine in this process and starts its runner loop. With
+    /// its store on disk it takes the engine lock first, and holds it until
+    /// [`Engine::close`] has closed the kernel: two engines on one store
+    /// never run.
     ///
     /// The kernel always opens: a store, a vault, or a pack that cannot be
     /// used is a named reason in `engine.status` and `doctor.run`, never a
@@ -348,14 +447,46 @@ impl Engine {
     /// # Errors
     ///
     /// `input`/`settings_invalid`, `policy`/`setting_protected`, and
-    /// `policy`/`setting_locked` when the settings do not load.
+    /// `policy`/`setting_locked` when the settings do not load;
+    /// `busy`/`engine_running` when another engine holds the lock of this
+    /// data directory; `policy`/`caller_not_verified` when the kernel does
+    /// not take this process's user as its caller.
     pub async fn open(options: EngineOptions) -> Result<Self, Failure> {
-        let settings = Settings::load(&sources(&options)?)?;
+        let settings = load_settings(&options)?;
+        let lock = match options.place {
+            StorePlace::Disk => Some(take_lock(&options.paths).await?),
+            // A store in memory is this process's alone.
+            StorePlace::Memory => None,
+        };
+        Self::open_loaded(options, settings, lock).await
+    }
+
+    /// The same, with the engine lock taken already: a command takes it
+    /// while it looks for an engine, so that nothing comes between.
+    pub(crate) async fn open_holding(
+        options: EngineOptions,
+        lock: EngineLock,
+    ) -> Result<Self, Failure> {
+        let settings = load_settings(&options)?;
+        Self::open_loaded(options, settings, Some(lock)).await
+    }
+
+    /// Opens the engine with settings that are loaded already. The local
+    /// engine reads them first, because its person surface is made from
+    /// them, and its channel holds the engine lock.
+    pub(crate) async fn open_loaded(
+        options: EngineOptions,
+        settings: Settings,
+        lock: Option<EngineLock>,
+    ) -> Result<Self, Failure> {
+        // What every HTTP client trusts is set before any pack registers
+        // and before anything makes a client (decision 0166).
+        crate::trust::install(&settings, options.project.as_deref())?;
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,
         };
-        let roots = roots(&options.paths, options.project.as_deref(), options.place);
+        let roots = roots(&options.paths, options.place);
         let prepared = Kernel::prepare(KernelParts {
             settings,
             paths: options.paths,
@@ -376,8 +507,15 @@ impl Engine {
             .await
         {
             Ok(principal) => principal,
-            // A stopped engine names nobody; it answers its own status.
-            Err(_) => kernel.status_only_caller(),
+            // Only a kernel whose store never opened names nobody: it
+            // answers its own status, and nothing else, to nobody.
+            Err(failure) if *failure.code() == a2m_actions::codes::ENGINE_DEGRADED => {
+                kernel.status_only_caller()
+            }
+            Err(failure) => {
+                kernel.close(CloseReason::Asked).await;
+                return Err(failure);
+            }
         };
         // A kernel that is stopped or degraded runs no job. The reason is
         // kept for the caller who asks, and is in `engine.status` already.
@@ -387,6 +525,7 @@ impl Engine {
             principal,
             project: options.project,
             runner_problem,
+            lock,
         })
     }
 
@@ -430,10 +569,18 @@ impl Engine {
         self.kernel.dispatch(request).await
     }
 
-    /// Closes the engine: the runner loop stops, sessions are saved, and
-    /// the store is closed.
+    /// Closes the engine: the runner loop stops, sessions are saved, the
+    /// store is closed, and then the engine lock, if this engine took it,
+    /// is let go.
     pub async fn close(self) {
-        self.kernel.close(CloseReason::Asked).await;
+        self.close_because(CloseReason::Asked).await;
+    }
+
+    /// The same, with the reason the audit log is to hold.
+    pub(crate) async fn close_because(self, why: CloseReason) {
+        self.kernel.close(why).await;
+        // Only once the kernel has closed may another engine open the store.
+        drop(self.lock);
     }
 }
 

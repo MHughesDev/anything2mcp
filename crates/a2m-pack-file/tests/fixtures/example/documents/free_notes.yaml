@@ -1,0 +1,12 @@
+surface: price_files
+file: stock.csv
+format: delimited
+may_be_open: true
+lock_signal: {sibling: stock.csv.lock}
+records:
+  stock:
+    rows: all
+    key: [item_code]
+    fields:
+      item_code: {header: item_code, type: identifier}
+      note: {header: note, type: note, writable: true, may_begin_formula: true}

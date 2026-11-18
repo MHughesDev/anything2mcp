@@ -22,8 +22,21 @@ codes! {
     PAYLOAD_UNREADABLE = Input, "payload_unreadable";
     /// The link's address is not one the run may reach.
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared";
-    /// The device's model or firmware version is not one the map names.
+    /// The surface declares no serial for the device of the run's
+    /// environment, so nothing is written to it. Nothing was sent.
+    DEVICE_SERIAL_NOT_DECLARED = Policy, "device_serial_not_declared";
+    /// A frame other than identification was asked for in the discovery
+    /// posture. Nothing was sent.
+    DISCOVERY_IDENTIFIES_ONLY = Policy, "discovery_identifies_only";
+    /// The run reached the most frames it may send on a link, or a write
+    /// would leave too few for its read-back. Nothing was sent.
+    FRAME_BUDGET_EXCEEDED = Policy, "frame_budget_exceeded";
+    /// The device's model, firmware version, or serial is not the one the
+    /// map and the surface name.
     DEVICE_IDENTITY_MISMATCH = UnknownVariant, "device_identity_mismatch";
+    /// A step writes a register with the hazard `physical`, and such a
+    /// write is not built. Nothing was sent.
+    PHYSICAL_NOT_BUILT = UnknownVariant, "physical_not_built";
     /// The device answered a read with a reply of no declared form.
     UNEXPECTED_REPLY = UnknownVariant, "unexpected_reply";
     /// The device answered with an exception: an address or a value it will

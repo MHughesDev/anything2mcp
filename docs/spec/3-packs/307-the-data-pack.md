@@ -10,7 +10,7 @@ The pack exists because a database is the plainest place to read many records, a
 | --- | --- |
 | Reading records by key, and lists with a row limit, through declared statements | A statement assembled from inputs. Every statement is text in a target file, reviewed and hashed with the plan |
 | Writing one record, or one parent with its rows, by key, inside one transaction | A table name, a column name, a sort order, or any other part of a statement chosen by an input |
-| Calling a declared stored procedure, as `irreversible` unless a read-back is declared | A statement that changes the schema, grants rights, or administers the store. The pack has no verb for them |
+| Calling a declared stored procedure, as `irreversible` unless a read-back is declared | A statement that changes the schema, grants rights, or administers the store; one that opens another file, changes a setting of its connection, or begins or ends a transaction. The pack has no verb for them, and refuses such a statement whatever it is declared as ("What a read-only connection does not stop", below) |
 | Reading the store's own catalog as discovery | Sampling values during discovery unless a person asks and policy allows ([section 218](../2-kernel/218-discovery-and-findings.md)) |
 | One connection pool per identity | A shared administrative identity used for everyone |
 
@@ -48,12 +48,8 @@ records:
 statements:
   line_item_by_key:
     effect: read
-    record: line_item
-    text: |
-      SELECT order_id, item_code, length_in, unit_price, row_version
-      FROM order_lines WHERE order_id = ? AND item_code = ?
-    params: [{name: order_id, type: identifier}, {name: item_code, type: identifier}]
-    returns: one_or_none           # zero rows is "absent"; two is a failure
+    form: table                    # the pack writes the read of one record by its key:
+    record: line_item              # zero rows is "absent"; two is a failure
     isolation: read_committed
     time_limit: 2s
   lines_of_order:
@@ -95,8 +91,8 @@ bindings:
 | `records.<kind>.table`, `key`, `fields` | One table or view, the fields that identify a row, and each column's field type. Units live in the field type and nowhere else ([decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md)) |
 | `version` | A column the store changes on every write. Sent back as a precondition, as an `ETag` is for HTTP ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)) |
 | `effect` (required) | `read` or `write`. A `read` runs only on a connection the store holds read-only (below) |
-| `form` | For writes: `table`, the pack writes the statement from `record`, `verb`, and `set`; or `statement`, hand-written `text` that must declare `hazard: data_elsewhere` |
-| `text` | For reads and `form: statement`: the statement, in the store's own dialect, with the dialect's positional placeholders. Never a template, never a substitution |
+| `form` | For writes: `table`, the pack writes the statement from `record`, `verb`, and `set`; or `statement`, hand-written `text` that must declare `hazard: data_elsewhere`. For reads: `table`, the read of one record by its key, which the pack writes from `record`; it is the only read a binding may name as `read_back` ([decision 0141](../../decisions/0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md)). A read with no `form` is hand-written |
+| `text` | For hand-written reads and `form: statement`: the statement, in the store's own dialect, with the dialect's positional placeholders. Never a template, never a substitution. One statement: a read begins with `SELECT` or `WITH` |
 | `params` (required) | The parameters in placeholder order, each with a field type |
 | `returns` | `one_or_none`, `one`, `many`, or `none` |
 | `max_rows` | Required with `many`. The pack fetches one row more, so that "more exist" is reported as a fact |
@@ -106,7 +102,7 @@ bindings:
 
 **How parameters are bound.** Only through the database driver's own parameter binding, as a prepared statement. The text is a constant of the plan. Nothing an input holds is ever placed into it, and the compiler has no way to do so: there is no expression field in `text`. A `form: table` statement is written by the pack from identifiers checked against the store's catalog and quoted by the dialect's rule.
 
-**How the pack knows a statement's shape.** It asks the store. When a statement is checked, and again when a session starts, the driver prepares it without running it, and the store reports the number and types of its parameters and the names and types of its result columns. The driver holds `params` and `fields` to that description the first time a session uses the statement, because the compiler has no connection; a difference is `drift`. The pack never parses a statement to learn what it does.
+**How the pack knows a statement's shape.** It asks the store. When a statement is checked, and again when a session starts, the driver prepares it without running it, and the store reports the number and types of its parameters and the names and types of its result columns. The driver holds `params` and `fields` to that description the first time a session uses the statement, because the compiler has no connection; a difference is `drift`. The pack never parses a statement to learn what it does. It does read a statement's words, outside quotes and comments, to refuse a form: more than one statement, a first word that is not the one its effect allows, and the words that attach a file, change a setting, or change the schema. Because a store's reader may end a comment or a word where that reading does not, a statement that holds any control character but a line feed and a tab is refused.
 
 ## How a read is proved a read
 
@@ -122,6 +118,8 @@ A read statement that tries to change data is refused by the store, rolled back,
 
 A read-only transaction stops changes to stored data. It does not stop a function that reaches outside the store. That gap is an open point below.
 
+**What a read-only connection does not stop.** In the embedded engine, a connection opened read-only will still attach another file that a parameter names, change its own settings, create a temporary table, and end the transaction it runs in. None of these is a change to stored data, and each returns no rows, as a read that finds nothing does. So a statement is held to one plain read or one keyed write three times ([decision 0141](../../decisions/0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md)): the compiler refuses any other by its words; the driver refuses it again before it is sent, with a read that returns no column and a read the store says is not read-only; and the connection is set, with each setting read back, so that it can attach no file, load no extension, and run no statement that reads or changes a setting, changes a schema, or controls a transaction. The file is opened by an absolute path only, never by an address that carries options. These refusals stop as `policy`, `statement_not_allowed`.
+
 ## Verbs and steps
 
 The request archetype's existing steps are HTTP's. The pack adds its own, fixed when it is built: `begin` (a transaction with a declared isolation and access mode), `execute` (one prepared statement with bound parameters), `fetch` (rows into typed values, up to a limit), `expect_rows` (the count against the declared one), and `commit`. Rollback is not a step. The driver rolls back whenever a step fails before `commit`, and when it releases a connection.
@@ -129,7 +127,7 @@ The request archetype's existing steps are HTTP's. The pack adds its own, fixed 
 | Verb | Lowers to | Commit point |
 | --- | --- | --- |
 | `read` | `begin` read-only, `execute`, `fetch` with `one_or_none` | None |
-| `list`, `search` | `begin` read-only, `execute`, `fetch` up to `max_rows` | None |
+| `list`, `search` | `begin` read-only, `execute`, `fetch` up to `max_rows`. The rows come back as records under `rows`, each field also as a list of its values in row order, and `more`; an operation's list outputs are read from the lists ([decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) | None |
 | `create` | `begin`, `execute` an insert, `expect_rows` 1, `fetch` any key the store assigned, `commit` | `commit` |
 | `update` | `begin`, `execute` an update with the key predicate and the guard, `expect_rows` 1, `commit` | `commit` |
 | `upsert` | Decided at the preview by reading ([section 209](../2-kernel/209-record-identity-and-dependent-records.md)), then as `create` or `update` | `commit` |
@@ -145,15 +143,15 @@ A parent with its rows saved in one transaction is one commit point and one ledg
 | Prepare | Takes a connection from the session's pool. Checks the store's reported version against the target's recorded identity ([section 401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md)). Prepares the statements the step will use and compares their description with the plan |
 | Act | `begin` with the declared isolation; `execute` with bound parameters; for a write, `expect_rows` inside the transaction. Any count other than the expected one rolls back, so nothing is committed. Then `commit`, which is the commit point |
 | Confirm | The store's acknowledgement of the commit. Rows affected were already checked before it |
-| Read back | The read-back statement, in a new transaction on a connection that is read-only, after the commit. Never inside the writing transaction, which would see its own uncommitted rows |
+| Read back | The read-back statement, in a new transaction on a connection that is read-only, after the commit. Never inside the writing transaction, which would see its own uncommitted rows. It is the read by key that the pack wrote for the written record, and the record it returns must hold the key that was bound; any other is `drift`, `read_not_by_key` |
 | Release | Rolls back anything open and returns the connection. A connection whose state is in doubt after a failure is closed, never returned |
 
-There are no retries inside the driver. A serialization failure or a deadlock is rolled back by the store and returned as `transient`; the engine decides whether to try again, and it does so only for reads and for keyed writes, which are idempotent.
+There are no retries inside the driver. A serialization failure or a deadlock is rolled back by the store and returned as `busy`, `store_locked` ([decision 0168](../../decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md)); the engine decides whether to try again, and it does so only for reads and for keyed writes, which are idempotent.
 
 **Confining a write to the rows it names.** Three things, each enforced by the store or by construction:
 
 1. A `form: table` update or delete always carries the full key predicate, because the pack writes the statement. There is no table-form statement without one.
-2. `expect_rows` runs inside the transaction. Zero rows is `stale` (the record or its version changed since the preview); more than one is `drift` (the key is not unique, which the catalog said it was). Both roll back.
+2. `expect_rows` runs inside the transaction. Zero rows is `stale` (the record or its version changed since the preview); more than one is `drift` (the key is not unique, which the catalog said it was). Both roll back. A writing transaction runs one statement, and the driver accepts no expected count but one, so the count checked is the count of everything committed.
 3. A guard of `version` or `before_values` makes the write itself a compare-and-set. The record lock and the engine's freshness check ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)) remain; the guard closes the window between that check and the write.
 
 Rows affected counts the rows of the named table. It does not count what a trigger or a cascading key does to other tables. Those are hazards, below.
@@ -185,12 +183,12 @@ If the store assigns a key, the answer to `commit` is lost, and the key was capt
 
 ## Sessions and secrets
 
-- **A session is an identity's credential and a small pool of open connections**, held by the driver on the session's home runner ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)). Runs on the same identity share the pool; each step holds one connection for one transaction. Different identities never share a connection.
+- **A session is an identity's credential and a small pool of open connections**, held by the driver on the session's home runner ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)). Runs on the same identity share the pool; each step holds one connection for one transaction. Different identities never share a connection. A connection is kept under everything that says where it leads and as whom (address, port, database, schema, link mode, role), and is held to the plan's surface at every prepare; before every transaction the store is asked where it is, and a connection that leads elsewhere is closed and nothing is sent ([decision 0184](../../decisions/0184-the-data-and-stream-packs-after-their-second-safety-audit.md)).
 - **The credential lives in the vault** and reaches the connection only through `inject` at connect time. The pack builds connection options as structured fields: there is no connection string in any file, and none is ever built as text with a password in it. `auth.yaml` holds vault references only.
 - **Errors are redacted twice.** The password is registered with the redactor, and the outside driver's error text is kept only as untrusted evidence, after redaction. What reaches a caller is the code and the pack's own sentence.
-- **No shared administrator.** The probe reads the identity's attributes from the catalog. An identity the store reports as administrative, or able to grant rights, is refused with `policy` and `identity_is_administrator`. Each person uses their own database identity, or a service identity that a person was given for that level ([section 401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md): a level is not a privilege).
+- **No shared administrator.** The probe reads the identity's attributes from the catalog. An identity the store reports as administrative, or able to grant rights, is refused with `policy` and `identity_is_administrator`. For PostgreSQL that is a superuser, a role that bypasses row security, may replicate, or may make roles, a role that owns anything in the surface's schema, and a member of a predefined role that reaches the server's files, programs, other sessions, or every table. Each person uses their own database identity, or a service identity that a person was given for that level ([section 401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md): a level is not a privilege).
 - **Auth providers.** A password provider for database identities, which the pack brings because signing in is opening a connection; and the neutral `client_certificate` and `windows_integrated` providers where the store accepts them. The probe is a declared read statement.
-- **The link is encrypted.** A server surface requires an encrypted, verified connection unless it is a loopback address or the target declares otherwise, and a credential is never sent over an unencrypted link to another machine.
+- **The link is encrypted.** A server surface requires an encrypted, verified connection unless it is a loopback address, and a credential is never sent over an unencrypted link to another machine. As built, the encrypted link is not, so a server surface is reached only at a loopback address written as an IP address, and any other stops before anything is sent as `policy`, `link_not_encrypted`; a target file has no switch for it ([decision 0168](../../decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md)).
 
 ## Effects and hazards
 
@@ -203,7 +201,7 @@ The pack declares three effects, each `enforced`: it uses the network, to the ho
 | A `form: statement` write | `data_elsewhere`, always: the pack cannot see what it touches |
 | A procedure that the target declares as sending something out | `sends_outside` |
 
-Any hazard other than `none` makes the operation `irreversible` and needs a person every run ([section 213](../2-kernel/213-effects-hazards-and-consent.md)). A trigger that appears after publishing is drift: the catalog is part of the target's identity.
+Any hazard other than `none` makes the operation `irreversible` and needs a person every run ([section 213](../2-kernel/213-effects-hazards-and-consent.md)). A trigger that appears after publishing is drift: the catalog is part of the target's identity. Names are compared as the store compares them, without regard to the case of letters. A catalog that could not be read whole, or that does not hold the written table, does not show that a write reaches nothing else: the write stops, as `unknown_variant`, `catalog_too_large`, or as `drift`.
 
 ## Discovery and drafting
 
@@ -218,11 +216,11 @@ The discoverer reads the store's own catalog, through the SQL standard's informa
 
 | The drafter writes | It leaves to the developer |
 | --- | --- |
-| One record kind per table with a declared key; field types from column types, with places and scale where the store states them and no unit | Units, business names, choice codes the store does not enumerate |
-| A `read` statement by key for each such table, and a read operation over it, provisional names from the table's words | Joins, lists, which tables matter |
+| One record kind per table with a declared key; field types from column types, with places and scale where the store states them and no unit. A server's `numeric(p,s)` is `decimal` where the built-in type keeps its scale; the embedded engine's `NUMERIC` may hold a float and stays a question | Units, business names, choice codes the store does not enumerate |
+| A `read` statement by key for each such table and a list of its rows in the order of its key, bounded by the pack's row limit, and a read operation over each, provisional names from the table's words ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Joins, which tables matter |
 | Nothing for tables without a key, beyond an open question | Every write, its strategy, and whether the route is supported beneath an application |
 
-The scout tries each drafted read in the sandbox, read-only, five times. To have a key to read by, it lists one row with a limit of one; the trace stores the digests and shapes of results, not their values.
+The scout tries each drafted read in the sandbox, read-only, five times. A read by key has no example, because discovery reads no row: the drafted list is tried, and the read by key waits for a key a person gives. Whether the scout may take a key from the list it tried is open. The trace stores the digests and shapes of results, not their values.
 
 ## Failures
 
@@ -237,7 +235,9 @@ The scout tries each drafted read in the sandbox, read-only, five times. To have
 | An embedded store's lock is held by another connection for the whole time limit | `busy` | `store_locked` ([decision 0101](../../decisions/0101-what-the-data-pack-refuses-and-how-it-names-it.md)) |
 | A unique, check, not-null, or foreign-key constraint refuses the write | `rejected` | `constraint_violated` (proposed), the constraint's name as untrusted text |
 | The store denies a right; a read statement tried to write; the identity is administrative; the certificate does not verify | `policy` | `denied_by_store`, `read_statement_wrote`, `identity_is_administrator`, `server_identity_mismatch` (all proposed) |
-| A table, column, or parameter differs from the plan; a key matched more than one row | `drift` | `schema_changed`, `key_not_unique` (proposed) |
+| A statement is not one plain read or one keyed write | `policy` | `statement_not_allowed` |
+| A table, column, or parameter differs from the plan; a key matched more than one row; a read by key returned another record | `drift` | `schema_changed`, `key_not_unique` (proposed), `read_not_by_key` |
+| The catalog is too large to show what a write reaches | `unknown_variant` | `catalog_too_large` |
 | A write affected no row: the guard did not hold | `stale` | `changed_since_preview`, or `version_conflict` with a `version` guard |
 | An error code from the store with no rule | `unknown_variant` | `unexpected_status` |
 | Read-back differs | `mismatch` | `read_back_differs` |
@@ -263,7 +263,7 @@ As real as is cheap ([the test application](../../plan/test-application.md)). Th
 | 9 | Has a table with no key | No read by key is drafted; writes are `irreversible` |
 | 10 | Changes a column between two scouts | `schema_changed`; levels fall |
 
-**To trust the pack against a server database,** an embedded engine is not enough. It has no identities and rights, no network, no read-only transactions in the server sense, and nothing to lose after a commit. A second stand is needed: a server database run locally in a container, of the kind the store uses on servers, with a control identity the pack never uses, triggers that log every write to a table only that identity can read, and a small network relay in the stand that can cut the connection after forwarding a commit. It adds the cases of a lost answer after `commit`, an administrative identity refused, a partial catalog, isolation levels, statement timeouts, and certificate checks. Containers run in CI on Linux only; on Windows and macOS the server cases are a gap written in the journal, and the embedded cases run on all three.
+**The server stand is built** as `example_db::server`, with a real PostgreSQL server started by the test or named by `A2M_TEST_POSTGRES`, not a container; a server surface is of the kind `database_server` ([decision 0168](../../decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md)). Partial catalogs and certificate checks are not yet among its cases. **To trust the pack against a server database,** an embedded engine is not enough. It has no identities and rights, no network, no read-only transactions in the server sense, and nothing to lose after a commit. A second stand is needed: a server database run locally in a container, of the kind the store uses on servers, with a control identity the pack never uses, triggers that log every write to a table only that identity can read, and a small network relay in the stand that can cut the connection after forwarding a commit. It adds the cases of a lost answer after `commit`, an administrative identity refused, a partial catalog, isolation levels, statement timeouts, and certificate checks. Containers run in CI on Linux only; on Windows and macOS the server cases are a gap written in the journal, and the embedded cases run on all three.
 
 ## Outside drivers needed
 
@@ -303,7 +303,7 @@ They wait. They fit the request archetype ([section 201](../2-kernel/201-archety
 
 ## Open points
 
-- **Functions that reach outside.** A read-only transaction does not stop a function in a read statement from sending something out of the store. Whether the probe should list such functions from the catalog and refuse statements on a store that has them, without parsing statements, is not settled.
+- **Functions that reach outside.** A read-only transaction does not stop a function in a read statement from sending something out of the store. Whether the probe should list such functions from the catalog and refuse statements on a store that has them, without parsing statements, is not settled. The embedded engine has none once extension loading is off, which the pack sets; the question is open for server stores.
 - **Outputs before the commit point.** The driver interface needs it for assigned keys and transaction identifiers. To be settled with the interface.
 - **Which dialects first.** The embedded engine's, then one server protocol. The choice of server protocol is a decision at G2.
 - **Reading back from a replica.** A replica may lag behind the write. Read-back goes to the store that took the write until a settle time is designed for replicas.

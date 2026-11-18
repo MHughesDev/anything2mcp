@@ -21,7 +21,9 @@ tools:
     digest: "sha256:2251bdee8a60ad36fed87e00f6619a2c0e2aa8907520475a74d63e441b130b6d"
     effect: read
     result: text
-    free_text: true
+    # Reviewed: the server looks for the text in the customer and the note.
+    # It runs nothing.
+    free_text: false
   orders_create:
     digest: "sha256:f59d6a3edd5c60bc1d3d654cbb09daa097ba30ddf6702e0d864ce31bc44c16dd"
     effect: write

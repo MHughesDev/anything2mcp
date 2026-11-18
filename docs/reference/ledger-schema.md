@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, and `0009-actions-installation-toolsets-and-scout-stages.sql`. There is no `0008`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, `0009-actions-installation-toolsets-and-scout-stages.sql`, `0011-actions-run-sources.sql`, `0012-ledger-rules-three-five-and-seven-in-triggers.sql`, and `0013-ledger-caller-idempotency.sql`. There is no `0008` or `0010`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -61,9 +61,13 @@ Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id,
 | `attempts` | int | Write attempts |
 | `failure_class`, `failure_code` | enum, text | When failed |
 | `evidence_ref` | ref | Trace fragment for this record |
-| `intent_at`, `acted_at`, `verified_at` | ts | Timings |
+| `intent_at`, `acted_at`, `verified_at` | ts | Timings. `acted_at` set means the write was sent in the current attempt: the record stays in doubt, whatever it failed with, until it is read back |
+| `reconciled_at` | ts | When reconcile last read it back. A record that may have been written returns to `planned` only with it set; a new intent clears it |
+| `acknowledged_at` | ts | When the record ended on the system's acknowledgement: its write was sent and answered, and the run's stored diff says that answer is the binding's only evidence. The record stays `acted`, is never `verified`, has no `read_back_hash`, keeps the answer's evidence in `evidence_ref`, and is settled, not in doubt; once set, nothing of the row changes. Migration `0015` ([decision 0172](../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)) |
 
 Indexes: on `(run_id, state)`; on `record_key_hash`.
+
+A run enters `completed` only when every record is `verified`, `unchanged`, or `acted` with `acknowledged_at` set; a trigger holds it.
 
 ## run_events
 
@@ -73,7 +77,7 @@ Indexes: on `(run_id, state)`; on `record_key_hash`.
 | `epoch` | bigint | Lease number of the writer |
 | `at` | ts | Database time |
 | `kind` | enum | `state_changed`, `step_started`, `binding_chosen`, `intent`, `acted`, `verified`, `failed`, `reconcile_read`, `approval_bound`, `lease_granted`, `lease_lost`, `need`, `late_evidence`, `planned`, `diff_stored`, `lock` |
-| `payload` | json | Small; large data goes in a blob |
+| `payload` | json | Small; large data goes in a blob. A record that ends on an acknowledgement gets a second `acted` event whose payload says `"evidence": "acknowledged"`. A `state_changed` event that stops or ends a run, and a `failed` event, carry the failure's `class`, `code`, `message`, `next_step`, and `said`, what the system itself said, redacted and kept apart from the sentence |
 | `evidence_ref` | ref | Optional |
 
 Append-only. An insert carrying an `epoch` other than the run's current `lease_epoch` is refused, except for `late_evidence`.
@@ -88,7 +92,7 @@ Append-only. An insert carrying an `epoch` other than the run's current `lease_e
 | `pattern`, `caller`, `window_start`, `window_end` | text, id, ts, ts | For standing scope |
 | `diff_hash`, `tool_version_hash` | text, text | What was approved |
 | `approver_id` | id | The person |
-| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed |
+| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed: `os_prompt`, `polkit`, `local_authentication`, `windows_hello`, or `signed_in`, each of which proves presence, or `not_available`, accepted only on the engine's own prompt (`local_prompt`) |
 | `granted_at`, `expires_at`, `used_at`, `revoked_at` | ts | A run-scope approval is used once |
 
 ## decisions
@@ -265,13 +269,15 @@ Rows are inserted in the same transaction as the change they announce, so a mess
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `principal_id`, `key` | id, text | Primary key; the caller's own idempotency key on REST calls |
-| `request_hash`, `run_id` | text, id | The same key with a different request is refused |
-| `expires_at` | ts | Cleanup |
+| `workspace_id`, `principal_id`, `key_digest` | id, id, text | Primary key; the workspace's keyed digest of the caller's own idempotency key, under the purpose `caller_key`, never the key |
+| `request_hash`, `run_id` | text, id | The digest of the call: tool, environment, input and source. The same key with a different request is refused. The run is empty from the moment the key is held, before the run is admitted, until it is bound |
+| `held_at` | ts | When the key was held. A bound key holds for as long as its run is kept, and leaves with it |
 
-## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls
+As built by migration `0013-ledger-caller-idempotency.sql` ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)).
 
-As built by migration `0009`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
+## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls, actions_run_sources, actions_scouts, actions_discovery_results
+
+As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
 
 | Table | One row is | Key |
 | --- | --- | --- |
@@ -280,6 +286,22 @@ As built by migration `0009`, which `a2m-actions` owns and is the only crate to 
 | `actions_scout_stages` | One finished stage of one scout run, stages 0 to 7: the hash of what it was given and its result, already redacted. A stopped scout continues after the last stage stored | `run_id`, `stage` |
 | `actions_targets` | A target that has a published version, so that a tool can be found by its name alone. Written by `version.publish` in the transaction that stores the version | `workspace_id`, `target` |
 | `actions_run_calls` | What a run was called with: the stored input and the verified facts about the caller, as names and flags and never a credential. Written before the run is admitted | What makes a run the same run (ledger rule 6): `workspace_id`, `principal_id`, `tool_name`, `target_version`, `input_hash` |
+| `actions_run_sources` | The source a run was called with: the blob that holds its bytes, whether it was a file of the project or rows given inline, the path inside the project as the caller wrote it, and its size. Written beside the row of `actions_run_calls`, and read by the runner so that every lease of the run reads the same bytes | The same key as `actions_run_calls` |
+| `actions_scouts` | One scout of one target by one person: when it started and finished, its report's hash once the last stage is stored, and `project`, the digest of the project folder it was made in or `none` (migration `0018`, [decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md); a scout stored before has none and is never continued). Its identifier keys its stages in `actions_scout_stages` (column `run_id`); one with no `finished_at` is continued by the next `scout.run` in the same project ([decision 0170](../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)) | `scout_id` |
+| `actions_discovery_results` | What one discoverer reported in one discovery run: the surface, the identifiers of its findings as a JSON list, and as JSON its coverage, the bounds it reached, and what it dropped, or its failure's class and code. Written by the run's control in the transaction that stores the findings | `run_id`, `provider`, `discoverer` |
+
+## target_versions
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its plan, named by the plan's hash |
+| `version` | text | The version the plan's header states |
+| `plan` | bytes | The plan's canonical bytes |
+| `published_by`, `published_at` | text, ts | Who published it, and when |
+| `is_current` | bool | At most one current version per target, held by a unique partial index |
+| `gate_evidence` | text | The evidence of the publish gates the version passed, canonical JSON written once with the version: each gate that ran with its result, and the gates the documents name that did not run (spec section 403, [decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)). Null for a version stored before migration `0016` |
+
+As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sql`, and `0017-ledger-versions-gate-evidence-never-changes.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its plan, hash, version, target, workspace, or gate evidence, and every delete.
 
 ## audit
 

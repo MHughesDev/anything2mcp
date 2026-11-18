@@ -29,12 +29,25 @@ codes! {
     MESSAGE_TOO_LARGE = Input, "message_too_large";
     /// The surface names a wire protocol this build does not speak.
     PROTOCOL_UNKNOWN = Input, "protocol_unknown";
+    /// The session holds a credential the wire protocol cannot present.
+    CREDENTIAL_NOT_CARRIED = Input, "credential_not_carried";
+    /// A step that settles a record by what its earlier steps recorded was
+    /// given nothing recorded, or nothing of the form it needs; nothing was
+    /// sent.
+    NOTHING_RECORDED = Input, "nothing_recorded";
+    /// The connection would carry the session in plain text to an address
+    /// that is not this machine's own, or to a server that asks for TLS.
+    TRANSPORT_REFUSED = Policy, "transport_refused";
     /// An acknowledgement was asked for on a queue the runtime does not own.
     ACK_NOT_OWNED = Policy, "ack_not_owned";
     /// The broker's address is not one the run may reach.
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared";
-    /// A log holds more than a scan may read, so the scan cannot say "absent".
+    /// A log or a queue holds more than a scan may read, so the scan cannot
+    /// say whether the record's message is there.
     SCAN_LIMIT = Policy, "scan_limit";
+    /// A message taken is larger than may be recorded before it is
+    /// acknowledged; it was given back.
+    TAKE_TOO_LARGE = Policy, "take_too_large";
     /// The broker refused the credentials.
     NEEDS_LOGIN = SessionExpired, "needs_login";
     /// The broker refused the message, with its reason.
@@ -61,6 +74,13 @@ codes! {
     NO_CONFIRMATION = PossibleCommit, "no_confirmation";
     /// The runtime's own subscription is held by another run.
     SUBSCRIPTION_IN_USE = Busy, "subscription_in_use";
+    /// A message delivered again may be held by the record that took it
+    /// first; nothing was taken.
+    MESSAGE_MAY_BE_HELD = Busy, "message_may_be_held";
+    /// A look cannot say whether the record's message is in the log: the
+    /// stream may lose a message from inside its range, or the range read
+    /// was not whole.
+    SCAN_INCONCLUSIVE = Policy, "scan_inconclusive";
 }
 
 /// The codes the provider contract and the session keeper already define.
@@ -72,8 +92,9 @@ pub const CONTRACT_CODES: &[&str] = &[
     "needs_login",
 ];
 
-/// Text that came from a broker, cut and cleaned before it is put in a
-/// message. The handle redacts the whole failure afterwards.
+/// Text that came from a broker, cleaned and cut for a message. The
+/// caller redacts the text first: a cut made before that could leave part
+/// of a secret, which no redactor would then know.
 pub(crate) fn shown(text: &str) -> String {
     const SHOWN: usize = 120;
     let clean: String = text

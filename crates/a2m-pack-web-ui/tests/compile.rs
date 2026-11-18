@@ -29,7 +29,13 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let first = stand("registry");
     let second = stand("registry");
     assert_eq!(first.registry.digest(), second.registry.digest());
-    assert_eq!(first.registry.modes().collect::<Vec<_>>(), vec![&ui_mode()]);
+    let page_http = common::page_http_mode();
+    assert_eq!(
+        first.registry.modes().collect::<Vec<_>>(),
+        vec![&page_http, &ui_mode()]
+    );
+    let handle = first.registry.driver(&page_http).unwrap();
+    assert_eq!(handle.choice().provider.as_str(), "web");
     let handle = first.registry.driver(&ui_mode()).unwrap();
     assert_eq!(handle.choice().provider.as_str(), "web");
     // Registering started nothing.
@@ -65,6 +71,14 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         assert!(steps.contains(&kind), "{kind}");
     }
     assert_eq!(steps.len(), 5);
+    // And those of `page_http`: neither saves.
+    let page_steps = &manifest.modes[1].steps;
+    assert_eq!(manifest.modes[1].name, page_http);
+    assert_eq!(
+        page_steps,
+        &vec![a2m_pack_web_ui::GOTO, a2m_pack_web_ui::REQUEST]
+    );
+    assert!(manifest.modes[1].commit_steps.is_empty());
     // Every place the browser engine looks for a browser is declared, so
     // that the supervisor will start what is found there.
     let declared: Vec<&str> = manifest.requirements[0]
@@ -146,6 +160,26 @@ fn refused(path: &str, change: impl Fn(&str) -> String, code: &str) -> a2m_files
         .find(code)
         .unwrap_or_else(|| panic!("no `{code}` in:\n{}", shown(&problems)))
         .clone()
+}
+
+#[test]
+fn a_binding_is_held_to_the_least_effect_of_what_it_does() {
+    // A `submit` cannot be taken back, and an operation that says it only
+    // writes does not compile.
+    let ops = "operations/sign_in.yaml";
+    let submit = refused(
+        ops,
+        |text| text.replacen("effect: irreversible", "effect: write", 1),
+        "kernel.effect_lower_than_derived",
+    );
+    assert_eq!(submit.at.file.as_str(), ops);
+    // An update that names no read-back could never be found again: it is
+    // irreversible too.
+    refused(
+        "operations/line_items.yaml",
+        |text| text.replacen("    read_back: {screen: line_item}\n", "", 1),
+        "kernel.effect_lower_than_derived",
+    );
 }
 
 #[test]

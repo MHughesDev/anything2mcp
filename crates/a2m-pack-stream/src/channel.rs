@@ -117,8 +117,9 @@ pub(crate) struct ChannelEntry {
     pub address: String,
     /// What the channel does with a message.
     pub shape: Shape,
-    /// What a message on it is.
-    pub role: Role,
+    /// What a message on it is. Only a publish needs it: a channel that
+    /// does not say compiles for reads, and a publish to it does not.
+    pub role: Option<Role>,
     /// The message schema, by the name a file under `schemas/` gives it.
     pub schema: Option<String>,
     /// The field of the body the message key is taken from.
@@ -142,6 +143,9 @@ pub(crate) struct ChannelEntry {
     pub token_header: Option<String>,
     /// Whether the broker itself refuses a repeated token.
     pub broker_dedupe: bool,
+    /// How long the broker remembers a token, in milliseconds, as the file
+    /// states it: checked against what the broker reports, never longer.
+    pub dedupe_window_ms: Option<u32>,
     /// The wait of a binding that states none, in milliseconds.
     pub wait_default_ms: u32,
     /// The longest wait on this channel, in milliseconds.
@@ -157,7 +161,7 @@ impl ChannelEntry {
     /// reads it: the one channel a publish to which is an ordinary write.
     pub(crate) fn is_private_state(&self) -> bool {
         self.shape == Shape::Retained
-            && self.role == Role::State
+            && self.role == Some(Role::State)
             && self.consumers == Consumers::None
     }
 }
@@ -174,6 +178,8 @@ pub(crate) fn code(rule: &'static str) -> LintCode {
         "ack_not_owned" => LintCode::fixed("stream.ack_not_owned"),
         "publish_effect" => LintCode::fixed("stream.publish_effect"),
         "consumers_unknown" => LintCode::fixed("stream.consumers_unknown"),
+        "untrusted_unmarked" => LintCode::fixed("stream.untrusted_unmarked"),
+        "protocol_unfit" => LintCode::fixed("stream.protocol_unfit"),
         _ => LintCode::fixed("stream.binding_invalid"),
     }
 }
@@ -230,7 +236,7 @@ pub(crate) fn read_channel(
     };
     let word = |key: &str| doc.text(key).unwrap_or_default();
     let shape = Shape::from_word(word("shape")).unwrap_or(Shape::Topic);
-    let role = Role::from_word(word("role")).unwrap_or(Role::Events);
+    let role = doc.text("role").and_then(Role::from_word);
     let read_through_at = doc.get("read_through").map_or(&doc.at, |field| &field.at);
     let read_through: Vec<ReadThrough> = doc
         .get("read_through")
@@ -292,16 +298,22 @@ pub(crate) fn read_channel(
 
     let subscription = doc.text("subscription").map(str::to_owned);
     match (own_subscription, &subscription) {
-        (true, None) if shape != Shape::Log => wrong(
+        // On a log or a topic the run may read through a cursor or a
+        // subscription of its own, which the broker discards.
+        (true, None) if shape != Shape::Log && shape != Shape::Topic => wrong(
             read_through_at,
             "The channel is read through the runtime's own subscription and names none.".to_owned(),
             "Add `subscription:` with the name of a subscription a person declared on the broker for the runtime. The runtime never creates one.",
         ),
-        (false, Some(_)) => wrong(
-            doc.get("subscription").map_or(&doc.at, |field| &field.at),
-            "The channel names a subscription and is not read through one.".to_owned(),
-            "Add `own_subscription` to `read_through`, or remove `subscription`.",
-        ),
+        // On a queue the runtime owns, the consumer a person made for the
+        // runtime's takes.
+        (false, Some(_)) if !(shape == Shape::Queue && ownership == Ownership::RuntimeOwned) => {
+            wrong(
+                doc.get("subscription").map_or(&doc.at, |field| &field.at),
+                "The channel names a subscription and is not read through one.".to_owned(),
+                "Add `own_subscription` to `read_through`, or remove `subscription`.",
+            );
+        }
         (_, Some(name)) if !is_wire_name(name) => wrong(
             doc.get("subscription").map_or(&doc.at, |field| &field.at),
             "The subscription's name is empty, too long, or holds a control character.".to_owned(),
@@ -350,6 +362,28 @@ pub(crate) fn read_channel(
         .and_then(|idempotency| idempotency.get("broker_dedupe"))
         .and_then(Located::as_bool)
         .unwrap_or(false);
+    let dedupe_window_ms = match idempotency.and_then(|idempotency| idempotency.get("window")) {
+        None => None,
+        Some(field) if !broker_dedupe => {
+            wrong(
+                &field.at,
+                "The file states how long the broker remembers a token, and says the broker refuses none.".to_owned(),
+                "Write `broker_dedupe: true` with the window, or remove `window`.",
+            );
+            None
+        }
+        Some(field) => match field.as_text().and_then(duration_ms) {
+            Some(ms) => Some(ms),
+            None => {
+                wrong(
+                    &field.at,
+                    "This is not a length of time.".to_owned(),
+                    "Write a whole number and a unit, such as `500ms`, `10s`, or `2m`.",
+                );
+                None
+            }
+        },
+    };
 
     let wait = doc.get("wait");
     let mut wait_ms = |key: &str, otherwise: u32| -> u32 {
@@ -413,6 +447,7 @@ pub(crate) fn read_channel(
             consumers,
             token_header,
             broker_dedupe,
+            dedupe_window_ms,
             wait_default_ms,
             wait_max_ms,
             browse_count: limit("browse_count", 100),
@@ -430,7 +465,7 @@ pub(crate) fn channel_schema() -> JsonSchema {
         .optional("surface", JsonSchema::surface())
         .required("address", JsonSchema::text())
         .required("shape", JsonSchema::words(Shape::WORDS))
-        .required("role", JsonSchema::words(Role::WORDS))
+        .optional("role", JsonSchema::words(Role::WORDS))
         .optional("schema", JsonSchema::name())
         .optional("encoding", JsonSchema::words(&["json"]))
         .optional(
@@ -457,7 +492,8 @@ pub(crate) fn channel_schema() -> JsonSchema {
             "idempotency",
             JsonSchema::object()
                 .required("header", JsonSchema::text())
-                .optional("broker_dedupe", JsonSchema::bool()),
+                .optional("broker_dedupe", JsonSchema::bool())
+                .optional("window", JsonSchema::text()),
         )
         .optional(
             "wait",
@@ -546,6 +582,17 @@ impl FileKind for ChannelKind {
 
     fn expressions(&self, _doc: &Located<Doc>) -> Vec<ExprSite> {
         Vec::new()
+    }
+
+    /// A channel file describes a write when it declares an `ownership`
+    /// other than plainly `shared`: `runtime_owned` is what lets a `take`
+    /// remove messages. An `idempotency` header states how the broker
+    /// treats a repeat and lets nothing run, and the drafter writes it
+    /// from what the broker stated; a publish is allowed by an operation
+    /// and its binding, not by this file.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("ownership")
+            .is_some_and(|ownership| ownership.as_text() != Some("shared"))
     }
 
     fn compile(

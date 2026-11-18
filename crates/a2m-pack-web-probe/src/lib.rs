@@ -15,9 +15,10 @@
 //! Not built yet, and so not declared in the pack's manifest: `web_auth`
 //! beyond naming a sign-in wall, `web_declared`, the watching tab and the
 //! capture of a person's own use, scenario steps, dependencies between
-//! requests, the front-end logic mark, and the platform profiles. The
-//! requests a page's own scripts read with are not captured, because the
-//! base has no stream of exchanges yet.
+//! requests, the front-end logic mark, and the platform profiles. Of the
+//! requests a page's own scripts make, only those with GET to the
+//! surface's origin are captured, by structure, as the observing tab
+//! records them.
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in
@@ -102,7 +103,7 @@ impl Pack for WebProbePack {
         // Only the handle that looks is kept.
         let observer = self
             .shared
-            .get_or_create(cx, self.settings.clone())?
+            .get_or_create(cx, self.settings.clone().with_pack_settings(cx.settings())?)?
             .observer();
         let max_pages = cx
             .settings()

@@ -373,6 +373,10 @@ pub struct Context {
     pub caller_is_agent: bool,
     /// For whom the caller acts, where that was proved.
     pub acting_for: Option<ActingFor>,
+    /// Whether every record the run would write is a declared test record
+    /// of a test environment, as the caller found it. False when it is not
+    /// known; with `writes_outside_tests` off, a write is then refused.
+    pub test_records: bool,
 }
 
 impl Context {
@@ -390,6 +394,7 @@ impl Context {
             identity_mode: None,
             caller_is_agent: false,
             acting_for: None,
+            test_records: false,
         }
     }
 }

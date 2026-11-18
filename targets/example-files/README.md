@@ -39,6 +39,7 @@ Every file is written from code, byte by byte, at start and at reset. `seed::fil
 | `NON_ASCII_NAME_CSV` | `prices/价格表-ß.csv` | Delimited, semicolon | A name and a content that are not ASCII. The name has one normal form, so no file system rewrites it |
 | `STOCK_DUPLICATE_KEY_CSV` | `prices/stock-duplicate-key.csv` | Delimited, comma | Two rows share the key `EX-1002` |
 | `BROKEN_CSV` | `prices/broken.csv` | Not valid | A quote is opened and never closed |
+| `ADJUSTMENTS_CSV` | `prices/adjustments.csv` | Delimited, comma | LF. Fields that begin with `=`, `+`, `-`, and `@`, which a spreadsheet program would run as formulas, one with a space before its sign, and one quoted |
 | `NOT_UTF8_CSV` | `prices/not-utf8.csv` | Not valid | One byte of a single-byte encoding |
 | `PRICE_LIST_WORKBOOK` | `prices/price-list.xlsx` | Workbook | Sheets `Prices` and `Notes`; the table `price_table` in `A1:E4`; the name `standard_discount` for `Notes!B1`; a column of formulas over the price and stock columns, each with its last result; a shared table of strings; a hidden column; a merged range; a date kept as the serial `46343`; a number spelled `0040` |
 | `PRICE_LIST_MACRO_WORKBOOK` | `prices/price-list-macro.xlsm` | Workbook | The same, with a macro part of opaque bytes |
@@ -69,7 +70,7 @@ Every answer is read from disk at the moment it is asked for. A link is reported
 | Call | What |
 | --- | --- |
 | `reset()` | Restore the seed files; end every fault; start the ledger again |
-| `inspect(name)` | A `FileTruth`: what is there (absent, file, folder, link, other), its size, its SHA-256 digest as 64 lowercase hexadecimal characters, whether it is read-only, and on Unix its identity and how many links it has |
+| `inspect(name)` | A `FileTruth`: what is there (absent, file, folder, link, other), its size, its SHA-256 digest as 64 lowercase hexadecimal characters, whether it is read-only, and on Unix its identity, how many links it has, its owner and group, and its permission bits |
 | `bytes(name)`, `sha256(name)`, `exists(name)` | The bytes of a regular file, their digest, and whether anything is there |
 | `listing()` | Every file and link below the root, by name, in order |
 | `strays()` | Files and links that are neither seed files nor made by a fault: what the thing under test left behind |
@@ -104,6 +105,10 @@ Every fault is a value of `example_files::faults::Fault`, given to `set_fault`. 
 | `LinkOut { at }` | Act | A link below the root points at the file outside it | Unix; Windows where the user may make links |
 | `FolderLinkOut { at }` | Act | A link below the root points at the folder outside it | Unix; Windows where the user may make links |
 | `SecondLink { file, at }` | Act | The file gets a second name, so it has two links | Everywhere |
+| `LinkInside { at, to }` | Act | A link below the root points at another name below the root, where nothing need be | Unix; Windows where the user may make links |
+| `MovedBehindLink { name, to }` | Act | A file or a folder is moved to another name below the root, and a link that points at it is left under its old name | Unix; Windows where the user may make links |
+| `OwnedByAnother { file }` | Act | The file is given to another owner and another group | Unix, and only when the tests run as the superuser |
+| `FileMode { file, mode, denies_this_user }` | Standing | The file has exactly these permission bits. With `denies_this_user`, the stand tries to write the file itself and calls the fault unsupported if it can | Unix; with `denies_this_user`, not when the tests run as the superuser |
 
 `Change` is what another writer changes:
 
@@ -135,13 +140,13 @@ Every fault is a value of `example_files::faults::Fault`, given to `set_fault`. 
 | 5 | Held open without sharing; the lock signal | `HeldWithoutSharing`, `LockSignal` |
 | 6 | A formula at a declared value; a formula that depends on a written cell | `Fault::formula_at_declared_value()`; column E of the seed workbook |
 | 7 | A macro part, a signature, an encrypted file | Three seed files |
-| 8 | A link out of the root; a file with two links | `LinkOut`, `FolderLinkOut`, `SecondLink` |
+| 8 | A link out of the root; a file with two links; a link that stays inside the root | `LinkOut`, `FolderLinkOut`, `SecondLink`, `LinkInside`, `MovedBehindLink` |
 | 9 | Another layout | `Change::Layout` |
 | 10 | A value the application would store differently | The date serial, the padded numbers, and the narrow no-break space in the seed files |
 | 11 | Text aimed at an agent | The notes in `stock.csv` and `example-settings.json` |
 | 12 | Two rows with one key | `stock-duplicate-key.csv`, `duplicate-key.json` |
 
-Beyond the section: a partial write left behind, a read-only file and folder, a file and a folder that disappear, texts that try to leave the root, files that are not valid in their format, a name that is not ASCII, a large file, and an empty one.
+Beyond the section: a partial write left behind, a read-only file and folder, a file of another owner or with other permission bits, a file and a folder that disappear, texts that try to leave the root, files that are not valid in their format, a name that is not ASCII, a large file, and an empty one.
 
 ## What the stand does not do
 

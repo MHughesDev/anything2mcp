@@ -16,6 +16,7 @@ use a2m_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::signature::Chain;
 use super::{Acting, ArtifactRef, CaptureLevel, ChoiceReason, Locating, Phase, TraceOutcome};
 
 /// The version of the trace schema this crate writes.
@@ -195,4 +196,68 @@ pub fn read_trace(bytes: &[u8]) -> Result<Vec<TraceLine>, Failure> {
             })
         })
         .collect()
+}
+
+/// What looking at a trace's own chain found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TraceCheck {
+    /// One header, the step lines numbered from 0 with no gap, one end
+    /// line, as many step lines as the end line counts, and the chain over
+    /// their digests gives the signature the end line states.
+    Whole,
+    /// The trace passed its size limit and was cut: its step lines are the
+    /// first `kept` ones, numbered with no gap, and fewer than the
+    /// signature covers, so the signature cannot be worked out from them.
+    Cut,
+    /// A line is missing, added, moved, or repeated, or the end line states
+    /// another signature than the lines give.
+    Broken,
+}
+
+impl TraceCheck {
+    /// The word, for a result.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Whole => "whole",
+            Self::Cut => "cut",
+            Self::Broken => "broken",
+        }
+    }
+}
+
+/// Checks a trace against its own chain: that no step line was removed,
+/// added, moved, or repeated since the end line was written.
+///
+/// What this is not. The signature is not keyed, so whoever can rewrite the
+/// end line as well passes this check: that a stored trace is the one the
+/// engine wrote rests on the store, which seals it. And a step line's own
+/// digest is taken as written: it covers values that are held only as keyed
+/// digests, which a reader without the key cannot work out again.
+#[must_use]
+pub fn check_trace(lines: &[TraceLine]) -> TraceCheck {
+    let (Some(TraceLine::Header(_)), Some(TraceLine::End(end))) = (lines.first(), lines.last())
+    else {
+        return TraceCheck::Broken;
+    };
+    let mut chain = Chain::new();
+    for (index, line) in lines[1..lines.len() - 1].iter().enumerate() {
+        match line {
+            TraceLine::Step(step) if u64::from(step.seq) == index as u64 => {
+                chain.push(&step.sig);
+            }
+            _ => return TraceCheck::Broken,
+        }
+    }
+    if chain.records() != end.kept || end.kept > end.records {
+        return TraceCheck::Broken;
+    }
+    if end.kept < end.records {
+        return TraceCheck::Cut;
+    }
+    if chain.signature() == end.signature {
+        TraceCheck::Whole
+    } else {
+        TraceCheck::Broken
+    }
 }

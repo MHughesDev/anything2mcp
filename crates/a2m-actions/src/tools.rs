@@ -59,14 +59,31 @@ impl Kernel {
         target: &TargetName,
         hash: &Digest,
     ) -> Result<Arc<Plan>, Failure> {
+        // A plan is kept under its target as well as its hash, and only
+        // after the store gave it for this installation's workspace, so a
+        // hash alone never finds a plan of another target.
+        let key = (target.clone(), *hash);
         if let Some(plan) = self
             .inner
             .plans
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(hash)
+            .get(&key)
         {
             return Ok(Arc::clone(plan));
+        }
+        // A drafted plan a trial runs is kept in memory only, and found
+        // here by the runner and its control; it is never a version.
+        if let Some(plan) = self
+            .inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(kept, _)| *kept == key)
+            .map(|(_, plan)| Arc::clone(plan))
+        {
+            return Ok(plan);
         }
         let workspace = self.installation()?.workspace;
         let (target, wanted) = (target.clone(), *hash);
@@ -75,12 +92,35 @@ impl Kernel {
             .read(move |tx| tx.versions().load(&workspace, &target, &wanted))
             .await?;
         let plan = Arc::new(Plan::decode(&encoded.bytes, hash)?);
-        self.inner
+        let mut plans = self
+            .inner
             .plans
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(*hash, Arc::clone(&plan));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Bounded: when it is full it is emptied, and a plan is read from
+        // the store once more.
+        if plans.len() >= crate::kernel::PLANS_KEPT {
+            plans.clear();
+        }
+        plans.insert(key, Arc::clone(&plan));
+        drop(plans);
         Ok(plan)
+    }
+
+    /// Keeps a drafted plan in memory for a trial's run, the newest
+    /// [`DRAFTS_KEPT`](crate::kernel::DRAFTS_KEPT) of them.
+    pub(crate) fn keep_draft(&self, target: &TargetName, hash: Digest, plan: Arc<Plan>) {
+        let mut drafts = self
+            .inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (target.clone(), hash);
+        drafts.retain(|(kept, _)| *kept != key);
+        if drafts.len() >= crate::kernel::DRAFTS_KEPT {
+            drafts.remove(0);
+        }
+        drafts.push((key, plan));
     }
 
     /// The current version of every published target, in order of target.

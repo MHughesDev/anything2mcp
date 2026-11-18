@@ -67,7 +67,11 @@ pub enum Resource {
 pub struct Context {
     pub effect: EffectClass, pub hazard: Hazard, pub records: Option<u32>,
     pub workspace: WorkspaceId, pub toolset: Option<ToolsetName>, pub environment: Environment,
-    pub identity_mode: Option<IdentityMode>, pub caller_is_agent: bool, pub acting_for: Option<ActingFor>,
+    pub identity_mode: Option<IdentityMode>, pub acting_for: Option<ActingFor>,
+    pub caller_is_agent: bool, // true for every caller of the local channel, MCP, and an SDK; in one
+                               // process the process's view of its terminal: a claim, never proof of a
+                               // person, which only the presence prompt gives (decision 0158)
+    pub test_records: bool, // every record of the run is a declared test record of a test environment
 }
 pub enum ActingFor { LocalUser(PrincipalId), TokenSubject(PrincipalId), Delegation(PrincipalId) }
 
@@ -88,10 +92,11 @@ pub struct ApprovalSurface { /* not Clone; no public constructor */ }
 pub struct Approved {
     pub run: RunId, pub diff_hash: Digest, pub tool_version: Digest,
     pub approver: PrincipalRef, pub channel: Channel, pub presence: PresenceCheck,
+    pub proved_at: Timestamp, pub prompt: Option<String>,
 }
 pub struct Declined { pub run: RunId, pub by: Option<PrincipalRef>, pub channel: Channel }
 pub enum Channel { LocalPrompt, ApprovalPage, ChatCard, UrlElicitation }
-pub enum PresenceCheck { OsPrompt, SignedIn, NotAvailable }
+pub enum PresenceCheck { OsPrompt, Polkit, LocalAuthentication, WindowsHello, SignedIn, NotAvailable }
 impl ApprovalSurface {
     pub fn record_approval(&self, tx: &mut Tx<'_>, a: &Approved) -> Result<ApprovalId, Failure>;
     pub fn record_decline(&self, tx: &mut Tx<'_>, d: &Declined) -> Result<(), Failure>;
@@ -113,8 +118,16 @@ pub struct PolicyLayers {
 pub enum Subject { Principal(PrincipalId), Group(GroupName), Anyone }
 pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
 pub enum Scope { Target(TargetName), Module(TargetName, ModuleName), Pattern(String) }
-pub struct Settings { pub approve_writes: ApproveWrites, pub max_records_per_run: u32, pub approval_window_minutes: u32 }
-impl BuiltIn { pub fn local(user: PrincipalId, workspace: WorkspaceId) -> BuiltIn; pub fn server() -> BuiltIn; }
+pub struct Settings {
+    pub approve_writes: ApproveWrites, pub max_records_per_run: u32, pub approval_window_minutes: u32,
+    pub agent_effect_ceiling: EffectClass, pub writes_outside_tests: bool,
+    pub two_person_irreversible: bool, pub pre_approval: bool,
+}
+impl Settings { pub fn tighter(&self, other: &Settings) -> Settings; pub fn looser_than(&self, old: &Settings) -> bool; }
+impl BuiltIn {
+    pub fn local(user: PrincipalId, workspace: WorkspaceId) -> BuiltIn; pub fn server() -> BuiltIn;
+    pub fn with_settings(self, s: Settings) -> BuiltIn; // the installation's settings, still the built-in set
+}
 impl CandidateSet {
     pub fn compile(layers: &PolicyLayers, profile: Profile) -> Result<CandidateSet, Failure>;
     pub fn test(&self) -> TestReport;
@@ -124,7 +137,7 @@ impl Policy {
     pub fn compile(&self, layers: &PolicyLayers) -> Result<CandidateSet, Failure>;
     pub fn test(&self, c: &CandidateSet) -> TestReport;                                   // policy.test
     pub fn publish(&self, tx: &mut Tx<'_>, c: &CandidateSet, by: &PrincipalRef, proof: PublishProof) -> Result<Digest, Failure>;
-    pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId) -> Result<Explanation, Failure>; // policy.explain
+    pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId, workspace: WorkspaceId) -> Result<Explanation, Failure>; // policy.explain
     pub fn check_limits(&self, tx: &mut Tx<'_>, l: &LimitCheck) -> Result<(), Failure>;
     pub fn set_kill_switch(&self, tx: &mut Tx<'_>, k: &KillSwitch) -> Result<u64, Failure>;
 }
@@ -139,13 +152,16 @@ Contracts that the signatures do not show:
 - **An error is a denial.** The only thing that can fail while deciding is a pre-approval rule's condition, an expression. A condition is checked when the set is compiled; one that still fails when it runs denies the request with the code `policy_evaluation_failed`. So does a store that cannot say which version is in force, a newest version that cannot be read, and a decision that cannot be recorded.
 - **The version in force is the newest one stored.** `decide` asks the store for the newest version on every call and loads it when it differs from the one in memory, so a version published by any process takes effect at the next decision, and a publish that was rolled back never does.
 - **A pre-approval is bound to one run and one diff.** `WriteWithoutPerson` is allowed only for a request that names a run and its diff hash. The decision row carries both, and the ledger checks them when writes begin.
-- **Approval binds and is used once.** `record_approval` reads the run from the ledger, decides and records `Approve` for the approver, and refuses unless the approver is a person, that decision allows, the run is waiting at `needs_approval`, and the diff hash equals the one stored on the run. `consume` refuses an expired, used, or revoked approval, or one for another diff, and marks it used in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. The ledger refuses an approval that was not marked used in its own transaction, so rule 3 of section 208 holds.
+- **Approval binds and is used once.** `record_approval` reads the run from the ledger, decides and records `Approve` for the approver, and refuses unless the approver is a person, that decision allows, the run is waiting at `needs_approval`, the diff hash and the tool version equal the run's, the proof of presence was made within two minutes of the store's clock and not ahead of it, and the check proves presence wherever the channel is not the engine's own prompt. Where `two_person_irreversible` holds and the run is irreversible, a second approval by the same person is refused. `consume` refuses under a kill switch that covers the run and for a run that was declined, whatever was decided before it; refuses an expired, used, or revoked approval, or one for another diff; needs two approvals of two people where two are asked for; and marks what it uses in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. The ledger reads the approval again and refuses one that was not marked used in its own transaction, so rule 3 of section 208 holds (decision 0145).
+- **Only the policy engine writes its tables.** `Policy::open` takes the store's `PolicyKey`, which the store hands out once, and every statement of this crate goes through `Tx::policy_tables` with it. A second `Policy::open` on the same store is refused, so there is one approval handle per store and no second opening can put another built-in set in force. What remains: a crate that depends on the ledger and is handed the key could still write these tables; the kernel hands it to this crate alone, and a test in `a2m-ledger` holds that no other crate's source names it (decision 0145).
+- **The installation's settings stay in force.** `BuiltIn::with_settings` carries the installation's policy settings into the built-in set. The policy engine keeps them as a floor: under any set published later, each setting in force is the tighter of the set's and the installation's. `agent_effect_ceiling`, `writes_outside_tests`, and `pre_approval` are forbids that follow the settings in force (`limit.agent_effect_ceiling`, `limit.writes_only_to_test_records`, `limit.no_pre_approval`), hashed with the guardrails; `two_person_irreversible` is kept by `record_approval` and `consume`. A pre-approval decision begins writes only in the transaction it was made in, which the ledger checks.
 - **There is no approve action, and the types say so.** `record_approval` and `record_decline` are methods of `ApprovalSurface` and of nothing else. The only `ApprovalSurface` comes out of `Policy::open`; it is not `Clone` and has no public constructor. `a2m-actions`, which opens the policy engine, hands it to the approval surface: the loopback listener in `a2m-local` after the operating system's prompt, or a server's console page after the approver signs in. Nothing in the action registry can hold it, so no command, MCP tool, REST route, or SDK method can approve.
 - **Silence is a decline.** An approval window that ends is recorded with `record_decline` by nobody, any unused approval of the run is revoked, and the caller ends the run `expired`.
 - **A session belongs to its owner.** `ActAs` on a person's identity is denied unless the principal is that person, or `acting_for` names them as the local user or the token's subject. A delegation never counts yet, because delegations are not built.
 - **On one machine,** the built-in set gives the operating-system user every role and a grant on every tool, requires a person's approval for writes, and holds the guardrails. A local set cannot name another approver.
 - **Protected settings loosen only with a person present.** The record limit, the approval window, who approves, and the pre-approval rules are the protected settings of section 226. `publish` refuses a set that is looser than the one in force on any of them unless the proof carries a user-presence check that proves presence. Tightening needs no proof. Releasing a kill switch on one machine needs the same check.
-- **A denial says what to ask for, not why.** The `refusal` carries a code from the table below and a next step; the determining rules are kept for `policy.explain`, which only an auditor or administrator may run. `a2m-actions` decides that before it calls `explain`.
+- **A denial says what to ask for, not why.** The `refusal` carries a code from the table below and a next step; the determining rules are kept for `policy.explain`, which only an auditor or administrator may run. `a2m-actions` decides that before it calls `explain`, and `explain` answers only for a decision of the caller's workspace.
+- **What the approval path cannot see.** The approver's kind is what the surface says, and `caller_is_agent` is not known on that path: what keeps an agent out of an approval is that it cannot operate the surface. A presence check is a word the surface hands in; nothing in the types stops a crate that holds the handle from writing one, which is why the handle goes to the person surface alone. The approver role is not scoped to a workspace or a target yet: on a server, an approver approves runs in every workspace.
 - **What `PerformAction` needs is the registry's to say.** Each action's entry names the role that may perform it; the request carries it, and the set says who holds which role.
 
 ## Used by, and uses
@@ -190,7 +206,9 @@ Tables, through `a2m-ledger`: `decisions`, `approvals`, `approval_declines`, `po
 | No policy input removes a guardrail | A test that builds the loosest set that compiles and asks what each guardrail forbids, and a property test that a matching guardrail always denies |
 | An agent identity can never approve | A guardrail test, and a test that hands `record_approval` an agent identity |
 | Only the approval handle records an approval | The types: the two methods exist on `ApprovalSurface` alone, and a test that fails to compile if the handle becomes `Clone` |
-| An approval is used once, and only for its diff, its run, and within its window | Tests with `a2m-ledger`: another diff, a second use, an expired one, a declined one, and one consumed in an earlier transaction than `begin_writes` |
+| An approval is used once, and only for its diff, its run, and within its window | Tests with `a2m-ledger`: another diff, a second use, an expired one, a declined one, one recorded after the decline, one under a kill switch, and one consumed in an earlier transaction than `begin_writes` |
+| One policy engine, and one approval handle, per store | A test that opens it twice |
+| The installation's settings are in force under a published set | Tests of the record limit and of two approvers under a looser published set; one test per setting in `a2m-actions` |
 | An evaluation error is a denial | A test with a condition that passes the checker and fails when it runs |
 | The same request on the same version gives the same answer | A property test over 4,000 generated requests |
 | A version that fails its test table is not published | A test that publishes one that lets a stranger write |
@@ -208,12 +226,13 @@ Tables, through `a2m-ledger`: `decisions`, `approvals`, `approval_declines`, `po
 5. Done in part: roles, grants, label and option rules, pre-approval rules with conditions, versioned sets with their own tests, `publish`, `explain`, `would`. Not built: lower layers that only narrow (workspace, toolset, target files); `grant.add` as a change to one grant, which today is a new version of the whole set; a second administrator on publish; the request budget per surface; a benchmark in `bench/`; decision timing through `a2m-telemetry`.
 6. Not built: standing approvals; delegations and `ActAs` with a delegation; the guardrail that the author of a version cannot be its only publisher, and the one that an agent cannot approve a publish, which need the publish flow's facts.
 7. Not built: consent records, with the first act that needs one.
+8. Done (the safety audit, decision 0145): the store's key, taken once; the installation's settings through `BuiltIn::with_settings`, kept as a floor; the forbids for an agent's ceiling, writes outside test records, and pre-approval off; two approvers of an irreversible run; `consume` at the point of action; the proof's time, the tool version, and the presence words checked when an approval is recorded; `explain` bound to the caller's workspace.
 
 ## Open points
 
 - Whether every read's decision is stored in full, or summarized at scale as decision 0034 allows. Today every decision is stored in full.
 - Whether consent records belong here or with the scout. They are here because only the decider should ask whether one exists.
-- The shape of the presence proof that `a2m-local` hands in, once research brief 27 says which prompts each operating system offers. Today it is one of three words, and `not_available` records an approval but proves nothing: it does not loosen a protected setting or release a kill switch.
+- The shape of the presence proof that `a2m-local` hands in. Settled in part (decision 0145): each operating system's prompt has its word, `polkit`, `local_authentication`, `windows_hello`, beside `os_prompt` and `signed_in`, and `not_available` records an approval only by the engine's own prompt and proves nothing: it does not loosen a protected setting or release a kill switch. The proof's time and the prompt's name come with the approval; the time is checked, and the name is kept in the audit entry the desk writes, not in the approval's row.
 - A set published before the binary's guardrails change is not read by the newer binary, because its version was stamped with the old guardrails' hash. The built-in set is stored again at start; a person's set must be published again. Whether to republish it automatically is open.
 - `caller_confirms`, the third value of `policy.approve_writes` in section 226, has no meaning here yet: a person approves every write through the surface, and the set says only whether that person may be the caller.
 - Listing the tools a caller may use is `would` asked tool by tool. Whether that is fast enough for a large catalog is not measured.

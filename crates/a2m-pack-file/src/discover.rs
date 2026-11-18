@@ -1,5 +1,5 @@
-//! Discovery: what a file says about its own layout, as findings, and the
-//! rule that drafts a `documents/` file from one.
+//! Discovery: what a file says about its own layout, as findings. The
+//! rules that draft from one are in `draft.rs`.
 //!
 //! The discoverer reads the files it is handed and nothing else. It holds
 //! no step that writes and is given no way to make one. A finding stores a
@@ -10,10 +10,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, FileKindName, Finding,
-    FindingKind, LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
+    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, Finding, FindingKind,
+    LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
 };
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
@@ -24,7 +23,7 @@ use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::driver::FileLimits;
-use crate::model::{DOCUMENT_KIND, DocumentSpec, Format, Layout, PACK, SURFACE_KIND};
+use crate::model::{DocumentSpec, Format, Layout, PACK, SURFACE_KIND};
 use crate::open::{self, Content, OpenFile};
 
 /// The name of the discoverer, and of the kind of finding it makes about a
@@ -43,6 +42,70 @@ pub struct TableFound {
     pub sheet: Option<String>,
     /// Its header texts, or the keys of the list's records, in order.
     pub headers: Vec<String>,
+    /// For a workbook's table, what the cells under each header hold, in
+    /// the order of `headers`: a shape, never a value. Empty for a JSON
+    /// list, and in a finding made before it was carried.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnFound>,
+}
+
+/// What the cells of one column of a workbook's table hold below its
+/// header, as the workbook stores them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnFound {
+    /// The one kind every cell that holds something is of, or `Mixed`. A
+    /// formula counts as the kind of the result it kept.
+    pub cells: CellKind,
+    /// Whether any of its cells holds a formula.
+    pub formula: bool,
+}
+
+/// The kind of what a workbook's cells hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellKind {
+    /// Text, or nothing at all.
+    Text,
+    /// Numbers.
+    Number,
+    /// True or false.
+    Boolean,
+    /// Cells of more than one kind, a date, an error, or a formula that
+    /// kept no result: no one type reads them all.
+    Mixed,
+}
+
+/// What each column of a workbook's table holds below its header row.
+fn columns_of(part: &a2m_sources::ParsedPart, range: a2m_sources::CellRange) -> Vec<ColumnFound> {
+    (range.left..=range.right)
+        .map(|column| {
+            let mut kind = None;
+            let mut formula = false;
+            for row in range.top.saturating_add(1)..=range.bottom {
+                let Some(placed) = part.cell(row, column) else {
+                    continue;
+                };
+                formula |= matches!(placed.cell.raw, RawCell::Formula { .. });
+                let this = match placed.cell.raw.settled() {
+                    Some(RawCell::Empty) => continue,
+                    Some(RawCell::Text(_)) => CellKind::Text,
+                    Some(RawCell::Number(_)) => CellKind::Number,
+                    Some(RawCell::Bool(_)) => CellKind::Boolean,
+                    _ => CellKind::Mixed,
+                };
+                kind = match kind {
+                    None => Some(this),
+                    Some(known) if known == this => Some(known),
+                    Some(_) => Some(CellKind::Mixed),
+                };
+            }
+            ColumnFound {
+                cells: kind.unwrap_or(CellKind::Text),
+                formula,
+            }
+        })
+        .collect()
 }
 
 /// What a `file_layout` finding holds: the file's layout, as the file
@@ -50,6 +113,12 @@ pub struct TableFound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutFound {
+    /// The surface the file was observed on: the document drafted from the
+    /// finding names it, so that in a target of several file surfaces it
+    /// is not taken for a file of the first. Nothing in a finding made
+    /// before it was carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
     /// The file's name inside its folder.
     pub file: String,
     /// Its format.
@@ -97,8 +166,15 @@ fn format_of(name: &str) -> Option<(Format, Option<&'static str>)> {
     }
 }
 
-fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFile) -> LayoutFound {
+fn layout_of(
+    surface: &str,
+    file: &str,
+    format: Format,
+    delimiter: Option<&str>,
+    open: &OpenFile,
+) -> LayoutFound {
     let mut found = LayoutFound {
+        surface: Some(surface.to_owned()),
         file: file.to_owned(),
         format,
         delimiter: delimiter.map(str::to_owned),
@@ -118,15 +194,21 @@ fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFil
         }
         Content::Cells(parsed) => {
             let structure = &parsed.structure;
-            for sheet in &structure.sheets {
+            for (index, sheet) in structure.sheets.iter().enumerate() {
                 found.sheets.push(sheet.name.clone());
-                found
-                    .tables
-                    .extend(sheet.tables.iter().map(|table| TableFound {
+                let part = u32::try_from(index)
+                    .ok()
+                    .and_then(|index| parsed.part(index));
+                found.tables.extend(sheet.tables.iter().map(|table| {
+                    TableFound {
                         name: table.name.clone(),
                         sheet: Some(sheet.name.clone()),
                         headers: table.headers.clone(),
-                    }));
+                        columns: part
+                            .map(|part| columns_of(part, table.range))
+                            .unwrap_or_default(),
+                    }
+                }));
             }
             found.names = structure.names.iter().map(|n| n.name.clone()).collect();
             found.macros = structure.macros;
@@ -161,6 +243,7 @@ fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFil
                                 name: key.clone(),
                                 sheet: None,
                                 headers: keys,
+                                columns: Vec::new(),
                             });
                         }
                     }
@@ -199,7 +282,7 @@ fn key_candidates(open: &OpenFile) -> Vec<String> {
         .collect()
 }
 
-fn invalid(what: &str) -> Failure {
+pub(crate) fn invalid(what: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
         FailureCode::FINDING_INVALID,
@@ -240,7 +323,12 @@ impl LayoutDiscoverer {
         })
     }
 
-    fn findings(&self, path: &CheckedPath, bytes: Vec<u8>) -> Result<Vec<Finding>, Failure> {
+    fn findings(
+        &self,
+        surface: &str,
+        path: &CheckedPath,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<Finding>, Failure> {
         let file = path.relative().rsplit('/').next().unwrap_or_default();
         let Some((format, delimiter)) = format_of(file) else {
             return Ok(Vec::new());
@@ -252,7 +340,7 @@ impl LayoutDiscoverer {
             delimiter: delimiter.map(str::to_owned),
             line_ending: None,
             layout: Layout::default(),
-            may_be_open: false,
+            may_be_open: None,
             lock_sibling: None,
             records: std::collections::BTreeMap::new(),
         };
@@ -273,7 +361,7 @@ impl LayoutDiscoverer {
         let layout = Finding::about(
             subject(open.digest),
             self.layout.clone(),
-            encoded(&layout_of(file, format, delimiter, &open))?,
+            encoded(&layout_of(surface, file, format, delimiter, &open))?,
             Source::LiveSystem,
             produced(),
             now,
@@ -317,6 +405,16 @@ impl LayoutDiscoverer {
     }
 }
 
+/// The bytes of a file the kernel handed to discovery, read through the
+/// path's own check and never changed. Nothing for a file that is missing,
+/// larger than `most`, or not a regular file. Blocking.
+fn read_handed(path: &CheckedPath, most: u64) -> Option<Vec<u8>> {
+    path.size().ok()?;
+    (path.entry_kind().ok()? == a2m_provider::EntryKind::File)
+        .then(|| path.read(most).ok())
+        .flatten()
+}
+
 impl Discoverer for LayoutDiscoverer {
     fn name(&self) -> DiscovererName {
         self.name.clone()
@@ -351,10 +449,10 @@ impl Discoverer for LayoutDiscoverer {
                 }
                 let most = left.min(self.limits.max_bytes);
                 let reading = path.clone();
-                let read = tokio::task::spawn_blocking(move || open::read_file(&reading, most))
+                let read = tokio::task::spawn_blocking(move || read_handed(&reading, most))
                     .await
                     .ok()
-                    .and_then(Result::ok);
+                    .flatten();
                 let Some(bytes) = read else {
                     // Missing, too large for what is left, or not a regular
                     // file: seen, and no finding made of it.
@@ -365,7 +463,7 @@ impl Discoverer for LayoutDiscoverer {
                     continue;
                 };
                 left = left.saturating_sub(bytes.len() as u64);
-                let findings = self.findings(path, bytes)?;
+                let findings = self.findings(scope.surface.surface.name.as_str(), path, bytes)?;
                 if findings.is_empty() {
                     report.dropped += 1;
                 }
@@ -420,171 +518,5 @@ impl Describer for LayoutDescriber {
                     .collect(),
             },
         }
-    }
-}
-
-/// A name made from a file's own words: lowercase letters, digits, and
-/// underscores, starting with a letter.
-fn name_from(text: &str, taken: &mut BTreeSet<String>) -> String {
-    let mut name = String::new();
-    for character in text.chars() {
-        if character.is_ascii_alphanumeric() {
-            name.push(character.to_ascii_lowercase());
-        } else if !name.ends_with('_') && !name.is_empty() {
-            name.push('_');
-        }
-    }
-    let mut name = name.trim_end_matches('_').to_owned();
-    if !name.starts_with(|first: char| first.is_ascii_lowercase()) {
-        name = format!("f_{name}");
-    }
-    name.truncate(28);
-    let mut unique = name.clone();
-    let mut number = 2;
-    while !taken.insert(unique.clone()) {
-        unique = format!("{name}_{number}");
-        number += 1;
-    }
-    unique
-}
-
-/// From a `file_layout` finding to a `documents/` file.
-pub struct DocumentFromLayout {
-    finding_kind: FindingKind,
-}
-
-impl DocumentFromLayout {
-    /// The rule.
-    ///
-    /// # Errors
-    ///
-    /// Never for the name this crate fixes; a failure of the name check.
-    pub fn new() -> Result<Self, Failure> {
-        Ok(Self {
-            finding_kind: FindingKind::new(FILE_LAYOUT)
-                .map_err(|_| invalid("its kind is not a name"))?,
-        })
-    }
-}
-
-impl DraftingRule for DocumentFromLayout {
-    fn finding_kind(&self) -> FindingKind {
-        self.finding_kind.clone()
-    }
-
-    fn file_kind(&self) -> FileKindName {
-        DOCUMENT_KIND
-    }
-
-    /// Drafts the document with its fingerprint and a record kind for each
-    /// table the file states. The file states no key and no type of a
-    /// column, so each is an open question and never a guess. Nothing is
-    /// drafted for a write.
-    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let found: LayoutFound = serde_json::from_str(finding.found())
-            .map_err(|_| invalid("a `file_layout` finding does not hold a layout"))?;
-        let texts = |items: &[String]| {
-            DraftValue::List(items.iter().map(|item| DraftValue::text(item)).collect())
-        };
-        let record = |place: (&str, DraftValue), headers: &[String], json: bool| {
-            let mut taken = BTreeSet::new();
-            let fields = headers
-                .iter()
-                .filter(|header| !header.is_empty())
-                .map(|header| {
-                    let place = if json {
-                        ("path", texts(std::slice::from_ref(header)))
-                    } else {
-                        ("header", DraftValue::text(header))
-                    };
-                    let question = cx.open_question(&format!(
-                        "Which field type do the values under `{header}` in `{}` have?",
-                        found.file
-                    ));
-                    (
-                        name_from(header, &mut taken),
-                        DraftValue::map(vec![place, ("type", question)]),
-                    )
-                })
-                .collect();
-            DraftValue::map(vec![
-                place,
-                (
-                    "key",
-                    cx.open_question(&format!(
-                        "Which fields identify one record of `{}`?",
-                        found.file
-                    )),
-                ),
-                ("fields", DraftValue::Map(fields)),
-            ])
-        };
-        let mut taken = BTreeSet::new();
-        let mut records = Vec::new();
-        let mut fingerprint = Vec::new();
-        match found.format {
-            Format::Delimited => {
-                fingerprint.push(("headers", texts(&found.headers)));
-                records.push((
-                    "rows".to_owned(),
-                    record(("rows", DraftValue::text("all")), &found.headers, false),
-                ));
-            }
-            Format::Json => {
-                fingerprint.push(("keys", texts(&found.headers)));
-                for table in &found.tables {
-                    let place = ("path", texts(std::slice::from_ref(&table.name)));
-                    records.push((
-                        name_from(&table.name, &mut taken),
-                        record(place, &table.headers, true),
-                    ));
-                }
-            }
-            Format::Workbook => {
-                fingerprint.push(("sheets", texts(&found.sheets)));
-                let tables: Vec<String> = found.tables.iter().map(|t| t.name.clone()).collect();
-                fingerprint.push(("tables", texts(&tables)));
-                fingerprint.push(("names", texts(&found.names)));
-                for table in &found.tables {
-                    let place = (
-                        "table",
-                        DraftValue::map(vec![
-                            (
-                                "sheet",
-                                DraftValue::text(table.sheet.as_deref().unwrap_or_default()),
-                            ),
-                            ("name", DraftValue::text(&table.name)),
-                        ]),
-                    );
-                    records.push((
-                        name_from(&table.name, &mut taken),
-                        record(place, &table.headers, false),
-                    ));
-                }
-            }
-        }
-        let mut body = vec![
-            ("file", DraftValue::text(&found.file)),
-            ("format", DraftValue::text(found.format.as_str())),
-        ];
-        if let Some(delimiter) = &found.delimiter {
-            body.push((
-                "dialect",
-                DraftValue::map(vec![("delimiter", DraftValue::text(delimiter))]),
-            ));
-        }
-        body.push(("fingerprint", DraftValue::map(fingerprint)));
-        body.push(("records", DraftValue::Map(records)));
-        let stem = found
-            .file
-            .rsplit_once('.')
-            .map_or(found.file.as_str(), |(stem, _)| stem);
-        Ok(vec![DraftDoc {
-            path: RelPath::new(&format!(
-                "documents/{}.yaml",
-                name_from(stem, &mut BTreeSet::new())
-            ))?,
-            body: DraftValue::map(body),
-        }])
     }
 }

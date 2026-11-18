@@ -10,12 +10,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use a2m_core::{
     Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, Value,
 };
 use a2m_pack_web_browser::{
-    Address, BrowserError, Look, ObserveTab, RawValue, ReadWhat, RequestShape, SnapshotLimits,
+    Address, BrowserError, Deadline, EXCHANGES_KEPT, Look, ObserveTab, RawValue, ReadWhat,
+    RequestShape, SnapshotLimits,
 };
 use a2m_provider::{
     BoxFuture, Discoverer, DiscovererName, DiscoveryReport, DiscoveryScope, FindingSink,
@@ -24,7 +26,7 @@ use a2m_provider::{
 use serde_json::Value as Json;
 
 use crate::SURFACE_KIND;
-use crate::infer::{Answer, Exchange, infer_endpoints};
+use crate::infer::{Answer, Exchange, infer_endpoints, matched_requests};
 use crate::look::{
     Arrival, Claim, Core, FOCUS_TIER_TWO, Place, Standing, failure, json_body, link, link_target,
     looks_like_an_action,
@@ -109,6 +111,41 @@ fn refused_note(refused: &[RequestShape]) -> Option<(LimitationCode, String)> {
             listed.join(", ")
         ),
     ))
+}
+
+/// How long `web_capture` waits for the answers to the requests one page
+/// made by itself, at most.
+const PAGE_WAIT: Duration = Duration::from_secs(10);
+
+/// The limitation of an address whose query held an entry that is not
+/// kept.
+fn query_left_out() -> (LimitationCode, String) {
+    (
+        LimitationCode::NotExercised,
+        "The query held an entry with no name, or a name that is not a plain word; such an entry is a value, and was not kept.".to_owned(),
+    )
+}
+
+/// The limitation of an answer an object of which read as a dictionary.
+fn dictionary() -> (LimitationCode, String) {
+    (
+        LimitationCode::NotExercised,
+        "An object of the answer had names that read as values (more of them than a record has, or one that is not a plain name), as a dictionary's keys are; none of its names were kept, so whether they are structure is not known.".to_owned(),
+    )
+}
+
+/// The limitations of every member of a matched group, each once, in the
+/// order first seen: what one page or request showed holds for the whole.
+fn union<'a>(
+    each: impl Iterator<Item = &'a [(LimitationCode, String)]>,
+) -> Vec<(LimitationCode, String)> {
+    let mut out: Vec<(LimitationCode, String)> = Vec::new();
+    for one in each.flatten() {
+        if !out.contains(one) {
+            out.push(one.clone());
+        }
+    }
+    out
 }
 
 fn single_variant(what: &str) -> (LimitationCode, String) {
@@ -203,7 +240,7 @@ impl WebProbe {
             let snapshot = tab
                 .snapshot(&SnapshotLimits::default(), scope.deadline)
                 .await
-                .map_err(|error| failure(&error, scope))?;
+                .map_err(|error| failure(&error))?;
             if snapshot.cut {
                 limitations.push((
                     LimitationCode::Truncated,
@@ -382,6 +419,10 @@ async fn ready(
 
 // ---- web_snapshot ----
 
+/// One page a snapshot was taken of: where it ended, what was found, and
+/// why that is weaker than it looks.
+type Looked = (Place, Json, Vec<(LimitationCode, String)>);
+
 /// `web_snapshot`: the screens of the surface's start page, of the pages
 /// the focus names, and of the pages plain links lead to, as deep as the
 /// bounds allow.
@@ -414,7 +455,7 @@ impl WebSnapshot {
                     links.unread += 1;
                     continue;
                 }
-                Err(error) => return Err(failure(&error, scope)),
+                Err(error) => return Err(failure(&error)),
             };
             let what = ReadWhat::Attribute {
                 name: "href".to_owned(),
@@ -426,7 +467,7 @@ impl WebSnapshot {
                     links.unread += 1;
                     continue;
                 }
-                Err(error) => return Err(failure(&error, scope)),
+                Err(error) => return Err(failure(&error)),
             };
             if looks_like_an_action(&href) || looks_like_an_action(name) {
                 links.refused += 1;
@@ -448,6 +489,7 @@ impl WebSnapshot {
         let (mut pages, start) = Pages::new(scope)?;
         let mut out = Once::new(out);
         let tab = core.tab(scope).await?;
+        let mut seen = Vec::new();
         while let Some((address, depth, focused)) = pages.next(core.max_pages, scope) {
             let arrival: Arrival = core.arrive(&tab, &address, &start, scope).await?;
             if depth == 0 {
@@ -463,7 +505,7 @@ impl WebSnapshot {
             let snapshot = tab
                 .snapshot(&SnapshotLimits::default(), scope.deadline)
                 .await
-                .map_err(|error| failure(&error, scope))?;
+                .map_err(|error| failure(&error))?;
             if snapshot.cut {
                 limitations.push((
                     LimitationCode::Truncated,
@@ -488,11 +530,81 @@ impl WebSnapshot {
                 }
             }
             limitations.extend(refused_note(&tab.blocked()));
+            seen.push((
+                arrival.ended,
+                screen::found(&snapshot, &arrival.title),
+                limitations,
+            ));
+        }
+        Self::give(core, kinds, scope, &seen, &mut out)?;
+        Ok(pages.report)
+    }
+
+    /// The `screen` findings of the pages looked at, in the order they
+    /// were looked at: one for each page, and one for each group of pages
+    /// that show one screen at addresses that differ in one segment, in
+    /// place of those pages' own (screen matching).
+    fn give(
+        core: &Core,
+        kinds: &Kinds,
+        scope: &DiscoveryScope<'_>,
+        seen: &[Looked],
+        out: &mut Once<'_>,
+    ) -> Result<(), Failure> {
+        let listed: Vec<(&str, &str, &Json)> = seen
+            .iter()
+            .map(|(place, found, _)| (place.origin.as_str(), place.path.as_str(), found))
+            .collect();
+        let groups = screen::matched(&listed);
+        for (at, (place, found, limitations)) in seen.iter().enumerate() {
+            let (subject, found, limitations) = match groups
+                .iter()
+                .find(|group| group.pages.contains(&at))
+            {
+                // Given once, where its first page was looked at.
+                Some(group) if group.pages.iter().min() != Some(&at) => continue,
+                Some(group) => {
+                    let first = &seen[group.pages[0]];
+                    let mut fields = first.1.as_object().cloned().unwrap_or_default();
+                    fields.insert(
+                        "pages".to_owned(),
+                        Json::Array(
+                            group
+                                .pages
+                                .iter()
+                                .map(|page| Json::from(seen[*page].0.path.as_str()))
+                                .collect(),
+                        ),
+                    );
+                    let found = Json::Object(crate::shape::sorted(fields));
+                    let mut limitations =
+                        union(group.pages.iter().map(|page| seen[*page].2.as_slice()));
+                    limitations.push((
+                            LimitationCode::Sampled,
+                            format!(
+                                "Matched from {} pages whose addresses differ in one segment and whose tables and labelled values are the same; the snapshot is of the first.",
+                                group.pages.len()
+                            ),
+                        ));
+                    let pattern = Place {
+                        origin: place.origin.clone(),
+                        path: group.pattern.clone(),
+                        query: BTreeMap::new(),
+                        query_left_out: false,
+                    };
+                    (pattern.subject(scope.redact)?, found, limitations)
+                }
+                None => (
+                    place.subject(scope.redact)?,
+                    found.clone(),
+                    limitations.clone(),
+                ),
+            };
             out.found(&core.finding(
                 scope,
-                arrival.ended.subject(scope.redact)?,
+                subject,
                 &kinds.screen,
-                &screen::found(&snapshot, &arrival.title),
+                &found,
                 &Claim {
                     level: EvidenceLevel::Discovered,
                     limitations,
@@ -500,7 +612,7 @@ impl WebSnapshot {
                 },
             )?)?;
         }
-        Ok(pages.report)
+        Ok(())
     }
 }
 
@@ -528,9 +640,10 @@ impl Discoverer for WebSnapshot {
 /// `web_capture`: the exchanges of the pages it is sent to, by structure,
 /// and the endpoints they group into. An exchange is the request for a
 /// document the tab was sent to, with the shape of a JSON answer, or a
-/// request the page tried and the tab refused. The requests a page's own
-/// scripts read with are not seen: the base has no stream of exchanges
-/// yet.
+/// request the page tried and the tab refused, or a request a page's own
+/// script made with GET to the surface's origin, as the observing tab
+/// recorded it, which names the page that made it. A request of a script
+/// to another origin is not followed (decision 0187).
 pub(crate) struct WebCapture(pub(crate) Arc<Parts>, pub(crate) DiscovererName);
 
 impl WebCapture {
@@ -543,6 +656,7 @@ impl WebCapture {
         let (mut pages, start) = Pages::new(scope)?;
         let mut out = Once::new(out);
         let tab = core.tab(scope).await?;
+        tab.record_exchanges();
         let mut exchanges: Vec<(Exchange, Vec<(LimitationCode, String)>)> = Vec::new();
         while let Some((address, _, focused)) = pages.next(core.max_pages, scope) {
             let arrival = core.arrive(&tab, &address, &start, scope).await?;
@@ -556,6 +670,9 @@ impl WebCapture {
                 Some(json) => Answer::Json(Shape::of(&json)),
                 None => Answer::Document,
             };
+            if matches!(&answer, Answer::Json(shape) if shape.withheld()) {
+                limitations.push(dictionary());
+            }
             let mut things = Vec::new();
             let mut refused = Vec::new();
             for one in tab.blocked() {
@@ -571,12 +688,44 @@ impl WebCapture {
                         query: BTreeMap::new(),
                         status: None,
                         answer: Answer::Refused,
+                        made_by: None,
+                        credential_headers: Vec::new(),
+                        set_headers: Vec::new(),
+                        query_left_out: false,
                     }),
                     // A request to a system that is not this surface.
                     _ => pages.report.dropped += 1,
                 }
             }
             limitations.extend(refused_note(&things));
+            if arrival.ended.query_left_out {
+                limitations.push(query_left_out());
+            }
+            // What the page asked for by itself, with GET, from its own
+            // origin, as the tab recorded it: names and kinds only. The wait
+            // for its answers is bounded for each page, so that one request
+            // that never ends does not hold the whole discovery.
+            let until = Deadline::after(PAGE_WAIT.min(scope.deadline.remaining()));
+            let taken = tab.exchanges(until).await;
+            if taken.awaited > 0 {
+                limitations.push((
+                    LimitationCode::NotExercised,
+                    format!(
+                        "{} request(s) the page made by itself had not been answered within {} seconds of its load, and are left out.",
+                        taken.awaited,
+                        PAGE_WAIT.as_secs()
+                    ),
+                ));
+            }
+            if taken.dropped > 0 {
+                limitations.push((
+                    LimitationCode::Truncated,
+                    format!(
+                        "{} request(s) the page made by itself are left out: the tab keeps at most {EXCHANGES_KEPT} at once.",
+                        taken.dropped
+                    ),
+                ));
+            }
             exchanges.push((
                 Exchange {
                     method: "GET".to_owned(),
@@ -585,9 +734,70 @@ impl WebCapture {
                     query: arrival.ended.query.clone(),
                     status: arrival.status,
                     answer,
+                    made_by: None,
+                    credential_headers: Vec::new(),
+                    set_headers: Vec::new(),
+                    query_left_out: arrival.ended.query_left_out,
                 },
                 limitations,
             ));
+            for own in taken.exchanges {
+                if own.origin != start.origin {
+                    pages.report.dropped += 1;
+                    continue;
+                }
+                let mut limitations = vec![(
+                    LimitationCode::SingleVariant,
+                    "A request the page made by itself, seen once, signed in as nobody. Its query and its answer are kept as names, the answer's to one level inside an object.".to_owned(),
+                )];
+                if !own.credential_headers.is_empty() {
+                    limitations.push((
+                        LimitationCode::NotExercised,
+                        format!(
+                            "The request carried {} header(s) that hold a credential or an anti-forgery token; they are named, and their values were not kept.",
+                            own.credential_headers.len()
+                        ),
+                    ));
+                }
+                if !own.set_headers.is_empty() {
+                    limitations.push((
+                        LimitationCode::NotExercised,
+                        format!(
+                            "The page's script set {} header(s) of the request; they are named, their values were not kept, and a read made again from inside the page would not send them.",
+                            own.set_headers.len()
+                        ),
+                    ));
+                }
+                if own.query_left_out {
+                    limitations.push(query_left_out());
+                }
+                if own.names_withheld {
+                    limitations.push(dictionary());
+                }
+                let answer = match &own.fields {
+                    Some(fields) => Answer::Json(Shape::of_fields(fields)),
+                    None => Answer::Document,
+                };
+                exchanges.push((
+                    Exchange {
+                        method: own.method,
+                        origin: own.origin,
+                        path: own.path,
+                        query: own
+                            .query
+                            .into_iter()
+                            .map(|name| (name, "unknown"))
+                            .collect(),
+                        status: Some(own.status),
+                        answer,
+                        made_by: Some(arrival.ended.path.clone()),
+                        credential_headers: own.credential_headers,
+                        set_headers: own.set_headers,
+                        query_left_out: own.query_left_out,
+                    },
+                    limitations,
+                ));
+            }
             for one in refused {
                 exchanges.push((
                     one,
@@ -599,42 +809,94 @@ impl WebCapture {
             }
         }
 
-        let mut findings = Vec::new();
-        for (exchange, limitations) in &exchanges {
+        // Requests a page made by itself that are one read by key are given
+        // as one finding, at the place of the first, with the segment that
+        // differs as a placeholder, and the requests' own are not given
+        // (decision 0190).
+        let only: Vec<Exchange> = exchanges.iter().map(|(one, _)| one.clone()).collect();
+        let groups = matched_requests(&only);
+        // The finding each exchange is given in, by its place, for the
+        // parents of the endpoints below.
+        let mut given: Vec<Option<Finding>> = vec![None; exchanges.len()];
+        for (at, (exchange, limitations)) in exchanges.iter().enumerate() {
+            let group = groups.iter().find(|group| group.members.contains(&at));
+            if let Some(group) = group
+                && group.members.first() != Some(&at)
+            {
+                continue;
+            }
+            let (path, found, limitations) = match group {
+                Some(group) => {
+                    let mut found = exchange.found();
+                    if let Json::Object(fields) = &mut found {
+                        fields.insert("path".to_owned(), Json::from(group.pattern.as_str()));
+                        fields.insert("made_by".to_owned(), Json::from(group.page.as_str()));
+                        fields.insert(
+                            "paths".to_owned(),
+                            Json::Array(
+                                group
+                                    .members
+                                    .iter()
+                                    .map(|member| Json::from(only[*member].path.as_str()))
+                                    .collect(),
+                            ),
+                        );
+                        found = Json::Object(crate::shape::sorted(fields.clone()));
+                    }
+                    let mut limitations = union(
+                        group
+                            .members
+                            .iter()
+                            .map(|member| exchanges[*member].1.as_slice()),
+                    );
+                    limitations.push((
+                        LimitationCode::Sampled,
+                        format!(
+                            "Matched from {} requests whose paths differ in one segment, made by pages whose paths differ in the same value, with one answer's shape; the names are of the first.",
+                            group.members.len()
+                        ),
+                    ));
+                    (group.pattern.clone(), found, limitations)
+                }
+                None => (exchange.path.clone(), exchange.found(), limitations.clone()),
+            };
             let place = Place {
                 origin: exchange.origin.clone(),
-                path: exchange.path.clone(),
+                path,
                 query: BTreeMap::new(),
+                query_left_out: false,
             };
             let finding = core.finding(
                 scope,
                 place.subject(scope.redact)?,
                 &kinds.exchange,
-                &exchange.found(),
+                &found,
                 &Claim {
                     level: if exchange.answered() {
                         EvidenceLevel::Discovered
                     } else {
                         EvidenceLevel::Inferred
                     },
-                    limitations: limitations.clone(),
+                    limitations,
                     parents: Vec::new(),
                 },
             )?;
             out.found(&finding)?;
-            findings.push(finding);
+            match group {
+                Some(group) => {
+                    for member in &group.members {
+                        given[*member] = Some(finding.clone());
+                    }
+                }
+                None => given[at] = Some(finding),
+            }
         }
-
         let tier_two = matches!(scope.focus.get(FOCUS_TIER_TWO), Some(Value::Bool(true)));
-        let only: Vec<Exchange> = exchanges
-            .into_iter()
-            .map(|(exchange, _)| exchange)
-            .collect();
         for endpoint in infer_endpoints(&only, tier_two) {
             let mut limitations = vec![(
                 LimitationCode::Sampled,
                 format!(
-                    "Made from {} exchange(s) of one capture. The requests a page's own scripts read with are not seen.",
+                    "Made from {} exchange(s) of one capture. Of the requests a page's own scripts make, only those with GET to the surface's origin are seen.",
                     endpoint.seen
                 ),
             )];
@@ -657,6 +919,9 @@ impl WebCapture {
                         .to_owned(),
                 ));
             }
+            if endpoint.response.as_ref().is_some_and(Shape::withheld) {
+                limitations.push(dictionary());
+            }
             if endpoint.response.as_ref().is_some_and(Shape::cut) {
                 limitations.push((
                     LimitationCode::Truncated,
@@ -665,7 +930,7 @@ impl WebCapture {
             }
             let mut parents: Vec<&Finding> = Vec::new();
             for source in &endpoint.sources {
-                if let Some(parent) = findings.get(*source)
+                if let Some(parent) = given.get(*source).and_then(Option::as_ref)
                     && !parents.iter().any(|known| known.id() == parent.id())
                 {
                     parents.push(parent);
@@ -675,6 +940,7 @@ impl WebCapture {
                 origin: endpoint.origin.clone(),
                 path: endpoint.template(),
                 query: BTreeMap::new(),
+                query_left_out: false,
             };
             out.found(&core.finding(
                 scope,

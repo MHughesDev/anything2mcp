@@ -24,19 +24,22 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 16 | Hosted-agent compatibility, hands-on | Phase 6 | 24 |
 | 17 | Remote sign-in to a server-hosted browser | Phase 7 | 16 |
 | 18 | Deployment and scaling patterns | Phase 7 | 23 |
-| 19 | Desktop accessibility automation | Phase 8 | 6 |
+| 19 | Desktop accessibility automation. Answered by note 19 | Phase 8 | 6 |
 | 20 | Selector repair and drift | Phase 9 | 28 |
 | 21 | Lessons from RPA products | Phase 3 | 8, 10, 31 |
 | 22 | Reproducibility and observability | Phase 9 | 28, 29 |
 | 23 | Vendor APIs and terms of use | Before the first real target | 34 |
-| 24 | WebMCP standard status | Phase 8 | 6 |
+| 24 | WebMCP standard status. Answered by note 25 | Phase 8 | 6 |
 | 25 | Gap-review components | The phase each lands in | 32 |
 | 26 | Local channel on three operating systems | Phase 1 | 39 |
-| 27 | Operating-system user-presence checks | Phase 3 | 18, 39 |
-| 28 | Wheel and npm packaging, verified hands-on | Phase 1 | 41 |
+| 27 | Operating-system user-presence checks. Answered by note 20 | Phase 3 | 18, 39 |
+| 28 | Wheel and npm packaging, verified hands-on. Answered by note 21 | Phase 1 | 41 |
 | 29 | Command-line design for agents | Phase 5 | 40 |
 | 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
 | 31 | Cedar spike. Answered by decision 0082 | Phase 3 | 45 |
+| 32 | First standard wire protocol of the stream pack. Answered by note 22 | Milestone 8, packages J2 and J3 | 309 |
+| 33 | Client crates for a server database beside the embedded one. Answered by note 23 | Milestone 8 package G3; milestone 9 package 6.1 | 307, 208 |
+| 34 | What turning TLS on needs in this workspace. Answered by note 24 | Before the first real target; milestone 9 | 226, 303 |
 
 ## Briefs
 
@@ -76,7 +79,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **18. Deployment and scaling patterns.** (Job queues and worker links are partly answered by [note 13](13-ledger-leases-and-runner-links.md).) Control plane and worker splits; Postgres-based job queues; browser workers in containers; Windows desktop workers; Kubernetes versus Compose versus a plain service; upgrades without downtime.
 
-**19. Desktop accessibility automation.** The state of UI Automation, the macOS Accessibility API, and AT-SPI from Rust; `xa11y` maturity; Java Access Bridge and SAP GUI scripting; whether desktop automation can run in a service session or needs an interactive one; how stable element identifiers are.
+**19. Desktop accessibility automation.** (Answered by [note 19](19-desktop-accessibility-base.md) and [decision 0120](../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md). The brief stays so that references to it resolve.) The state of UI Automation, the macOS Accessibility API, and AT-SPI from Rust; `xa11y` maturity; Java Access Bridge and SAP GUI scripting; whether desktop automation can run in a service session or needs an interactive one; how stable element identifiers are.
 
 **20. Selector repair and drift.** Healenium and similar tools; LLM-based locator repair; fallback locators and element fingerprints; the failure mode where healing picks the wrong element; how mature systems keep repair safe.
 
@@ -86,18 +89,24 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **23. Vendor APIs and terms of use.** For the first real target, chosen privately by the owner: what its published API covers and omits; rate limits; whether it offers its own MCP server; what its terms say about automated access. In general: what typical SaaS terms say about automating a licensed user's own account. Not legal advice. Keep the application's name out of the repository.
 
-**24. WebMCP standard status.** The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
+**24. WebMCP standard status.** (Answered by [note 25](25-webmcp-standard-status.md). The brief stays so that references to it resolve.) The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
 
 **25. Gap-review components.** For each component in [spec section 604](../spec/6-running-it/604-management-and-operations.md), find prior art and pitfalls before designing it in detail: environments, triggers, mid-run input, undo, read caching, data classification, identity isolation, single-session apps, tool versioning, authorization records, usage metering, updates, and target packs.
 
 **26. Local channel on three operating systems.** Rust crates for Unix domain sockets and Windows named pipes behind one interface; serving HTTP over them with the chosen web framework; reading the connecting user's identity on each system; directory and access-list permissions; starting a detached background process and guarding it with a lock file; how comparable tools (language servers, container and database daemons) handle version skew and idle shutdown.
 
-**27. Operating-system user-presence checks.** What Windows Hello, macOS Touch ID and password prompts, and Linux polkit offer to a background process running as the user; whether each can be called from Rust; behavior on machines with no biometric hardware, over remote desktop, and on headless servers; what a program running as the same user can and cannot bypass.
+**27. Operating-system user-presence checks.** (Answered by [note 20](20-operating-system-user-presence-checks.md). The brief stays so that references to it resolve.) What Windows Hello, macOS Touch ID and password prompts, and Linux polkit offer to a background process running as the user; whether each can be called from Rust; behavior on machines with no biometric hardware, over remote desktop, and on headless servers; what a program running as the same user can and cannot bypass.
 
-**28. Wheel and npm packaging, verified hands-on.** Build a maturin `bin` wheel that also carries a pure-Python package and confirm the command and the import both work; the platform tags to publish; a launcher plus platform packages on npm, tested with optional dependencies switched off and with install scripts disabled; what `dist` covers; current registry rules for short-lived publishing credentials and build provenance.
+**28. Wheel and npm packaging, verified hands-on.** (Answered by [note 21](21-wheel-and-npm-packaging.md) and [decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md). The brief stays so that references to it resolve.) Build a maturin `bin` wheel that also carries a pure-Python package and confirm the command and the import both work; the platform tags to publish; a launcher plus platform packages on npm, tested with optional dependencies switched off and with install scripts disabled; what `dist` covers; current registry rules for short-lived publishing credentials and build provenance.
 
 **29. Command-line design for agents.** How current coding agents discover and use commands; output formats that cost the least context; evidence on `--json` conventions, exit codes, and paging; how guidance files and skills are loaded by the main agents today; measured comparisons of commands and MCP tools for the same task.
 
 **30. Sign-in in engine-owned profiles, and device-bound sessions.** On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
 
 **31. Cedar spike.** (Answered by [decision 0082](../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which ran the spike and chose the policy crate's own evaluator. The brief stays so that references to it resolve.) Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Anything2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.
+
+**32. First standard wire protocol of the stream pack.** (Answered by [note 22](22-stream-wire-protocol.md). The brief stays so that references to it resolve.) Added after [decision 0104](../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) left the choice open. Compare NATS with JetStream, MQTT 5, AMQP 1.0, and Kafka against the nine requirements of that record. Check each client crate on the registry and against the closed licence list, and weigh a client of our own against a crate.
+
+**33. Client crates for a server database beside the embedded one.** (Answered by [note 23](23-server-database-clients.md). The brief stays so that references to it resolve.) Added for the ledger's Postgres back end and the data pack's server store. Compare the client crates for Postgres, MySQL, and SQL Server on maintenance, licence tree, C code, encrypted links, and what they leave to the caller: deadlines, the fate of a failed call, read-only transactions, exact numbers, pools.
+
+**34. What turning TLS on needs in this workspace.** (Answered by [note 24](24-turning-tls-on.md). The brief stays so that references to it resolve.) Added after the overnight build's journal named "TLS is off". What the HTTP client, the server listener, the database and stream links, and the test stands need; the cost of each stack; trust roots on three systems and in minimal containers.

@@ -62,12 +62,26 @@ impl Drop for Folder {
 
 /// The host services of a test: a supervisor, the roots given, no secrets.
 pub fn host(folder: &Folder, roots: Roots) -> HostServices {
+    host_with(folder, roots, Arc::new(NoSecrets))
+}
+
+/// A redactor that knows one secret.
+pub struct OneSecret(pub &'static str);
+
+impl a2m_core::Redact for OneSecret {
+    fn redact(&self, text: &str) -> String {
+        text.replace(self.0, a2m_core::REDACTED)
+    }
+}
+
+/// The host services of a test, with the redactor given.
+pub fn host_with(folder: &Folder, roots: Roots, redact: Arc<dyn a2m_core::Redact>) -> HostServices {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     HostServices {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots,
-        redact: Arc::new(NoSecrets),
+        redact,
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), Arc::new(NoSecrets), &logs)
             .unwrap(),
     }
@@ -233,8 +247,15 @@ impl Lowering for StandLowering {
 #[derive(Clone)]
 pub enum Behaviour {
     Done,
+    /// Done, with what was observed.
+    Saw(Observed),
     Absent,
     DoneWithReconcile,
+    /// Done, giving back as its values what the handle set as recorded.
+    EchoRecorded,
+    /// Done, giving back as its value `answer` what the engine answered
+    /// when asked whether another record holds this value under this name.
+    AskElsewhere(String, a2m_core::Value),
     Fail(StepFailure),
 }
 
@@ -257,20 +278,42 @@ impl Driver for StubDriver {
         &'a self,
         prepared: &'a mut Prepared,
         step: &'a Step,
-        _input: &'a StepInput<'a>,
+        input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
             if let Some(count) = prepared.state::<u32>() {
                 *count += 1;
             }
             self.reached.lock().unwrap().push(step.kind.to_string());
-            match self.behaviour.lock().unwrap().clone() {
+            let behaviour = self.behaviour.lock().unwrap().clone();
+            match behaviour {
                 Behaviour::Done => Ok(StepOutcome::Done(Observed::default())),
+                Behaviour::Saw(observed) => Ok(StepOutcome::Done(observed)),
                 Behaviour::Absent => Ok(StepOutcome::Absent(Observed::default())),
                 Behaviour::DoneWithReconcile => Ok(StepOutcome::Done(Observed {
                     for_reconcile: Values::new().with("assigned", "K-1"),
                     ..Observed::default()
                 })),
+                Behaviour::EchoRecorded => Ok(StepOutcome::Done(Observed {
+                    values: prepared.recorded().clone(),
+                    ..Observed::default()
+                })),
+                Behaviour::AskElsewhere(name, value) => {
+                    let answer = match prepared
+                        .recorded_elsewhere(&name, &value, input.deadline)
+                        .await
+                    {
+                        a2m_provider::RecordedElsewhere::Held(record) => {
+                            format!("held:{}:{}", record.step_seq, record.record_seq)
+                        }
+                        a2m_provider::RecordedElsewhere::NotHeld => "not_held".to_owned(),
+                        a2m_provider::RecordedElsewhere::CannotTell => "cannot_tell".to_owned(),
+                    };
+                    Ok(StepOutcome::Done(Observed {
+                        values: Values::new().with("answer", answer),
+                        ..Observed::default()
+                    }))
+                }
                 Behaviour::Fail(failure) => Err(failure),
             }
         })
@@ -477,6 +520,7 @@ impl Pack for TestPack {
                     address_key: "address".to_owned(),
                     fields: JsonSchema::object().required("address", JsonSchema::text()),
                     programs: Vec::new(),
+                    notices: Vec::new(),
                 })
                 .file_kind(Arc::new(CallKind {
                     name: FileKindName::new(&format!("{}_call", self.name)).unwrap(),

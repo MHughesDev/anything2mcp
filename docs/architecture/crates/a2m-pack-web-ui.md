@@ -2,7 +2,7 @@
 
 The web pack's drivers and the knowledge they carry: the `ui`, `page_http`, and `site_tools` drivers, the widget drivers, platform profiles, screen models as a file kind, the auth providers that need a browser, and the drafting rules for observed interfaces. It is built on `a2m-pack-web-browser` and is called back by the engine and the session keeper.
 
-Built so far: the `ui` driver for reads and verified writes, the `screens/` file kind, and the `ui` lowering. Everything else on this page is the design of what follows, and the build order says which is which.
+Built so far: the `ui` driver for reads and verified writes, with every read in an observing tab, in every posture ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)), the `screens/` file kind, the `ui` lowering, the drafting rules from a snapshot's tables and labelled values, by key over a matched screen, and the read half of `page_http` with the `page_requests/` file kind and its drafting rules ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md), [decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). Everything else on this page is the design of what follows, and the build order says which is which.
 
 ## Facts
 
@@ -34,18 +34,19 @@ As built. The manifest is `src/anything2mcp-provider.toml`; what is not built is
 | Registration | Content |
 | --- | --- |
 | Provider | `web`, a pack |
-| Modes | `ui`, archetype interface, rank 60, four reads and one write at a time on a session. `page_http` and `site_tools` are not built |
+| Modes | `ui`, archetype interface, rank 60, four reads and one write at a time on a session. `page_http`, archetype request, rank 40, verb `read`, steps `goto` and `request`, neither of which saves ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). `site_tools` is not built |
 | Surface kinds | `web`, with the address key `origin` and the fields `viewport` (`width`, `height`), `color_scheme` (`light` or `dark`), and `reduced_motion`. `profile` is not accepted yet |
-| Step kinds | `goto`, `wait`, `read`, `set`, `invoke` ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)). `handle`, `upload`, `download`, `observe`, and the kinds of the other two modes are not built |
-| Drivers | `UiDriver`, over the `Browsers` of the cell the product crate hands the pack |
-| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml), [decision 0113](../../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)) |
-| Binding fields | `ui`: `screen`, `fields`, `action`, and `read_back` with a `screen` |
+| Step kinds | `ui`: `goto`, `wait`, `read`, `set`, `invoke` ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)). `page_http`: `goto`, which reaches the page that makes the request and waits for its load, and `request`, which makes the read, checks its status, media type, and shape, and gives its values. `handle`, `upload`, `download`, `observe`, `token`, and `site_tools`'s kind are not built |
+| Drivers | `UiDriver` and `PageHttpDriver`, over the `Browsers` of the cell the product crate hands the pack |
+| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml), [decision 0113](../../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)), and `page_requests/` (`page_request`) for them: a part of an endpoint entry (`endpoint`, `surface`, `method: GET`, `path`, `effect: read`, `response_schema`) and `page`, the page that makes it. It is here, not in the HTTP pack's `endpoints/`, because a rule may draft only a kind its pack owns ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
+| Binding fields | `ui`: `screen`, `fields`, `action`, and `read_back` with a `screen`. `page_http`: `endpoint`, the name of a page request; each placeholder takes the input of its name |
 | Verb lowerings | `ui`: `read`, `list`, `create`, `update`, `upsert`, `submit`, below. `open`, `search`, `delete`, `upload`, and `download` are not built |
 | Control names | `text`, `textarea`, `number`, `currency`, `measurement`, `select`, `checkbox`. The compiler refuses any other with `kernel.unknown_control` |
 | Lint rules | Below |
 | Settings | `packs.web.max_read_chars` and `packs.web.max_snapshot_elements` |
 | Effects | Writes the root `profiles`; network to surfaces; sessions for `web` surfaces; a requirement that lists every path of the browser engine's `KNOWN_PLACES` |
-| Drafting rules, discoverers, auth providers | None yet |
+| Drafting rules | From a `screen` finding to `screen` files and `operation` files, and from an `exchange` finding to `page_request` files and `operation` files, below |
+| Discoverers, auth providers | None yet |
 
 ### Lint rules
 
@@ -61,20 +62,23 @@ Codes are stable once released. A lint code is the pack's name, a dot, and the r
 | `web.variant_unhandled` | Error | A variant with no handling | The schema requires a handling |
 | `web.frame_undeclared` | Error | A screen whose locators need a frame and declare none | No: frames |
 | `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` | No: profiles |
-| `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified | No: `page_http` |
+| `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified | No: the write half of `page_http` |
 
-The file kind and the lowering refuse, under the same prefix: `locator_invalid`, `condition_invalid`, `within_and_section`, `read_not_fitting`, `column_unknown`, `reach_invalid`, `unknown_screen`, `unknown_field`, `unknown_action`, `placeholder_unbound`, `position_type`, `value_type`, `action_missing`, `read_acts`, `read_back_never_absent`, and `not_encodable`.
+The file kind and the lowering refuse, under the same prefix: `locator_invalid`, `condition_invalid`, `within_and_section`, `read_not_fitting`, `column_unknown`, `reach_invalid`, `unknown_screen`, `unknown_field`, `unknown_action`, `placeholder_unbound`, `position_type`, `value_type`, `action_missing`, `read_acts`, `read_back_never_absent`, and `not_encodable`; for `page_http` and its file kind, `unknown_endpoint`, `page_http_writes`, `output_kind`, `output_not_required`, `request_path_invalid`, and `request_shape_invalid`.
 
 ### Drafting rules
 
-Not built. As designed:
+As built ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)). The finding is the probe's, read as data: this crate does not name `a2m-pack-web-probe`, and does not declare the kind under `reads`, so that a registry with only this pack has no missing owner.
 
-| From a finding of kind | The drafter writes | Left as an open question |
+| From a finding of kind | The drafter writes | Left out, or as an open question |
 | --- | --- | --- |
-| `screen`, from a snapshot | A screen model: `reach` from the observed address with identifier segments as placeholders, `ready` from the profile's rule or a visible heading | What the screen is for; its name beyond the mechanical one |
-| `field`, from a snapshot | A field: `control` from the role by a fixed table (textbox to `text`, combobox to `combobox`, checkbox to `checkbox`); `locate` as role and name, then label; `fingerprint` from the nearest heading or section | Its field type. A field type is meaning, so the draft does not compile until it is settled |
-| `action`, from a snapshot | Nothing | Every action, and whether it commits |
-| A tool a page registers, marked read-only by the page | A `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
+| `screen`, from a snapshot | For each table the page names, readable row by row, inside a part of the page the snapshot names once: `screens/{page}_{table}.yaml`, with `reach` the finding's path, `ready` the table showing, `rows` located by the table's role and name, the part of the page as the fingerprint, every heading, and one column of type `untrusted_text` for each heading, and `operations/{page}_{table}_list.yaml`. For the values the page labels, each a `definition` whose name one `term` of the page also has, once, in a part of the page named once: `screens/{page}_values.yaml`, one field each located by the role `definition` and the label, read as text, and `operations/{page}_values_get.yaml`, `{target}_{page}_get`. A placeholder in the finding's path, as screen matching gives it, is each read's input, of type `text`, and its key; `{page}` is the path's plain words ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) | A table with no name; a column whose heading another shares; a page cut short, of another origin than one `web` surface, or with a path no address can hold as written. Two tables with one name: an open question in place of the locator. A label two terms share: no field for it, and an open question apart, in `screens/{page}_values_undecided.yaml` |
+| `screen`, from a snapshot | For each such screen that holds no question: `operations/{page}_{table}_list.yaml`, `{target}_{page}_{table}_list`, `effect: read`, `verb: list`, no input, one list output of type `untrusted_text` for each column | An example, a test, a key |
+| `field`, `action`, a form, a button | Nothing | Every field and action, and what a field means. A drafted screen with an action is refused by the drafter |
+| `exchange`, a request a page made by itself (`made_by`), GET, JSON, status 200, on one `web` surface; matched by key when the discoverer joined several ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). A read is drafted only when the driver can make the request again exactly: the finding says the page sent no query, no entry of one that was left out, and no header its script set outside `REPRODUCED_HEADERS`, which is empty; for any other, the entry is drafted with an open question in place of its path that quotes the path, the query's names, and the headers' names, and no operation is drafted ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) | `page_requests/{request}.yaml`, with the path, the page, and the answer's top-level names and kinds, required when every answer held them; `operations/{request}_request.yaml`, `{target}_{request}_get`, `page_http`, verb `read`, the placeholders as inputs and key, the plain values as outputs: a string `untrusted_text`, an integer `integer`, a boolean `boolean`. `{request}` is the request path's plain words, so a screen's reads, named from the page's path, never take its name | Any other method, an answer that is not JSON, another origin, a document the tab was sent to; a number with a fraction, a nested value, a value some answers left out; an example |
+| A tool a page registers, marked read-only by the page | Not built: a `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
+
+Screen matching is done by the discoverer, which sees every page of one discovery: the drafter calls a rule with one finding. Setting a stored finding against existing screen models is not built.
 
 ## Interface
 
@@ -90,6 +94,9 @@ pub fn pack(browsers: SharedBrowsers) -> WebUiPack;
 pub fn add_to(builder: &mut RegistryBuilder, browsers: SharedBrowsers);
 
 pub const UI_MODE: &str = "ui";
+pub const PAGE_HTTP_MODE: &str = "page_http";
+pub const REQUEST: StepKind;                         // `request`, of `page_http`
+pub const REQUEST_KIND: FileKindName;                 // `page_request`
 pub const ADDRESS_KEY: &str = "origin";
 pub const PACK: &str = "web";
 pub const SCREEN_KIND: FileKindName;                  // `screen`
@@ -105,11 +112,15 @@ The host's roots must hold a folder named `profiles` that may be written. The dr
 
 | Step | Refers to | Arguments | Does |
 | --- | --- | --- | --- |
-| `goto` | A screen | `reach.<placeholder>` for each placeholder of its address | Builds the address from the surface's origin and the screen's path, each value one percent-encoded segment, and sends the tab there. A page that ends on another origin is `policy`, `surface_not_declared` |
+| `goto` | A screen | `reach.<placeholder>` for each placeholder of its address | Builds the address from the surface's origin and the screen's path, each value one plain segment (letters, digits, `-`, `.`, `_`, `~`, not dots only); any other value is `input`, `address_value_refused`, before the tab is sent anywhere, never encoded. The made address is checked against the origin and the screen's pattern, and sends the tab there. A page that ends on another origin is `policy`, `surface_not_declared` ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) |
 | `wait` | A screen | None | Waits, on the base's observer, until the screen's `ready` holds or one of its variants shows. A variant `absent` is the outcome absent, for a lookup; a variant `stop` is `rejected`. In a write binding it keeps a snapshot |
 | `read` | A screen | None | For each output, finds the field of its name and reads it by its control's rule, as the text the page shows; for a list, reads the screen's table by its headings |
 | `set` | A screen | `value` | Finds the field and sets it by its control's rule |
-| `invoke` | A screen | None | Finds the action, clicks it, and waits until the page shows the action's `confirm` or a variant. Marked as the commit point when the action says `commits`. Keeps a snapshot |
+| `invoke` | A screen | None | Finds the action, and does not click it when the page already shows one of the screen's variants or the action's `confirm`: its answer could not be told from them. Otherwise clicks it, and waits until the page shows the action's `confirm` or a variant. A variant is the application's answer, except that after a committing click an `absent` variant, or a variant shown together with the confirmation, leaves the write in doubt. Marked as the commit point when the action says `commits`. Keeps a snapshot |
+
+The tab is opened for the surface's own origin, and the browser engine holds it there ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)): a move to another origin is ended in the browser, and no page of another origin is located, read, or acted on. What the tab refused, a move of the page, a window, or a download, is heard at the start and the end of every step and while a click's answer is awaited, and stops the run: `policy`, `surface_not_declared` for a move, `unknown_variant`, `unexpected_page` for a window or a download, and `possible_commit`, `no_confirmation` once a committing click was made ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)). Another destination of the run is another surface, whose screens the run does not hold, so it is not one of the tab's origins.
+
+A run against a declared test record sets fields and performs only the action marked as the commit point; a run that may only look sets and clicks nothing ([decision 0147](../../decisions/0147-the-engine-after-its-safety-audit.md)). The lowering states that only an `invoke` may save, as its action declares, and that a `goto`, `wait`, `read`, or `set` never does; no kind of step always saves, so the manifest lists no `commit_steps`. A binding's least effect is the HTTP pack's rule: a verb that reads is `read`, `submit` is `irreversible`, and any other write is `write` with a `read_back` and `irreversible` without one. A screen that declares any action describes a write, and the drafter writes none.
 
 `read`, `set`, and `invoke` each find their element through the field's or action's locators in order, and check its fingerprint. A locator that matches several elements, and a match that fails its fingerprint, stop the step; a later locator is tried only when an earlier one matches nothing.
 
@@ -128,15 +139,15 @@ What the kernel gives this crate:
 - `Driver` has four calls. Confirm and read-back are lists of steps that `act` carries out ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)). A step marked as a lookup may report a record as absent. Every failure says whether the request was not sent, was answered, or is unknown: a crash after an `invoke` reached the page is unknown. The engine reaches the driver through a handle that refuses a committing step without the ledger's intent token.
 - An outcome can carry outputs known before the commit point, such as a value the form shows before saving; the engine records them before the committing step runs.
 - `Plan` and `Step` are data in `a2m-core`. A step's payload is opaque bytes that this crate's lowering wrote and its driver reads; the kernel stores and hashes it and never decodes it.
-- `page_http` reads `endpoints/` as data. If `a2m-pack-http` is not enabled, a `page_http` binding does not compile. The endpoint entry is compiled here, into this crate's payload; no request-template type is shared.
+- `page_http` reads the `page_requests/` this pack owns, written in the endpoint catalog's form, and compiles them into its own payload; no request-template type is shared. Sharing one catalog needs the drafter to let a rule draft a kind its pack reads, or the HTTP pack to draft from an `exchange` that names `made_by` ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)).
 - `SessionLease` lets a driver report an expiry signal and reach the session's live handle, here a `ProfileKey`, without holding a credential. `inject` places a token into a `page_http` request header without returning it.
 
 ### How each mode fills the loop
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
-| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `wait`, `set` through the control's rule, `invoke` | The action's declared `confirm`, inside the committing `invoke`; the confirm list is empty | The fields again after the screen is reached afresh. `prefer: response` is not built |
-| `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` with `fetch` from inside the page | Status and response schema | The endpoint the binding names |
+| `ui` | An observing tab in the session's profile, with the target's fixed environment, opened at prepare, in which the browser fails every request of the page that could change the system: every read, and every read-back, the preview's and the freshness check's among them, runs there, in every posture. Each `goto` says which tab its screen is reached in (`GotoStep { tab }`): the lowering marks `act` only on the `goto` of a write's own steps, and the driver opens an acting tab in the same profile for it, in a live run or one against a test record; in any other posture every tab is the observing one. A plan whose `goto` does not say is answered from the plan: an acting tab only when every binding holding that very step is the work of an operation that writes, otherwise `step_not_usable` ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) | `goto`, `wait`, `set` through the control's rule, `invoke` | The action's declared `confirm`, inside the committing `invoke`; the confirm list is empty | The fields again after the screen is reached afresh. `prefer: response` is not built |
+| `page_http`, as built for reads ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | An observing tab in the session's profile, in every posture | `goto` the entry's `page`, which waits for its load; `request`, through the engine's `read_from_page`: GET alone, to the entry's path with each placeholder one plain segment and no word of an action, no header, no body, no redirect (a redirect is the application's answer: `unexpected_status`) | Inside `request`: status 200, a JSON media type, the answer's shape against the entry, before any value is returned | None: it only reads. The write half needs the page's anti-forgery token placed without being read, a commit point, and a read-back |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
 ### The entry bar
@@ -147,10 +158,18 @@ What the kernel gives this crate:
 | 2 | A read-back rule for every write | As in the table above |
 | 3 | Each identity strategy | `natural` and `composite`: `reach` built from the key; built. `stamped`: write the stamp field, then find the record through a list screen; not built. `find`: a search screen, with the declared `settle`; not built. `none`: the write is `irreversible` |
 | 4 | A test stand | The test application, cases 1 to 27; `site_tools` needs a page that registers tools, which is a new case. As built, the application has cases 1 to 4: its line-item form and its tables. A page with a password, a check box, and a select is served by the test that needs it |
-| 5 | A discoverer | Snapshots and capture are in `a2m-pack-web-probe`; screen matching is here |
+| 5 | A discoverer | Snapshots and capture are in `a2m-pack-web-probe`, and so is the matching of pages into one screen (decision 0187); setting a finding against existing screen models would be here |
 | 6 | Failures mapped | Below |
 | 7 | Effects and hazards | Starts the browser, by path and digest, through the supervisor its context scopes; reads and writes the profile root and a staging folder for files; network to the target's declared web surfaces for what the engine itself sends; holds sessions for `web` surfaces; changes a person's screen only for a sign-in window. Hazards come from operations, not from the driver |
 | 8 | A record per new mode | None: these modes are from decision 0005 |
+
+### After the kernel's second pass (decisions 0161 and 0162)
+
+- Every step input is built with `StepInput::new` and `for_record`. The `acting` capture is made with `Capture::acting`; its bytes are the ones written before. Five runs of one read give one signature (the existing test).
+- A refusal the page shows, a screen variant handled `stop`, carries the text of that variant's element through `StepFailure::with_said`, read through the browser base, which redacts every text it reads. The failure's sentence names the variant and nothing the page said.
+- No write here states `acknowledged`: the package named none for this pack. `delete` is `irreversible`; a screen that declares any action counts as a write.
+- No version guard of an endpoint, and no key argument, exists in this pack: `page_http` only reads.
+- Keys: no step reads `StepInput::key`.
 
 ## Used by, and uses
 
@@ -184,16 +203,19 @@ As built. Every failure says whether input reached the page.
 | `unknown_variant` | `unknown_control` | The plan names a control this driver has no rule for | Not sent |
 | `unknown_variant` | `unexpected_dialog` | The page opened a dialog; none can be declared yet | As the base reports |
 | `unknown_variant` | `read_too_large` | A read longer than `max_read_chars` | Answered |
+| `unknown_variant` | `unexpected_status` | A `page_http` read answered with a status other than 200, or with a redirect, which it follows nowhere | Answered |
+| `drift` | `response_schema_mismatch` | A `page_http` answer that is not JSON, not an object, lacks a required name, holds a declared name of another kind, or an undeclared one where the entry says `additionalProperties: false` | Answered |
 | `unknown_variant` | `browser_not_owned` | The base's: what started is not a browser the engine can own | Not sent |
-| `rejected` | `app_validation_error` | The page shows a variant with handling `stop` | Answered |
-| `possible_commit` | `no_confirmation` | After the click of a committing action: the confirmation did not show in time, or the browser was lost. The handle makes every other doubtful failure of that step the same | Unknown |
-| `policy` | `surface_not_declared` | The surface's address is not one the run may reach, or the page ended on another origin | Not sent, or answered |
+| `rejected` | `app_validation_error` | The page shows a variant with handling `stop`: at `wait`, after a click that did not show it before, or before a click, which is then not made | Answered; not sent before a click |
+| `possible_commit` | `no_confirmation` | After the click of a committing action: the confirmation did not show in time, the browser was lost, the page tried to leave, opened a window, or began a download, the page showed an `absent` variant, or both a variant and the confirmation. The handle makes every other doubtful failure of that step the same | Unknown |
+| `policy` | `page_write_refused` | The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it: a read is never made where the page may write ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) | Not sent, or answered |
+| `policy` | `surface_not_declared` | The surface's address is not one the run may reach, the page ended on another origin, or the page tried to move to one, which the browser stopped | Not sent, or answered |
 | `policy` | `password_read_refused` | The base's: a password input was asked for its value | Not sent |
-| `policy` | `read_only_posture` | The contract's: a `set` or an `invoke` in a run that may only look | Not sent |
+| `policy` | `read_only_posture` | The contract's: a `set` or an `invoke` in a run that may only look, or an `invoke` that is not the commit point in a run against a test record | Not sent |
 | `busy` | `browser_unavailable` | The base's: no browser is installed | Not sent |
 | `input` | `step_not_usable` | A step or a payload this driver cannot carry out as written; a session whose provider hands over a credential to place | Not sent |
 | `input` | `address_invalid` | The surface's `origin` is more than a scheme, a host, and a port | Not sent |
-| `input` | `address_value_refused` | A value that cannot stand in one segment of a screen's address | Not sent |
+| `input` | `address_value_refused` | A value that cannot stand in one segment of a screen's address, or that holds a word of an action | Not sent |
 | `transient` | `timeout`, `connection_lost` | The contract's: the browser did not answer, or was lost, on a step that commits nothing | As the base reports |
 
 Not built: `edge_blocked` and its codes, `session_expired` through the lease, `stale`, `version_conflict`.
@@ -212,9 +234,18 @@ Not built: `edge_blocked` and its codes, `session_expired` through the lease, `s
 | A refused write is `rejected`, answered, and stores nothing. A run that may only look touches no control. A surface the run may not reach is not opened | `tests/driver.rs` |
 | A browser lost after the committing click is `possible_commit`, never `transient`, and nothing is sent again | `tests/driver.rs`: the application holds the save, the browser is killed, the control interface counts |
 | A password on the page is never read, and is in no capture and no log; a snapshot masks it | `tests/driver.rs`, with a page the test serves |
+| A page that moves itself to another origin stops the run before a field is set; nothing reaches the other origin | `tests/driver.rs`, `a_page_that_moves_to_another_origin_is_stopped_before_anything_is_typed`, with the test application's `leaving` pages and its traps |
+| A page that leaves, or opens a window, after a committing click is `possible_commit`, while the application did store the save | `tests/driver.rs`, `a_page_that_leaves_or_opens_a_window_after_the_committing_click_is_a_write_in_doubt` |
+| A variant, or the confirmation, the page showed before the click is never taken for its answer: the click is not made, and nothing is stored | `tests/driver.rs`, `a_state_the_page_showed_before_the_click_is_never_taken_for_its_answer` |
+| A binding is held to the least effect of what it does | `tests/compile.rs` |
 | No driver calls an auth provider or renews | The driver holds none; a lease is used for its profile only |
+| A drafted read of a snapshot's table compiles, reads what the application holds, writes nothing, and drafts the same bytes twice; a drafted screen the page no longer matches stops; a table two of the page share is a question, a form drafts nothing, and a drafted screen with an action is refused | `tests/draft.rs`, against the snapshot the probe's test holds equal to discovery |
+| A read never runs in a tab that can write, in any posture: a page that writes when it loads stops a read live, in the sandbox with and without test records, and in discovery, as `page_write_refused` naming the page's own write, and the application stores nothing; the same page reached as a write's step does store it | `tests/draft.rs`, `a_read_never_runs_in_a_tab_that_can_write_in_any_posture` |
+| A request the driver cannot make again exactly (a query, a header the page's script set, a finding that does not say) drafts its entry with a quoted question and no read; a read written by hand that drops them is answered with another variant of the same shape, which is why | `tests/page_http.rs`, `a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no_read` |
+| A label that would steer the agent reaches it only as quoted words of a question; one with characters that hide or reorder text, or longer than 64 characters, is drafted nowhere | `tests/draft.rs`, `a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read` |
 | An undeclared dialog stops the run | The mapping is built; no test, because the test application opens no dialog |
-| `ui` steps stay under 50 ms of overhead on a warm tab | Not measured |
+| A `page_http` read reads each order by key as the control interface holds it; a key that leaves its segment sends nothing; a changed answer stops by name; the page's cookie and token are nowhere in what the pack gives | `tests/page_http.rs`, with the probe's finding kept in `tests/fixtures/findings/order_totals_exchange.json` |
+| `ui` steps stay under 50 ms of overhead on a warm tab | Not measured as a budget. A first measurement ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)), headless on Linux, the totals of one order with no delay: a whole `ui` read 118 ms, a whole `page_http` read 99 ms, the `request` step alone 9 ms, the two results equal |
 
 ## Build order
 
@@ -223,17 +254,26 @@ Not built: `edge_blocked` and its codes, `session_expired` through the lease, `s
 3. Done in part: reads of text, value, checked state, and table rows; variants `absent` and `stop`. Not built: frames, `open` and `search`, a row by its key, attribute reads, the conditions `value`, `url`, `response`, and `profile_ready`.
 4. Done: `set` for text, select, and check box; `invoke` with the commit point, the confirmation inside it, and `possible_commit`; snapshots at the two checkpoints of a write; read-back from the page afresh.
 5. Not built, package 2.3 and 2.6: the auth providers. The base has no visible window and no export of a session's state yet, and the test application has no sign-in page, so neither the sign-in window nor `form_login` can be proven. Signs of expiry are not detected. A lease is used for the name of its profile; a provider that hands over a credential to place is refused.
-6. Not built: `PageHttpDriver` (package 4.2), `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, the drafting rules and screen matching.
+6. Not built: the write half of `PageHttpDriver` (package 4.2): when it is built, its lowering takes the HTTP pack's rules for the `endpoints/` kind it shares ([decision 0154](../../decisions/0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md)): its request step is `AsDeclared` and every other kind `Never`, a version precondition needs a read-back endpoint that reads a version ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)), and its driver refuses an endpoint that writes from a step not marked `commits`. Also not built: `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, setting a finding against existing screen models, and drafting fields that are set and `site_tools` reads.
+7. Done: the drafting rules from a snapshot's tables, and the observing tab for a run that may only look ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)); every read in an observing tab, in every posture, and a write's own steps alone in an acting tab ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)).
+8. Done: reads by key over a matched screen, a placeholder's value refused unless it is one plain segment, and the `get` read of labelled values ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)).
+9. Done: the read half of `page_http`: the mode, its lowering and driver, the `page_requests/` file kind, and the drafting rules from a page's own `exchange` ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). Not built: its write half, a `token` step, `responses` other than 200, a lookup that finds a record absent, a page kept open between reads, and one catalog with the HTTP pack.
 
 ## Open points
 
 - **`screens/` is registered twice,** by this pack for `web` surfaces and by the desktop pack for `desktop` surfaces. Whether the shared parts should become the interface archetype's, in the kernel, is for the desktop pack to show.
 - **A fingerprint cannot name a role,** because the base cannot say what role an element has or whether two queries found one element ([decision 0113](../../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)).
 - **A failing step keeps no evidence.** A step failure carries no capture, so the snapshot of the page at a failure cannot be handed to the trace. What a step did travels as a capture named `acting`, because an outcome has no field for it.
-- **The lease does not say whose session it is.** The base keys a browser by target, environment, and identity; the lease gives a session and the name of a profile. The driver makes an account name from the profile's name. No test runs with a lease.
+- **The lease does not say whose session it is.** The base keys a browser by target, environment, and identity; the lease gives a session and the name of a profile. The driver makes an account name from the profile's name, and refuses a profile named as one no person owns (`anonymous`, the profile of every run with no session, and `discovery`, the probe's). Every run with no session of one target and environment shares one profile, so cookies and storage a page sets in one person's run are there in the next person's; such a surface asks for no sign-in, and its pages are held to its origin, but the profile is not one person's. No test runs with a lease.
+- **The read-back is a new visit to the page, in the same profile.** For a page the server renders this is a fresh read. An application that keeps an edit in the page's own storage, and sends it later, would show its own copy, and the write would look verified before the server has it; the engine would need to read back with its cache and the page's storage set aside, which the browser engine does not offer yet.
+- **Two checks are not one look at the page.** A fingerprint is checked by a second locate, and a click is made after the variants and the confirmation were asked about; the page can change in between. A locator that has its own `within` is refused with a fingerprint by the compiler, and again by the driver. A refusal the page shows a moment after the click, for a reason of its own such as a field that lost the focus, is taken as the answer; on resume, a `rejected` record is reconciled before anything is written again.
+- **Where a page's own words reach an agent as the product's** ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)). A tool's, an output's, a screen's, and a drafted file's name: ASCII lowercase letters, digits, and `_`, at most 64 characters, from the page's words by a fixed rule; such a name can still say something ("ignore previous instructions"), and is provisional until a person renames it. A description: the product's sentence with the page's path, which is plain segments and placeholders and at most 160 characters. A question: the page's words through `open_question_quoting`, cleaned and bounded by the kernel. A locator's name and a heading in a drafted screen: the page's words as data, at most 64 characters, with no control character and none that hides or reorders text, or not drafted. A finding's summary: the describer keeps the system's text apart, as untrusted.
+- **A key that is a word of an action is refused,** so an order whose key is `PAY-100` cannot be read by key; safe before easy.
+- **A write's own steps act in its acting tab after the ledger's intent is written;** a page that writes by itself as that screen loads does so then, as part of operating the screen, and only the record's read-back verifies it. Its preview and freshness reads run in the observing tab.
+- **Page text in captures is not marked untrusted here.** A snapshot holds the page's titles and names as evidence; marking free text from a system as untrusted where it reaches a caller is the engine's.
 - **A browser program named in a person's settings cannot be started,** because a scoped supervisor starts only what the manifest declares. The pack declares no such setting.
 - **Restricted fields are not masked in a snapshot.** The base masks passwords and what the redactor knows; the driver does not yet tell it which fields a target marks restricted.
-- How the `page_http` lowering is held to the `endpoints/` schema version it was written for, when `a2m-pack-http` changes it.
+- How `page_requests/` is held to the endpoint catalog's form when `a2m-pack-http` changes it, until the two share one catalog.
 - The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is.
 - Whether a validation message is always a declared variant, or the profile can name a generic one.
 - Whether a table whose cells hold a tab or a line break needs another way of reading than the text the page shows.

@@ -15,11 +15,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, Digest, EffectClass, Environment, Failure, Mode, OperationName, PrincipalId,
-    RecordKey, RunId, RunState, RunnerId, TargetName, Timestamp, Value, WorkspaceId,
+    Digest, EffectClass, Environment, Failure, Mode, OperationName, PrincipalId, RecordKey, RunId,
+    RunState, RunnerId, TargetName, Timestamp, Value, WorkspaceId,
 };
 use a2m_ledger::{
-    DATABASE_FILE_NAME, Durability, Fence, NewRun, Owner, PlannedRecord, RecordIntent, RecordRef,
+    DATABASE_FILE_NAME, Durability, Fence, NewRun, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind, Tx, WriteClearance,
 };
 use a2m_sched::{
@@ -362,24 +362,10 @@ pub fn record(fence: &Fence) -> RecordRef {
     }
 }
 
-fn approve(tx: &mut Tx<'_>, run: RunId) -> Result<WriteClearance, Failure> {
-    let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-    let now = tx.now();
-    tx.tables(Owner::Policy).execute(
-        "INSERT INTO approvals
-            (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check,
-             granted_at, used_at)
-         VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-        &[
-            id.to_string().into(),
-            workspace().to_string().into(),
-            run.to_string().into(),
-            diff_hash().to_string().into(),
-            principal(9).to_string().into(),
-            now.into(),
-        ],
-    )?;
-    Ok(WriteClearance::Approval(id))
+/// The policy engine's stand-in: an approval of the run's diff, used once,
+/// through the ledger's `testing` feature (decision 0145).
+fn approve(tx: &mut Tx<'_>, fence: &Fence) -> Result<WriteClearance, Failure> {
+    a2m_ledger::testing::approve(tx, fence)
 }
 
 /// Brings a write run, under `fence`, to `running` with the lock on the
@@ -403,7 +389,7 @@ pub async fn start_writing(store: &Store, fence: Fence, name: &str, intent: bool
             ledger.plan_records(&fence, &[planned])?;
             ledger.store_diff(&fence, diff_hash(), None)?;
             ledger.set_state(&fence, RunState::NeedsApproval, None)?;
-            let clearance = approve(tx, fence.run)?;
+            let clearance = approve(tx, &fence)?;
             tx.ledger().begin_writes(&fence, clearance)?;
             tx.ledger().take_lock(&fence, record(&fence)).map(|_| ())
         })

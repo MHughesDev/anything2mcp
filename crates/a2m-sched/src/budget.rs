@@ -31,6 +31,11 @@ struct Bucket {
     refill: i64,
     per_ms: i64,
     level: i64,
+    /// The moment up to which the level counts refills: the later of the
+    /// moment stored and now. It never goes back, so a clock that was set
+    /// back and comes forward again refills nothing for the time between,
+    /// which was counted before.
+    counted_to: i64,
 }
 
 impl Bucket {
@@ -77,10 +82,13 @@ pub(crate) fn set_limit(
     let (capacity, refill, per_ms) = limit_parts(limit)?;
     let now = tx.now();
     let bucket = load(tx, key, now)?;
-    let level = match bucket {
+    let (level, counted_to) = match bucket {
         // What it holds, in requests, carried over to the new period.
-        Some(old) => (old.level / old.per_ms).min(capacity) * per_ms,
-        None => capacity * per_ms,
+        Some(old) => (
+            (old.level / old.per_ms).min(capacity) * per_ms,
+            Timestamp::from_unix_millis(old.counted_to),
+        ),
+        None => (capacity * per_ms, now),
     };
     tx.tables(Owner::Sched).execute(
         "INSERT INTO budgets (budget_key, capacity, refill, per_ms, level, updated_at)
@@ -93,7 +101,7 @@ pub(crate) fn set_limit(
             refill.into(),
             per_ms.into(),
             level.into(),
-            now.into(),
+            counted_to.into(),
         ],
     )?;
     Ok(())
@@ -113,12 +121,16 @@ fn load(tx: &mut Tx<'_>, key: &BudgetKey, now: Timestamp) -> Result<Option<Bucke
         refill: row.int(1)?,
         per_ms: row.int(2)?,
         level: row.int(3)?,
+        counted_to: 0,
     };
     if bucket.capacity <= 0 || bucket.refill <= 0 || bucket.per_ms <= 0 {
         return Err(failure::corrupt("a budget with no capacity or no refill"));
     }
-    // A clock that went backwards refills nothing.
-    bucket.level = bucket.refilled(now.as_unix_millis().saturating_sub(row.int(4)?));
+    // A clock that went backwards refills nothing, now or when it comes
+    // forward again.
+    let stored = row.int(4)?;
+    bucket.level = bucket.refilled(now.as_unix_millis().saturating_sub(stored));
+    bucket.counted_to = stored.max(now.as_unix_millis());
     Ok(Some(bucket))
 }
 
@@ -166,7 +178,10 @@ pub(crate) fn take(
             .iter()
             .map(|(_, bucket)| {
                 let needed = if whole { want.min(bucket.capacity) } else { 1 };
-                bucket.wait_for(needed)
+                // A bucket counted to a later moment refills from there.
+                (bucket.counted_to - now.as_unix_millis())
+                    .max(0)
+                    .saturating_add(bucket.wait_for(needed))
             })
             .max()
             .unwrap_or(0)
@@ -180,7 +195,11 @@ pub(crate) fn take(
         let level = bucket.level - granted * bucket.per_ms;
         tx.tables(Owner::Sched).execute(
             "UPDATE budgets SET level = ?2, updated_at = ?3 WHERE budget_key = ?1",
-            &[SqlValue::from(key.as_str()), level.into(), now.into()],
+            &[
+                SqlValue::from(key.as_str()),
+                level.into(),
+                Timestamp::from_unix_millis(bucket.counted_to).into(),
+            ],
         )?;
         over_ms = over_ms.max((granted * bucket.per_ms + bucket.refill - 1) / bucket.refill);
     }
@@ -202,6 +221,7 @@ mod tests {
             refill: 3,
             per_ms: 2_000,
             level: 0,
+            counted_to: 0,
         };
         assert_eq!(bucket.refilled(0), 0);
         // One request is 2000 units; 667 ms give 2001.

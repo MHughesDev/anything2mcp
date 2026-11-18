@@ -17,7 +17,9 @@ use std::sync::atomic::Ordering;
 use a2m_core::{Digest, FailureClass, RunState, SessionState, SurfaceName, Value, Values};
 use a2m_engine::{EngineEvent, JobKind, JobOutcome};
 use a2m_telemetry::ChoiceReason;
-use common::{FIRST_MODE, ORDER_GET, SECOND_MODE, SECURE_GET, STOCK_GET, Scene};
+use common::{
+    FIRST_MODE, ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, SECURE_GET, STOCK_GET, Scene, expr,
+};
 
 fn order(id: &str) -> Values {
     Values::new().with("order_id", id)
@@ -146,9 +148,11 @@ async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
     };
     assert_eq!(failure.class(), FailureClass::Policy);
     assert_eq!(failure.code().as_str(), "plan_unverified");
-    // Nothing was asked of the decider or of a driver.
+    // Nothing was asked of the decider or of a driver: the run was moved
+    // to `validating`, and nothing else happened.
     assert!(scene.control.questions.lock().unwrap().is_empty());
-    assert!(scene.hooks.seen().is_empty());
+    assert_eq!(scene.hooks.seen(), ["moved:validating"]);
+    assert!(scene.hooks.postures.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -286,4 +290,70 @@ async fn a_session_known_to_need_a_person_is_not_asked_for() {
     assert_eq!(outcome.run_state(), Some(RunState::NeedsLogin));
     assert!(scene.control.wants.lock().unwrap().is_empty());
     assert_eq!(scene.hooks.count("get_order"), 0);
+}
+
+#[tokio::test]
+async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
+    // A step's condition gives a text. It is not taken for false, which
+    // would skip the step silently and run the ones after it.
+    let scene = Scene::new(ORDER_GET, |plan| {
+        let not_a_condition = expr(plan, "input.order_id", a2m_core::ValueType::Text);
+        for binding in &mut plan.operations[0].bindings {
+            binding.act[0].when = Some(not_a_condition);
+        }
+    })
+    .await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
+    let failure = outcome.failure().unwrap();
+    assert_eq!(
+        (failure.class(), failure.code().as_str()),
+        (FailureClass::UnknownVariant, "condition_not_boolean")
+    );
+    assert_eq!(scene.hooks.count("get_order"), 0);
+
+    // A binding's precondition that gives no boolean is not taken as "does
+    // not qualify" either.
+    let scene = Scene::new(ORDER_GET, |plan| {
+        let not_a_condition = expr(plan, "input.order_id", a2m_core::ValueType::Text);
+        plan.operations[0].bindings[0].precondition = Some(not_a_condition);
+    })
+    .await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
+    assert_eq!(
+        outcome.failure().unwrap().code().as_str(),
+        "condition_not_boolean"
+    );
+    assert_eq!(scene.hooks.count("get_order"), 0);
+}
+
+#[tokio::test]
+async fn what_a_writing_tool_must_hold_alone_is_told_from_the_plan_and_the_manifests() {
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    let plan = scene.control.plan.clone();
+    let name = |text: &str| a2m_core::OperationName::new(text).unwrap();
+    let needs = |tool: &str| -> Vec<(String, String)> {
+        scene
+            .engine
+            .exclusive_needs(&plan, &name(tool))
+            .into_iter()
+            .map(|need| (need.kind.as_str().to_owned(), need.surface.to_string()))
+            .collect()
+    };
+    // A read holds nothing alone. A write, alone or in a pipeline, holds
+    // what its bindings' modes declare, once for each surface: the test
+    // pack's modes state nothing, which is the surface.
+    assert!(needs(ORDER_GET).is_empty());
+    assert_eq!(
+        needs(ITEM_UPSERT),
+        [("surface".to_owned(), "app".to_owned())]
+    );
+    assert_eq!(
+        needs(ORDER_FILL),
+        [("surface".to_owned(), "app".to_owned())]
+    );
+    assert!(needs("example_no_such_tool").is_empty());
 }

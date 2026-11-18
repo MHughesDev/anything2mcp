@@ -36,7 +36,7 @@ It is a provider of its own, named `web_probe`, because a pack is handed its con
 | Finding kinds | Built: `surface`, `sign_in_method`, `screen`, `exchange`, each a checked name. It produces `endpoint` findings and does not own that kind: its manifest reads it. Not built: `declared_tool`. `field` and `action` are not kinds: one `screen` finding holds its fields and actions |
 | Discoverers | Built: `web_probe`, `web_snapshot`, `web_capture`. Not built: `web_auth`, `web_endpoints`, `web_declared` |
 | Describer | `web_describer`, for each discoverer |
-| Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, endpoints by `a2m-pack-http` |
+| Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, which drafts a read of each table a snapshot names, and endpoints by `a2m-pack-http` |
 | Effects | The root `profiles` for writing, the network of the target's surfaces, and a requirement that lists every place of the base's `KNOWN_PLACES`; a test holds the two lists equal |
 | Settings | `max_pages`, the page budget of one discovery, 20 unless set |
 
@@ -45,7 +45,7 @@ It is a provider of its own, named `web_probe`, because a pack is handed its con
 | `web_probe`, built | `target.probe` | One page load: the status, where the tab ended, whether a password input shows, the roles of the snapshot, and whether the document is JSON. The kind of interface is named by `INTERFACE_RULES`, which are data. Platform profiles are not built, so the platform is `unknown_platform` and the tier `unsupported` | Surface; sign-in method when the page asks for one | The surface `discovered`; the sign-in method `inferred` |
 | `web_auth`, not built | `auth.detect` | Redirects, challenges, a request for a client certificate, the identity provider's discovery document, whether backend calls carry a cookie or a bearer token | Sign-in method, with a recommended mode | `inferred`, with the observations as evidence |
 | `web_snapshot`, built | `screen.snapshot` | The accessibility tree, through the base's snapshot builder, of the start page, of each page the focus names, and of the pages plain links lead to, as deep as the bounds allow | Screen, with its elements | `discovered`; coverage `partial`, limitation `single_variant` |
-| `web_capture`, built in part | `capture.start`, `capture.stop`, and scenario runs | The request for each document the tab is sent to, with the shape of a JSON answer; each request a page tried that the tab refused. Not the requests a page's own scripts read with: the base has no stream of exchanges yet | Exchange; endpoint | An answered exchange `discovered`; a refused one `inferred`. Endpoints as below |
+| `web_capture`, built in part | `capture.start`, `capture.stop`, and scenario runs | The request for each document the tab is sent to, with the shape of a JSON answer; each request a page tried that the tab refused; each request a page's own script made with GET to the surface's origin, as the observing tab records it: method, path, the query's names, status, the names and kinds of a JSON answer's fields to one level, the page that made it (`made_by`), and the names of the headers that carried a credential (`credential_headers`), never a value ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); and the names of the headers the page's script set (`set_headers`) and whether an entry of its query was left out (`query_left_out`) ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)). The wait for one page's own requests is at most 10 s; requests still awaited then, and requests past the 256 a tab keeps, are left out and said to be in the page's limitations. Requests a page made by itself, of one method and origin, one status and one JSON shape, whose paths differ in one segment and whose pages differ in one segment holding the same value, are one `exchange` finding with the placeholder in `path` and `made_by` and the requests in `paths`; theirs are not given apart ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | Exchange; endpoint | An answered exchange `discovered`; a refused one `inferred`. Endpoints as below |
 | `web_endpoints`, not built apart | `endpoints.infer` | Stored exchange findings, not the page. Until the sandbox port hands over stored findings, the inference runs inside `web_capture` | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
 | `web_declared`, not built | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
 
@@ -58,10 +58,10 @@ A value is replaced by its type everywhere: `empty`, `integer`, `decimal`, `bool
 | Finding | Kept | Kept as a type only |
 | --- | --- | --- |
 | `screen` | The title; each element's role, depth, states, and heading level; the accessible name of a role in `NAMED_ROLES` (a heading, a control, a column header) and of a link outside a record | Every value of a control; the name of any other role, such as a cell or a line of text; the name of a link inside a row or a list item. A password is `password` |
-| `exchange` | The method, the path, the status, the names of the query's parameters, the names of a JSON answer's fields | The values of the query and of the answer |
+| `exchange` | The method, the path by structure, the status, the plain names of the query's parameters, the names of a JSON answer's fields where they are structure | The values of the query and of the answer; a segment of a path that is not a plain word, kept as `{value}`; an entry of a query with no `=`, or whose name is not a plain name, counted and not named; the names of an object that read as a dictionary's keys (more than 64, or one that is not a plain name), withheld with a limitation ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) |
 | `endpoint` | The method, the path template, the statuses, the names and types of query parameters and answer fields, how many exchanges it was made from | For each parameter, how many different values were seen, compared by digest; the values are not kept |
 
-Everything found passes the redactor as one text, names included, and so does the path of a finding's subject. Every finding has coverage `partial` and at least one limitation.
+Everything found passes the redactor as one text, names included, and so does the path of a finding's subject. Every path a finding keeps is by structure, and a description list keeps the name of a term and of a definition only as a pair, a term that labels a definition of its name; a list used as data keeps types. A matched screen or request keeps the limitations of every page or request it was matched from ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)). Every finding has coverage `partial` and at least one limitation.
 
 ## Discovery cannot write
 
@@ -71,7 +71,7 @@ Rule one of [section 218](../../spec/2-kernel/218-discovery-and-findings.md) is 
 | --- | --- |
 | The type | This crate keeps an `Observer` from the base and nothing else of the cell it is given. An `Observer` opens observing tabs only; one has no input method, and there is no way to obtain an acting tab from it. A check in CI is to refuse the names of the acting types in this crate's source; it must match whole words, because the crate names the cell `SharedBrowsers`. The check is not written yet |
 | The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames. This crate marks no request safe. WebSockets are refused at creation. A refused request becomes an `exchange` finding that says the system never answered; anything else refused becomes a limitation on the finding of its page |
-| Navigation | A link is followed only when it is a plain link to the surface's own origin, its name is shared with no other link on the page, and neither its address nor its name holds a word of `ACTION_WORDS` (sign-out, delete, remove, approve, confirm, send, pay, and the like). A link not followed is counted in the report, and a link refused as an action is a limitation on the screen. A focus can name a path of the surface and nothing else. What "looks like an action" means is settled in Phase 4 |
+| Navigation | A link is followed only when it is a plain link to the surface's own origin, its name is shared with no other link on the page, and neither its address nor its name holds a word of `ACTION_WORDS` (sign-out, delete, remove, approve, confirm, send, pay, and the like). A link not followed is counted in the report, and a link refused as an action is a limitation on the screen. A focus can name a path of the surface and nothing else. Every address the tab is sent to passes the same word check, whatever named it, the surface, a focus, or a link: one that looks like an action is never visited, and stops the discovery with `policy`, `address_looks_like_an_action` ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)). A redirect is followed by the browser before this crate sees it: one that ends at such an address is not read, and stops the discovery the same way, after the visit. The tab is opened for the surface's origin, and the browser holds it there: a move the page starts is ended before it leaves the browser, and a redirect to another origin is ended too, which the probe reports as a sign-in by redirect. What "looks like an action" means is settled in Phase 4 |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox. A discoverer is given only what `SandboxPort` offers: no driver, no ledger token, no way to reach `Driver::act`. This crate has no driver, so it sends no step through the port at all |
 
 **Capture of a person's use is not exploration, and is not built.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
@@ -120,11 +120,15 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 /// Shapes and inference, pure.
 pub fn type_of_text(text: &str) -> &'static str;
 pub struct Shape;                              // Shape::of(&json), merged, has_optional, cut, to_json
-pub struct Exchange { pub method, pub origin, pub path, pub query, pub status, pub answer: Answer }
+pub struct Exchange { pub method, pub origin, pub path, pub query, pub status, pub answer: Answer,
+                      pub made_by: Option<String>, pub credential_headers: Vec<String>,
+                      pub set_headers: Vec<String>, pub query_left_out: bool }
 pub enum Answer { Refused, Json(Shape), Document }
 pub struct Endpoint { pub method, pub origin, pub segments: Vec<Segment>, pub statuses, pub query, pub response, pub seen, pub sources }
 pub enum Segment { Literal(String), Parameter { types, tier: Tier, literals } }
 pub fn infer_endpoints(exchanges: &[Exchange], tier_two: bool) -> Vec<Endpoint>;
+pub struct MatchedRequests { pub pattern: String, pub page: String, pub members: Vec<usize> }
+pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests>;   // request matching (decision 0190)
 
 pub mod codes { /* this crate's failure codes, and ALL with the class of each */ }
 ```
@@ -148,7 +152,7 @@ What the kernel gives this crate, as built:
 | `a2m-pack-web-ui`, through stored findings only | Snapshot findings, for its drafting rules and screen matching |
 | `a2m-pack-http`, through stored findings only | Endpoint findings, for its drafting rule |
 
-It uses the base's `Observer`, `Look`, `Snapshot`, and the list of what an observing tab refused; the redactor on everything it finds. The base's exchanges and platform profiles are not built.
+It uses the base's `Observer`, `Look`, `Snapshot`, the list of what an observing tab refused, and the page's own GET exchanges an observing tab recorded (`ObserveTab::exchanges`); the redactor on everything it finds. The base's platform profiles are not built.
 
 ## State
 
@@ -166,10 +170,11 @@ It uses the base's `Observer`, `Look`, `Snapshot`, and the list of what an obser
 | `edge_blocked` | `forbidden_by_edge`, `rate_limited_by_edge` | A page answered 403 or 429. `web_probe` names the block in its surface finding; the other discoverers stop. `challenge_page` is not built |
 | `session_expired` | `needs_login` | A page asks for a sign-in: it answered 401, the tab ended at another origin, or a password input shows. `web_probe` makes a finding of it; the other discoverers stop, and a page a link led to is counted and passed over |
 | `policy` | `surface_not_declared` | Asked to look at an address that is not of the surface's origin |
+| `policy` | `address_looks_like_an_action` | Asked to visit an address whose path or query holds a word of `ACTION_WORDS`, by the surface, a focus, or a link; or a redirect ended at one |
 | `input` | `focus_invalid` | The focus `paths` is not a list of paths that each start with one `/` |
 | `transient` | `page_not_loaded`; the base's `timeout` and `connection_lost` | The page did not load, or the browser was lost |
 | `busy` | The base's `browser_unavailable` | No browser is installed |
-| `unknown_variant` | `page_unreadable` | The page could not be read in a way no rule covers |
+| `unknown_variant` | `page_unreadable` | The page could not be read in a way no rule covers. The message names the kind of answer and holds none of the browser's or the page's text |
 
 `unknown_platform` is not a failure in discovery: the surface finding says so, and its tier is `unsupported` until a person names a profile.
 
@@ -186,7 +191,10 @@ Hitting a bound is not a failure. The report names the bound, `pages` or `second
 | An endpoint with a tier-two segment is `inferred`; an endpoint never answered is `inferred` | Unit tests on templating, and the capture of two orders with `tier_two` |
 | A discovery that hits a bound says which, and how many pages it left | A discovery whose time is up |
 | A sign-in wall and a block are named and never read | A page that redirects to a sign-in form; a page that answers 403 |
+| An address that looks like an action is never visited, whatever named it; a redirect to another origin is a sign-in by redirect | `an_address_that_looks_like_an_action_is_never_visited_whatever_names_it`: two focus paths, by path and by query, for both discoverers that take a focus, and a surface whose own address is one; the control interface counts no write |
+| A failure message holds no page text | `a_page_that_cannot_be_read_puts_none_of_its_text_in_the_message` |
 | A platform the profiles do not know is reported unknown, never guessed | The probe of the test application: `unknown_platform`, tier `unsupported` |
+| A page that shows an order gives the snapshot the web pack's drafting rules are proven against, the same twice | `a_page_that_shows_an_order_gives_the_screen_the_web_pack_drafts_from_the_same_twice`: the finding equals the one `a2m-pack-web-ui` keeps in `tests/fixtures/findings/` ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)) |
 | A registry with only this pack builds, and its digest is stable | Two registries |
 
 Run on Linux only. The crate has no code that differs by operating system.
@@ -195,7 +203,7 @@ Run on Linux only. The crate has no code that differs by operating system.
 
 1. Not built, package 2.6: `web_auth`, against case 13's sign-in variants. The probe names a sign-in wall; it does not say which method of sign-in to use.
 2. Done, package E2: the manifest and registration; `web_probe`; `web_snapshot` with links followed within the bounds.
-3. Done in part: `web_capture` of documents and refused requests, and endpoint inference with tier one and tier two, inside it. Not built: the requests a page's own scripts read with, which need the base's stream of exchanges; request shapes; scenario steps; cases 5 and 22.
+3. Done in part: `web_capture` of documents, refused requests, and the GET requests a page's own scripts make to its origin ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)), and endpoint inference with tier one and tier two, inside it. Done: screen matching's first half in `web_snapshot`, pages whose paths differ in one segment and whose tables and labelled values are the same given as one `screen` finding with a placeholder and `pages`; the names of a description list's terms and of the definitions a page labels are kept outside a record. Done: request matching in `web_capture`, `matched_requests` ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). Not built: request shapes; a request's dependencies; scenario steps; cases 5 and 22.
 4. Not built: dependencies between requests and the front-end logic mark.
 5. Not built: the watching tab and the capture of a person's own use, which need a visible window in the base.
 6. Not built: platform profiles and the support tier, which are data of the base.
@@ -209,6 +217,8 @@ Run on Linux only. The crate has no code that differs by operating system.
 - A page inside an application that holds a password input is taken for a sign-in wall and is not read.
 - When a page is ready to be read. A page is read when its document is parsed, or when the focus's `ready_text` shows. A page that fills itself by script later is read early, and nothing says so.
 - Whether a discovery should look through a session marked for discovery. The scope carries none.
+- **One profile, `discovery`, serves every person's discoveries of a target and environment.** Cookies and storage a page sets persist from one discovery to the next, so two discoveries can differ by what an earlier one left, and a profile signed in by some means of the system's own would no longer look as nobody. The browser engine starts with a cleared environment and an owned data directory, so a device's account is not handed to it; a fresh profile for each discovery would close the rest, at the cost of a browser start each time.
+- A page title in a `screen` finding is redacted and cut to 160 characters; it is free text from the system, which the describer keeps apart and which no field marks untrusted yet.
 - The sandbox port takes steps for a driver. A discoverer that looks through a browser of its own pack has no use for it, and one that needs stored findings cannot get them.
 - The file format of a scenario ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)).
 - Whether capture should also read what in-page code sends over WebSockets and server-sent events, which section 301 observes for confirmation and does not drive.

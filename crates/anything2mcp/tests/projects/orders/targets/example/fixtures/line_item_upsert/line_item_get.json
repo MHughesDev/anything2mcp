@@ -1,1 +1,8 @@
-{"order_id":"A-102","item_code":"L-900","description":"Test rail","quantity":2,"length_in":"90.5","version":1}
+[
+  {"order_id": "A-102", "item_code": "L-900", "description": "Old rail", "quantity": 1, "length_in": "7' 0\"", "version": 1},
+  {"order_id": "A-102", "item_code": "L-900", "description": "Old rail", "quantity": 1, "length_in": "7' 0\"", "version": 1},
+  {"order_id": "A-102", "item_code": "L-900", "description": "Old rail", "quantity": 1, "length_in": "7' 0\"", "version": 1},
+  {"order_id": "A-102", "item_code": "L-900", "description": "Test rail", "quantity": 2, "length_in": "7' 6 1/2\"", "version": 2},
+  {"order_id": "A-102", "item_code": "L-900", "description": "Test rail", "quantity": 2, "length_in": "7' 6 1/2\"", "version": 2},
+  {"order_id": "A-102", "item_code": "L-900", "description": "Test rail", "quantity": 2, "length_in": "7' 6 1/2\"", "version": 2}
+]

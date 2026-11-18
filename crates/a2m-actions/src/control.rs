@@ -5,18 +5,28 @@
 //! One `InProcessControl` is built for one claimed job. It attaches the run
 //! and the lease number to every call itself, so the engine can neither
 //! forge nor forget them.
+//!
+//! The engine gives up a call that does not answer in time and drops its
+//! future, so every call here stands or falls as one transaction of the
+//! store. A transaction that was handed to the store commits or not as a
+//! whole, whether or not anyone still waits for it. What follows a commit
+//! in a call is only a notice in memory, that a lock may be free or that a
+//! run changed, and it is given by a guard as the call ends, however it
+//! ends. Two calls keep a blob before they record it, a result and a
+//! trace: dropped in between, they leave a blob nothing names, and the call
+//! made again stores the same blob under the same name.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    Digest, Failure, FailureClass, Identity, Mode, Plan, RunState, SurfaceIndex, SurfaceName,
+    Digest, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex, SurfaceName, ToolRuns,
     Values,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
-    encode_values,
+    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
+    SessionWant, encode_values,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld,
@@ -24,6 +34,7 @@ use a2m_ledger::{
 };
 use a2m_policy::{Context, LimitCheck, ModuleName, Outcome, Question, Resource, ToolRef};
 use a2m_sched::{BudgetKey, LeaseRef, RateLimit, ResourceKey};
+use a2m_telemetry::Phase;
 use a2m_vault::OwnerRef;
 use serde_json::json;
 
@@ -42,8 +53,6 @@ pub(crate) struct InProcessControl {
     run: RunRow,
     plan: Arc<Plan>,
     caller: CallerFacts,
-    /// The mode each intent was stored for, for a later claim's snapshot.
-    pub(crate) modes: Mutex<Vec<(RecordRef, Mode)>>,
 }
 
 impl InProcessControl {
@@ -62,7 +71,6 @@ impl InProcessControl {
             run,
             plan,
             caller,
-            modes: Mutex::new(Vec::new()),
         }
     }
 
@@ -101,12 +109,33 @@ impl InProcessControl {
         ))
     }
 
-    /// Tells the scheduler that a commit may have released the record's
-    /// lock, so that the run that waited first asks the ledger again.
-    async fn freed(&self, record: RecordRef) {
-        if let (Ok(key), Ok(sched)) = (self.lock_key(record).await, self.kernel.sched()) {
-            sched.lock_freed(&key);
+    /// A guard that, when it is dropped, tells the scheduler that the
+    /// record's lock may be free, so that the run that waited first asks
+    /// the ledger again, and tells whoever follows a run that one changed.
+    /// The key is read before the write the guard is made for, so that the
+    /// notice needs no further wait and is given even when the call's
+    /// future is dropped while its transaction commits. A notice for a
+    /// lock that was not released costs a waiter one more look.
+    async fn notice(&self, record: RecordRef) -> Notice {
+        Notice {
+            kernel: self.kernel.clone(),
+            key: self.lock_key(record).await.ok(),
         }
+    }
+}
+
+/// See [`InProcessControl::notice`].
+struct Notice {
+    kernel: Kernel,
+    key: Option<ResourceKey>,
+}
+
+impl Drop for Notice {
+    fn drop(&mut self) {
+        if let (Some(key), Ok(sched)) = (&self.key, self.kernel.sched()) {
+            sched.lock_freed(key);
+        }
+        self.kernel.run_changed();
     }
 }
 
@@ -272,7 +301,7 @@ impl Control for InProcessControl {
                 .surface_index(surface)
                 .and_then(|index| self.plan.surface(index))
                 .and_then(|surface| surface.rate)
-                && self.kernel.note_budget(&key)
+                && !self.kernel.budget_noted(&key)
             {
                 sched
                     .set_budget(
@@ -284,6 +313,9 @@ impl Control for InProcessControl {
                         },
                     )
                     .await?;
+                // Noted only once it is set: a call dropped before that
+                // sets it the next time.
+                self.kernel.note_budget(&key);
             }
             sched
                 .rate(&self.lease, &[key], want.max(1))
@@ -306,6 +338,7 @@ impl Control for InProcessControl {
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|()| self.kernel.run_changed())
         })
     }
 
@@ -321,17 +354,48 @@ impl Control for InProcessControl {
             let fence = self.fence;
             let run = self.run.id;
             let diff = *diff;
+            // Unknown is off: only the setting read as true lets a
+            // pre-approval begin a write.
+            let pre_approval =
+                self.kernel.settings().flag(crate::bounds::PRE_APPROVAL) == Some(true);
             let module = self
                 .plan
                 .tool(&self.run.tool_name)
                 .and_then(|tool| tool.module.clone())
                 .unwrap_or_else(|| "main".to_owned());
+            // The tool's hazard, from the plan: a hazard forbids writing
+            // without a person, so the question must carry it. A tool the
+            // plan does not hold is asked about with no record count, and
+            // no pre-approval rule covers a run of unknown size.
+            let hazard = self
+                .plan
+                .tool(&self.run.tool_name)
+                .and_then(|tool| match tool.runs {
+                    ToolRuns::Operation(index) => {
+                        self.plan.operation(index).map(|found| found.hazard)
+                    }
+                    ToolRuns::Pipeline(index) => {
+                        self.plan.pipeline(index).map(|found| found.hazard)
+                    }
+                });
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
+            context.hazard = hazard.unwrap_or(a2m_core::Hazard::None);
             context.toolset = self.caller.toolset.clone();
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
-            let request = a2m_policy::Request {
+            let known = hazard.is_some();
+            // The test records the run's environment declares, when it is a
+            // test environment: the policy engine is told whether every
+            // record of the run is one of them (decision 0145).
+            let test_keys: Option<Vec<a2m_core::RecordKey>> = self
+                .plan
+                .environments
+                .iter()
+                .find(|environment| environment.name == self.run.environment)
+                .filter(|environment| environment.kind == a2m_core::EnvironmentKind::Test)
+                .map(|environment| environment.test_records.clone());
+            let mut request = a2m_policy::Request {
                 principal: self.caller.principal.clone(),
                 question: Question::WriteWithoutPerson,
                 resource: Resource::Tool(ToolRef {
@@ -352,15 +416,31 @@ impl Control for InProcessControl {
                 .kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
+                    // How many records the run would write, as the ledger
+                    // holds them: a pre-approval rule covers a run only up
+                    // to its own record count.
+                    let records = tx.ledger().records(run)?;
+                    if known {
+                        request.context.records = u32::try_from(records.len()).ok();
+                    }
+                    request.context.test_records = test_keys.as_ref().is_some_and(|keys| {
+                        !records.is_empty() && records.iter().all(|row| keys.contains(&row.key))
+                    });
                     let decision = policy.decide(tx, &request);
-                    if let Some(clearance) = decision.clearance() {
+                    // A pre-approval begins a write only where the
+                    // installation lets one: with `policy.pre_approval` off
+                    // every write waits for a person, whatever rule the
+                    // set in force holds.
+                    let pre_approved = decision.clearance();
+                    if pre_approval && let Some(clearance) = pre_approved {
                         tx.ledger().begin_writes(&fence, clearance)?;
                         return Ok(Ok(Clearance::Cleared));
                     }
-                    // A kill switch stops the run here; it is not a wait.
-                    if let Outcome::Refused(refusal) = decision.outcome()
-                        && refusal.code() == &a2m_policy::KILL_SWITCH_ON
-                    {
+                    // A refusal stops the run here; it is not a wait. That
+                    // is a kill switch, and it is a policy engine that
+                    // could not decide: a decider that cannot decide never
+                    // leaves the write to an approval (fail closed).
+                    if let Outcome::Refused(refusal) = decision.outcome() {
                         return Ok(Err(refusal.clone()));
                     }
                     match policy.consume(tx, run, &diff) {
@@ -369,12 +449,38 @@ impl Control for InProcessControl {
                             Ok(Ok(Clearance::Cleared))
                         }
                         Err(missing) if missing.code() == &a2m_policy::APPROVAL_MISSING => {
+                            // The refusal to write without a person is a
+                            // recorded decision; the run's own events name
+                            // it, so that it can be explained later.
+                            tx.ledger().append_event(
+                                &fence,
+                                EventKind::Need,
+                                &json!({
+                                    "needs": "approval",
+                                    "decision": decision.id.to_string(),
+                                    "diff": diff.to_string(),
+                                    // The policy engine keeps the setting
+                                    // too, so with it off no rule applies.
+                                    "pre_approval": if pre_approved.is_some() || !pre_approval {
+                                        "off by the setting `policy.pre_approval`"
+                                    } else {
+                                        "none applies"
+                                    },
+                                }),
+                                None,
+                            )?;
                             Ok(Ok(Clearance::Waits))
                         }
                         Err(stale) => Ok(Err(stale)),
                     }
                 })
                 .await?;
+            if matches!(cleared, Ok(Clearance::Cleared)) {
+                // The approval is used: the run no longer waits to be
+                // resumed.
+                self.kernel.inner.signals.forget(run);
+            }
+            self.kernel.run_changed();
             cleared.map_err(|failure| self.redacted(failure))
         })
     }
@@ -413,14 +519,6 @@ impl Control for InProcessControl {
         intents: Vec<RecordIntent>,
     ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
         Box::pin(async move {
-            for intent in &intents {
-                if let Some(mode) = &intent.mode {
-                    self.modes
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push((intent.record, mode.clone()));
-                }
-            }
             // Fail closed: no ledger, no write. The intents are durable
             // before a token exists.
             self.kernel
@@ -428,6 +526,7 @@ impl Control for InProcessControl {
                 .store_intents(&self.fence, intents)
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|_| self.kernel.run_changed())
         })
     }
 
@@ -444,6 +543,7 @@ impl Control for InProcessControl {
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|_| self.kernel.run_changed())
         })
     }
 
@@ -453,19 +553,117 @@ impl Control for InProcessControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
-            let record = token.record();
-            let marked = self
-                .kernel
+            // The ledger releases the record's lock in the transaction
+            // that marks it verified; a run waiting for it is told as this
+            // call ends.
+            let _notice = self.notice(token.record()).await;
+            self.kernel
                 .store()?
                 .store_verified(token, read_back)
                 .await
-                .map_err(|failure| self.redacted(failure));
-            // The ledger released the record's lock in the same
-            // transaction; a run waiting for it is told.
-            if marked.is_ok() {
-                self.freed(record).await;
-            }
-            marked
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
+        Box::pin(async move {
+            // A step's capture is evidence of the run, of the short class:
+            // a blob in the evidence space, sealed for the run's person,
+            // kept as long as traces are (`evidence.trace_retention_days`).
+            // Its bytes passed the redactor and the run's capture level in
+            // the engine; the name is redacted again here, as everything
+            // stored is.
+            let kind = if capture.media_type.starts_with("image/") {
+                BlobKind::Screenshot
+            } else {
+                BlobKind::Exchange
+            };
+            let redact = self.kernel.redact();
+            let blob = self
+                .evidence(Evidence {
+                    kind,
+                    class: RetentionClass::Short,
+                    bytes: capture.bytes,
+                })
+                .await?;
+            // What ties it to the run: an event of the run, durable before
+            // this call returns, so that a capture taken before a
+            // committing step is in the store before that step is sent.
+            let payload = json!({
+                "capture": redact.redact(&capture.name),
+                "media_type": redact.redact(&capture.media_type),
+                "pass": capture.pass,
+                "phase": match capture.phase {
+                    Phase::Act => "act",
+                    Phase::Confirm => "confirm",
+                    Phase::ReadBack => "read_back",
+                },
+                "position": capture.step,
+                "step": capture.record.map(|record| record.step_seq),
+                "record": capture.record.map(|record| record.record_seq),
+                "digest": blob.digest().to_string(),
+            });
+            let fence = self.fence;
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger()
+                        .append_event(&fence, EventKind::Need, &payload, Some(blob))
+                        .map(|_| ())
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))?;
+            Ok(blob)
+        })
+    }
+
+    fn project_folder(&self) -> Option<std::path::PathBuf> {
+        self.caller.project.clone()
+    }
+
+    fn step_observed(&self, step: &a2m_core::Step, observed: Option<&a2m_core::Values>) {
+        // Kept only for a trial a fixture is being recorded from.
+        crate::fixture::observed(&self.kernel, self.run.input_hash, step, observed);
+    }
+
+    fn other_records(
+        &self,
+        operation: &a2m_core::OperationName,
+        asking: RecordRef,
+    ) -> Option<Arc<dyn a2m_provider::OtherRecords>> {
+        let store = self.kernel.store().ok()?.clone();
+        Some(Arc::new(StoredOthers {
+            store,
+            workspace: self.run.workspace,
+            operation: operation.clone(),
+            asking,
+        }))
+    }
+
+    fn acknowledged<'a>(
+        &'a self,
+        token: &'a ActedToken,
+        evidence: Option<BlobRef>,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            // The ledger releases the record's lock in the transaction that
+            // ends it; a run waiting for it is told as this call ends.
+            let _notice = self.notice(token.record()).await;
+            // The ledger requires the answer's evidence: where the engine
+            // could not keep it, the record stays in doubt (decision 0172).
+            let evidence = evidence.ok_or_else(|| {
+                Failure::new(
+                    FailureClass::Busy,
+                    a2m_engine::codes::ACKNOWLEDGEMENT_NOT_KEPT,
+                    "The system's answer could not be kept, so the record cannot end on it and stays in doubt.",
+                    "Look at the system; the run stops until the record is settled.",
+                )
+            })?;
+            self.kernel
+                .store()?
+                .store_acknowledged(token, evidence)
+                .await
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -478,18 +676,17 @@ impl Control for InProcessControl {
         Box::pin(async move {
             let fence = self.fence;
             let why = self.redacted(why.clone());
-            let key = self.lock_key(record).await;
+            // A record fails from `planned` as well, when the record it
+            // depends on failed: it holds no lock then, and the notice
+            // costs nothing.
+            let _notice = self.notice(record).await;
             self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().mark_failed(&fence, record, &why, evidence)
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))?;
-            if let (Ok(key), Ok(sched)) = (key, self.kernel.sched()) {
-                sched.lock_freed(&key);
-            }
-            Ok(())
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -500,18 +697,14 @@ impl Control for InProcessControl {
     ) -> BoxFuture<'a, Result<Settled, Failure>> {
         Box::pin(async move {
             let fence = self.fence;
-            let settled = self
-                .kernel
+            let _notice = self.notice(record).await;
+            self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().settle(&fence, record, seen)
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))?;
-            if settled != Settled::Planned {
-                self.freed(record).await;
-            }
-            Ok(settled)
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -524,7 +717,14 @@ impl Control for InProcessControl {
                 EngineEvent::Moved(to) => {
                     store
                         .write(Durability::Synced, move |tx| {
-                            tx.ledger().set_state(&fence, to, None)
+                            let mut ledger = tx.ledger();
+                            // The engine says `validating` before it has
+                            // the plan, and may say a state the run is
+                            // already in: that is no move.
+                            if ledger.run(run)?.state == to {
+                                return Ok(());
+                            }
+                            ledger.set_state(&fence, to, None)
                         })
                         .await
                 }
@@ -616,17 +816,49 @@ impl Control for InProcessControl {
                         })
                         .await
                 }
-                EngineEvent::Discovered { findings, .. } => {
+                EngineEvent::Discovered {
+                    surface,
+                    provider,
+                    discoverer,
+                    findings,
+                    report,
+                } => {
                     // Each finding was checked against its provider's
                     // manifest by the sandbox; the store names it by the
-                    // digest of its content.
+                    // digest of its content. What the discoverer reported,
+                    // and which findings were its, is kept beside it for
+                    // the scout (decision 0170).
                     let workspace = self.run.workspace;
                     let target = self.run.target.clone();
+                    let run = self.run.id;
+                    let ids: Vec<String> = findings
+                        .iter()
+                        .map(|finding| finding.id().to_string())
+                        .collect();
+                    let ended = crate::handlers::discovery_report_json(&report);
                     store
                         .write(Durability::Synced, move |tx| {
                             for finding in &findings {
                                 tx.findings().put(&workspace, &target, finding)?;
                             }
+                            let now = tx.now().as_unix_millis();
+                            tx.tables(a2m_ledger::Owner::Actions).execute(
+                                "INSERT INTO actions_discovery_results
+                                    (run_id, provider, discoverer, surface, findings, report, sent_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                 ON CONFLICT (run_id, provider, discoverer)
+                                 DO UPDATE SET findings = excluded.findings,
+                                     report = excluded.report, sent_at = excluded.sent_at",
+                                &[
+                                    a2m_ledger::SqlValue::from(run.to_string()),
+                                    a2m_ledger::SqlValue::from(provider.as_str()),
+                                    a2m_ledger::SqlValue::from(discoverer.as_str()),
+                                    a2m_ledger::SqlValue::from(surface.as_str()),
+                                    a2m_ledger::SqlValue::from(json!(ids).to_string()),
+                                    a2m_ledger::SqlValue::from(ended.to_string()),
+                                    a2m_ledger::SqlValue::from(now),
+                                ],
+                            )?;
                             Ok(())
                         })
                         .await
@@ -690,19 +922,6 @@ impl InProcessControl {
             .await
     }
 
-    /// Whether the outcome leaves a record in doubt, which the scheduler
-    /// answers with a reconcile job.
-    pub(crate) async fn in_doubt(&self) -> bool {
-        let run = self.run.id;
-        match self.kernel.store() {
-            Ok(store) => store
-                .read(move |tx| tx.ledger().in_doubt(run))
-                .await
-                .is_ok_and(|records| !records.is_empty()),
-            Err(_) => false,
-        }
-    }
-
     /// Applies a job's outcome to the run, under the job's lease.
     pub(crate) async fn apply(&self, to: RunState, why: Option<Failure>) -> Result<(), Failure> {
         let fence = self.fence;
@@ -713,7 +932,10 @@ impl InProcessControl {
             .store()?
             .write(Durability::Synced, move |tx| {
                 let mut ledger = tx.ledger();
-                if ledger.run(run)?.state == to {
+                let state = ledger.run(run)?.state;
+                // A run that ended while the job was in hand, declined at
+                // the desk or cancelled, stays as it ended.
+                if state == to || state.is_final() {
                     return Ok(());
                 }
                 ledger.set_state(&fence, to, why.as_ref())
@@ -727,4 +949,63 @@ impl InProcessControl {
 /// Whether a failure class means a write may have been sent.
 pub(crate) const fn may_have_written(class: FailureClass) -> bool {
     matches!(class, FailureClass::PossibleCommit)
+}
+
+/// The answer to a driver's question whether another record of an
+/// operation holds a value (decision 0196): the values recorded before the
+/// commit point of every other record of the operation in the workspace,
+/// as the ledger stored them, compared by [`a2m_provider::recorded_digest`].
+/// It names the record that holds the value and never hands a value out.
+/// Where any candidate's value under the name was masked by the redactor,
+/// or a stored value cannot be read, it cannot tell.
+struct StoredOthers {
+    store: a2m_ledger::Store,
+    workspace: a2m_core::WorkspaceId,
+    operation: a2m_core::OperationName,
+    asking: RecordRef,
+}
+
+impl a2m_provider::OtherRecords for StoredOthers {
+    fn holding<'a>(
+        &'a self,
+        name: &'a str,
+        value: Digest,
+    ) -> BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        use a2m_provider::RecordedElsewhere;
+        Box::pin(async move {
+            let (workspace, operation) = (self.workspace, self.operation.clone());
+            let Ok(rows) = self
+                .store
+                .read(move |tx| tx.ledger().recorded_before_commit(&workspace, &operation))
+                .await
+            else {
+                return RecordedElsewhere::CannotTell;
+            };
+            let mut held = None;
+            for (record, blob) in rows {
+                if record == self.asking {
+                    continue;
+                }
+                let Ok(opened) = self.store.blobs().get(&blob).await else {
+                    return RecordedElsewhere::CannotTell;
+                };
+                let Ok(values) = a2m_engine::decode_values(opened.expose()) else {
+                    return RecordedElsewhere::CannotTell;
+                };
+                let Some(found) = values.get(name) else {
+                    continue;
+                };
+                // A masked value names nothing that can be compared: the
+                // value asked about may be the one the mask stands for.
+                if matches!(found, a2m_core::Value::Text(text) if text.contains(a2m_core::REDACTED))
+                {
+                    return RecordedElsewhere::CannotTell;
+                }
+                if held.is_none() && a2m_provider::recorded_digest(found) == value {
+                    held = Some(record);
+                }
+            }
+            held.map_or(RecordedElsewhere::NotHeld, RecordedElsewhere::Held)
+        })
+    }
 }

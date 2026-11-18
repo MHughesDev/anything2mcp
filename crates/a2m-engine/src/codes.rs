@@ -34,8 +34,6 @@ pub const BINDING_DRIFTED: FailureCode = FailureCode::fixed("binding_drifted");
 pub const READ_BACK_DIFFERS: FailureCode = FailureCode::fixed("read_back_differs");
 /// `stale`: a record no longer holds what the preview saw.
 pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
-/// `possible_commit`: a lookup found more than one record.
-pub const AMBIGUOUS_MATCH: FailureCode = FailureCode::fixed("ambiguous_match");
 /// `possible_commit`: a record in doubt cannot be read, so a person must
 /// settle it.
 pub const CANNOT_RECONCILE: FailureCode = FailureCode::fixed("cannot_reconcile");
@@ -54,6 +52,9 @@ pub const SANDBOX_READ_ONLY: FailureCode = FailureCode::fixed("sandbox_read_only
 pub const JOB_KIND_NOT_BUILT: FailureCode = FailureCode::fixed("job_kind_not_built");
 /// `busy`: evidence could not be stored, so nothing can be marked verified.
 pub const EVIDENCE_NOT_STORED: FailureCode = FailureCode::fixed("evidence_not_stored");
+/// `policy`: the binding that would write a record is not one the approved
+/// diff names for it, or the stored diff is not the approved one.
+pub const APPROVAL_STALE: FailureCode = FailureCode::fixed("approval_stale");
 
 /// `transient`: a driver was not ready within the time preparing may take.
 pub const PREPARE_TIMED_OUT: FailureCode = FailureCode::fixed("prepare_timed_out");
@@ -63,6 +64,26 @@ pub const NO_RATE_BUDGET: FailureCode = FailureCode::fixed("no_rate_budget");
 pub const NO_TOKEN: FailureCode = FailureCode::fixed("intent_token_missing");
 /// `unknown_variant`: a binding ended without sending its write.
 pub const COMMIT_SKIPPED: FailureCode = FailureCode::fixed("commit_skipped");
+
+/// `busy`: a call to the control plane was not answered within the time the
+/// engine waits for one.
+pub const CONTROL_UNANSWERED: FailureCode = FailureCode::fixed("control_unanswered");
+/// `unknown_variant`: a provider's code panicked. The engine goes on; the
+/// step does not.
+pub const DRIVER_PANICKED: FailureCode = FailureCode::fixed("driver_panicked");
+
+/// `unknown_variant`: a condition gave a value that is neither true nor
+/// false.
+pub const CONDITION_NOT_BOOLEAN: FailureCode = FailureCode::fixed("condition_not_boolean");
+/// `unknown_variant`: an argument of a step holds the mask of a value the
+/// redactor removed.
+pub const ARGUMENT_MASKED: FailureCode = FailureCode::fixed("argument_masked");
+
+/// `busy`: the control plane keeps no captures; the capture was dropped.
+pub const CAPTURE_NOT_KEPT: FailureCode = FailureCode::fixed("capture_not_kept");
+/// `busy`: the control plane cannot end a record on the system's
+/// acknowledgement alone; the record stays `acted`, in doubt.
+pub const ACKNOWLEDGEMENT_NOT_KEPT: FailureCode = FailureCode::fixed("acknowledgement_not_kept");
 
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
@@ -81,7 +102,6 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Drift, "binding_drifted"),
     (FailureClass::Mismatch, "read_back_differs"),
     (FailureClass::Stale, "changed_since_preview"),
-    (FailureClass::PossibleCommit, "ambiguous_match"),
     (FailureClass::PossibleCommit, "cannot_reconcile"),
     (FailureClass::PossibleCommit, "no_confirmation"),
     (FailureClass::UnknownVariant, "no_read_back"),
@@ -90,10 +110,17 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Policy, "sandbox_read_only"),
     (FailureClass::Busy, "job_kind_not_built"),
     (FailureClass::Busy, "evidence_not_stored"),
+    (FailureClass::Policy, "approval_stale"),
     (FailureClass::Transient, "prepare_timed_out"),
     (FailureClass::Busy, "no_rate_budget"),
     (FailureClass::Policy, "intent_token_missing"),
     (FailureClass::UnknownVariant, "commit_skipped"),
+    (FailureClass::Busy, "control_unanswered"),
+    (FailureClass::UnknownVariant, "driver_panicked"),
+    (FailureClass::UnknownVariant, "condition_not_boolean"),
+    (FailureClass::UnknownVariant, "argument_masked"),
+    (FailureClass::Busy, "capture_not_kept"),
+    (FailureClass::Busy, "acknowledgement_not_kept"),
 ];
 
 pub(crate) fn fail(

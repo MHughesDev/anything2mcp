@@ -49,8 +49,8 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 | Driver | One |
 | File kinds | Owns `screens/` for surfaces of kind `desktop`. Registration is keyed by file kind and surface kind, so the web pack's registration for `web` surfaces does not collide. `reach` takes a window match (process, title, or an automation identifier) or `from` another screen with an action. The `css` locator is not accepted; `test_id` means the interface's automation identifier |
 | Binding fields | `screen`, `verb`, `fields`, `action`, as for `ui` |
-| Control names | `text`, `textarea`, `number`, `select`, `combobox`, `checkbox`, `radio`, `date`, `grid`, `tree`, `tabs`, `dialog`, where the operating system's interface exposes them. The rest are refused until a test passes |
-| Finding kinds | `surface`, `screen`, `field`, `action` for desktop subjects, with this pack's `found` schemas |
+| Control names | `desktop_text`, `textarea`, `number`, `select`, `combobox`, `checkbox`, `radio`, `date`, `grid`, `tree`, `tabs`, `dialog`, where the operating system's interface exposes them. The rest are refused until a test passes |
+| Finding kinds | `window` for desktop subjects, built: one window's shape, never a value; `surface` with `desktop_probe` |
 | Discoverers | `desktop_probe`, `desktop_snapshot` |
 | Describer | `desktop_describer`, in the snapshot text form |
 | Auth providers | None yet |
@@ -70,7 +70,7 @@ Each verb lowers into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle
 
 | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- |
-| The application started by path and digest, or attached as a person named it; its window found, and its process proven by identifier, start time, and program digest | `locate`, then `set` through the widget driver, preferring the interface's value pattern; `invoke` through its invoke pattern; a synthetic key or click only after those | The action's declared `confirm`: a window, an element, a value | The field again, after the screen is reached afresh |
+| The application started by path and digest, or attached as a person named it; its window found, and its process proven by identifier, start time, and program digest. The first slice finds the application already running and starts nothing ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) | `locate`, then `set` through the widget driver, preferring the interface's value pattern; `invoke` through its invoke pattern; no synthetic key or click until a test shows one can be bound to its window (decision 0198) | The action's declared `confirm`: a window, an element, a value | The field again, after the screen is reached afresh |
 
 - **One request at a time per desktop session.** The scheduler serializes work that changes what is on a person's screen, so two runs never type into one desktop at once ([section 204](../2-kernel/204-supervising-subsystems.md)).
 - **Before every act** the driver proves that the element is in the window and the process the step expects.
@@ -111,10 +111,10 @@ The drafting rules are as for the web: from a window's snapshot, a screen model 
 
 | Code | Level | Rule |
 | --- | --- | --- |
-| `desktop_css` | Error | A `css` locator |
-| `desktop_unnamed` | Error | A role locator with an empty name |
-| `desktop_condition_unsupported` | Error | A condition this operating system cannot signal |
-| `desktop_title_only` | Warning | A window reached by title alone |
+| `desktop.css` | Error | A `css` locator. As built, the schema of `screens/` has no `css` key, so none compiles |
+| `desktop.unnamed` | Error | A role locator with an empty name. As built, a refusal of the file kind |
+| `desktop.condition_unsupported` | Error | A condition this operating system cannot signal. Not built: on Linux every condition offered is signalled |
+| `desktop.title_only` | Warning | A window reached by title alone. Not built: a window has no other match yet |
 
 ## Effects and hazards
 
@@ -137,6 +137,8 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited |
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it |
 | `busy` | `runner_unavailable` | No interactive desktop session, or the operating system's accessibility permission is not granted |
+| `busy` | `application_not_running`, `accessibility_off`, `system_not_built` | The application the surface names is not running; it runs and publishes nothing while the session's accessibility switch is off; the pack has no back end for this system (decision 0198) |
+| `policy` | `password_read_refused` | A step would read a control that holds a secret |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent |
 
 ## The test stand
@@ -170,7 +172,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 1. Slice 8.1, in `spikes/`, with brief 19: on each operating system, read a simple program's tree, find a text field by name, set it, and read it back. A decision record on the library ([research note 09](../../research/09-rust-building-blocks.md) lists candidates, none verified by use).
 2. Case 28, with its control interface.
-3. Package 8.3: reads, with `desktop_snapshot`; then writes with read-back; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
+3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198); then writes with read-back; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
 
 ## Open points
 

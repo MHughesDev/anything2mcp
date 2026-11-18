@@ -2,8 +2,12 @@
 //! and the SDK bridge use. It holds no engine logic: it finds the engine,
 //! checks that it belongs to this user, says hello, and carries requests.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use a2m_actions::Paths;
-use a2m_core::{Failure, Version};
+use a2m_core::{Failure, FailureClass, Version};
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use hyper::client::conn::http1::SendRequest;
@@ -13,7 +17,7 @@ use tokio::sync::{Mutex, watch};
 
 use crate::channel::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, ClientLabel, HELLO_PATH, LOCAL_API,
-    LOCAL_API_HEADER, OsUser, place,
+    LOCAL_API_HEADER, OsUser, place, variable_digests,
 };
 use crate::codes;
 use crate::os::{self, ConnectError};
@@ -23,6 +27,11 @@ const HELLO_LIMIT: usize = 4 * 1024;
 /// The host a request names. The channel is not a network address; the
 /// header is there because HTTP/1.1 asks for one.
 const HOST: &str = "localhost";
+/// How long a client waits for an engine to answer its hello. An engine
+/// binds its channel before it opens its store and answers a hello only
+/// once the store is open, so this is how long an engine may take to open
+/// before a client stops waiting for it (decision 0181).
+pub const HELLO_PATIENCE: Duration = Duration::from_secs(30);
 
 /// Finds the engine of one user and one set of paths.
 #[derive(Debug, Clone)]
@@ -31,6 +40,43 @@ pub struct Connector {
     expected: OsUser,
     version: Version,
     label: ClientLabel,
+    /// The engine's log, which a failure to answer points at.
+    log: PathBuf,
+    hello_patience: Duration,
+}
+
+pub(crate) fn shown(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
+/// An engine holds the channel and did not answer the hello in time.
+fn hello_unanswered(log: &Path) -> Failure {
+    codes::busy(
+        codes::ENGINE_UNREACHABLE,
+        "An engine holds the local channel and did not answer in time: it may still be opening its store, or it is stuck while starting.",
+        format!(
+            "Read the engine's log, `{}`. If the engine is stuck, stop its process and run the command again.",
+            shown(log)
+        ),
+    )
+}
+
+/// The engine closed the connection before it answered the hello: nothing
+/// was sent, and the engine most likely stopped while it was starting.
+fn hello_lost(log: &Path) -> Failure {
+    Failure::new(
+        FailureClass::Transient,
+        codes::CONNECTION_LOST,
+        "The engine closed the connection before it answered, so nothing was sent: it stopped while starting, or it is closing.",
+        format!(
+            "Read the engine's log, `{}`, for why it stopped, then run the command again.",
+            shown(log)
+        ),
+    )
 }
 
 impl Connector {
@@ -48,7 +94,17 @@ impl Connector {
             expected: user,
             version,
             label,
+            log: crate::Launch::log_of(paths),
+            hello_patience: HELLO_PATIENCE,
         })
+    }
+
+    /// As [`Connector::new`], waiting `patience` for a hello's answer. A
+    /// test waits less.
+    #[cfg(test)]
+    pub(crate) const fn hello_patience(mut self, patience: Duration) -> Self {
+        self.hello_patience = patience;
+        self
     }
 
     /// As [`Connector::new`], expecting the engine to belong to `user`. A
@@ -69,9 +125,23 @@ impl Connector {
     /// `policy`/`peer_not_allowed` when what answers is not this user's;
     /// `input`/`local_api_mismatch` when the engine speaks another version
     /// of the local API; `transient`/`connection_lost` when the engine
-    /// went away; `busy`/`channel_unavailable` for anything else the
-    /// operating system refused.
+    /// went away, which for a hello means it stopped while starting;
+    /// `busy`/`engine_unreachable`, pointing at the engine's log, when an
+    /// engine holds the channel and does not answer the hello within
+    /// [`HELLO_PATIENCE`], or, on Windows, keeps every instance of the
+    /// pipe taken for as long; `input`/`socket_path_too_long`, before any
+    /// connection, when the socket's path is longer than the system takes;
+    /// `busy`/`channel_unavailable`, with the
+    /// system's error by its number, for anything else the operating system
+    /// refused.
     pub async fn connect(&self) -> Result<Link, Failure> {
+        match tokio::time::timeout(self.hello_patience, self.say_hello()).await {
+            Ok(said) => said,
+            Err(_) => Err(hello_unanswered(&self.log)),
+        }
+    }
+
+    async fn say_hello(&self) -> Result<Link, Failure> {
         let link = self.open().await?;
         let hello = Request::builder()
             .method(Method::GET)
@@ -81,11 +151,13 @@ impl Connector {
             .header(CLIENT_LABEL_HEADER, self.label.as_text())
             .body(Body::empty())
             .map_err(|_| codes::lost())?;
-        let answer = link.send(hello).await?;
+        // A hello does nothing in the engine, so a hello whose answer was
+        // lost is only a connection that ended.
+        let answer = link.send(hello).await.map_err(|_| hello_lost(&self.log))?;
         let status = answer.status();
         let body = axum::body::to_bytes(answer.into_body(), HELLO_LIMIT)
             .await
-            .map_err(|_| codes::lost())?;
+            .map_err(|_| hello_lost(&self.log))?;
         let said: Json = serde_json::from_slice(&body).map_err(|_| not_an_engine())?;
         if status != StatusCode::OK {
             return Err(if said["code"] == codes::LOCAL_API_MISMATCH.to_string() {
@@ -102,8 +174,17 @@ impl Connector {
             .as_str()
             .and_then(|text| text.parse::<Version>().ok())
             .ok_or_else(not_an_engine)?;
+        // An engine that names none is told as one whose variables are not
+        // known, never as one that has none.
+        let start_variables = said["start_variables"].as_object().map(|named| {
+            named
+                .iter()
+                .filter_map(|(name, digest)| Some((name.clone(), digest.as_str()?.to_owned())))
+                .collect()
+        });
         Ok(Link {
             engine_version,
+            start_variables,
             ..link
         })
     }
@@ -111,7 +192,15 @@ impl Connector {
     /// Opens a connection and checks the engine's owner, without the
     /// hello.
     pub(crate) async fn open(&self) -> Result<Link, Failure> {
-        let stream = os::connect(&self.place, self.expected.as_str())
+        // A socket of a path the system does not take cannot be reached:
+        // told by name, and no engine is started for it.
+        if let Some((socket, length, longest)) = self.place.too_long() {
+            return Err(codes::socket_path_too_long(socket, length, longest));
+        }
+        // The same patience as the hello's: a pipe whose every instance is
+        // taken is waited for no longer than an engine that does not answer.
+        let deadline = tokio::time::Instant::now() + self.hello_patience;
+        let stream = os::connect(&self.place, self.expected.as_str(), deadline)
             .await
             .map_err(|error| match error {
                 ConnectError::NotRunning => codes::busy(
@@ -124,6 +213,10 @@ impl Connector {
                     "What listens on the local channel does not belong to this user, so nothing was sent to it.",
                     "Check who owns the engine's runtime directory, remove what is not yours to trust, and start the engine again.",
                 ),
+                // Every instance of the pipe stayed taken: an engine holds
+                // the channel and does not answer, as a stalled hello.
+                #[cfg(windows)]
+                ConnectError::Busy => hello_unanswered(&self.log),
                 ConnectError::Io(error) => codes::unavailable("The local channel", &error),
             })?;
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
@@ -141,6 +234,7 @@ impl Connector {
             sender: Mutex::new(sender),
             gone,
             engine_version: self.version,
+            start_variables: None,
         })
     }
 }
@@ -160,6 +254,9 @@ pub struct Link {
     /// Turns true when the connection has ended.
     gone: watch::Receiver<bool>,
     engine_version: Version,
+    /// The engine's start variables, by name and digest, as its hello
+    /// named them; `None` when it named none.
+    start_variables: Option<BTreeMap<String, String>>,
 }
 
 impl Link {
@@ -169,13 +266,39 @@ impl Link {
         self.engine_version
     }
 
+    /// The names of the start variables whose values differ between the
+    /// engine that answered and `client`'s own: each set on one side only,
+    /// or set to another value, in order of name. `None` when the engine
+    /// named none in its hello, so nothing can be compared.
+    #[must_use]
+    pub fn start_variables_differing(
+        &self,
+        client: &BTreeMap<String, String>,
+    ) -> Option<Vec<String>> {
+        let engine = self.start_variables.as_ref()?;
+        let client = variable_digests(client);
+        let mut names: Vec<String> = engine
+            .keys()
+            .chain(client.keys())
+            .filter(|name| engine.get(*name) != client.get(*name))
+            .cloned()
+            .collect();
+        names.sort();
+        names.dedup();
+        Some(names)
+    }
+
     /// Sends one request and returns the response as it arrives; the body
     /// may still be on its way. Requests on one link go one after another.
     /// The request's address is a path, such as `/api/v1/tools`.
     ///
     /// # Errors
     ///
-    /// `transient`/`connection_lost` when the engine went away.
+    /// `transient`/`connection_lost` when the connection ended before the
+    /// request was sent, so the engine never had it;
+    /// `possible_commit`/`answer_lost` when the request may have reached
+    /// the engine and no answer came back. The second is never safe to
+    /// send again blindly: what the request asked may have been done.
     pub async fn send(&self, mut request: Request<Body>) -> Result<Response<Body>, Failure> {
         request
             .headers_mut()
@@ -184,15 +307,27 @@ impl Link {
         let mut sender = self.sender.lock().await;
         let mut gone = self.gone.clone();
         let answered = async {
-            sender.ready().await?;
-            sender.send_request(request).await
+            // A connection that cannot take a request has been given none.
+            sender.ready().await.map_err(|_| codes::lost())?;
+            match sender.try_send_request(request).await {
+                Ok(response) => Ok(response),
+                // The library hands the request back when it never wrote
+                // any of it; otherwise some of it may have reached the
+                // engine.
+                Err(mut error) => Err(if error.take_message().is_some() {
+                    codes::lost()
+                } else {
+                    codes::answer_lost()
+                }),
+            }
         };
         // An answer that is there is taken first. Otherwise the end of the
-        // connection ends the wait: nothing can answer after it.
+        // connection ends the wait: nothing can answer after it, and the
+        // request may have been read before it ended.
         let response = tokio::select! {
             biased;
-            answered = answered => answered.map_err(|_| codes::lost())?,
-            _ = gone.wait_for(|gone| *gone) => return Err(codes::lost()),
+            answered = answered => answered?,
+            _ = gone.wait_for(|gone| *gone) => return Err(codes::answer_lost()),
         };
         Ok(response.map(Body::new))
     }

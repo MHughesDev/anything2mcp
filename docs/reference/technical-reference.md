@@ -41,6 +41,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `Hazard` | Five, ordered from least to most serious | [Spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md) |
 | `FailureClass` | Twelve | "Failure codes" below, and [spec section 207](../spec/2-kernel/207-the-engine-loop.md) |
 | `EvidenceLevel` | Seven, ordered as the ladder; the default is the weakest | [Spec section 219](../spec/2-kernel/219-the-evidence-ladder.md) |
+| `WriteEvidence` | Three: `read_back`, `response`, `acknowledged`; what a write binding offers as the proof that its write landed, and only an operation declared `irreversible` may offer `acknowledged` | [Spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md), [decision 0161](../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md) |
 | `Coverage` | Three; the default is `unknown` | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 | `RunState`, `RecordState` | Twelve and six | [Spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) |
 | `SessionState` | Eight | [Spec section 215](../spec/2-kernel/215-sessions-and-the-session-keeper.md) |
@@ -57,7 +58,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `CaptureLevel` | Three, each including the one before | [Spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) |
 | `ApproveWrites` | Three, ordered from least to most strict | [Spec section 226](../spec/2-kernel/226-configuration.md) |
 | `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
-| `DigestPurpose` | Three: `blob_name`, `restricted_value`, `record_key` | [Decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
+| `DigestPurpose` | Four: `blob_name`, `restricted_value`, `record_key`, `caller_key` | [Decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
 
 Some words are checked names and not enums, because their values arrive with packs, crates, and target files ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md), [decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)):
 
@@ -91,7 +92,16 @@ The driver interface, the manifest, the registry, and the supervisor are built i
 - **`DriverHandle`** is the only way the engine reaches a driver. The registry gives one for a mode, and it checks every step on the way in and every outcome on the way out.
 - **`Authority`** is what a step is run under: the right to read, or the intent token for one write.
 - **`StepInput`** is what one step is given, with its values already evaluated. **`StepOutcome`** is how a step ended when it did not fail.
-- **`StepFailure`** is a failure together with **`Sent`**, which says whether the request was not sent, was answered, or is unknown.
+- **`StepFailure`** is a failure together with **`Sent`**, which says whether the request was not sent, was answered, or is unknown. What the system itself said travels on the failure, apart from its sentence (`StepFailure::with_said`).
+- What a record's earlier steps recorded reaches a driver while it acts, as **`Prepared::recorded`**; how a step was done is the capture **`Capture::acting`**; the run's project folder is **`CheckedPaths::project_folder`**; a verified save in steps is **`CheckedPath::create_temporary`** and **`Temporary`** ([decision 0162](../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
+- A root bound to no folder, which stands for each request's project folder, is **`Roots::add_project`**; **`Roots::check_in`** and **`Roots::folder_in`** resolve it in the run's project folder ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
+- A path resolved in the one form every root holds its folder in (on Windows the ordinary form `C:\...` where it names the same thing) is **`resolved_path`** of `a2m-provider`; whatever compares a path with a root's folder resolves it by this and by nothing else.
+- **`Prepared::recorded_elsewhere`** asks the engine whether another record holds a value, and answers `Held`, `NotHeld`, or `CannotTell`, never the value ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
+- **`SurfaceNotice`** (in `a2m-core`) is a closed list of the notices a door must show with a surface, such as unencrypted credentials; a kind registers one with `SurfaceKindSpec::with_notice`, and `CompilerSet::surface_notices` computes them ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
+- **`DraftContext::open_question_quoting`** makes an open question whose sentence is the product's and whose quoted words are the system's, kept apart ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
+
+- **`Replay`** is a driver of recorded answers that every pack gets from the contract, so that an offline test runs the tool's steps against a fixture; `Registry::replay_driver` hands it out and keeps the pack's own step kinds, commit kinds, and codes ([decision 0177](../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)). `Replay::sent` gives what the engine sent to each committing step, for a test to compare with the request a fixture states, and `RecordedAnswer::repeats` says that one answer serves every step of its name ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)).
+- **`RefusedProvider`** is a provider whose manifest was refused, kept by `Registry::refused` so that `provider.list` names it with its problem ([decision 0176](../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)).
 
 The plug-in host and the framed link are not built yet.
 
@@ -108,8 +118,12 @@ Rules for every driver:
 - Every failure maps to exactly one failure class, and says whether the request was not sent, was answered, or is unknown.
 - No secret ever appears in a step's outcome or in a failure.
 - A driver is reached only through a handle that refuses a step that commits without the token the ledger gives for a recorded intent.
-- A step marked as a lookup may report that a record is absent. No other step may.
+- A step marked as a lookup may report that a record is absent. No other step may. "Absent" proves that a record with no key is not there only from steps whose kinds the mode lists in `ModeDecl::absence_steps` (empty by default); `DriverHandle::proves_absence(steps)` asks it ([decision 0185](../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)).
 - A step's outcome can carry values known before the commit point, such as a key the store assigned. The engine records them before the committing step runs.
+- A failure of a committing step that was answered with class `policy` or `input` leaves the handle as `possible_commit`, `no_confirmation`, and `Sent::Unknown`: those two classes say nothing was sent, and on a write that left they are not the system's verdict ([decision 0148](../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)).
+- The handle refuses a step that commits and is not marked, where the mode's manifest lists its kind in `commit_steps` (`policy`, `intent_missing`), and it lets no driver return a code in `codes::KERNEL_ONLY`, seven codes that state the kernel's bookkeeping. It redacts what a step returns, its values, its values for reconcile, and a capture whose bytes are text, as it does a failure.
+- `CheckedPath` writes under a random name, only where nothing stands, and never through a link; the new methods are `entry_kind` (what stands at the final name, a link reported and not followed) and `create_dir` (one folder, new; it fails when anything is at the name). A link at the final name is refused for `write` and `remove_file`. A pack's manifest may not name a program by a relative path.
+- The supervisor digests the program it opens at every start and refuses a digest that is none of the declared ones; on Linux it starts the file it digested.
 
 ## Verbs by mode
 
@@ -149,7 +163,7 @@ Both are the web pack's knowledge and live in its section: [widget drivers](../s
 
 Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider. A provider also states what it needs and can do (a person, a silent renewal, a light prompt, state that can move, and whether a successful exchange confirms the credential) and checks an `auth.yaml` entry without signing in. The traits as built are in the [crate design](../architecture/crates/a2m-auth.md).
 
-A provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system. A provider that needs a person's consent in a browser, and is not in the web pack, gives the person a link to open in their own browser; nothing drives that browser.
+Every outbound HTTP client of the product is made by the module `tls` of `a2m-auth`: `tls::client_builder` takes a `Trust` (the roots of `network.trust_roots`, then the operating system's) whose TLS configuration states its provider, and `tls::refusal` names a certificate or a handshake that failed; the design of [`a2m-auth`](../architecture/crates/a2m-auth.md) has the signatures ([decision 0157](../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). A provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system. A provider that needs a person's consent in a browser, and is not in the web pack, gives the person a link to open in their own browser; nothing drives that browser.
 
 | Provider | Covers | Lives in |
 | --- | --- | --- |
@@ -172,9 +186,9 @@ Further packs bring their own where a credential is bound to their kind of conne
 The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the interface in full. The main types:
 
 - **`Vault`** seals a plain item into a **`Sealed`** envelope under a **`SealContext`**, and opens it again only under the same context. The caller stores the envelope.
-- **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it.
+- **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it. A root, and the passphrase route's salt through `PassphraseSalt::load_or_create`, is made once, under a lock that two engines starting together both take.
 - **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`Generation`**. `a2m-ledger` implements it.
-- **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`.
+- **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`. A text that arrives in pieces is redacted through the redactor's **`RedactStream`**, never piece by piece.
 
 ## Telemetry interface
 
@@ -189,7 +203,7 @@ The design of [`a2m-telemetry`](../architecture/crates/a2m-telemetry.md) gives t
 The design of [`a2m-files`](../architecture/crates/a2m-files.md) gives the interface in full ([decision 0079](../decisions/0079-the-compilers-registration-points-and-the-file-formats-as-the-code-settles-them.md)). The main types:
 
 - **`CompilerSetBuilder`** takes what each pack registers, under the pack's own name, and ends as a **`CompilerSet`**, which `compile` and `lint_one` are given.
-- **`FileKind`**, **`Lowering`**, **`LintRule`**, and **`DraftingRule`** are the four traits a pack implements. A surface kind, as a **`SurfaceKindSpec`**, and a control name are registered as data.
+- **`FileKind`**, **`Lowering`**, **`LintRule`**, and **`DraftingRule`** are the four traits a pack implements. A surface kind, as a **`SurfaceKindSpec`**, and a control name are registered as data. A lowering states, for each kind of step, whether it saves, as a **`StepCommits`** (`Never`, `Always`, `AsDeclared`), and the least effect a binding has by what it does; a file kind states whether a document describes a write, which the drafter never writes ([decision 0153](../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)).
 - **`Compiled`** is a plan with its encoded bytes and its hash. **`Diagnostics`** is every problem found, each a **`Diagnostic`** with its place and a fix.
 
 ## Store interface
@@ -248,7 +262,8 @@ The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the i
 
 - **`ActionRegistry`** holds every action of the catalog as data, built or not.
 - **`Kernel`** is the handle every front door holds. Its `dispatch` takes a **`Request`** and gives a **`Response`**: it checks the input, the health state, and the person need, records one policy decision, runs the handler, and redacts the result.
-- **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves a diff; no action reaches it.
+- **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves or declines a diff, and where an approval page reads what the diff would change (**`ApprovalPreview`**); no action reaches it. A decline ends the run as `expired`.
+- **`Kernel::events`** and **`Kernel::next_events`** give a page of **`RunEvents`** after a sequence number, the second after waiting for one, to the caller that started the run ([decision 0132](../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md)). **`Kernel::next_events_from`** waits from a **`Followed`**, what the follower last saw, and answers at once when the run came to rest or began again since ([decision 0159](../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
 - The faces are data generated from the registry: `command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, and **`McpResultFace`**.
 
 ## REST router
@@ -298,22 +313,22 @@ Delivery is at-least-once. A job whose lease ends without a result is treated as
 
 ## Failure codes
 
-Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them. The codes of `a2m-ledger` are listed in [its design](../architecture/crates/a2m-ledger.md). The rows include the codes of `a2m-engine`, `a2m-actions`, `a2m-api`, and `a2m-pack-web-browser`. Each pack's own codes, those of `a2m-pack-http`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device`, and `a2m-pack-mcp`, are listed in its design and its manifest, and are not repeated here.
+Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them. The codes of `a2m-ledger` are listed in [its design](../architecture/crates/a2m-ledger.md). The rows include the codes of `a2m-engine`, `a2m-actions`, `a2m-api`, `a2m-local`, and `a2m-pack-web-browser`. Each pack's own codes, those of `a2m-pack-http`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device`, and `a2m-pack-mcp`, are listed in its design and its manifest, and are not repeated here.
 
 | Class | Example codes |
 | --- | --- |
-| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled`, `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture`, `plan_unverified`, `record_limit_exceeded`, `sandbox_read_only`, `intent_token_missing`, `person_required`, `caller_not_verified`, `setting_protected`, `setting_locked`, `caller_missing`, `password_read_refused` |
-| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch`, `draft_conflict`, `registration_conflict`, `target_unreadable`, `formula_without_value`, `source_too_large`, `source_malformed`, `source_encoding_unsupported`, `source_protected`, `source_reader_unknown`, `source_definition_invalid`, `key_not_unique`, `auth_provider_unknown`, `auth_provider_duplicate`, `auth_settings_invalid`, `credential_missing`, `tls_not_enabled`, `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `file_unavailable`, `provider_ambiguous`, `mode_unknown`, `not_registered`, `kind_owner_missing`, `kind_owner_conflict`, `provider_duplicate`, `pack_settings_invalid`, `program_not_found`, `job_invalid`, `input_invalid`, `action_not_built`, `client_action`, `settings_invalid`, `action_registry_invalid`, `body_too_large`, `content_type_unsupported`, `query_invalid`, `path_field_conflict`, `idempotency_key_invalid`, `route_not_found`, `method_not_allowed`, `body_timed_out`, `route_conflict`, `address_invalid` |
+| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled`, `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture`, `plan_unverified`, `record_limit_exceeded`, `sandbox_read_only`, `intent_token_missing`, `person_required`, `caller_not_verified`, `setting_protected`, `setting_locked`, `caller_missing`, `password_read_refused`, `setting_not_in_force`, `peer_not_allowed`, `presence_failed`, `engine_variable_refused`, `scout_off`, `offline_writes_nothing` |
+| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch`, `vault_passphrase_too_short`, `draft_conflict`, `registration_conflict`, `target_unreadable`, `formula_without_value`, `source_too_large`, `source_malformed`, `source_encoding_unsupported`, `source_protected`, `source_reader_unknown`, `source_definition_invalid`, `key_not_unique`, `auth_provider_unknown`, `auth_provider_duplicate`, `auth_settings_invalid`, `credential_missing`, `tls_not_enabled`, `tls_setup_failed`, `trust_roots_unreadable`, `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `file_unavailable`, `provider_ambiguous`, `mode_unknown`, `not_registered`, `kind_owner_missing`, `kind_owner_conflict`, `provider_duplicate`, `pack_settings_invalid`, `program_not_found`, `job_invalid`, `input_invalid`, `action_not_built`, `client_action`, `settings_invalid`, `action_registry_invalid`, `body_too_large`, `content_type_unsupported`, `query_invalid`, `path_field_conflict`, `idempotency_key_invalid`, `idempotency_key_reused`, `route_not_found`, `method_not_allowed`, `body_timed_out`, `route_conflict`, `address_invalid`, `address_value_refused`, `hello_invalid`, `local_api_mismatch`, `socket_path_too_long`, `path_missing`, `path_denied`, `project_folder_missing`, `draft_under_release_version`, `publish_gates_not_passed`, `binding_not_promotable`, `promotion_unproven`, `fixture_no_scrub_rule`, `fixture_read_failed`, `fixture_not_replayed` |
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required`, `headroom_short`, `lease_stale`, `credential_refused` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed`, `binding_drifted` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `fixture_no_answer`, `commit_skipped`, `browser_not_owned`, `driver_panicked`, `condition_not_boolean`, `argument_masked` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
-| `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match`, `cannot_reconcile` |
-| `stale` | `changed_since_preview`, `version_conflict` |
+| `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match`, `cannot_reconcile`, `answer_lost` |
+| `stale` | `changed_since_preview`, `version_conflict`, `drafts_changed` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable`, `prepare_timed_out`, `engine_fault` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed`, `no_binding`, `run_time_exceeded`, `blocked_by_parent`, `evidence_not_stored`, `no_rate_budget`, `job_kind_not_built`, `lease_too_short`, `request_timed_out`, `browser_unavailable` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `run_reconciling`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed`, `no_binding`, `run_time_exceeded`, `blocked_by_parent`, `evidence_not_stored`, `no_rate_budget`, `job_kind_not_built`, `lease_too_short`, `request_timed_out`, `browser_unavailable`, `control_unanswered`, `run_call_unreadable`, `tool_changed`, `system_job_not_carried`, `engine_running`, `engine_unreachable`, `channel_unavailable`, `prompt_busy`, `surface_unavailable`, `data_directory_gone`, `capture_not_kept`, `acknowledgement_not_kept`, `path_locked`, `disk_full` |
 
 ## Command line
 
@@ -344,6 +359,7 @@ On a local machine no command approves a write; see spec section 222. On a serve
 | Transport | Unix domain socket (macOS, Linux); named pipe (Windows) |
 | Access | Per-user directory or access list, plus a check of the connecting user on every connection |
 | Protocol | HTTP carrying the `/api/v1` REST API and the MCP endpoint |
+| What a command adds | One request header, read from the local channel alone: `A2M-Project`, the project folder it was run in, percent-encoded. No header says a person is at the caller's terminal: every caller of the channel is an agent ([decision 0158](../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)). Every REST answer carries its exit class in the header `A2M-Exit-Class` ([decision 0131](../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)) |
 | Start | On demand, guarded by a lock file; `--in-process` for single-command use |
 | Stop | After 30 minutes idle by default; session state saved to the vault |
 | Version skew | A newer client asks an older engine to drain and restart |
@@ -370,7 +386,7 @@ Inside the data directory: `store/` for the database with `blobs/` for evidence 
 | `POST /api/v1/pipelines/{name}/runs` | Start a pipeline |
 | `GET /api/v1/runs/{id}` | Run status and result |
 | `POST /api/v1/runs/{id}/resume`, `/cancel` | Resume or cancel |
-| `GET /api/v1/runs/{id}/events` | Server-sent event stream |
+| `GET /api/v1/runs/{id}/events` | A run's events after a sequence number: one page as JSON, or a server-sent event stream that ends when the run settles. Not an action; only the caller that started the run reads them |
 | `GET /api/v1/sessions` | Session status for the caller |
 | `POST /api/v1/actions/{noun}.{verb}` | Run an authoring or admin action from the registry |
 | `GET /api/v1/openapi.json` | The generated API description |

@@ -55,4 +55,11 @@ pub mod names {
     pub const STEPS: &str = "steps";
     /// The environment's name and kind.
     pub const ENV: &str = "env";
+    /// In a binding's steps: what the system held when the engine last read
+    /// the record, as the read gave it; null when it does not exist.
+    pub const CURRENT: &str = "current";
+    /// In a binding's steps: the record's key in the system, `key`, its
+    /// parts as text; null when the record has none yet. Never the engine's
+    /// own name for a record in a run.
+    pub const RECORD: &str = "record";
 }

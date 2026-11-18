@@ -10,7 +10,9 @@
 //! - a look ([`Link::latest`], [`Link::browse`], [`Link::describe`],
 //!   [`Link::channels`]) takes nothing from anyone;
 //! - every failure says whether the request was not sent, was answered, or
-//!   has an unknown fate;
+//!   has an unknown fate; an answer the protocol has no rule for, a refusal
+//!   under an unknown code included, has an unknown fate;
+//! - a look says whether the channel holds more than it returned;
 //! - a publish carries its headers unchanged, so the record's token reaches
 //!   the broker in the header the channel declares.
 
@@ -50,6 +52,46 @@ pub(crate) enum WireErrorKind {
     PositionOutOfRange,
     /// An answer the protocol has no rule for.
     Unexpected,
+    /// The connection would carry the session where this build does not
+    /// send it: plain text to an address that is not this machine's own,
+    /// or to a server that asks for TLS.
+    Transport,
+    /// The protocol cannot carry what the step would send: an address, a
+    /// key, or a header it has no form for.
+    Unfit,
+}
+
+/// Where a plain TCP connection may go: a loopback address written as an
+/// IP address, `127.0.0.0/8` or `::1`, with its port (decision 0197, by the
+/// rule of decision 0188). A name, `localhost` included, is never one: the
+/// resolver decides where a name leads. `::ffff:127.0.0.1`, `0.0.0.0`, and
+/// `::` are not one either. Every protocol of the pack dials only what this
+/// returns, so the session's credential never crosses a plain link to
+/// another machine, and nothing is resolved or sent before the check.
+pub(crate) fn plain_tcp_address(address: &str) -> Result<std::net::SocketAddr, WireError> {
+    match address.parse::<std::net::SocketAddr>() {
+        Ok(found) if found.ip().is_loopback() => Ok(found),
+        _ => Err(WireError {
+            kind: WireErrorKind::Transport,
+            sent: Sent::NotSent,
+            detail: "plain TCP is used only to this machine's loopback address, written as an IP address"
+                .to_owned(),
+        }),
+    }
+}
+
+/// The session's credential, as a wire protocol presents it when a
+/// connection opens. It is used for that and kept nowhere.
+pub(crate) enum Credential {
+    /// One token.
+    Token(Secret),
+    /// A user name and a password.
+    UserPassword {
+        /// The user's name; not a secret.
+        user: String,
+        /// The password.
+        password: Secret,
+    },
 }
 
 /// A failed call, with whether the request left and what the broker said.
@@ -59,8 +101,9 @@ pub(crate) struct WireError {
     pub kind: WireErrorKind,
     /// Whether the request left, and whether its fate is known.
     pub sent: Sent,
-    /// The broker's own words where it gave some, cleaned and cut; else a
-    /// fixed phrase. Never a credential the pack sent.
+    /// The broker's own words where it gave some, whole and as it said
+    /// them; else a fixed phrase. Never a credential the pack sent. The
+    /// driver redacts this before it cleans and cuts it for a message.
     pub detail: String,
 }
 
@@ -77,6 +120,9 @@ pub(crate) struct ChannelFacts {
     pub schema: Option<Json>,
     /// The header whose repeated value the broker refuses.
     pub dedupe_header: Option<String>,
+    /// How long the broker remembers a token, in milliseconds; nothing when
+    /// it does not say, which a broker that forgets none may leave out.
+    pub dedupe_window_ms: Option<u64>,
     /// How many messages it holds now.
     pub held: u64,
     /// A log's first held position.
@@ -85,6 +131,12 @@ pub(crate) struct ChannelFacts {
     pub end: Option<u64>,
     /// The subscriptions declared on it, by name.
     pub subscriptions: Vec<String>,
+    /// Whether the broker's own configuration of the channel lets it lose a
+    /// message from inside its range between a publish and a later look: a
+    /// limit per key that evicts, a time to live per message, or a
+    /// retention that removes what nobody reads. A look at such a channel
+    /// never says a message is absent.
+    pub may_lose_inside: bool,
 }
 
 /// One message as a broker holds or delivers it.
@@ -122,6 +174,13 @@ pub(crate) struct Opened {
     pub handle: String,
     /// On a log, the position it stands at.
     pub position: Option<u64>,
+    /// On a queue, how long the broker waits for an acknowledgement of a
+    /// delivery before it hands the message out again, as the declared
+    /// consumer states it. Nothing only where the protocol has no such
+    /// wait: the test broker's hands a message out again only when it is
+    /// given back or its connection ends. A protocol that has one and a
+    /// broker that does not state it is an answer with no rule.
+    pub ack_wait: Option<Duration>,
 }
 
 /// One delivery of one message.
@@ -131,6 +190,11 @@ pub(crate) struct Delivered {
     pub delivery: String,
     /// The message.
     pub message: Message,
+    /// How many times the broker has handed this message out, this one
+    /// included, as the delivery's own metadata says; nothing where the
+    /// protocol does not say. Above one, or unstated, an earlier delivery
+    /// may be held by another record, and a take treats it so.
+    pub attempt: Option<u64>,
 }
 
 /// One message to publish.
@@ -168,12 +232,15 @@ pub(crate) trait Protocol: Send + Sync {
     /// The protocol's name, as a surface states it.
     fn name(&self) -> &'static str;
 
-    /// Opens a connection and presents the session's token, when there is
-    /// one. The token is used for this and kept nowhere.
+    /// Whether the protocol can present this credential.
+    fn carries(&self, credential: &Credential) -> bool;
+
+    /// Opens a connection and presents the session's credential, when there
+    /// is one. The credential is used for this and kept nowhere.
     fn connect<'a>(
         &'a self,
         address: &'a str,
-        token: Option<&'a Secret>,
+        credential: Option<&'a Credential>,
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>>;
 }
@@ -250,4 +317,35 @@ pub(crate) trait Link: Send {
 
     /// Publishes one message and waits for the broker's confirmation.
     fn publish<'a>(&'a mut self, message: &'a Outgoing, deadline: Deadline) -> Wire<'a, Receipt>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_tcp_goes_only_to_a_loopback_address_written_as_an_ip_address() {
+        for good in ["127.0.0.1:4222", "127.5.6.7:1", "[::1]:7400"] {
+            assert!(plain_tcp_address(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "localhost:4222",
+            "localhost.:4222",
+            "broker.internal:7400",
+            "[::ffff:127.0.0.1]:4222",
+            "0.0.0.0:4222",
+            "[::]:4222",
+            "127.1:4222",
+            "192.0.2.10:4222",
+            "127.0.0.1",
+            "",
+        ] {
+            let refused = plain_tcp_address(bad).unwrap_err();
+            assert_eq!(
+                (refused.kind, refused.sent),
+                (WireErrorKind::Transport, Sent::NotSent),
+                "{bad}"
+            );
+        }
+    }
 }

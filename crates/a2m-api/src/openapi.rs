@@ -5,14 +5,16 @@
 use a2m_actions::{ActionRegistry, REST_PREFIX, RestRouteFace, rest_routes};
 use serde_json::{Map, Value as Json, json};
 
+use crate::events::RUN_EVENTS_PATH;
+
 /// The path of the document itself, served by this crate and not an action.
 pub const OPENAPI_PATH: &str = "/api/v1/openapi.json";
 
 /// The version of the OpenAPI specification the document follows.
 pub const OPENAPI_VERSION: &str = "3.1.0";
 
-/// The document for every REST route of the registry, and for the
-/// document's own route.
+/// The document for every REST route of the registry, for the route of a
+/// run's events, and for the document's own route.
 #[must_use]
 pub fn openapi(registry: &ActionRegistry) -> Json {
     document(&rest_routes(registry))
@@ -27,6 +29,15 @@ pub(crate) fn document(routes: &[RestRouteFace]) -> Json {
         if let Json::Object(item) = item {
             item.insert(route.method.to_ascii_lowercase(), operation(route));
         }
+    }
+    // The one route beside the document's own that no action generates.
+    let events = paths
+        .entry(RUN_EVENTS_PATH.to_owned())
+        .or_insert_with(|| Json::Object(Map::new()));
+    if let (Json::Object(item), Json::Object(described)) =
+        (events, crate::events::operation(envelope))
+    {
+        item.extend(described);
     }
     paths.insert(
         OPENAPI_PATH.to_owned(),

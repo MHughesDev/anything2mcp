@@ -5,7 +5,7 @@
 //! the lease is counted on a steady clock, a task per held job sends its
 //! heartbeats, and the engine stops acting before the lease runs out.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
@@ -13,10 +13,10 @@ use a2m_core::{
     DecisionId, Failure, Identity, Mode, PrincipalId, RunId, RunState, RunnerId, Values,
 };
 use a2m_engine::{
-    Conditions, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
+    Conditions, Diff, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
     KernelHealth, LeaseClock, Parallelism, RecordSnapshot, RunSnapshot, ToolRef, decode_values,
 };
-use a2m_ledger::{BlobRef, Durability, Owner, RecordRef, RunRow, SqlValue, Tx};
+use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RunRow, SqlValue, Tx};
 use a2m_policy::{ActingFor, GroupName, PrincipalKind, PrincipalRef, ToolsetName};
 use a2m_sched::{BudgetKey, JobEnd, JobLease, RunnerOffer, RunnerTerms, Slots};
 use a2m_telemetry::CaptureLevel;
@@ -31,8 +31,22 @@ use crate::dispatch::Caller;
 use crate::health::HealthState;
 use crate::kernel::{Kernel, fact, set_fact};
 
-/// How long one claim waits for work before it asks again.
+/// How long one claim waits for work before it asks again. After a claim
+/// the store could not answer, it is also the longest the loop waits before
+/// it asks once more: the store gives no notice that it can be asked again,
+/// so this is an interval between tries and not a wait for a condition. The
+/// kernel's wake notice ends it early.
 const CLAIM_WAIT: Duration = Duration::from_secs(30);
+
+/// The most rate budgets noted as set. Past it the notes are dropped, and a
+/// budget is set once more the next time its surface is used.
+const BUDGETS_NOTED: usize = 4096;
+
+/// The field of a discovery run's stored call that names its surface.
+pub(crate) const DISCOVERY_SURFACE: &str = "surface";
+/// The field of a discovery run's stored call that holds the focus its
+/// discoverers are given.
+pub(crate) const DISCOVERY_FOCUS: &str = "focus";
 
 /// The verified facts about the caller of a run, kept so that the guard's
 /// question to policy is asked about the caller that started the run. Names
@@ -45,6 +59,12 @@ pub(crate) struct CallerFacts {
     pub(crate) toolset: Option<ToolsetName>,
     /// The decision that let the call in.
     pub(crate) decision: DecisionId,
+    /// The project folder of the request that started the run, as the
+    /// dispatcher checked it: kept with the run's stored call, so that every
+    /// lease of the run, a resume's too, hands the engine the same folder
+    /// (decision 0176). `None` when the request stated none, or one whose
+    /// path is not text and so cannot be kept.
+    pub(crate) project: Option<std::path::PathBuf>,
 }
 
 impl CallerFacts {
@@ -55,7 +75,14 @@ impl CallerFacts {
             acting_for: caller.principal.acting_for.clone(),
             toolset: caller.toolset.clone(),
             decision,
+            project: None,
         }
+    }
+
+    /// The same facts, with the request's checked project folder.
+    pub(crate) fn with_project(mut self, project: Option<std::path::PathBuf>) -> Self {
+        self.project = project;
+        self
     }
 
     /// The person the run acts for: the caller themself, or the person the
@@ -84,6 +111,7 @@ impl CallerFacts {
             "acting_for": person,
             "toolset": self.toolset.as_ref().map(ToolsetName::as_str),
             "decision": self.decision.to_string(),
+            "project": self.project.as_deref().and_then(std::path::Path::to_str),
         })
     }
 
@@ -114,6 +142,7 @@ impl CallerFacts {
                 .as_str()
                 .and_then(|name| ToolsetName::new(name).ok()),
             decision: json["decision"].as_str()?.parse().ok()?,
+            project: json["project"].as_str().map(std::path::PathBuf::from),
         })
     }
 }
@@ -122,6 +151,66 @@ impl CallerFacts {
 pub(crate) struct RunCall {
     pub(crate) input: BlobRef,
     pub(crate) caller: CallerFacts,
+    /// The stored bytes of the source the run reads, when it reads one.
+    pub(crate) source: Option<BlobRef>,
+}
+
+/// How the source of a run was handed over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    /// A file of the project, read once by the dispatcher.
+    File,
+    /// Rows the caller gave inline.
+    Rows,
+}
+
+impl SourceKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Rows => "rows",
+        }
+    }
+}
+
+/// The source a run is called with: its stored bytes, and where they came
+/// from.
+#[derive(Debug, Clone)]
+pub(crate) struct KeptSource {
+    pub(crate) blob: BlobRef,
+    pub(crate) kind: SourceKind,
+    /// The path inside the project, as the caller wrote it; empty for rows.
+    pub(crate) name: String,
+    pub(crate) size: u64,
+}
+
+/// Keeps the source a run is called with, before the run is admitted.
+pub(crate) fn keep_run_source(
+    tx: &mut Tx<'_>,
+    run: &a2m_ledger::NewRun,
+    source: &KeptSource,
+) -> Result<(), Failure> {
+    tx.tables(Owner::Actions).execute(
+        "INSERT INTO actions_run_sources
+            (workspace_id, principal_id, tool_name, target_version, input_hash,
+             source_ref, kind, name, size_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT (workspace_id, principal_id, tool_name, target_version, input_hash)
+         DO UPDATE SET source_ref = excluded.source_ref, kind = excluded.kind,
+             name = excluded.name, size_bytes = excluded.size_bytes",
+        &[
+            SqlValue::from(run.workspace.to_string()),
+            SqlValue::from(run.principal.to_string()),
+            SqlValue::from(run.tool_name.as_str()),
+            SqlValue::from(run.target_version.to_string()),
+            SqlValue::from(run.input_hash.to_string()),
+            SqlValue::from(source.blob.to_string()),
+            SqlValue::from(source.kind.as_str()),
+            SqlValue::from(source.name.as_str()),
+            SqlValue::from(i64::try_from(source.size).unwrap_or(i64::MAX)),
+        ],
+    )?;
+    Ok(())
 }
 
 /// Keeps what a run is called with, before the run is admitted.
@@ -150,30 +239,13 @@ pub(crate) fn keep_run_call(
     Ok(())
 }
 
-/// Keeps the facts of whoever resumes a run, in place of those of whoever
-/// started it.
-pub(crate) fn rekeep_caller(
-    tx: &mut Tx<'_>,
-    run: &RunRow,
-    caller: &CallerFacts,
-) -> Result<(), Failure> {
-    tx.tables(Owner::Actions).execute(
-        "UPDATE actions_run_calls SET caller = ?6
-         WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
-           AND target_version = ?4 AND input_hash = ?5",
-        &[
-            SqlValue::from(run.workspace.to_string()),
-            SqlValue::from(run.principal.to_string()),
-            SqlValue::from(run.tool_name.as_str()),
-            SqlValue::from(run.target_version.to_string()),
-            SqlValue::from(run.input_hash.to_string()),
-            SqlValue::from(caller.to_json().to_string()),
-        ],
-    )?;
-    Ok(())
-}
-
-fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
+/// What a run was called with, as the store holds it. `None` when the row
+/// is missing or its caller cannot be read: such a run is never run.
+///
+/// The caller's facts are written once, when the run is made, and nothing
+/// changes them afterwards: a resume never replaces who a run belongs to or
+/// what its caller was.
+pub(crate) fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
     let row = tx.tables(Owner::Actions).query_first(
         "SELECT input_ref, caller FROM actions_run_calls
          WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
@@ -190,18 +262,37 @@ fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
         return Ok(None);
     };
     let input: BlobRef = row.text(0)?.parse()?;
-    Ok(CallerFacts::from_json(row.text(1)?).map(|caller| RunCall { input, caller }))
+    let Some(caller) = CallerFacts::from_json(row.text(1)?) else {
+        return Ok(None);
+    };
+    let source = tx
+        .tables(Owner::Actions)
+        .query_first(
+            "SELECT source_ref FROM actions_run_sources
+             WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
+               AND target_version = ?4 AND input_hash = ?5",
+            &[
+                SqlValue::from(run.workspace.to_string()),
+                SqlValue::from(run.principal.to_string()),
+                SqlValue::from(run.tool_name.as_str()),
+                SqlValue::from(run.target_version.to_string()),
+                SqlValue::from(run.input_hash.to_string()),
+            ],
+        )?
+        .map(|row| row.text(0)?.parse::<BlobRef>())
+        .transpose()?;
+    Ok(Some(RunCall {
+        input,
+        caller,
+        source,
+    }))
 }
 
 /// What the kernel keeps about its runner loop.
 pub(crate) struct RunnerState {
     pub(crate) task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
-    changed: watch::Sender<u64>,
     budgets: Mutex<BTreeSet<String>>,
-    modes: Mutex<BTreeMap<RunId, Vec<(RecordRef, Mode)>>>,
-    /// The runs a job of this loop is working on now.
-    in_hand: Mutex<BTreeSet<RunId>>,
 }
 
 impl Default for RunnerState {
@@ -209,10 +300,7 @@ impl Default for RunnerState {
         Self {
             task: Mutex::new(None),
             engine: OnceLock::new(),
-            changed: watch::Sender::new(0),
             budgets: Mutex::new(BTreeSet::new()),
-            modes: Mutex::new(BTreeMap::new()),
-            in_hand: Mutex::new(BTreeSet::new()),
         }
     }
 }
@@ -256,36 +344,7 @@ impl Kernel {
         let store = self.store()?.clone();
         let sched = self.sched()?.clone();
         let installation = self.installation()?;
-        let vault = self.inner.vault.clone().ok_or_else(|| {
-            codes::busy(
-                codes::ENGINE_DEGRADED,
-                "The vault is not open, so nothing can be sealed or verified.",
-                "Call `doctor.run` for the fix.",
-            )
-        })?;
-        if self.inner.runner.engine.get().is_none() {
-            let engine = Engine::new(EngineDeps {
-                registry: Arc::new(self.providers().clone()),
-                redact: self.redact(),
-                keyed: vault.keyed_digest().await?,
-                clock: Arc::clone(&self.inner.clock),
-                settings: EngineSettings {
-                    transient_retries: self
-                        .settings()
-                        .int("engine.retries.transient")
-                        .and_then(|count| u32::try_from(count).ok())
-                        .unwrap_or(2),
-                    freshness_window: Duration::from_secs(
-                        self.settings()
-                            .int("policy.preview_freshness_seconds")
-                            .and_then(|seconds| u64::try_from(seconds).ok())
-                            .unwrap_or(60),
-                    ),
-                    ..EngineSettings::default()
-                },
-            });
-            let _ = self.inner.runner.engine.set(Arc::new(engine));
-        }
+        self.engine().await?;
         let runner = store
             .write(Durability::Synced, |tx| match fact(tx, "runner")? {
                 Some(text) => Ok(text.parse::<RunnerId>()?),
@@ -364,6 +423,89 @@ impl Kernel {
         })
     }
 
+    /// The engine, made once from the provider registry, the redactor, the
+    /// vault's keyed digest, and the settings. The runner loop runs jobs
+    /// through it, and whoever submits a job asks it what the job's tool
+    /// must hold alone.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the vault is not open.
+    pub(crate) async fn engine(&self) -> Result<Arc<Engine>, Failure> {
+        if let Some(engine) = self.inner.runner.engine.get() {
+            return Ok(Arc::clone(engine));
+        }
+        let vault = self.inner.vault.clone().ok_or_else(|| {
+            codes::busy(
+                codes::ENGINE_DEGRADED,
+                "The vault is not open, so nothing can be sealed or verified.",
+                "Call `doctor.run` for the fix.",
+            )
+        })?;
+        let engine = Engine::new(EngineDeps {
+            registry: Arc::new(self.providers().clone()),
+            redact: self.redact(),
+            keyed: vault.keyed_digest().await?,
+            clock: Arc::clone(&self.inner.clock),
+            settings: EngineSettings {
+                transient_retries: self
+                    .settings()
+                    .int("engine.retries.transient")
+                    .and_then(|count| u32::try_from(count).ok())
+                    .unwrap_or(2),
+                freshness_window: Duration::from_secs(
+                    self.settings()
+                        .int("policy.preview_freshness_seconds")
+                        .and_then(|seconds| u64::try_from(seconds).ok())
+                        .unwrap_or(60),
+                ),
+                ..EngineSettings::default()
+            },
+        });
+        Ok(Arc::clone(
+            self.inner.runner.engine.get_or_init(|| Arc::new(engine)),
+        ))
+    }
+
+    /// What a job of `tool` must hold alone for as long as it is leased:
+    /// one key for every surface a write of the tool may be made on, of
+    /// the kind the write's mode declares (one run at a time on one file,
+    /// one link, one surface). A read holds nothing. The scheduler takes
+    /// all of a job's keys in the transaction that leases it, or none, so
+    /// two jobs never wait for each other; the keys are sorted all the
+    /// same, which is the scheduler's order.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the engine cannot be made; the
+    /// scheduler's refusal of a key.
+    pub(crate) async fn held_alone(
+        &self,
+        row_workspace: a2m_core::WorkspaceId,
+        plan: &a2m_core::Plan,
+        tool: &a2m_core::OperationName,
+        environment: &a2m_core::Environment,
+        writes: bool,
+    ) -> Result<Vec<a2m_sched::ResourceKey>, Failure> {
+        if !writes {
+            return Ok(Vec::new());
+        }
+        let engine = self.engine().await?;
+        let mut keys = Vec::new();
+        for need in engine.exclusive_needs(plan, tool) {
+            keys.push(a2m_sched::ResourceKey::held_alone(
+                need.kind.as_str(),
+                row_workspace,
+                &plan.header.target,
+                environment,
+                need.surface.as_str(),
+            )?);
+        }
+        keys.sort();
+        keys.dedup();
+        Ok(keys)
+    }
+
     pub(crate) async fn stop_runner_loop(&self) {
         let task = lock(&self.inner.runner.task).take();
         if let Some(task) = task {
@@ -383,25 +525,39 @@ impl Kernel {
     /// Tells everyone who waits for a run that something about a run
     /// changed.
     pub(crate) fn run_changed(&self) {
-        self.inner
-            .runner
-            .changed
-            .send_modify(|count| *count = count.wrapping_add(1));
+        self.inner.signals.changed();
     }
 
     /// A receiver that is told whenever something about a run changed.
     pub(crate) fn run_watch(&self) -> watch::Receiver<u64> {
-        self.inner.runner.changed.subscribe()
+        self.inner.signals.watch()
     }
 
-    /// Whether a job of this loop is working on the run now.
-    pub(crate) fn in_hand(&self, run: RunId) -> bool {
-        lock(&self.inner.runner.in_hand).contains(&run)
+    /// Whether the budget was set in this process already.
+    pub(crate) fn budget_noted(&self, key: &BudgetKey) -> bool {
+        lock(&self.inner.runner.budgets).contains(key.as_str())
     }
 
-    /// Whether this is the first time the budget is seen in this process.
-    pub(crate) fn note_budget(&self, key: &BudgetKey) -> bool {
-        lock(&self.inner.runner.budgets).insert(key.as_str().to_owned())
+    /// Notes that the budget is set.
+    pub(crate) fn note_budget(&self, key: &BudgetKey) {
+        let mut noted = lock(&self.inner.runner.budgets);
+        if noted.len() >= BUDGETS_NOTED {
+            noted.clear();
+        }
+        noted.insert(key.as_str().to_owned());
+    }
+
+    /// Whether a record of the run may have been written without being
+    /// read back. When the ledger cannot be asked, the answer is yes: a
+    /// write whose state cannot be read is a write in doubt.
+    pub(crate) async fn run_in_doubt(&self, run: RunId) -> bool {
+        match self.store() {
+            Ok(store) => store
+                .read(move |tx| tx.ledger().in_doubt(run))
+                .await
+                .map_or(true, |records| !records.is_empty()),
+            Err(_) => true,
+        }
     }
 
     /// Carries out one claimed job: fills it from the ledger, runs it
@@ -413,39 +569,131 @@ impl Kernel {
             return;
         };
         let lease_ref = lease.lease_ref();
-        if let Some(run) = lease.run {
-            lock(&self.inner.runner.in_hand).insert(run);
-        }
+        // The claim wrote the run's new lease number: whoever follows the
+        // run is told.
+        self.run_changed();
         let end = match self.run_claimed(&lease, terms).await {
             Ok(end) => end,
-            Err(failure) => JobEnd::Stopped {
-                class: failure.class(),
-                code: failure.code().clone(),
-                in_doubt: false,
-            },
+            Err(failure) => {
+                // The job could not be carried through, perhaps after the
+                // engine had sent a write: the run is stopped with the
+                // failure, and whether a record is in doubt is read from
+                // the ledger, never assumed.
+                let in_doubt = match lease.fence() {
+                    Some(fence) => {
+                        self.stop_run(fence, &failure).await;
+                        self.run_in_doubt(fence.run).await
+                    }
+                    None => false,
+                };
+                JobEnd::Stopped {
+                    class: failure.class(),
+                    code: failure.code().clone(),
+                    in_doubt,
+                }
+            }
         };
-        let _ = sched.finish(&lease_ref, end).await;
-        if let Some(run) = lease.run {
-            lock(&self.inner.runner.in_hand).remove(&run);
+        // The job is unfinished in the scheduler's own table until this
+        // commits, and that table is what a caller waiting for the run
+        // reads. It is told only afterwards. When it cannot be recorded
+        // the store cannot commit: the job stays leased until its lease
+        // ends, the scheduler's sweep then stops the run and queues its
+        // reconcile, and the health state is looked at again now.
+        if sched.finish(&lease_ref, end).await.is_err() {
+            self.recheck().await;
         }
         self.run_changed();
     }
 
+    /// Stops a run with a failure, under the job's lease, when the job
+    /// could not be carried through. A run that has ended stays as it
+    /// ended.
+    async fn stop_run(&self, fence: a2m_ledger::Fence, why: &Failure) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        let why = self.redact().redact_failure(why);
+        let run = fence.run;
+        // Best effort: when this cannot be written either, the lease ends
+        // and the scheduler's sweep stops the run.
+        let _ = store
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                let state = ledger.run(run)?.state;
+                if state.is_final() || state == RunState::Stopped {
+                    return Ok(());
+                }
+                ledger.set_state(&fence, RunState::Stopped, Some(&why))
+            })
+            .await;
+    }
+
+    /// Ends a run whose stored call is missing or cannot be read. Nothing
+    /// is known of its input or of its caller, so it is not run with an
+    /// empty input and a caller made up for it (rule 7: unknown means
+    /// stop). A run with a record in doubt stops, so that the doubt stays
+    /// in view; any other run ends as `failed`, or as `cancelled` where the
+    /// ledger allows no other end from the state it rests in.
+    async fn end_unreadable(&self, fence: a2m_ledger::Fence) -> Result<JobEnd, Failure> {
+        let why = codes::busy(
+            codes::RUN_CALL_UNREADABLE,
+            "What this run was called with is missing from the store or cannot be read, so the run was not carried out.",
+            "Call the tool again; that is a new run. Call `trace.show` with this run's identifier to see what it did before.",
+        );
+        let run = fence.run;
+        let (class, code) = (why.class(), why.code().clone());
+        self.store()?
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                let state = ledger.run(run)?.state;
+                if state.is_final() {
+                    return Ok(());
+                }
+                let ends = if ledger.in_doubt(run)?.is_empty() {
+                    [RunState::Failed, RunState::Cancelled]
+                } else {
+                    [RunState::Stopped, RunState::Stopped]
+                };
+                for to in ends {
+                    if state == to || ledger.set_state(&fence, to, Some(&why)).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+        self.run_changed();
+        // No reconcile is queued: it would be claimed, and end, the same
+        // way.
+        Ok(JobEnd::Stopped {
+            class,
+            code,
+            in_doubt: false,
+        })
+    }
+
     async fn run_claimed(&self, lease: &JobLease, terms: RunnerTerms) -> Result<JobEnd, Failure> {
         let Some(fence) = lease.fence() else {
-            // A system job. The keeper's work runs on its own worker in one
-            // process, so nothing is queued for it here.
-            return Ok(JobEnd::Done);
+            // A system job. In one process nothing queues one: the keeper's
+            // work, a sign-out and a forget included, is a call on the
+            // keeper's own worker that is waited for to its answer, so
+            // none can be lost on the way. A system job that reaches this
+            // loop all the same is work it cannot carry out, and it is
+            // never answered as done.
+            let failure = codes::busy(
+                codes::SYSTEM_JOB_NOT_CARRIED,
+                "This runner carries out jobs of runs only, and was handed a job of another kind.",
+                "Report this; it is a fault in the engine.",
+            );
+            return Ok(JobEnd::Stopped {
+                class: failure.class(),
+                code: failure.code().clone(),
+                in_doubt: false,
+            });
         };
         let store = self.store()?;
         let sched = self.sched()?.clone();
-        let engine = self.inner.runner.engine.get().cloned().ok_or_else(|| {
-            codes::busy(
-                codes::ENGINE_DEGRADED,
-                "The engine is not started.",
-                "Start the runner loop.",
-            )
-        })?;
+        let engine = self.engine().await?;
         let run = fence.run;
         let (row, call) = store
             .read(move |tx| {
@@ -455,25 +703,28 @@ impl Kernel {
             })
             .await?;
         let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
-        let (input, caller) = match call {
-            Some(call) => {
-                let opened = store.blobs().get(&call.input).await?;
-                (decode_values(opened.expose())?, call.caller)
-            }
-            // A run this installation holds no call for: nothing is known
-            // of its input, and its caller is the person who started it.
-            None => (
-                Values::new(),
-                CallerFacts {
-                    principal: PrincipalRef::person(row.principal),
-                    is_agent: false,
-                    acting_for: None,
-                    toolset: None,
-                    decision: row
-                        .decision
-                        .unwrap_or_else(|| DecisionId::from_bytes([0; 16])),
-                },
-            ),
+        let Some(call) = call else {
+            return self.end_unreadable(fence).await;
+        };
+        let opened = store.blobs().get(&call.input).await?;
+        // The source is the stored bytes the run was called with: every
+        // lease of the run reads the same ones, whatever the file in the
+        // project holds by now.
+        let source = match &call.source {
+            Some(blob) => Some(Arc::new(store.blobs().get(blob).await?.expose().to_vec())),
+            None => None,
+        };
+        let (input, caller) = (decode_values(opened.expose())?, call.caller);
+        // The run's project folder was checked at the request. It is checked
+        // again at every lease, a resume's days later too: a folder that no
+        // longer passes, or that now leads elsewhere, is not handed to the
+        // engine (audit finding A-4), and a pack that needs it stops by name.
+        let caller = match caller.project.clone() {
+            Some(folder) => match self.checked_project(&folder).await {
+                Ok(checked) if checked == folder => caller,
+                _ => caller.with_project(None),
+            },
+            None => caller,
         };
 
         let kind = match lease.requirements.kind {
@@ -484,6 +735,23 @@ impl Kernel {
             a2m_sched::JobKind::VerifyAfterLoss => JobKind::VerifyAfterLoss,
             a2m_sched::JobKind::Canary => JobKind::Canary,
             _ => JobKind::Execute,
+        };
+        // A discovery run's stored call names its surface and the focus
+        // handed to its discoverers (`discover.run`): the job names the
+        // surface, and the discoverers are given the focus alone.
+        let (tool, input) = if kind == JobKind::Discover {
+            let mut input = input;
+            let surface = match input.remove(DISCOVERY_SURFACE) {
+                Some(a2m_core::Value::Text(surface)) => a2m_core::SurfaceName::new(&surface)?,
+                _ => return self.end_unreadable(fence).await,
+            };
+            let focus = match input.remove(DISCOVERY_FOCUS) {
+                Some(a2m_core::Value::Record(focus)) => focus,
+                _ => Values::new(),
+            };
+            (ToolRef::Surface(surface), focus)
+        } else {
+            (ToolRef::Tool(row.tool_name.clone()), input)
         };
         let health = self.health();
         let capture = |key: &str| match self.settings().text(key) {
@@ -499,11 +767,11 @@ impl Kernel {
             epoch: fence.epoch,
             kind,
             plan: row.target_version,
-            tool: ToolRef::Tool(row.tool_name.clone()),
+            tool,
             environment: Some(row.environment.clone()),
             identity: Some(Identity::Person(row.principal)),
             input,
-            source: None,
+            source,
             snapshot: self.snapshot(&row).await?,
             conditions: Conditions {
                 health: match health.state {
@@ -563,10 +831,6 @@ impl Kernel {
         let outcome = engine.run_job(&job, &control).await;
         beat.abort();
         let _ = beat.await;
-        lock(&self.inner.runner.modes)
-            .entry(run)
-            .or_default()
-            .extend(lock(&control.modes).drain(..));
 
         let end = match outcome {
             JobOutcome::Finished { state, failure } => {
@@ -577,13 +841,25 @@ impl Kernel {
                 control.apply(state, failure).await?;
                 JobEnd::Rests
             }
+            // A record in doubt that reconcile read and could not settle
+            // waits for a person: reading it again at once would answer
+            // the same, and a reconcile queued on every stop would read the
+            // system without end. The run rests `stopped`; a resume asks
+            // again (decision 0185).
+            JobOutcome::Stopped(failure)
+                if failure.class() == a2m_core::FailureClass::PossibleCommit
+                    && *failure.code() == a2m_engine::codes::CANNOT_RECONCILE =>
+            {
+                control.apply(RunState::Stopped, Some(failure)).await?;
+                JobEnd::Rests
+            }
             JobOutcome::Stopped(failure) => {
                 let (class, code) = (failure.class(), failure.code().clone());
                 control.apply(RunState::Stopped, Some(failure)).await?;
                 JobEnd::Stopped {
                     class,
                     code,
-                    in_doubt: may_have_written(class) || control.in_doubt().await,
+                    in_doubt: may_have_written(class) || self.run_in_doubt(run).await,
                 }
             }
             JobOutcome::LeaseEnding => {
@@ -603,7 +879,7 @@ impl Kernel {
                     JobEnd::Stopped {
                         class,
                         code,
-                        in_doubt: control.in_doubt().await,
+                        in_doubt: self.run_in_doubt(run).await,
                     }
                 } else {
                     JobEnd::LeaseEnding
@@ -611,10 +887,17 @@ impl Kernel {
             }
             // A reconcile or a second look ended: the run's state stays.
             JobOutcome::Settled { .. } => JobEnd::Done,
+            // A discovery that could not be carried out wrote nothing and
+            // is a run of its own: it ends as failed, with the failure,
+            // and is not left running.
+            JobOutcome::Left(failure) if kind == JobKind::Discover => {
+                control.apply(RunState::Failed, Some(failure)).await?;
+                JobEnd::Done
+            }
             JobOutcome::Left(failure) => JobEnd::Stopped {
                 class: failure.class(),
                 code: failure.code().clone(),
-                in_doubt: false,
+                in_doubt: self.run_in_doubt(run).await,
             },
         };
         Ok(end)
@@ -628,15 +911,66 @@ impl Kernel {
         }
         let store = self.store()?;
         let run = row.id;
-        let rows = store.read(move |tx| tx.ledger().records(run)).await?;
-        let modes = lock(&self.inner.runner.modes)
-            .get(&run)
-            .cloned()
-            .unwrap_or_default();
+        // The values recorded before a commit point are the evidence of a
+        // `need` event of the run. They are read from the ledger, so a
+        // run resumed after a restart has them as well. Only those recorded
+        // after the record's current intent belong to the attempt whose
+        // send may be in doubt: an earlier attempt's values name what that
+        // attempt sent, and a reconcile is never given them (decision 0185).
+        let (rows, events) = store
+            .read(move |tx| {
+                let mut ledger = tx.ledger();
+                let rows = ledger.records(run)?;
+                let events = ledger.events(run, 0, u32::MAX)?;
+                Ok((rows, events))
+            })
+            .await?;
+        let place_of = |payload: &Json| {
+            let place = |name: &str| {
+                payload[name]
+                    .as_u64()
+                    .and_then(|number| u32::try_from(number).ok())
+            };
+            place("step").zip(place("record"))
+        };
         let mut records = Vec::new();
         for record in rows {
+            let place = (record.record.step_seq, record.record.record_seq);
+            let mut before_commit_blob = None;
+            let mut sent_by: Option<a2m_core::Timestamp> = record.acted_at;
+            if let Some(intent_seq) = record.intent_seq {
+                for event in events.iter().filter(|event| event.seq > intent_seq) {
+                    let Ok(payload) = serde_json::from_str::<Json>(&event.payload) else {
+                        continue;
+                    };
+                    if place_of(&payload) != Some(place) {
+                        continue;
+                    }
+                    match event.kind {
+                        EventKind::Need if payload["before_commit"] == true => {
+                            // A later event of the same attempt replaces an
+                            // earlier one.
+                            if let Some(blob) = event.evidence {
+                                before_commit_blob = Some(blob);
+                            }
+                        }
+                        // What followed the send was recorded at this
+                        // moment: the send was made before it.
+                        EventKind::Acted | EventKind::Failed
+                            if sent_by.is_none_or(|at| {
+                                at.as_unix_millis() < event.at.as_unix_millis()
+                            }) =>
+                        {
+                            sent_by = Some(event.at);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let before = self.stored_values(record.before).await?;
             let outputs = self.stored_values(record.outputs).await?;
+            let before_commit = self.stored_values(before_commit_blob).await?;
+            let acknowledged = record.acknowledged();
             records.push(RecordSnapshot {
                 record: record.record,
                 key: record.key,
@@ -648,20 +982,32 @@ impl Kernel {
                 idempotency_token: record.idempotency_token,
                 assigned_key: record.assigned_key,
                 outputs,
-                before_commit: None,
-                mode: modes
-                    .iter()
-                    .rev()
-                    .find(|(held, _)| *held == record.record)
-                    .map(|(_, mode)| mode.clone()),
+                before_commit,
+                // The mode of the binding its intent was stored for, as
+                // the ledger keeps it with the record: after a restart, a
+                // record in doubt is read through the binding that wrote it.
+                mode: record.mode,
                 failure: record.failure,
+                acknowledged,
+                intent_at: record.intent_at,
+                sent_by,
             });
         }
+        // The diff the run was previewed with, which a person approved: the
+        // engine writes each record only through the binding it names.
+        let approved = match row.diff {
+            Some(blob) => {
+                let opened = store.blobs().get(&blob).await?;
+                Some(Diff::decode(opened.expose())?)
+            }
+            None => None,
+        };
         Ok(Some(RunSnapshot {
             state: row.state,
             diff: row.diff_hash,
             cleared: row.cleared_to_write(),
             records,
+            approved,
         }))
     }
 

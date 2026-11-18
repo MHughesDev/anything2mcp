@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::process::{Command, Output, Stdio};
 
 use a2m_actions::{PROCESS_COMMANDS, SHORTCUTS, command_faces};
-use common::Folder;
+use common::{Folder, Machine};
 use serde_json::Value as Json;
 
 /// Both names of the command.
@@ -75,6 +75,9 @@ impl Bare {
             .current_dir(self.project.path())
             .env("A2M_HOME", self.home.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
+            // The engine runs inside each command: none is started and
+            // left running by a test of the command line.
+            .env(common::IN_PROCESS_VARIABLE, "true")
             .stdin(Stdio::null());
         if self.passphrase {
             command.env(anything2mcp::PASSPHRASE_VARIABLE, common::PASSPHRASE);
@@ -135,8 +138,11 @@ fn both_names_are_the_same_program() {
         vec!["nothing"],
         vec!["tool", "cal"],
         vec!["tool", "call"],
-        vec!["serve"],
-        vec!["init"],
+        vec!["runner"],
+        vec!["serve", "--help"],
+        vec!["bridge", "--toolset", "admin"],
+        // `init` writes files, so a second run of it says what it kept:
+        // not the same output, by design.
         vec!["docs", "get", "approvals"],
     ] {
         let long = bare.run_as(COMMANDS[0], &args);
@@ -266,7 +272,10 @@ fn output_that_is_not_a_terminal_is_one_json_object_for_every_action() {
         let output = bare.run(&[&face.noun, &face.verb]);
         let json = object(&output);
         let code = output.status.code().unwrap();
-        assert!((0..=3).contains(&code), "{}: {code}", face.action);
+        // `engine start`, which this machine cannot carry out with no
+        // passphrase for its vault, ends as an engine not started.
+        let highest = if face.action == "engine.start" { 4 } else { 3 };
+        assert!((0..=highest).contains(&code), "{}: {code}", face.action);
         assert_eq!(json["ok"] == true, code == 0, "{}: {json}", face.action);
         if code == 0 {
             assert!(json["result"].is_object(), "{}: {json}", face.action);
@@ -356,11 +365,21 @@ fn the_exit_code_follows_the_failure() {
     assert_eq!(publish.status.code(), Some(3));
     assert_eq!(object(&publish)["error"]["code"], "person_required");
 
-    // A process command is named and not built; a settings file that does
-    // not load stops the command with the file named.
-    let serve = bare.run(&["serve"]);
-    assert_eq!(serve.status.code(), Some(1));
-    assert_eq!(object(&serve)["error"]["code"], "action_not_built");
+    // The process command of a server's role is named and not built; a
+    // process command given a word it does not take is malformed, and the
+    // bridge says so on standard error alone, because its standard output
+    // carries protocol messages and nothing else. A settings file that
+    // does not load stops the command with the file named.
+    let runner = bare.run(&["runner"]);
+    assert_eq!(runner.status.code(), Some(1));
+    assert_eq!(object(&runner)["error"]["code"], "action_not_built");
+    let serve = bare.run(&["serve", "now"]);
+    assert_eq!(serve.status.code(), Some(2));
+    assert_eq!(object(&serve)["error"]["code"], "schema_invalid");
+    let bridge = bare.run(&["bridge", "--toolset", "admin"]);
+    assert_eq!(bridge.status.code(), Some(2));
+    assert!(bridge.stdout.is_empty(), "{bridge:?}");
+    assert!(text(&bridge.stderr).contains("admin"), "{bridge:?}");
     std::fs::write(
         bare.project.path().join("anything2mcp.toml"),
         "[tools]\nno_such_key = 1\n",
@@ -381,6 +400,7 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
     let names = [
         "command",
         "data",
+        "desktop",
         "device",
         "file",
         "http",
@@ -389,9 +409,10 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
         "web",
         "web_probe",
     ];
-    // The web pack's two providers need a browser on the machine, so only
-    // the others are held to `ready` here.
-    let needs_a_program = ["web", "web_probe"];
+    // The web pack's two providers need a browser on the machine, and the
+    // desktop pack needs the accessibility bus and is built for Linux only,
+    // so only the others are held to `ready` here.
+    let needs_a_program = ["desktop", "web", "web_probe"];
     for off in names {
         let bare = Bare::new();
         bare.installation(&format!("[providers]\ndisabled = [\"{off}\"]\n"));
@@ -437,14 +458,20 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
 #[test]
 fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let bare = Bare::with_passphrase();
-    // `init` has no action beneath it yet, and says what to do instead.
+    // `init` writes the project's first files beside the project file that
+    // is there, and keeps that one.
     let init = bare.run(&["init"]);
-    assert_eq!(init.status.code(), Some(1));
-    assert!(
-        object(&init)["error"]["fix"]
-            .as_str()
-            .unwrap()
-            .contains("anything2mcp.toml")
+    assert_eq!(init.status.code(), Some(0), "{init:?}");
+    let made = &object(&init)["result"];
+    assert_eq!(
+        made["kept"],
+        serde_json::json!(["anything2mcp.toml"]),
+        "{made}"
+    );
+    assert_eq!(
+        made["written"],
+        serde_json::json!(["AGENTS.md", ".gitignore", "targets"]),
+        "{made}"
     );
 
     // `add` registers the target, then stops at the first of its actions
@@ -452,8 +479,16 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
     assert_eq!(add.status.code(), Some(1), "{added}");
-    assert_eq!(added["action"], "target.probe");
+    assert_eq!(added["action"], "session.login", "{added}");
     assert_eq!(added["error"]["code"], "action_not_built");
+    // The step it stopped before was never begun, and the note says what
+    // was done and what was not.
+    let note = added["error"]["message"].as_str().unwrap();
+    assert!(note.contains("stopped before `session.login`"), "{note}");
+    assert!(
+        note.contains("Done: `target.add`, `scout.run`, `scout.report`"),
+        "{note}"
+    );
     let file = bare
         .project
         .path()
@@ -493,4 +528,143 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     // `doctor` checks the machine and prints one object.
     let doctor = bare.run(&["doctor"]);
     assert_eq!(object(&doctor)["action"], "doctor.run");
+}
+
+/// Runs the program with `input` on its standard input, and waits for it.
+fn run_with_stdin(mut command: Command, input: &'static [u8]) -> Output {
+    use std::io::Write;
+    let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
+    // The pipe is closed when the handle is dropped: the program reads to
+    // the end of its input.
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_secret_typed_on_standard_input_is_stored_and_is_in_no_output() {
+    use example_app::harness::{BEARER_TOKEN, TestApp};
+
+    let app = TestApp::start().await.unwrap();
+    let machine =
+        Machine::new("secured", &[("http://127.0.0.1:4010", &app.url(""))]).with_passphrase();
+    // A person publishes the target; the engine is then closed, so that
+    // each command below is the real program with an engine of its own.
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+
+    let run = |args: &'static [&'static str], input: &'static [u8]| {
+        let command = machine.program(args);
+        tokio::task::spawn_blocking(move || run_with_stdin(command, input))
+    };
+    let mut outputs = Vec::new();
+
+    // Both ways at once are refused, by the names of the two arguments.
+    // What was given is in neither output.
+    let both = run(
+        &[
+            "secret",
+            "set",
+            "example/service/token",
+            "--stdin",
+            "--value",
+            "example-value-given-as-an-argument",
+        ],
+        b"example-value-given-on-standard-input\n",
+    )
+    .await
+    .unwrap();
+    assert_eq!(both.status.code(), Some(2), "{both:?}");
+    let refused = object(&both);
+    assert_eq!(refused["error"]["code"], "schema_invalid");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--stdin") && message.contains("--value"));
+    for given in [
+        "example-value-given-as-an-argument",
+        "example-value-given-on-standard-input",
+    ] {
+        assert!(!text(&both.stdout).contains(given), "{both:?}");
+        assert!(!text(&both.stderr).contains(given), "{both:?}");
+    }
+
+    // The secret, typed on standard input with a line ending after it.
+    let token: &'static [u8] = Box::leak(
+        format!("{BEARER_TOKEN}\r\n")
+            .into_bytes()
+            .into_boxed_slice(),
+    );
+    let stored = run(
+        &["secret", "set", "example/service/token", "--stdin"],
+        token,
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.status.code(), Some(0), "{stored:?}");
+    let answer = object(&stored);
+    assert_eq!(answer["action"], "secret.set");
+    assert_eq!(answer["result"]["stored"], true);
+    outputs.push(stored);
+
+    // The test application takes the token the vault now holds: the read
+    // is signed in, and the application refused no token. So what was
+    // stored is the text that was typed, without its line ending.
+    let read = run(
+        &[
+            "tool",
+            "call",
+            "example_order_get",
+            "--input",
+            r#"{"order_id": "A-100"}"#,
+        ],
+        b"",
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    let result = object(&read)["result"].clone();
+    assert_eq!(result["status"], "completed", "{result}");
+    assert_eq!(result["result"]["customer"], "Example Customer One");
+    assert_eq!(app.auth_report().await.unwrap().refused_tokens, 0);
+    outputs.push(read);
+
+    for output in &outputs {
+        assert!(!text(&output.stdout).contains(BEARER_TOKEN), "{output:?}");
+        assert!(!text(&output.stderr).contains(BEARER_TOKEN), "{output:?}");
+    }
+}
+
+#[test]
+fn init_makes_an_empty_folder_a_project_and_keeps_what_is_there() {
+    let bare = Bare::new();
+    let folder = Folder::new("init");
+    let init = |args: &[&str]| {
+        let mut command = bare.command(COMMANDS[0], args);
+        command.current_dir(folder.path());
+        command.output().unwrap()
+    };
+    let made = init(&["init"]);
+    assert_eq!(made.status.code(), Some(0), "{made:?}");
+    let result = &object(&made)["result"];
+    assert_eq!(
+        result["written"],
+        serde_json::json!(["anything2mcp.toml", "AGENTS.md", ".gitignore", "targets"]),
+        "{result}"
+    );
+    assert!(folder.path().join("targets").is_dir());
+    let guidance = std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap();
+    assert!(!guidance.trim().is_empty());
+    // The folder is a project now: a command run in it finds it.
+    let listed = init(&["draft", "lint", "--help"]);
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+
+    // Again, nothing is written over.
+    std::fs::write(folder.path().join("AGENTS.md"), "my own words").unwrap();
+    let again = init(&["init"]);
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(object(&again)["result"]["written"], serde_json::json!([]));
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap(),
+        "my own words"
+    );
 }

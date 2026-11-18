@@ -57,6 +57,13 @@ pub enum FaultKind {
     /// Do the work and answer with structured content that does not fit the
     /// tool's output schema. Applies to `tools/call` only.
     ResultOffSchema,
+    /// Do the work and answer with this structured content in place of the
+    /// tool's own, whether or not the tool has an output schema. Applies to
+    /// `tools/call` only.
+    ResultStructured {
+        /// The structured content to answer with.
+        content: serde_json::Value,
+    },
     /// Do nothing and answer with this HTTP status. Applies over HTTP only.
     HttpStatus {
         /// The HTTP status to answer with.

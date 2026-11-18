@@ -19,8 +19,8 @@ use crate::budget::{self, Take};
 use crate::failure;
 use crate::types::{
     Admitted, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd, JobKind, JobLease,
-    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, Priority, Renewal,
-    ResourceKey, RunnerOffer, RunnerTerms, SchedSettings, Slots, Submission,
+    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, Priority, Reconciling,
+    Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings, Slots, Submission,
 };
 
 /// The most keys a job may name as exclusive, and the most modes.
@@ -168,6 +168,29 @@ fn live_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<Job>, Failure> {
         .as_ref()
         .map(job_of)
         .transpose()
+}
+
+/// The identifier of the unfinished job of a run, when it has one.
+pub(crate) fn unfinished_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<JobId>, Failure> {
+    Ok(live_job(tx, run)?.map(|job| job.id))
+}
+
+/// How many jobs are waiting or leased. Each count has an index of its own.
+pub(crate) fn unfinished_jobs(tx: &mut Tx<'_>) -> Result<u64, Failure> {
+    let mut jobs = 0_u64;
+    for sql in [
+        "SELECT COUNT(*) FROM jobs WHERE state = 'pending'",
+        "SELECT COUNT(*) FROM jobs WHERE state = 'leased'",
+    ] {
+        let found = tx
+            .tables(Owner::Sched)
+            .query_first(sql, &[])?
+            .map(|row| row.int(0))
+            .transpose()?
+            .unwrap_or(0);
+        jobs = jobs.saturating_add(u64::try_from(found).unwrap_or(0));
+    }
+    Ok(jobs)
 }
 
 /// What a runner offers, as the store keeps it.
@@ -525,8 +548,13 @@ pub(crate) fn grant(
         let free = keys.iter().all(|key| {
             holds.get(key).is_none_or(|holder| *holder == me) && !spoken_for.contains(key)
         });
-        if find_job(tx, *job)?.state != JobState::Leased {
-            // Its job has ended: it is given nothing and keeps no place.
+        let waiting = find_job(tx, *job)?;
+        let now = tx.now();
+        if waiting.state != JobState::Leased || waiting.lease_until.is_none_or(|until| now >= until)
+        {
+            // Its job has ended, or its lease has run out and it is about
+            // to be declared lost: it is given nothing and keeps no place,
+            // as `acquire` would refuse it now.
             continue;
         }
         if free {
@@ -1253,13 +1281,173 @@ fn queue_reconcile(
     Ok(id)
 }
 
+/// Whether a run that stopped with a failure of this class waits for a
+/// person: the scheduler then never queues its reconcile on its own. Only
+/// a write in doubt, a timeout, and a busy system are worth reading again
+/// without anyone doing anything (spec section 207); every other class
+/// needs a person first, and a resume reconciles before anything else.
+pub(crate) const fn waits_for_person(class: FailureClass) -> bool {
+    !matches!(
+        class,
+        FailureClass::PossibleCommit | FailureClass::Transient | FailureClass::Busy
+    )
+}
+
+/// How many reconcile jobs of the run have ended one after the other, the
+/// latest first, before any job of another kind.
+fn reconciles_in_a_row(tx: &mut Tx<'_>, run: RunId) -> Result<u32, Failure> {
+    let rows = tx.tables(Owner::Sched).query(
+        "SELECT kind, state FROM jobs WHERE run_id = ?1 ORDER BY seq DESC LIMIT 64",
+        &[run.to_string().into()],
+    )?;
+    let mut count = 0_u32;
+    for row in &rows {
+        let ended = matches!(row.text(1)?, "done" | "lost" | "dead");
+        if row.text(0)? != JobKind::Reconcile.as_str() || !ended {
+            break;
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// How long a reconcile waits when `before` reconciles of its run have
+/// ended in a row: nothing for the first; then the setting's first wait,
+/// doubled for each one after, never more than its ceiling (decision 0193).
+pub(crate) fn reconcile_wait(settings: &SchedSettings, before: u32) -> Duration {
+    if before == 0 {
+        return Duration::ZERO;
+    }
+    let doubled = settings
+        .reconcile_wait
+        .checked_mul(1_u32.checked_shl(before - 1).unwrap_or(u32::MAX))
+        .unwrap_or(settings.reconcile_wait_ceiling);
+    doubled.min(settings.reconcile_wait_ceiling)
+}
+
+/// The end of the quarantine that holds a pending reconcile back: when the
+/// job before it in its run was lost, the moment of that loss plus the
+/// quarantine (or the job's longest step, when longer). `None` otherwise.
+fn quarantine_end(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    run: RunId,
+    job: &Job,
+) -> Result<Option<Timestamp>, Failure> {
+    let before = tx.tables(Owner::Sched).query_first(
+        "SELECT state, finished_at FROM jobs WHERE run_id = ?1 AND seq < (SELECT seq FROM jobs WHERE id = ?2)
+         ORDER BY seq DESC LIMIT 1",
+        &[run.to_string().into(), job.id.to_string().into()],
+    )?;
+    if let Some(row) = before
+        && row.text(0)? == JobState::Lost.as_str()
+    {
+        let lost_at = Timestamp::from_unix_millis(row.opt_int(1)?.unwrap_or(i64::MAX));
+        let quarantine = settings.quarantine.max(job.requirements.max_step);
+        return Ok(Some(plus(lost_at, quarantine)));
+    }
+    Ok(None)
+}
+
+/// Brings a pending reconcile forward to `at`, never before now and never
+/// before the end of a quarantine that a lost lease began. Answers when it
+/// is handed out and how long a quarantine still holds it back.
+fn bring_forward(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    run: RunId,
+    job: &Job,
+    at: Timestamp,
+) -> Result<(bool, Reconciling), Failure> {
+    let now = tx.now();
+    let quarantine = quarantine_end(tx, settings, run, job)?;
+    let floor = now.max(at).max(quarantine.unwrap_or(now));
+    let moved = job.available_at > floor;
+    if moved {
+        tx.tables(Owner::Sched).execute(
+            "UPDATE jobs SET available_at = ?2 WHERE id = ?1 AND state = 'pending'",
+            &[job.id.to_string().into(), floor.into()],
+        )?;
+    }
+    let from = job.available_at.min(floor).max(now);
+    let quarantine_left = quarantine
+        .filter(|end| *end > now)
+        .map(|end| between(now, end.min(from)));
+    Ok((
+        moved,
+        Reconciling {
+            job: job.id,
+            leased: false,
+            from,
+            quarantine_left,
+        },
+    ))
+}
+
+/// Brings the run's waiting reconcile forward to `at`, never before now and
+/// never before the end of a quarantine that a lost lease began: a named
+/// condition has come that makes reading the system again worth it (a
+/// settle time has passed). Nothing changes for a run with no reconcile
+/// waiting, or one that waits less. True when it was brought forward.
+pub(crate) fn wake_reconcile(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    run: RunId,
+    at: Timestamp,
+) -> Result<bool, Failure> {
+    let Some(job) = live_job(tx, run)? else {
+        return Ok(false);
+    };
+    if job.state != JobState::Pending || job.requirements.kind != JobKind::Reconcile {
+        return Ok(false);
+    }
+    Ok(bring_forward(tx, settings, run, &job, at)?.0)
+}
+
+/// A person asks for the run now: in one transaction, a reconcile that is
+/// the run's one job is woken (or, while it is leased, found so that the
+/// caller remembers the wake for the reconcile it queues), and otherwise the
+/// resume's own job is queued as [`enqueue`] queues it. Waking the
+/// reconcile needs none of the admission checks: it is the scheduler's own
+/// job, and it stands even when the resume could not be queued.
+pub(crate) fn resume(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    enqueue: Enqueue,
+) -> Result<Resumed, Failure> {
+    check_requirements(&enqueue.job)?;
+    let run = tx.ledger().run(enqueue.run)?;
+    if !run.state.is_final()
+        && let Some(job) = live_job(tx, run.id)?
+        && job.requirements.kind == JobKind::Reconcile
+    {
+        if job.state == JobState::Leased {
+            return Ok(Resumed::Reconciling(Reconciling {
+                job: job.id,
+                leased: true,
+                from: tx.now(),
+                quarantine_left: None,
+            }));
+        }
+        let now = tx.now();
+        let (_, found) = bring_forward(tx, settings, run.id, &job, now)?;
+        return Ok(Resumed::Reconciling(found));
+    }
+    self::enqueue(tx, settings, enqueue).map(Resumed::Queued)
+}
+
 /// Records how a job ended. The run's state is the ledger's: it is read
 /// here and copied, never written.
+///
+/// `resumed`: a person resumed the run while this job, a reconcile, was
+/// leased. A reconcile it queues because it ended in doubt is then handed
+/// out at once, not after the growing wait.
 pub(crate) fn finish(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
     lease: &LeaseRef,
     end: &JobEnd,
+    resumed: bool,
 ) -> Result<Ended, Failure> {
     // A result is taken until the lease is declared lost: until then nobody
     // else has been given the job.
@@ -1286,9 +1474,31 @@ pub(crate) fn finish(
                 run_state,
                 Some((*class, code.clone())),
             )?;
-            if *in_doubt && run_state.is_some_and(|state| !state.is_final()) {
-                let now = tx.now();
-                ended.reconcile = Some(queue_reconcile(tx, settings, &job, now)?);
+            // The runner's word is not all that is asked: the ledger knows
+            // which records had their intent stored and were never read
+            // back, and a run that holds one is reconciled whatever its
+            // runner reported.
+            let in_doubt = *in_doubt
+                || match job.run {
+                    Some(run) => !tx.ledger().in_doubt(run)?.is_empty(),
+                    None => false,
+                };
+            // A run that stopped for a person rests until someone resumes
+            // it; one that may be read again is, after a wait that grows
+            // with each reconcile of it in a row, so a record that stays in
+            // doubt is never read without end (decision 0193).
+            if in_doubt
+                && !waits_for_person(*class)
+                && run_state.is_some_and(|state| !state.is_final())
+                && let Some(run) = job.run
+            {
+                let wait = if resumed {
+                    Duration::ZERO
+                } else {
+                    reconcile_wait(settings, reconciles_in_a_row(tx, run)?)
+                };
+                let at = plus(tx.now(), wait);
+                ended.reconcile = Some(queue_reconcile(tx, settings, &job, at)?);
             }
         }
         JobEnd::LeaseEnding => {
@@ -1361,8 +1571,14 @@ pub(crate) struct Swept {
 }
 
 /// Declares lost every lease that ended without a result, and ends every
-/// job no runner took within its queue limit.
-pub(crate) fn sweep(tx: &mut Tx<'_>, settings: &SchedSettings) -> Result<Swept, Failure> {
+/// job no runner took within its queue limit. `resumed`: the leased
+/// reconciles a person resumed the run of; the reconcile queued after such
+/// a one is lost waits out the quarantine and no growing wait.
+pub(crate) fn sweep(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    resumed: &BTreeSet<JobId>,
+) -> Result<Swept, Failure> {
     let now = tx.now();
     let mut swept = Swept::default();
 
@@ -1405,7 +1621,12 @@ pub(crate) fn sweep(tx: &mut Tx<'_>, settings: &SchedSettings) -> Result<Swept, 
         }
         if reconcile {
             let quarantine = settings.quarantine.max(job.requirements.max_step);
-            let id = queue_reconcile(tx, settings, &job, plus(now, quarantine))?;
+            let before = match job.run {
+                Some(run) if !resumed.contains(&job.id) => reconciles_in_a_row(tx, run)?,
+                _ => 0,
+            };
+            let wait = quarantine.max(reconcile_wait(settings, before));
+            let id = queue_reconcile(tx, settings, &job, plus(now, wait))?;
             swept.reconcile.push(id);
         } else {
             swept.freed |= drop_holds(tx, job.id)?;

@@ -14,9 +14,14 @@
 //! Not built yet, and so not declared in the pack's manifest: the `api`
 //! mode, the `token` step and the anti-forgery bootstrap, the edge's
 //! answers, uploads and downloads, pagers, identity by a stamp or a search,
-//! the digest and integrated Windows exchanges, GraphQL and OData. TLS is
-//! not in this build: a surface reached over HTTPS is refused with the
-//! failure `input`/`tls_not_enabled`.
+//! the digest and integrated Windows exchanges, a client certificate,
+//! GraphQL and OData.
+//!
+//! HTTPS is behind the feature `tls`. With it on, an `https` surface is
+//! reached through a client made by `a2m_auth::tls`, and a certificate or a
+//! handshake that fails is a named failure of `unknown_variant` with nothing
+//! sent. With it off, an `https` surface is refused with the failure
+//! `input`/`tls_not_enabled`.
 //!
 //! A pack crate sees the kernel up to the provider contract; the layering
 //! table in `docs/reference/technical-reference.md` is the rule, and this
@@ -24,9 +29,11 @@
 
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod endpoints;
 mod json;
+mod link;
 mod lower;
 mod openapi;
 mod shape;
@@ -40,6 +47,7 @@ use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, Registry
 
 pub use discover::{DESCRIPTION_FILE, DESCRIPTION_PATH};
 pub use endpoints::{ENDPOINT_KIND, HTTP_SURFACE, PACK, WEB_SURFACE};
+pub use link::{ACCEPTED, UNENCRYPTED_CREDENTIALS};
 pub use lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
 
 /// The name of the mode this pack drives.
@@ -84,18 +92,36 @@ impl Pack for HttpPack {
         )?;
         to.compiler(
             CompilerRegistrations::new()
-                .surface_kind(SurfaceKindSpec::new(
-                    HTTP_SURFACE,
-                    ADDRESS_KEY,
-                    JsonSchema::object().required(ADDRESS_KEY, JsonSchema::text()),
-                ))
+                .surface_kind(
+                    SurfaceKindSpec::new(
+                        HTTP_SURFACE,
+                        ADDRESS_KEY,
+                        JsonSchema::object()
+                            .required(ADDRESS_KEY, JsonSchema::text())
+                            .optional(
+                                link::UNENCRYPTED_CREDENTIALS,
+                                JsonSchema::words(&[link::ACCEPTED]),
+                            ),
+                    )
+                    // A door shows a person that the surface sends a credential
+                    // over an unencrypted link (decisions 0193 and 0194).
+                    .with_notice(
+                        link::UNENCRYPTED_CREDENTIALS,
+                        link::ACCEPTED,
+                        a2m_core::SurfaceNotice::UnencryptedCredentials,
+                    ),
+                )
                 .file_kind(Arc::new(endpoints::EndpointKind::new()))
                 .lowering(Arc::new(lower::HttpLowering::new(mode)))
                 .lint_rule(Arc::new(endpoints::SecretLiteral))
                 .lint_rule(Arc::new(endpoints::NoResponseSchema))
                 .lint_rule(Arc::new(endpoints::EffectMethod))
                 .lint_rule(Arc::new(endpoints::SignedEndpoint))
+                .lint_rule(Arc::new(link::UnencryptedCredentials))
                 .drafting_rule(Arc::new(openapi::DescribedOperationRule {
+                    kind: openapi::described_operation()?,
+                }))
+                .drafting_rule(Arc::new(draft::DescribedReadRule {
                     kind: openapi::described_operation()?,
                 })),
         )?;

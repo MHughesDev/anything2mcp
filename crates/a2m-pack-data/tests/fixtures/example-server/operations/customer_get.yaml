@@ -1,0 +1,16 @@
+operation: example_customer_get
+title: Get a customer
+effect: read
+key: customer_id
+inputs:
+  customer_id: {type: identifier, description: "Customer number"}
+outputs:
+  name: {type: note}
+  credit_limit_cents: {type: integer}
+  notes: {type: note}
+bindings:
+  - mode: sql
+    statement: customer_by_key
+description: >
+  Reads one customer from the store; the notes are free text the store holds.
+  Prefer example_line_item_get for the lines of an order.

@@ -16,6 +16,40 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/orders", get(order_list))
         .route("/orders/{order_id}", get(order_detail))
         .route("/orders/{order_id}/items/{item_code}", get(item_form))
+        .route("/orders/{order_id}/totals", get(order_totals))
+}
+
+/// The totals of an order, which the page's own script reads from the JSON
+/// interface with GET as it loads, sending an anti-forgery header and a
+/// cookie it sets itself, both made up. The page says `Loaded.` once the
+/// answer is shown.
+async fn order_totals(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+    let inner = state.lock().await;
+    let Some(order) = inner.store.order(&order_id) else {
+        return missing("order");
+    };
+    let id = escape(&order.order_id);
+    let body = format!(
+        "<h1>Totals of order {id}</h1>\n\
+         <p><span id=\"total-label\">Total quantity</span> \
+         <output id=\"total\" aria-labelledby=\"total-label\"></output></p>\n\
+         <p id=\"state\">Loading.</p>\n\
+         <script>\n\
+         document.cookie = \"example_session=secret-for-tests-cookie-4c1d; path=/\";\n\
+         (async () => {{\n\
+           const response = await fetch(\"/api/orders/\" + encodeURIComponent({quoted}) + \"/totals?view=summary&lang=en\", {{\n\
+             headers: {{\"X-CSRF-Token\": \"example-token-for-tests-9e2b\", \"Accept\": \"application/json\"}},\n\
+           }});\n\
+           const totals = await response.json();\n\
+           document.getElementById(\"total\").textContent = String(totals.total_quantity);\n\
+           document.getElementById(\"state\").textContent = \"Loaded.\";\n\
+         }})();\n\
+         </script>",
+        quoted = serde_json::to_string(&order.order_id)
+            .unwrap_or_default()
+            .replace('<', "\\u003c"),
+    );
+    page(&format!("Totals of order {}", order.order_id), &body).into_response()
 }
 
 /// Makes text safe to place inside HTML, in content or in a quoted attribute.
@@ -102,7 +136,8 @@ async fn order_detail(State(state): State<AppState>, Path(order_id): Path<String
         }
     };
     let body = format!(
-        "<h1>Order {id}</h1>\n<dl>\n<dt>Customer</dt><dd>{}</dd>\n<dt>Status</dt><dd>{}</dd>\n</dl>\n\
+        "<h1>Order {id}</h1>\n<dl>\n<dt id=\"order-customer\">Customer</dt><dd aria-labelledby=\"order-customer\">{}</dd>\n\
+         <dt id=\"order-status\">Status</dt><dd aria-labelledby=\"order-status\">{}</dd>\n</dl>\n\
          <table>\n<caption>Line items</caption>\n\
          <thead><tr><th>Item code</th><th>Description</th><th>Quantity</th><th>Length (in)</th></tr></thead>\n\
          <tbody>\n{rows}</tbody>\n</table>\n{add}",
@@ -113,7 +148,7 @@ async fn order_detail(State(state): State<AppState>, Path(order_id): Path<String
 }
 
 /// The form for one line item. The address `.../items/new` gives an empty form.
-async fn item_form(
+pub(crate) async fn item_form(
     State(state): State<AppState>,
     Path((order_id, item_code)): Path<(String, String)>,
 ) -> Response {

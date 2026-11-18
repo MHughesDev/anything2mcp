@@ -3,13 +3,17 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use a2m_core::{Digest, Failure, FailureClass, KeyedDigest, Redact, RunState, Version};
-use a2m_provider::{Posture, Registry};
+use a2m_core::{
+    Digest, Failure, FailureClass, KeyedDigest, OperationName, Plan, Redact, RunState, SurfaceName,
+    ToolRuns, Version,
+};
+use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;
 use a2m_telemetry::{Clock, TraceBuilder, TraceIdentity};
 
 use crate::codes;
 use crate::control::{Control, EngineEvent};
+use crate::guard::Timed;
 use crate::job::{JobKind, JobOutcome, JobSpec, ToolRef};
 use crate::loaded::Loaded;
 use crate::run::{Run, Stop};
@@ -27,6 +31,11 @@ pub struct EngineSettings {
     pub prepare_timeout: Duration,
     /// The time limit of a step whose plan states none.
     pub step_timeout: Duration,
+    /// How long the engine waits for one call to `Control` to be answered.
+    /// An implementation that waits (for a lock, a lease, a rate budget)
+    /// keeps its own, shorter limit; this one ends a call that never
+    /// answers.
+    pub control_timeout: Duration,
     /// What reading a source may use up.
     pub source_limits: Limits,
     /// How many plans are kept loaded.
@@ -42,6 +51,7 @@ impl Default for EngineSettings {
             freshness_window: Duration::from_secs(60),
             prepare_timeout: Duration::from_secs(30),
             step_timeout: Duration::from_secs(30),
+            control_timeout: Duration::from_secs(120),
             source_limits: Limits {
                 bytes: 64 * 1024 * 1024,
                 unpacked_bytes: 256 * 1024 * 1024,
@@ -69,6 +79,22 @@ pub struct EngineDeps {
     pub clock: Arc<dyn Clock>,
     /// The settings.
     pub settings: EngineSettings,
+}
+
+/// Something a job that writes must hold alone for as long as it is leased:
+/// what the mode of one of its bindings declares that one write holds
+/// alone, on the surface the binding acts on.
+///
+/// The engine does not take it. Whoever submits the job names it in the
+/// job's requirements, so that the scheduler takes every such key together
+/// when it leases the job, before any record lock, and passes what a lost
+/// job held to its reconcile job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExclusiveNeed {
+    /// What is held alone, as the mode's manifest words it.
+    pub kind: Exclusive,
+    /// The surface it is held on.
+    pub surface: SurfaceName,
 }
 
 /// The engine. It holds the plans it has loaded and nothing else between
@@ -157,6 +183,54 @@ impl Engine {
         Ok(loaded)
     }
 
+    /// What a job that carries out `tool` must hold alone, when the tool
+    /// writes: for every binding that may write, what its mode declares
+    /// one write holds alone, on the binding's surface. In the order of
+    /// the kinds and then of the surfaces' names, each once. Empty for a
+    /// tool that only reads, and for a tool the plan does not hold.
+    ///
+    /// A binding's mode is looked up by name in the registry, as data; a
+    /// mode no enabled provider declares can never be chosen and adds
+    /// nothing.
+    #[must_use]
+    pub fn exclusive_needs(&self, plan: &Plan, tool: &OperationName) -> Vec<ExclusiveNeed> {
+        let operations: Vec<_> = match plan.tool(tool).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => plan.operation(index).into_iter().collect(),
+            Some(ToolRuns::Pipeline(index)) => plan
+                .pipeline(index)
+                .into_iter()
+                .flat_map(|pipeline| &pipeline.steps)
+                .filter_map(|step| plan.operation(step.operation))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut needs = Vec::new();
+        for binding in operations.iter().flat_map(|operation| &operation.bindings) {
+            if !binding.act.iter().any(|step| step.commits)
+                || binding.status == a2m_core::BindingStatus::Retired
+            {
+                continue;
+            }
+            let Some(defaults) = self.deps.registry.mode_defaults(&binding.mode) else {
+                continue;
+            };
+            let Some(surface) = plan.surface(binding.surface) else {
+                continue;
+            };
+            if defaults.exclusive != Exclusive::None {
+                needs.push(ExclusiveNeed {
+                    kind: defaults.exclusive,
+                    surface: surface.name.clone(),
+                });
+            }
+        }
+        needs.sort_by(|left, right| {
+            (left.kind.as_str(), &left.surface).cmp(&(right.kind.as_str(), &right.surface))
+        });
+        needs.dedup();
+        needs
+    }
+
     /// The environment a job names, as its position in the plan.
     pub(crate) fn environment(loaded: &Loaded, job: &JobSpec) -> Result<usize, Failure> {
         let plan = &loaded.plan;
@@ -189,13 +263,53 @@ impl Engine {
     /// while such a step is in flight leaves the record in doubt, to be
     /// reconciled.
     pub async fn run_job(&self, job: &JobSpec, control: &dyn Control) -> JobOutcome {
+        self.run_job_with(job, control, None).await
+    }
+
+    /// Runs an offline test's job: the job as [`Engine::run_job`] runs it,
+    /// with every binding handed `replay`, a [`a2m_provider::Replay`] of
+    /// recorded answers and nothing else, in place of its provider's driver,
+    /// through a handle that checks each step against the provider's
+    /// declared step kinds and codes. No session is asked for and no
+    /// provider's driver is prepared, so nothing leaves the machine
+    /// (decision 0177). A write commits only where `replay` answers its
+    /// committing step, and the control plane decides whether it is cleared
+    /// to: a replay is never a reason to clear one.
+    pub async fn run_offline(
+        &self,
+        job: &JobSpec,
+        control: &dyn Control,
+        replay: Arc<a2m_provider::Replay>,
+    ) -> JobOutcome {
+        // Typed as the replay itself, never any driver: a pack's driver
+        // handed here would let a binding not yet verified act on a live
+        // system (audit finding EN-1).
+        self.run_job_with(job, control, Some(replay as Arc<dyn a2m_provider::Driver>))
+            .await
+    }
+
+    async fn run_job_with(
+        &self,
+        job: &JobSpec,
+        control: &dyn Control,
+        replay: Option<Arc<dyn a2m_provider::Driver>>,
+    ) -> JobOutcome {
         let claimed = job
             .snapshot
             .as_ref()
             .map_or(RunState::Queued, |snapshot| snapshot.state);
         let ToolRef::Tool(name) = &job.tool else {
+            if replay.is_some() {
+                // Discovery observes a live system; there is no replay of it.
+                return JobOutcome::Left(codes::job_invalid(
+                    "An offline test runs a tool, and this job names a surface to observe.",
+                ));
+            }
             return self.discover(job, control).await;
         };
+        // A call to the control plane that never answers is given up.
+        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let control: &dyn Control = &timed;
         let keeps_state = job.kind == JobKind::VerifyAfterLoss;
         let give_up = |state: RunState, failure: Failure| {
             if keeps_state {
@@ -210,6 +324,17 @@ impl Engine {
                 codes::job_invalid("A discovery job names a surface, and this one names a tool."),
             );
         }
+        // A new run is `validating` from here on: the plan, the
+        // environment, and the tool are checked as part of it, so that a
+        // job that names one the plan does not hold ends `rejected`, which
+        // a run that is still `queued` cannot.
+        let mut claimed = claimed;
+        if job.snapshot.is_none() {
+            if let Err(failure) = control.send(EngineEvent::Moved(RunState::Validating)).await {
+                return give_up(claimed, failure);
+            }
+            claimed = RunState::Validating;
+        }
         let loaded = match self.plan(&job.plan, control).await {
             Ok(loaded) => loaded,
             Err(failure) => return give_up(claimed, failure),
@@ -219,8 +344,12 @@ impl Engine {
             Err(failure) => return give_up(claimed, failure),
         };
         let posture = if job.kind == JobKind::Try {
+            // Every driver of a try is prepared with its own read-only
+            // guard on. The context in which a declared test record is
+            // written is the one exception, and it is prepared for that
+            // record's write alone (`Run::hold`).
             Posture::Sandbox {
-                test_records: !loaded.plan.environments[position].test_records.is_empty(),
+                test_records: false,
             }
         } else {
             Posture::Live
@@ -240,6 +369,8 @@ impl Engine {
             Arc::clone(&self.deps.keyed),
         );
         let mut run = Run::new(self, job, control, loaded, position, posture, Some(trace));
+        run.state = claimed;
+        run.replay = replay;
         let result = tool::run_tool(&mut run, name).await;
         run.release().await;
         if let Some(trace) = run.trace.take() {

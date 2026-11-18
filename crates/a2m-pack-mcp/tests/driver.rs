@@ -14,12 +14,12 @@ use std::sync::Arc;
 use a2m_core::{FailureClass, PackPayload, Plan, Step, Value, Values};
 use a2m_pack_mcp::{UpstreamMcp, codes};
 use a2m_provider::{
-    Authority, DriverHandle, DriverHealth, Observed, Posture, Prepared, Registry, Sent,
+    Authority, Destinations, DriverHandle, Observed, Posture, Prepared, Registry, Sent,
     StepFailure, StepOutcome, SurfaceRef,
 };
 use common::{
-    Folder, Sessions, compiled_fixture, fence_of, input, key, prepare, record, registry,
-    registry_with, running, steps, store, surface, token,
+    Folder, Sessions, compiled_fixture, fence_of, input, key, prepare, prepare_reaching, record,
+    registry, registry_set, registry_with, remapped, running, steps, store, surface, token,
 };
 use example_mcp::faults::{Drift, Fault, FaultKind, Malformed};
 use example_mcp::harness::HttpStand;
@@ -136,9 +136,21 @@ async fn a_read_returns_what_the_stand_holds_and_five_runs_observe_the_same() {
         first.values.get("note"),
         Some(&Value::from("Deliver to dock 2"))
     );
-    assert_eq!(first.captures.len(), 1);
+    // How the call was done, and what the server answered.
+    assert_eq!(first.captures.len(), 2);
+    let acting = first.acting().unwrap();
+    assert!(
+        acting
+            .means
+            .iter()
+            .any(|detail| detail.value == "orders_get")
+    );
+    assert!(!format!("{acting:?}").contains("A-100"));
+    // Five runs: the same values, the same captures, one trace signature.
     for _ in 0..4 {
-        assert_eq!(done(scene.get("A-100").await), first);
+        let again = done(scene.get("A-100").await);
+        assert_eq!(again, first);
+        assert_eq!(again.acting().unwrap().means, acting.means);
     }
     let control = scene.stand.control();
     assert_eq!(control.calls_to("orders_get").unwrap(), 5);
@@ -256,6 +268,11 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
             Authority::Write(&intent),
         )
         .await;
+    // What the tool said is carried apart from the product's sentence.
+    let refusal = rejected.as_ref().unwrap_err();
+    let said = refusal.failure.said().unwrap();
+    assert!(!said.is_empty());
+    assert!(!refusal.failure.message().contains(said));
     assert_eq!(
         failed(rejected),
         code(
@@ -348,6 +365,59 @@ async fn a_write_lost_in_flight_is_possible_commit_and_the_lookup_finds_the_one_
         .unwrap();
     let (class, _, _) = failed(scene.get("A-100").await);
     assert_eq!(class, FailureClass::Transient);
+}
+
+/// A lookup that finds more than one record never picks one: it reports
+/// `possible_commit`, `ambiguous_match`, which the manifest declares.
+#[tokio::test]
+async fn a_lookup_that_finds_two_records_is_ambiguous_and_picks_neither() {
+    let scene = scene().await;
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["one", "two"]).await;
+    let control = scene.stand.control();
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence,
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let create = steps(&scene.plan, "example_order_create");
+    let args = Values::new()
+        .with("customer", "Same Stamp Customer")
+        .with("note", Value::Null);
+    for (at, name) in [(0, "one"), (1, "two")] {
+        let intent = token(&ledger, fence, at, name).await;
+        handle
+            .act(
+                &mut prepared,
+                &create.act,
+                &input(&args, Some(record(&fence, at)), None, Some("STAMP-DOUBLE")),
+                Authority::Write(&intent),
+            )
+            .await
+            .unwrap();
+    }
+    handle.release(prepared, false).await;
+    assert_eq!(control.stored_orders().unwrap().len(), 5);
+
+    let (handle, mut prepared) = scene.prepared().await;
+    let none = Values::new();
+    let outcome = handle
+        .act(
+            &mut prepared,
+            &create.lookup.unwrap(),
+            &input(&none, None, None, Some("STAMP-DOUBLE")),
+            Authority::Read,
+        )
+        .await;
+    let (class, code, _) = failed(outcome);
+    assert_eq!(class, FailureClass::PossibleCommit);
+    assert_eq!(code, "ambiguous_match");
+    handle.release(prepared, true).await;
 }
 
 #[tokio::test]
@@ -450,6 +520,58 @@ async fn only_mapped_tools_are_reachable() {
     assert_eq!(control.request_count("tools/call").unwrap(), 0);
 }
 
+/// The driver has no guard of its own that a posture lifts: the handle lets
+/// a committing step through in the sandbox only for a declared test record,
+/// and the driver refuses a tool mapped as a write from any step that does
+/// not commit, in every posture, token or none.
+#[tokio::test]
+async fn in_the_sandbox_a_write_tool_is_called_only_by_the_step_that_commits() {
+    let scene = scene().await;
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["A-100"]).await;
+    let intent = token(&ledger, fence, 0, "A-100").await;
+    let order = key("A-100");
+    let args = Values::new()
+        .with("order_id", "A-100")
+        .with("field", "note")
+        .with("value", "x");
+    let mut unmarked = steps(&scene.plan, "example_order_note_update").act;
+    unmarked.commits = false;
+    for posture in [
+        Posture::Sandbox { test_records: true },
+        Posture::Sandbox {
+            test_records: false,
+        },
+    ] {
+        let (handle, mut prepared) = prepare(
+            &scene.registry,
+            &scene.plan,
+            &scene.surface,
+            fence,
+            posture,
+            None,
+        )
+        .await
+        .unwrap();
+        let refused = handle
+            .act(
+                &mut prepared,
+                &unmarked,
+                &input(&args, Some(record(&fence, 0)), Some(&order), None),
+                Authority::Write(&intent),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused.sent, Sent::NotSent, "{refused}");
+        handle.release(prepared, true).await;
+    }
+    assert_eq!(scene.calls_to("orders_update"), 0);
+    assert_eq!(
+        scene.stand.control().request_count("tools/call").unwrap(),
+        0
+    );
+}
+
 #[tokio::test]
 async fn what_the_server_gets_wrong_is_a_named_stop() {
     let scene = scene().await;
@@ -549,6 +671,7 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     done(scene.get("A-100").await);
 }
 
+#[cfg(not(feature = "tls"))]
 #[tokio::test]
 async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let scene = scene().await;
@@ -579,9 +702,12 @@ async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let handle = scene.registry.driver(&mode).unwrap();
     assert_eq!(
         handle.health(&secure),
-        DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
+        a2m_provider::DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
     );
-    assert_eq!(handle.health(&scene.surface), DriverHealth::Ready);
+    assert_eq!(
+        handle.health(&scene.surface),
+        a2m_provider::DriverHealth::Ready
+    );
     assert_eq!(
         scene.stand.control().request_count("initialize").unwrap(),
         0
@@ -699,7 +825,10 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
 
     // The system's answer holds a secret: the stand is told, by a plain
     // client that is not the code under test, to store one in a note.
-    let plain = reqwest::Client::builder().no_proxy().build().unwrap();
+    let plain = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let planted = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "orders_update", "arguments": {
@@ -779,4 +908,535 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     );
     assert!(!format!("{failure:?}").contains("PLANTED"));
     handle.release(prepared, true).await;
+}
+
+#[tokio::test]
+async fn a_tool_that_runs_free_text_is_never_called() {
+    let mut scene = scene().await;
+    let search = steps(&scene.plan, "example_order_search").act;
+    let args = || Values::new().with("query", "dock");
+
+    // The tool's whole input is one string. A reviewer stated that the
+    // server does not run it: it is called, and what it returns is one
+    // value, `text`.
+    let found = done(scene.read(&search, args()).await);
+    assert!(found.values.get("text").is_some());
+    assert_eq!(found.values.len(), 1);
+    assert_eq!(scene.calls_to("orders_search"), 1);
+
+    // A mapping that says the server runs the string, and one that says
+    // nothing about it: neither makes the tool callable, whatever compiled
+    // the plan.
+    let compiled = scene.plan.clone();
+    for flag in [serde_json::json!(true), serde_json::Value::Null] {
+        scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+            entry["free_text"] = flag.clone();
+        });
+        assert_eq!(
+            failed(scene.read(&search, args()).await),
+            code(FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent),
+            "free_text: {flag}"
+        );
+    }
+    // The same for a tool with more than one argument that a reviewer says
+    // runs free text.
+    scene.plan = remapped(&compiled, "orders", "orders_list", |entry| {
+        entry["free_text"] = serde_json::json!(true);
+    });
+    let list = steps(&compiled, "example_order_create").lookup.unwrap();
+    assert_eq!(
+        failed(scene.read(&list, Values::new()).await),
+        code(FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
+    );
+    assert_eq!(scene.calls_to("orders_search"), 1);
+    assert_eq!(scene.calls_to("orders_list"), 0);
+}
+
+#[tokio::test]
+async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    // The first run opens a connection, and the driver keeps it.
+    done(scene.get("A-100").await);
+    assert_eq!(scene.calls_to("orders_get"), 1);
+
+    // A run that may not reach the address is refused, although a
+    // connection to it is open.
+    let nowhere = Destinations::new(Vec::<String>::new());
+    let refused = prepare_reaching(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence_of(7),
+        Posture::Live,
+        None,
+        &nowhere,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (
+            refused.failure.class(),
+            refused.failure.code(),
+            refused.sent
+        ),
+        (FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
+    );
+
+    // The plan is published again with another protocol revision: the next
+    // run does not speak the old one over the old connection.
+    let mut stateless = scene.surface.clone();
+    stateless.surface.payload =
+        PackPayload::encode(&serde_json::json!({"revision": "2026-07-28"})).unwrap();
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &stateless,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    assert_eq!(
+        control.calls().unwrap().last().unwrap().connection,
+        "stateless"
+    );
+
+    // The plan is published again with another address: the next run
+    // reaches the server at the new address, not the one it was connected
+    // to.
+    let other = HttpStand::start().await.unwrap();
+    let moved = surface(&scene.plan, "orders", Some(&other.url()));
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &moved,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    assert_eq!(other.control().calls_to("orders_get").unwrap(), 1);
+    assert_eq!(scene.calls_to("orders_get"), 2);
+}
+
+#[tokio::test]
+async fn a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["A-100"]).await;
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence,
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let order_args = Values::new().with("order_id", "A-100");
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&order_args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+
+    // Between two calls of the one run the server changes the write tool.
+    // Over HTTP it gives no notice: the driver opens no stream to hear one.
+    control
+        .set_drift(Drift::InputSchemaChanged {
+            tool: "orders_update".to_owned(),
+        })
+        .unwrap();
+    let listed = control.request_count("tools/list").unwrap();
+    let update = steps(&scene.plan, "example_order_note_update");
+    let args = Values::new()
+        .with("order_id", "A-100")
+        .with("field", "note")
+        .with("value", "Leave at the gate");
+    let order = key("A-100");
+    let intent = token(&ledger, fence, 0, "A-100").await;
+    let changed = handle
+        .act(
+            &mut prepared,
+            &update.act,
+            &input(&args, Some(record(&fence, 0)), Some(&order), None),
+            Authority::Write(&intent),
+        )
+        .await;
+    // The list was read again before the write, and the write never left.
+    assert_eq!(
+        failed(changed),
+        code(
+            FailureClass::Drift,
+            &codes::UPSTREAM_TOOL_CHANGED,
+            Sent::NotSent
+        )
+    );
+    assert!(control.request_count("tools/list").unwrap() > listed);
+    assert_eq!(scene.calls_to("orders_update"), 0);
+    assert_eq!(control.write_count("A-100").unwrap(), 0);
+    handle.release(prepared, false).await;
+}
+
+#[tokio::test]
+async fn a_read_is_compared_with_a_list_no_older_than_the_setting_allows() {
+    // With the setting at nothing, the list is read again before every
+    // read on a connection that can give no notice.
+    let scene = scene_with(|folder| {
+        registry_set(
+            folder,
+            Arc::new(a2m_core::NoSecrets),
+            Values::new().with("list_max_age_ms", 0_i64),
+        )
+    })
+    .await;
+    let control = scene.stand.control();
+    let (handle, mut prepared) = scene.prepared().await;
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let first = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
+        .await;
+    done(first);
+    control
+        .set_drift(Drift::OutputSchemaChanged {
+            tool: "orders_get".to_owned(),
+        })
+        .unwrap();
+    let second = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
+        .await;
+    assert_eq!(
+        failed(second),
+        code(
+            FailureClass::Drift,
+            &codes::UPSTREAM_TOOL_CHANGED,
+            Sent::NotSent
+        )
+    );
+    assert_eq!(scene.calls_to("orders_get"), 1);
+    handle.release(prepared, false).await;
+}
+
+#[tokio::test]
+async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_against_it() {
+    let mut scene = scene().await;
+    let control = scene.stand.control();
+    let compiled = scene.plan.clone();
+
+    // A tool with a pinned output schema. The order A-101 holds, in its
+    // note, text aimed at an agent. The mapping lists the note as text
+    // that may pass: it is among the values.
+    let listed = done(scene.get("A-101").await);
+    assert_eq!(
+        listed.values.get("note"),
+        Some(&Value::from(INSTRUCTION_TEXT))
+    );
+    // A mapping that does not list it: the note does not reach a caller.
+    // What cannot hold free text still does: a number, and a string its
+    // pinned schema closes to a list of values.
+    scene.plan = remapped(&compiled, "orders", "orders_get", |entry| {
+        entry["untrusted_fields"] = serde_json::json!(["customer"]);
+    });
+    let unlisted = done(scene.get("A-101").await);
+    let names: Vec<&str> = unlisted.values.names().collect();
+    assert_eq!(names, ["customer", "status", "version"]);
+    assert!(!format!("{:?}", unlisted.values).contains(INSTRUCTION_TEXT));
+
+    // A tool with no output schema, mapped as one whose result is
+    // structured. The mapping names what it takes: a key and a note.
+    scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+        entry["result"] = serde_json::json!("structured");
+        entry["key"] = serde_json::json!(["order_id"]);
+        entry["untrusted_fields"] = serde_json::json!(["note"]);
+    });
+    let search = steps(&compiled, "example_order_search").act;
+    let args = || Values::new().with("query", "dock");
+    let answer_with = |content: serde_json::Value| {
+        control
+            .set_fault(
+                Fault::once(FaultKind::ResultStructured { content }).on_tool("orders_search"),
+            )
+            .unwrap();
+    };
+    let mismatch = || {
+        code(
+            FailureClass::Drift,
+            &codes::RESPONSE_SCHEMA_MISMATCH,
+            Sent::Answered,
+        )
+    };
+    // No structured content at all, a result without the key, and a key
+    // that is neither text nor a whole number: each is a named stop.
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    answer_with(serde_json::json!({"note": "Deliver to dock 2", "count": 3}));
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    answer_with(serde_json::json!({"order_id": {"is": "A-100"}, "note": "Deliver to dock 2"}));
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    // What the mapping names is taken, and nothing else: not a number it
+    // does not name, and not text aimed at an agent.
+    answer_with(serde_json::json!({
+        "order_id": "A-100",
+        "note": "Deliver to dock 2",
+        "count": 3,
+        "advice": INSTRUCTION_TEXT,
+    }));
+    let taken = done(scene.read(&search, args()).await);
+    assert_eq!(
+        taken.values,
+        Values::new()
+            .with("note", "Deliver to dock 2")
+            .with("order_id", "A-100")
+    );
+    assert_eq!(taken.assigned_key, Some(key("A-100")));
+}
+
+/// A user name and a password in the surface's address are a credential
+/// the HTTP client would send by itself, in plain text: refused before
+/// anything is sent, with no session (MC-1).
+#[tokio::test]
+async fn an_address_that_holds_a_user_name_or_a_password_is_refused_unsent() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let plain = scene.stand.url();
+    for address in [
+        plain.replacen("http://", "http://svc:PLANTED-pw@", 1),
+        plain.replacen("http://", "http://svc@", 1),
+    ] {
+        let far = surface(&scene.plan, "orders", Some(&address));
+        let outcome = match prepare(
+            &scene.registry,
+            &scene.plan,
+            &far,
+            fence_of(7),
+            Posture::Live,
+            None,
+        )
+        .await
+        {
+            Err(refused) => refused,
+            Ok((handle, mut prepared)) => {
+                let acted = handle
+                    .act(
+                        &mut prepared,
+                        &get,
+                        &input(&args, None, None, None),
+                        Authority::Read,
+                    )
+                    .await;
+                handle.release(prepared, acted.is_err()).await;
+                acted.expect_err("an address with a user name was used")
+            }
+        };
+        assert_eq!(outcome.sent, Sent::NotSent, "{address}");
+        assert_eq!(outcome.failure.class(), FailureClass::Input, "{address}");
+        assert!(!format!("{outcome:?}").contains("PLANTED"));
+    }
+    assert_eq!(control.request_count("initialize").unwrap(), 0);
+    assert!(control.calls().unwrap().is_empty());
+}
+
+/// A credential never crosses plain `http` to another machine unless the
+/// surface accepts it (decision 0188). "Another machine" is the stand
+/// reached by the name `localhost`, which the rule never takes for a
+/// loopback address, and a documentation address that nothing answers.
+#[tokio::test]
+async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts_it() {
+    let sessions = Sessions::new(vec![Arc::new(UpstreamMcp)]).await;
+    let redact = sessions.redact();
+    let scene = scene_with(|folder| registry_with(folder, redact)).await;
+    let control = scene.stand.control();
+    control.accept_token("PLANTED-token-of-ada", "ada").unwrap();
+    let ada = sessions.lease("ada", "PLANTED-token-of-ada").await;
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let by_name = scene.stand.url().replace("127.0.0.1", "localhost");
+    assert_ne!(by_name, scene.stand.url());
+
+    // Not accepted: refused before anything is sent; the stand saw nothing.
+    for address in [by_name.as_str(), "http://192.0.2.10:9/mcp"] {
+        let far = surface(&scene.plan, "orders", Some(address));
+        let refused = prepare(
+            &scene.registry,
+            &scene.plan,
+            &far,
+            fence_of(7),
+            Posture::Live,
+            Some(&ada),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (
+                refused.failure.class(),
+                refused.failure.code(),
+                refused.sent
+            ),
+            (
+                FailureClass::Policy,
+                &codes::LINK_NOT_ENCRYPTED,
+                Sent::NotSent
+            ),
+            "{address}"
+        );
+        assert!(!format!("{refused:?}").contains("PLANTED"));
+    }
+    assert_eq!(control.request_count("initialize").unwrap(), 0);
+    assert_eq!(control.unauthorized_count().unwrap(), 0);
+    assert!(control.calls().unwrap().is_empty());
+
+    // Over the loopback address nothing changes.
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence_of(7),
+        Posture::Live,
+        Some(&ada),
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+
+    // Accepted, in the target's own words: the lint warns, and the call
+    // goes through to the name with the session's token.
+    let folder = Folder::new("unencrypted");
+    let registry = registry_with(&folder, sessions.redact());
+    let root = folder.path().join("target");
+    common::write_target(&root, &|path, text| match path {
+        "target.yaml" => text.replace(
+            "    address: \"http://127.0.0.1:9/mcp\"\n",
+            "    address: \"http://127.0.0.1:9/mcp\"\n    unencrypted_credentials: accepted\n",
+        ),
+        _ => text,
+    });
+    let compiled = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
+    assert!(
+        compiled
+            .warnings
+            .find("mcp.unencrypted_credentials")
+            .is_some()
+    );
+    let far = surface(&compiled.plan, "orders", Some(&by_name));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &compiled.plan,
+        &far,
+        fence_of(7),
+        Posture::Live,
+        Some(&ada),
+    )
+    .await
+    .unwrap();
+    let get = steps(&compiled.plan, "example_order_get").act;
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    let callers: Vec<Option<String>> = control
+        .calls()
+        .unwrap()
+        .into_iter()
+        .map(|call| call.principal)
+        .collect();
+    assert_eq!(callers, [Some("ada".to_owned()), Some("ada".to_owned())]);
+}
+
+/// A surface that accepts an unencrypted link carries the notice a door
+/// shows a person, from its own field as the compiler kept it; one that
+/// does not carries none (decisions 0193 and 0194).
+#[test]
+fn a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_does() {
+    let folder = Folder::new("notice");
+    let registry = registry(&folder);
+    let set = registry.compiler_set();
+    let plain = compiled_fixture(&registry);
+    for surface in &plain.surfaces {
+        assert!(set.surface_notices(surface).is_empty(), "{surface:?}");
+    }
+    let root = folder.path().join("target");
+    common::write_target(&root, &|path, text| match path {
+        "target.yaml" => text.replace(
+            "    address: \"http://127.0.0.1:9/mcp\"\n",
+            "    address: \"http://127.0.0.1:9/mcp\"\n    unencrypted_credentials: accepted\n",
+        ),
+        _ => text,
+    });
+    let accepted = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+    let orders = accepted
+        .surfaces
+        .iter()
+        .find(|surface| surface.name.as_str() == "orders")
+        .unwrap();
+    assert_eq!(
+        set.surface_notices(orders),
+        [a2m_core::SurfaceNotice::UnencryptedCredentials]
+    );
 }

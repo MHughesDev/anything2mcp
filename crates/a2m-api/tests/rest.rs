@@ -21,7 +21,7 @@ use a2m_actions::{
     HealthState, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof, SessionAsk,
     Settings, SignInAsk, StorePlace, SurfaceLink,
 };
-use a2m_api::{ApiSettings, OPENAPI_PATH, openapi, router, served_routes};
+use a2m_api::{ApiSettings, OPENAPI_PATH, RUN_EVENTS_PATH, openapi, router, served_routes};
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
@@ -124,9 +124,7 @@ impl World {
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
         builder.add_pack(&AppPack {
             hooks: Arc::new(engine::Hooks::default()),
-            discoverer: Arc::new(engine::WritingDiscoverer {
-                results: Mutex::new(Vec::new()),
-            }),
+            discoverer: Arc::new(engine::WritingDiscoverer::default()),
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
@@ -168,7 +166,9 @@ impl World {
             app,
             kernel,
             base,
-            http: reqwest::Client::new(),
+            http: a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+                .build()
+                .unwrap(),
             server,
             surface,
             _folder: folder,
@@ -689,7 +689,10 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
     // action does not have: the router reaches that action, whose
     // dispatcher refuses the input before anything runs.
     for (method, path) in &described {
-        if path == OPENAPI_PATH {
+        // The two routes that dispatch no action: the document's own, and
+        // a run's events, which has a test of its own.
+        if path == OPENAPI_PATH || path == RUN_EVENTS_PATH {
+            assert!(doc["paths"][path]["get"].get("x-action").is_none());
             continue;
         }
         let op = &doc["paths"][path][method.to_lowercase()];
@@ -703,5 +706,254 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
         assert_eq!(body["action"], op["x-action"], "{method} {path}");
         assert_eq!(body["error"]["class"], "input", "{method} {path}: {body}");
     }
+    world.close().await;
+}
+
+/// The events of a stream's body: each event's id, its name, and its data.
+fn stream_events(body: &str) -> Vec<(Option<u64>, Option<String>, Json)> {
+    body.split("\n\n")
+        .filter_map(|event| {
+            let field = |name: &str| {
+                event
+                    .lines()
+                    .find_map(|line| line.strip_prefix(name))
+                    .map(|value| value.trim().to_owned())
+            };
+            let data = field("data:")?;
+            Some((
+                field("id:").map(|id| id.parse().unwrap()),
+                field("event:"),
+                serde_json::from_str(&data).unwrap(),
+            ))
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_runs_events_are_read_from_a_number_and_streamed_until_the_run_settles() {
+    let world = World::ready().await;
+    let events_of = |run: &str| format!("/api/v1/runs/{run}/events");
+    let stream = |run: &str, last: Option<u64>| {
+        let mut request = world
+            .http
+            .get(format!("{}{}", world.base, events_of(run)))
+            .header("accept", "text/event-stream");
+        if let Some(last) = last {
+            request = request.header("last-event-id", last.to_string());
+        }
+        async move {
+            let answer = request.send().await.unwrap();
+            assert_eq!(answer.status().as_u16(), 200);
+            assert_eq!(answer.headers()["content-type"], "text/event-stream");
+            stream_events(&answer.text().await.unwrap())
+        }
+    };
+
+    // A write, started without a wait. Its stream is opened at once, and
+    // ends when the run comes to rest for a person, whether the run got
+    // there before the stream was opened or after.
+    let mut call = write_call();
+    call["wait_seconds"] = json!(0);
+    let (status, started) = world.post("/api/v1/actions/tool.call", &call).await;
+    // 200 while the run is worked on; 202 should it rest already.
+    assert!(status == 200 || status == 202, "{status}: {started}");
+    let run = started["result"]["run_id"].as_str().unwrap().to_owned();
+    let first = stream(&run, None).await;
+    let (ids, end) = first.split_at(first.len() - 1);
+    assert_eq!(end[0].1.as_deref(), Some("settled"), "{first:?}");
+    assert_eq!(end[0].2["status"], "needs_approval");
+    assert_eq!(end[0].2["ended"], false);
+    // Every event from the first, in order, with no gap, each under its
+    // own number.
+    let seen: Vec<u64> = ids.iter().map(|event| event.0.unwrap()).collect();
+    let last = *seen.last().unwrap();
+    assert_eq!(seen, (1..=last).collect::<Vec<u64>>());
+    assert_eq!(end[0].2["last"], last);
+    assert!(ids.iter().all(|event| event.2["seq"] == event.0.unwrap()));
+    // Nothing was written.
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // One page as JSON: the same events, by number, and where the run
+    // stands.
+    let (status, page) = world.get(&events_of(&run)).await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["ok"], true);
+    assert_eq!(page["result"]["run_id"], run.as_str());
+    assert_eq!(page["result"]["last"], last);
+    assert_eq!(page["result"]["settled"], true);
+    assert_eq!(
+        page["result"]["events"].as_array().unwrap().len() as u64,
+        last
+    );
+    let (status, part) = world
+        .get(&format!("{}?after=2&limit=2", events_of(&run)))
+        .await;
+    assert_eq!(status, 200, "{part}");
+    let numbers: Vec<u64> = part["result"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["seq"].as_u64().unwrap())
+        .collect();
+    assert_eq!(numbers, [3, 4]);
+    assert_eq!(part["result"]["last"], 4);
+
+    // The person approves at the desk, which no route reaches, and the
+    // run is resumed. A stream that names the last event it saw goes on
+    // from there: it misses nothing and repeats nothing, and ends with
+    // the run.
+    let desk = world.surface.desk.lock().unwrap().take().unwrap();
+    let id: a2m_core::RunId = run.parse().unwrap();
+    let waiting = desk.waiting(id).await.unwrap();
+    let person = world
+        .kernel
+        .verify_caller(CallerCredential::LocalUser(USER.to_owned()))
+        .await
+        .unwrap()
+        .principal()
+        .clone();
+    let proof = PresenceProof::new(
+        a2m_policy::PresenceCheck::OsPrompt,
+        person.id,
+        Timestamp::from_unix_millis(START),
+    );
+    desk.approve(
+        id,
+        waiting.diff_hash,
+        person,
+        a2m_policy::Channel::LocalPrompt,
+        proof,
+    )
+    .await
+    .unwrap();
+    let (status, resumed) = world
+        .post(
+            &format!("/api/v1/runs/{run}/resume"),
+            &json!({"wait_seconds": 0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{resumed}");
+    let second = stream(&run, Some(last)).await;
+    let (ids, end) = second.split_at(second.len() - 1);
+    assert_eq!(end[0].1.as_deref(), Some("settled"), "{second:?}");
+    assert_eq!(end[0].2["status"], "completed");
+    assert_eq!(end[0].2["ended"], true);
+    let more: Vec<u64> = ids.iter().map(|event| event.0.unwrap()).collect();
+    let end_at = end[0].2["last"].as_u64().unwrap();
+    assert_eq!(more, (last + 1..=end_at).collect::<Vec<u64>>());
+    // The test application holds the item, written once.
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // A run the caller did not start is no run to the caller; nor is a
+    // word that is no run's identifier. Neither opens a stream.
+    let end = if run.ends_with('0') { '1' } else { '0' };
+    let other = format!("{}{end}", &run[..run.len() - 1]);
+    for accept in ["application/json", "text/event-stream"] {
+        let (status, body) = world
+            .raw(
+                world
+                    .http
+                    .get(format!("{}{}", world.base, events_of(&other)))
+                    .header("accept", accept),
+            )
+            .await;
+        assert_eq!(status, 400, "{body}");
+        assert_refusal(&body, "input", "not_found");
+    }
+    let (status, body) = world.get(&events_of("run_absent")).await;
+    assert_eq!(status, 400);
+    assert_refusal(&body, "input", "schema_invalid");
+    // A query the route does not take, and a page that is too long.
+    for query in ["zz_not_a_field=1", "after=one", "limit=0", "limit=100000"] {
+        let (status, body) = world.get(&format!("{}?{query}", events_of(&run))).await;
+        assert_eq!(status, 400, "{query}: {body}");
+        assert_refusal(&body, "input", "query_invalid");
+    }
+    // No caller, no events; and the route takes no other method.
+    let (status, body) = world
+        .raw(
+            world
+                .http
+                .get(format!("{}/bare{}", world.base, events_of(&run))),
+        )
+        .await;
+    assert_eq!(status, 401);
+    assert_refusal(&body, "policy", "caller_missing");
+    let (status, body) = world.post(&events_of(&run), &json!({})).await;
+    assert_eq!(status, 405);
+    assert_refusal(&body, "input", "method_not_allowed");
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kill_switch_is_the_policy_engines_refusal_and_status_403() {
+    let world = World::ready().await;
+    // A person at the machine stops everything.
+    let principal = world
+        .kernel
+        .verify_caller(CallerCredential::LocalUser(USER.to_owned()))
+        .await
+        .unwrap();
+    let stopped = world
+        .kernel
+        .dispatch(a2m_actions::Request::new(
+            "killswitch.set",
+            json!({"scope": "everything", "on": true}),
+            Caller::new(principal, FrontDoor::Command, false),
+        ))
+        .await;
+    assert!(stopped.ok, "{:?}", stopped.error);
+    let (status, body) = world
+        .post(
+            "/api/v1/actions/tool.call",
+            &json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert_eq!(status, 403, "{body}");
+    assert_refusal(&body, "policy", "kill_switch_on");
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_idempotency_key_is_the_same_run_and_the_run_list_shows_it() {
+    let world = World::ready().await;
+    let mut call = write_call();
+    call["input"]["item_code"] = json!("L-320");
+    call["wait_seconds"] = json!(5);
+    let url = format!("{}/api/v1/actions/tool.call", world.base);
+    let send = |body: Json| {
+        world.raw(
+            world
+                .http
+                .post(&url)
+                .header("content-type", "application/json")
+                .header("idempotency-key", "example-key-320")
+                .body(body.to_string()),
+        )
+    };
+    let (status, first) = send(call.clone()).await;
+    assert_eq!(status, 202, "{first}");
+    let run = first["result"]["run_id"].as_str().unwrap().to_owned();
+    let (_, again) = send(call.clone()).await;
+    assert_eq!(again["result"]["run_id"], run.as_str(), "{again}");
+    assert_eq!(again["result"]["repeated"], true);
+    // Another input under the key is refused by name.
+    let mut other = call.clone();
+    other["input"]["item_code"] = json!("L-321");
+    let (status, refused) = send(other).await;
+    assert_eq!(status, 400, "{refused}");
+    assert_refusal(&refused, "input", "idempotency_key_reused");
+    // The run list, by its route, holds the one run, and finds it by key.
+    let (status, listed) = world.get("/api/v1/runs?tool=example_item_upsert").await;
+    assert_eq!(status, 200, "{listed}");
+    let runs = listed["result"]["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{listed}");
+    assert_eq!(runs[0]["run_id"], run.as_str());
+    assert_eq!(runs[0]["waits_for_person"], true);
+    let (_, by_key) = world
+        .get("/api/v1/runs?idempotency_key=example-key-320")
+        .await;
+    assert_eq!(by_key["result"]["runs"][0]["run_id"], run.as_str());
+    assert_eq!(world.app.write_count("A-102", "L-320").await.unwrap(), 0);
     world.close().await;
 }

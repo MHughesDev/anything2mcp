@@ -19,8 +19,8 @@ use a2m_core::{
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
-    CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
-    SandboxPort, Sent, StepFailure, StepInput, SurfaceDescription,
+    Access, CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Posture,
+    ReadOnlyPort, RootName, Roots, SandboxPort, Sent, StepFailure, StepInput, SurfaceDescription,
 };
 use common::{Folder, Scene, Signed, fixture};
 use example_app::harness::TestApp;
@@ -133,6 +133,27 @@ impl Service {
                             "302 Found",
                             "location: http://other.example.test/elsewhere".to_owned(),
                             String::new(),
+                        ),
+                        // A sign-in redirect written without a scheme.
+                        "GET /moved/relative HTTP/1.1" => (
+                            "302 Found",
+                            "location: //login.example.test/sign-in".to_owned(),
+                            String::new(),
+                        ),
+                        // Another host, written the way a browser also reads.
+                        "GET /moved/slashes HTTP/1.1" => (
+                            "302 Found",
+                            "location: /\\other.example.test/elsewhere".to_owned(),
+                            String::new(),
+                        ),
+                        "GET /moved/within HTTP/1.1" => {
+                            ("302 Found", "location: /account".to_owned(), String::new())
+                        }
+                        // A sign-in page answered with 200, as some systems do.
+                        "GET /page HTTP/1.1" => (
+                            "200 OK",
+                            "content-type: text/html".to_owned(),
+                            "<html><body>Sign in to continue</body></html>".to_owned(),
                         ),
                         "GET /large HTTP/1.1" => (
                             "200 OK",
@@ -306,7 +327,40 @@ async fn a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_els
         (FailureClass::Policy, "surface_not_declared")
     );
     assert_eq!(moved.sent, Sent::Answered);
-    assert_eq!(service.seen().len(), before + 2);
+    // The same holds however the address is written: with no scheme, or
+    // with the slashes a browser also takes for the start of a host. One
+    // within the surface is a status like any other, and is not followed.
+    for (place, class, code) in [
+        ("relative", FailureClass::SessionExpired, "needs_login"),
+        ("slashes", FailureClass::Policy, "surface_not_declared"),
+        ("within", FailureClass::UnknownVariant, "unexpected_status"),
+    ] {
+        let moved = scene
+            .read(
+                &handle,
+                &mut prepared,
+                "example_moved_get",
+                &Values::new().with("place", place),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(class_and_code(&moved), (class, code), "{place}");
+        assert_eq!(moved.sent, Sent::Answered, "{place}");
+    }
+    assert_eq!(service.seen().len(), before + 5);
+
+    // A body that is not JSON is never read as nothing, whatever shape the
+    // endpoint declares: a sign-in page answered with 200 stops as drift,
+    // and the page's text is not quoted.
+    let page = scene
+        .read(&handle, &mut prepared, "example_page_get", &none)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&page),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    assert!(!page.failure.message().contains("Sign in"), "{page}");
 
     // An answer larger than its endpoint allows is not read to the end.
     let large = scene
@@ -422,6 +476,17 @@ impl FindingSink for Collected {
 /// Runs every discoverer of the pack that suits the scene's surface, each
 /// through a port that can only read.
 async fn discover(scene: &Scene, focus: &Values) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
+    discover_with(scene, focus, &CheckedPaths::none(), &a2m_core::NoSecrets).await
+}
+
+/// The same, with the files the discoverers may read and the redactor
+/// they are given.
+async fn discover_with(
+    scene: &Scene,
+    focus: &Values,
+    paths: &CheckedPaths,
+    redact: &dyn Redact,
+) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
         archetype: Archetype::Request,
@@ -439,8 +504,8 @@ async fn discover(scene: &Scene, focus: &Values) -> Vec<(String, Result<Vec<Find
             surface: &scene.surface,
             bounds: discoverer.declared().bounds,
             deadline: Deadline::after(Duration::from_secs(30)),
-            paths: &CheckedPaths::none(),
-            redact: &a2m_core::NoSecrets,
+            paths,
+            redact,
             focus,
         };
         let mut sink = Collected::default();
@@ -461,7 +526,8 @@ async fn discovery_observes_and_cannot_write() {
     let scene = Scene::new("example", &app.url(""));
 
     // Both discoverers run against the application: the surface is seen to
-    // answer, and it serves no description, which is said and not guessed.
+    // answer, and the description it serves at `/api/openapi.json`, one of
+    // the places looked in by convention, is read as claims.
     let results = discover(&scene, &Values::new()).await;
     assert_eq!(results.len(), 2);
     for (name, result) in &results {
@@ -474,8 +540,12 @@ async fn discovery_observes_and_cannot_write() {
                     assert_eq!(finding.kind().as_str(), "endpoint");
                 }
             }
-            ("http_description", Err(failure)) => {
-                assert_eq!(failure.code().as_str(), "description_unreadable");
+            ("http_description", Ok(findings)) => {
+                assert_eq!(findings.len(), 8);
+                for finding in findings {
+                    assert_eq!(finding.level(), EvidenceLevel::Inferred);
+                    assert_eq!(finding.source(), Source::PublishedDescription);
+                }
             }
             other => panic!("{other:?}"),
         }
@@ -510,13 +580,7 @@ async fn discovery_observes_and_cannot_write() {
     ];
     for (step, class, code) in expected {
         let args = scene.args(&step, &inputs);
-        let input = StepInput {
-            args: &args,
-            record: None,
-            key: None,
-            stamp: None,
-            deadline: Deadline::after(Duration::from_secs(30)),
-        };
+        let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30)));
         let refused = port.act(&step, &input).await.unwrap_err();
         assert_eq!(class_and_code(&refused), (class, code));
         assert_eq!(refused.sent, Sent::NotSent);
@@ -566,21 +630,21 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     let root = TargetRoot::new(folder.path());
     let set = scene.registry.compiler_set();
     let report = Drafter::new(set, &root).draft(&findings).unwrap();
-    assert!(
-        report.refused.is_empty() && report.conflicts.is_empty(),
-        "{report:?}"
-    );
+    assert!(report.conflicts.is_empty(), "{report:?}");
     let written: Vec<&str> = report
         .written
         .iter()
         .map(a2m_files::RelPath::as_str)
         .collect();
+    // One read operation, for the GET whose path holds no placeholder: the
+    // other GET's placeholder is a parameter the description does not
+    // state, so its read is left to the developer.
     assert_eq!(
         written,
         [
-            "endpoints/delete_order.yaml",
             "endpoints/get_account.yaml",
-            "endpoints/get_order.yaml"
+            "endpoints/get_order.yaml",
+            "operations/account_get.yaml"
         ]
     );
     let draft =
@@ -594,18 +658,21 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
         read.contains("/orders/{order_id}") && read.contains("absent"),
         "{read}"
     );
-    let delete = draft("delete_order.yaml");
+    // The rule drafts the DELETE as what it is, a write, and the file kind
+    // says so: the drafter refuses it and writes nothing for it. A write
+    // is written by the developer.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(refused, ["endpoints/delete_order.yaml"], "{report:?}");
     assert!(
-        delete.contains("effect: \"write\"") && !delete.contains("effect: \"read\""),
-        "{delete}"
-    );
-    // What the description does not state is a question, not a guess.
-    assert!(
-        report
-            .open_questions
-            .iter()
-            .any(|question| question.file.as_str() == "endpoints/delete_order.yaml"),
-        "{report:?}"
+        !folder
+            .path()
+            .join("endpoints")
+            .join("delete_order.yaml")
+            .exists()
     );
     // Drafting the same findings again gives the same bytes.
     let again = Drafter::new(set, &root).draft(&findings).unwrap();
@@ -627,4 +694,209 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     );
     assert!(!description.text.contains("/orders"));
     assert_eq!(description.untrusted.len(), 3);
+}
+
+/// The test application's description, found where it serves it, drafted
+/// into a new target: endpoint entries and one read operation for each GET
+/// it describes, which compile in draft mode and, run through the driver's
+/// handle with the description's own example, read what the application
+/// stores. No write is drafted and nothing is written.
+#[tokio::test]
+async fn the_test_applications_description_drafts_reads_that_read_what_it_stores() {
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(findings.len(), 8, "{findings:?}");
+
+    let folder = Folder::new("drafted-reads");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &root).draft(&findings).unwrap();
+    assert!(
+        report.kept_failing.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let operations: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    assert_eq!(
+        operations,
+        [
+            "operations/api_orders_get.yaml",
+            "operations/api_orders_list.yaml",
+            "operations/api_stock_get.yaml",
+            "operations/orders_delivery_get.yaml",
+            "operations/orders_items_get.yaml",
+            "operations/orders_totals_get.yaml",
+        ]
+    );
+    // The two PUTs are writes: their entries are refused, and no operation
+    // is drafted for them.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(
+        refused,
+        ["endpoints/put_delivery.yaml", "endpoints/put_item.yaml"]
+    );
+
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    for operation in &plan.operations {
+        assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+    }
+    let examples = |name: &str| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .examples
+            .first()
+            .cloned()
+    };
+    // The list needs no input; each read by key has the description's own
+    // example, and the outputs that came as text are marked untrusted.
+    assert_eq!(examples("example_api_orders_list"), None);
+    assert_eq!(
+        examples("example_orders_items_get").unwrap(),
+        Values::new()
+            .with("order_id", "A-100")
+            .with("item_code", "L-101")
+    );
+    let item = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_orders_items_get")
+        .unwrap();
+    let description = item
+        .outputs
+        .iter()
+        .find(|output| output.name == "description")
+        .unwrap();
+    assert!(plan.field_types[description.field_type.unwrap().get()].untrusted);
+
+    let reading = Scene::over(
+        Folder::new("drafted-run"),
+        common::registry(
+            &Folder::new("drafted-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan.clone(),
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let mut got = std::collections::BTreeMap::new();
+    for name in [
+        "example_orders_items_get",
+        "example_api_orders_get",
+        "example_api_orders_list",
+    ] {
+        let inputs = examples(name).unwrap_or_default();
+        let ran = reading.read(&handle, &mut prepared, name, &inputs).await;
+        got.insert(name, ran.unwrap().values);
+    }
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    let item = &got["example_orders_items_get"];
+    assert_eq!(
+        item.get("description").and_then(Value::as_text),
+        Some(stored.description.as_str())
+    );
+    assert_eq!(
+        item.get("quantity"),
+        Some(&Value::Int(i64::from(stored.quantity)))
+    );
+    let order = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(
+        got["example_api_orders_get"]
+            .get("customer")
+            .and_then(Value::as_text),
+        Some(order.customer.as_str())
+    );
+    let listed = got["example_api_orders_list"]
+        .get("order_id")
+        .and_then(Value::as_list)
+        .unwrap();
+    assert!(listed.contains(&Value::from("A-100")), "{got:?}");
+    handle.release(prepared, false).await;
+
+    // The application was read, and nothing in it was written.
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
+/// A redactor that knows one secret.
+struct Knows(&'static str);
+
+impl Redact for Knows {
+    fn redact(&self, text: &str) -> String {
+        text.replace(self.0, a2m_core::REDACTED)
+    }
+}
+
+#[tokio::test]
+async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_made_of_it() {
+    // A description that holds a registered secret where a finding would
+    // quote it: in an operation's name, a path, and a word of a shape.
+    let secret = "secret-for-tests-described-0007";
+    let planted = DESCRIPTION
+        .replacen("getOrder", &format!("get{secret}"), 1)
+        .replacen("/account", &format!("/account/{secret}"), 1)
+        .replacen("\"draft\"", &format!("\"{secret}\""), 1);
+    assert_eq!(planted.matches(secret).count(), 3);
+    let folder = Folder::new("described");
+    std::fs::write(folder.path().join("openapi.json"), planted).unwrap();
+    let root = RootName::new("import").unwrap();
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), folder.path(), Access::Read)
+        .unwrap();
+    let mut paths = CheckedPaths::none();
+    paths.insert(
+        a2m_pack_http::DESCRIPTION_FILE,
+        roots.check(&root, "openapi.json", Access::Read).unwrap(),
+    );
+
+    let service = Service::start("authorization", "none").await;
+    let scene = Scene::new("secured", &service.address);
+    let results = discover_with(&scene, &Values::new(), &paths, &Knows(secret)).await;
+    let findings: Vec<Finding> = results
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(findings.len(), 3);
+    for finding in &findings {
+        let text = format!("{finding:?}");
+        assert!(!text.contains("secret-for-tests"), "{text}");
+    }
+    // The file was read, not the surface: only `http_surface` sent anything.
+    assert!(
+        service
+            .seen()
+            .iter()
+            .all(|(line, _)| !line.contains("openapi")),
+    );
 }

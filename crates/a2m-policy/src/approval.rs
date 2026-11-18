@@ -7,7 +7,7 @@
 //! no public constructor. Whoever wires the engine hands it to the approval
 //! surface, so no command, tool, or route can hold it.
 
-use a2m_core::{ApprovalId, Digest, Failure, RunId, RunState};
+use a2m_core::{ApprovalId, Digest, EffectClass, Failure, RunId, RunState, Timestamp};
 use a2m_ledger::{Durability, Tx, WriteClearance};
 
 use crate::failure;
@@ -30,16 +30,28 @@ word! {
 }
 
 word! {
-    /// Which user-presence check the person passed.
+    /// Which user-presence check the person passed, as it is stored in
+    /// `approvals.presence_check`. Every word but `not_available` proves
+    /// that a person was present.
     PresenceCheck {
-        /// The operating system's own prompt.
+        /// The operating system's own prompt, where it is not named below.
         OsPrompt => "os_prompt",
+        /// The prompt of the Linux desktop's authorization agent.
+        Polkit => "polkit",
+        /// The macOS prompt for the user's password or fingerprint.
+        LocalAuthentication => "local_authentication",
+        /// The Windows prompt for the user's face, fingerprint, or PIN.
+        WindowsHello => "windows_hello",
         /// The person signed in to the console or the approval page.
         SignedIn => "signed_in",
         /// This machine offers no such check.
         NotAvailable => "not_available",
     }
 }
+
+/// How old a proof of presence may be when the approval it came with is
+/// recorded, and how far ahead of the store's clock: two minutes.
+const PROOF_LIFETIME_MILLIS: i64 = 120_000;
 
 impl PresenceCheck {
     /// Whether the check shows that a person was present.
@@ -64,6 +76,10 @@ pub struct Approved {
     pub channel: Channel,
     /// The user-presence check the person passed.
     pub presence: PresenceCheck,
+    /// When the check was passed, by the store's clock.
+    pub proved_at: Timestamp,
+    /// The name of the prompt that answered, where the surface names it.
+    pub prompt: Option<String>,
 }
 
 /// A refusal of one run's diff, or an approval window that ended.
@@ -109,6 +125,9 @@ impl ApprovalSurface {
         approved: &Approved,
     ) -> Result<ApprovalId, Failure> {
         let run = tx.ledger().run(approved.run)?;
+        // The approval surface is what keeps an agent out: an agent cannot
+        // operate it. Whatever it says of the approver, an agent identity is
+        // refused here by the guardrail.
         let request = Request {
             principal: approved.approver.clone(),
             question: Question::Approve,
@@ -135,15 +154,50 @@ impl ApprovalSurface {
                 "the diff the person saw is not the run's diff",
             ));
         }
+        if run.target_version != approved.tool_version {
+            return Err(failure::approval_stale(
+                "the tool version the person saw is not the run's",
+            ));
+        }
+        // The proof is checked again here, by the store's clock: it is of
+        // now, and it proves presence wherever the approval did not come by
+        // the engine's own prompt on a machine that has no check.
+        let now = tx.now().as_unix_millis();
+        let at = approved.proved_at.as_unix_millis();
+        if at > now.saturating_add(PROOF_LIFETIME_MILLIS)
+            || now.saturating_sub(at) > PROOF_LIFETIME_MILLIS
+        {
+            return Err(failure::approval_refused());
+        }
+        if !approved.presence.proves_presence() && approved.channel != Channel::LocalPrompt {
+            return Err(failure::approval_refused());
+        }
         let Some(set) = self.policy.current(tx) else {
             return Err(failure::evaluation_failed());
         };
+        // Where an irreversible run needs two people, the second approval is
+        // another person's.
+        if set.layers.settings.two_person_irreversible && run.effect == EffectClass::Irreversible {
+            let approver = approved.approver.id.to_string();
+            let wanted = approved.diff_hash.to_string();
+            let again = store::approvals_of(tx, self.policy.key(), &run.id.to_string())?
+                .iter()
+                .any(|held| {
+                    held.approver == approver
+                        && held.diff_hash.as_deref() == Some(wanted.as_str())
+                        && usable(held, now)
+                });
+            if again {
+                return Err(failure::approval_refused());
+            }
+        }
         let window = i64::from(set.layers.settings.approval_window_minutes) * 60_000;
         let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
         let expires_at =
             a2m_core::Timestamp::from_unix_millis(tx.now().as_unix_millis().saturating_add(window));
         store::insert_approval(
             tx,
+            self.policy.key(),
             store::NewApproval {
                 id: id.to_string(),
                 workspace: run.workspace.to_string(),
@@ -170,13 +224,14 @@ impl ApprovalSurface {
         let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
         store::insert_decline(
             tx,
+            self.policy.key(),
             id.to_string(),
             run.workspace.to_string(),
             run.id.to_string(),
             declined.by.as_ref().map(|by| by.id.to_string()),
             declined.channel.as_str(),
         )?;
-        store::revoke_unused(tx, &run.id.to_string())?;
+        store::revoke_unused(tx, self.policy.key(), &run.id.to_string())?;
         Ok(())
     }
 
@@ -232,17 +287,51 @@ impl Policy {
     ) -> Result<WriteClearance, Failure> {
         let now = tx.now().as_unix_millis();
         let wanted = diff_hash.to_string();
-        let approvals = store::approvals_of(tx, &run.to_string())?;
+        // At the point of action, whatever the caller asked before: a kill
+        // switch that covers the run stops it, and a declined run is not
+        // written on an approval recorded after the decline.
+        let row = tx.ledger().run(run)?;
+        let on = store::switches_on(tx, self.key())?;
+        if switched_off(&on, &row) {
+            return Err(failure::kill_switch_on());
+        }
+        if store::declined(tx, self.key(), &run.to_string())? {
+            return Err(failure::approval_stale("the run was declined"));
+        }
+        let approvals = store::approvals_of(tx, self.key(), &run.to_string())?;
         let Some(newest) = approvals.first() else {
             return Err(failure::approval_missing());
         };
-        let usable = |approval: &store::StoredApproval| {
-            approval.diff_hash.as_deref() == Some(wanted.as_str())
-                && approval.used_at.is_none()
-                && approval.revoked_at.is_none()
-                && approval.expires_at.is_some_and(|expires| expires > now)
+        let fits = |approval: &store::StoredApproval| {
+            approval.diff_hash.as_deref() == Some(wanted.as_str()) && usable(approval, now)
         };
-        let Some(found) = approvals.iter().find(|approval| usable(approval)) else {
+        // Where an irreversible run needs two people, it is cleared only by
+        // two approvals of two of them, and both are used.
+        let two = self
+            .current(tx)
+            .is_some_and(|set| set.layers.settings.two_person_irreversible)
+            && row.effect == EffectClass::Irreversible;
+        if two {
+            let mut people: Vec<&store::StoredApproval> = Vec::new();
+            for approval in approvals.iter().filter(|approval| fits(approval)) {
+                if people.iter().all(|seen| seen.approver != approval.approver) {
+                    people.push(approval);
+                }
+            }
+            if people.len() < 2 {
+                return Err(failure::approval_missing());
+            }
+            for approval in &people[..2] {
+                if !store::mark_used(tx, self.key(), &approval.id)? {
+                    return Err(failure::approval_stale(
+                        "it was used already, and an approval is used once",
+                    ));
+                }
+            }
+            let id: ApprovalId = people[0].id.parse()?;
+            return Ok(WriteClearance::Approval(id));
+        }
+        let Some(found) = approvals.iter().find(|approval| fits(approval)) else {
             let why = if newest.diff_hash.as_deref() != Some(wanted.as_str()) {
                 "it was given for another diff"
             } else if newest.used_at.is_some() {
@@ -254,7 +343,7 @@ impl Policy {
             };
             return Err(failure::approval_stale(why));
         };
-        if !store::mark_used(tx, &found.id)? {
+        if !store::mark_used(tx, self.key(), &found.id)? {
             return Err(failure::approval_stale(
                 "it was used already, and an approval is used once",
             ));
@@ -269,6 +358,22 @@ impl Policy {
     ///
     /// The store's failures.
     pub fn declined(&self, tx: &mut Tx<'_>, run: RunId) -> Result<bool, Failure> {
-        store::declined(tx, &run.to_string())
+        store::declined(tx, self.key(), &run.to_string())
     }
+}
+
+/// Whether an approval can still be used at `now`, whatever its diff.
+fn usable(approval: &store::StoredApproval, now: i64) -> bool {
+    approval.used_at.is_none()
+        && approval.revoked_at.is_none()
+        && approval.expires_at.is_some_and(|expires| expires > now)
+}
+
+/// Whether a kill switch that is on covers the run.
+fn switched_off(on: &[(String, String)], run: &a2m_ledger::RunRow) -> bool {
+    crate::policy::covers_parts(
+        on,
+        &run.workspace.to_string(),
+        Some((run.target.as_str(), run.tool_name.as_str())),
+    )
 }

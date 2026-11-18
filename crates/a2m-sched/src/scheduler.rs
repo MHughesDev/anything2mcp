@@ -5,11 +5,12 @@
 //! half of each other's work, and everything the scheduler knows is found
 //! again after a restart. What is kept in memory is only who waits.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{Failure, JobId, RunId, RunnerId, Timestamp};
-use a2m_ledger::{Durability, Store};
+use a2m_ledger::{Durability, Store, Tx};
 use a2m_telemetry::{Attr, Clock, Telemetry};
 use tokio::sync::{Notify, oneshot, watch};
 
@@ -18,8 +19,8 @@ use crate::failure;
 use crate::tables::{self, Acquired, between, plus};
 use crate::types::{
     Admitted, BudgetKey, CancelOutcome, Enqueue, HoldScope, JobEnd, JobLease, JobRow, LeaseRef,
-    RateGrant, RateLimit, Renewal, ResourceKey, RunnerOffer, RunnerTerms, SchedSettings, Slots,
-    Submission, SweepReport,
+    RateGrant, RateLimit, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings,
+    Slots, Submission, SweepReport,
 };
 use crate::waits::{LockTicket, Waits};
 
@@ -47,12 +48,24 @@ struct Inner {
     waits: Mutex<Waits>,
     /// Counts the changes to what the scheduler waits for.
     due: watch::Sender<u64>,
+    /// The leased reconciles a person resumed the run of: the reconcile
+    /// each queues if it ends in doubt, or is lost, takes no growing wait.
+    /// Read and changed only inside the store's write transactions, which
+    /// its one writer runs one after another, so a resume and the end of
+    /// the reconcile it found are always in one order. Kept in memory: the
+    /// wake serves the call that asked, which an engine's restart ends too,
+    /// and the next resume finds the waiting reconcile in the store.
+    resumed: Arc<Mutex<BTreeSet<JobId>>>,
 }
 
 impl Inner {
     fn waits(&self) -> MutexGuard<'_, Waits> {
         self.waits.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+fn resumed_set(resumed: &Mutex<BTreeSet<JobId>>) -> MutexGuard<'_, BTreeSet<JobId>> {
+    resumed.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The scheduler. Cheap to clone; every clone is the same scheduler.
@@ -127,6 +140,7 @@ impl Scheduler {
                 gate: tokio::sync::Mutex::new(()),
                 waits: Mutex::new(Waits::default()),
                 due,
+                resumed: Arc::new(Mutex::new(BTreeSet::new())),
             }),
         }
     }
@@ -224,24 +238,78 @@ impl Scheduler {
 
     /// Queues a further job for a run that exists and has none waiting or
     /// leased: the execute job after an approval, or a resume. The same
-    /// checks as [`Scheduler::submit`], the run row aside.
+    /// checks as [`Scheduler::submit`], the run row aside. It does what
+    /// [`Scheduler::resume`] does, and answers a reconcile it found as a
+    /// refusal.
     ///
     /// # Errors
     ///
     /// As [`Scheduler::submit`]; `input`/`not_found` for a run that does not
     /// exist; `input`/`schema_invalid` for a run that has ended or has a job
-    /// already.
+    /// already, a reconcile included, whose words then say when that
+    /// reconcile is handed out.
     pub async fn enqueue(&self, enqueue: Enqueue) -> Result<JobId, Failure> {
+        match self.resume(enqueue).await? {
+            Resumed::Queued(job) => Ok(job),
+            Resumed::Reconciling(found) => Err(failure::reconciling_refused(&found)),
+        }
+    }
+
+    /// A person asks for the run now. In one transaction of the store:
+    /// when the run's one job is a reconcile, the resume is not queued and
+    /// is never lost. A reconcile that waits out its growing wait is woken
+    /// to now; one that is leased is remembered, so that the reconcile it
+    /// queues if it ends in doubt, or is lost, takes no growing wait. A
+    /// quarantine that a lost lease began is kept either way, and
+    /// [`Resumed::Reconciling`] says how long it still holds (decision
+    /// 0193). Otherwise the resume's job is queued as
+    /// [`Scheduler::enqueue`] queues it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scheduler::enqueue`], a reconcile aside.
+    pub async fn resume(&self, enqueue: Enqueue) -> Result<Resumed, Failure> {
         let settings = self.inner.settings;
-        let job = self
+        let resumed = Arc::clone(&self.inner.resumed);
+        let answer = self
             .inner
             .store
             .write(Durability::Synced, move |tx| {
-                tables::enqueue(tx, &settings, enqueue)
+                let answer = tables::resume(tx, &settings, enqueue)?;
+                if let Resumed::Reconciling(found) = &answer
+                    && found.leased
+                {
+                    resumed_set(&resumed).insert(found.job);
+                }
+                Ok(answer)
             })
             .await?;
         self.changed();
-        Ok(job)
+        Ok(answer)
+    }
+
+    /// Brings a reconcile of the run that waits out its growing wait
+    /// forward to `at`: a named condition makes reading the system again
+    /// worth it before then, such as a settle time the engine reported
+    /// passing. Never before now, and never before the end of a quarantine
+    /// a lost lease began. True when a reconcile was brought forward.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the store.
+    pub async fn wake_reconcile(&self, run: RunId, at: Timestamp) -> Result<bool, Failure> {
+        let settings = self.inner.settings;
+        let woken = self
+            .inner
+            .store
+            .write(Durability::Synced, move |tx| {
+                tables::wake_reconcile(tx, &settings, run, at)
+            })
+            .await?;
+        if woken {
+            self.changed();
+        }
+        Ok(woken)
     }
 
     /// Cancels a run. A run no runner holds is cancelled at once. A run a
@@ -392,13 +460,20 @@ impl Scheduler {
     pub async fn finish(&self, lease: &LeaseRef, end: JobEnd) -> Result<(), Failure> {
         let settings = self.inner.settings;
         let lease = *lease;
+        let resumed = Arc::clone(&self.inner.resumed);
         let ended = self
             .inner
             .store
             .write(Durability::Synced, move |tx| {
-                tables::finish(tx, &settings, &lease, &end)
+                // Read in the transaction, which the store's one writer runs
+                // after every resume handed over before it.
+                let asked = resumed_set(&resumed).contains(&lease.job);
+                tables::finish(tx, &settings, &lease, &end, asked)
             })
             .await?;
+        // The job has ended or gone back to waiting; no later resume names
+        // it, so the mark is done with.
+        resumed_set(&self.inner.resumed).remove(&lease.job);
         // The ledger sorted the run's locks when its state changed.
         self.inner.waits().locks_changed();
         if ended.freed {
@@ -767,11 +842,21 @@ impl Scheduler {
     /// `busy` failures of the store.
     pub async fn sweep(&self) -> Result<SweepReport, Failure> {
         let settings = self.inner.settings;
+        let resumed = Arc::clone(&self.inner.resumed);
         let swept = self
             .inner
             .store
-            .write(Durability::Synced, move |tx| tables::sweep(tx, &settings))
+            .write(Durability::Synced, move |tx| {
+                let asked = resumed_set(&resumed).clone();
+                tables::sweep(tx, &settings, &asked)
+            })
             .await?;
+        {
+            let mut resumed = resumed_set(&self.inner.resumed);
+            for job in &swept.lost {
+                resumed.remove(job);
+            }
+        }
         if !swept.lost.is_empty() || !swept.expired.is_empty() {
             self.inner.waits().locks_changed();
         }
@@ -817,6 +902,29 @@ impl Scheduler {
     }
 
     // ---- reading ---------------------------------------------------------
+
+    /// The job of a run that is waiting or leased, when it has one, read in
+    /// the caller's own transaction. A run has at most one. Whoever waits
+    /// for work on a run to end reads this together with the run's row, so
+    /// that a job a runner has claimed and not yet begun counts as work.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub fn unfinished_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<JobId>, Failure> {
+        tables::unfinished_job(tx, run)
+    }
+
+    /// How many jobs are waiting or leased now, read in the caller's own
+    /// transaction: the work the scheduler has in hand. Both counts are
+    /// answered from an index, so this is cheap enough to ask often.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub fn unfinished_jobs(tx: &mut Tx<'_>) -> Result<u64, Failure> {
+        tables::unfinished_jobs(tx)
+    }
 
     /// A job, as the store holds it now.
     ///

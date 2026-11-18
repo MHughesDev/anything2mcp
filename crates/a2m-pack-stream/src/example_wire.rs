@@ -9,17 +9,15 @@ use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::time::Duration;
 
-use a2m_core::Secret;
 use a2m_provider::{Deadline, Sent};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::channel::Shape;
-use crate::codes::shown;
 use crate::json::Json;
 use crate::wire::{
-    ChannelFacts, Delivered, Link, Message, Opened, Outgoing, Page, Protocol, Receipt, Wire,
-    WireError, WireErrorKind,
+    ChannelFacts, Credential, Delivered, Link, Message, Opened, Outgoing, Page, Protocol, Receipt,
+    Wire, WireError, WireErrorKind,
 };
 
 /// The protocol's name, as a surface states it.
@@ -57,13 +55,20 @@ impl Protocol for ExampleProtocol {
         NAME
     }
 
+    fn carries(&self, credential: &Credential) -> bool {
+        matches!(credential, Credential::Token(_))
+    }
+
     fn connect<'a>(
         &'a self,
         address: &'a str,
-        token: Option<&'a Secret>,
+        credential: Option<&'a Credential>,
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>> {
         Box::pin(async move {
+            // The token goes in the clear, so plain TCP goes to this
+            // machine's own loopback address and nowhere else, as for NATS.
+            let address = crate::wire::plain_tcp_address(address)?;
             let unreachable = || {
                 error(
                     WireErrorKind::Unreachable,
@@ -84,8 +89,18 @@ impl Protocol for ExampleProtocol {
                 broken: false,
             };
             let mut fields = vec![("client", Json::text(CLIENT))];
-            if let Some(token) = token {
-                fields.push(("token", Json::text(token.expose())));
+            match credential {
+                Some(Credential::Token(token)) => {
+                    fields.push(("token", Json::text(token.expose())))
+                }
+                Some(Credential::UserPassword { .. }) => {
+                    return Err(error(
+                        WireErrorKind::Unfit,
+                        Sent::NotSent,
+                        "the protocol carries one token and nothing else",
+                    ));
+                }
+                None => {}
             }
             let reply = link.request("hello", fields, deadline).await?;
             if reply.get("protocol").and_then(Json::as_str) != Some(NAME) {
@@ -227,7 +242,8 @@ impl ExampleLink {
     }
 }
 
-/// The broker's refusal, as this pack names it.
+/// The broker's refusal, as this pack names it. The broker's words are
+/// passed on whole: the driver redacts them before it cleans and cuts them.
 fn refusal(reply: &Json) -> WireError {
     let code = reply
         .get("error")
@@ -246,15 +262,17 @@ fn refusal(reply: &Json) -> WireError {
         "subscription_missing" => WireErrorKind::SubscriptionMissing,
         "subscription_in_use" => WireErrorKind::SubscriptionInUse,
         "position_out_of_range" => WireErrorKind::PositionOutOfRange,
+        // A refusal under a code the protocol does not have says nothing
+        // about whether the request was carried out.
         _ => {
             return error(
                 WireErrorKind::Unexpected,
-                Sent::Answered,
-                format!("the broker refused with `{}`", shown(code)),
+                Sent::Unknown,
+                format!("the broker refused with the code `{code}`"),
             );
         }
     };
-    error(kind, Sent::Answered, shown(said))
+    error(kind, Sent::Answered, said)
 }
 
 fn text_of(value: Option<&Json>) -> Option<String> {
@@ -321,10 +339,15 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
             .filter(|schema| !schema.is_null())
             .cloned(),
         dedupe_header: text_of(value.get("dedupe_header")),
+        // The test broker remembers a token for as long as it holds the
+        // message, and states no window.
+        dedupe_window_ms: None,
         held: number_of(value, "held")?.unwrap_or(0),
         start: number_of(value, "start")?,
         end: number_of(value, "end")?,
         subscriptions,
+        // The test broker loses nothing from inside a log or a queue.
+        may_lose_inside: false,
     })
 }
 
@@ -405,7 +428,12 @@ impl Link for ExampleLink {
                     .iter()
                     .map(message_of)
                     .collect::<Result<_, _>>()?,
-                more: reply.get("more").and_then(Json::as_bool).unwrap_or(false),
+                // Whether more is held is what a scan's "absent" rests on:
+                // a look that does not say is no answer of this protocol.
+                more: reply
+                    .get("more")
+                    .and_then(Json::as_bool)
+                    .ok_or_else(|| unexpected("a look does not say whether more is held"))?,
                 start: number_of(&reply, "start")?,
                 end: number_of(&reply, "end")?,
             })
@@ -437,6 +465,7 @@ impl Link for ExampleLink {
                 handle: text_of(reply.get("subscription"))
                     .ok_or_else(|| unexpected("a subscription has no handle"))?,
                 position: number_of(&reply, "position")?,
+                ack_wait: None,
             })
         })
     }
@@ -468,6 +497,13 @@ impl Link for ExampleLink {
                             item.get("message")
                                 .ok_or_else(|| unexpected("a delivery has no message"))?,
                         )?,
+                        // The protocol states every delivery's count; one
+                        // it does not state has no rule.
+                        attempt: Some(
+                            number_of(item, "attempt")?
+                                .filter(|attempt| *attempt >= 1)
+                                .ok_or_else(|| unexpected("a delivery does not say its count"))?,
+                        ),
                     })
                 })
                 .collect()
@@ -548,5 +584,65 @@ impl Link for ExampleLink {
                 duplicate,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test stops when its helper cannot work"
+    )]
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    /// A broker of one connection that answers each request with the next
+    /// of `answers`, after the request's own `re`.
+    async fn answering(answers: Vec<&'static str>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for (number, answer) in answers.into_iter().enumerate() {
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                let reply = format!("{{\"re\":{},{answer}}}\n", number + 1);
+                stream.get_mut().write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        address
+    }
+
+    #[tokio::test]
+    async fn an_answer_with_no_rule_has_an_unknown_fate() {
+        let address = answering(vec![
+            r#""ok":true,"protocol":"example-broker/1""#,
+            // A look that does not say whether more is held.
+            r#""ok":true,"messages":[]"#,
+            // A refusal under a code the protocol does not have.
+            r#""ok":false,"error":"replica_timeout","message":"later""#,
+        ])
+        .await;
+        let deadline = Deadline::after(Duration::from_secs(10));
+        let mut link = ExampleProtocol
+            .connect(&address, None, deadline)
+            .await
+            .unwrap();
+        let look = link
+            .browse("example.orders.events", None, 5, deadline)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (look.kind, look.sent),
+            (WireErrorKind::Unexpected, Sent::Unknown)
+        );
+        let refused = link.acknowledge("s-1", "d-1", deadline).await.unwrap_err();
+        assert_eq!(
+            (refused.kind, refused.sent),
+            (WireErrorKind::Unexpected, Sent::Unknown)
+        );
     }
 }

@@ -31,8 +31,8 @@ The scout is the mechanical half of the overlay method ([section 401](401-overla
 | 6 | Try | Each drafted read that the scout is allowed to try runs in the sandbox, five times, and the results are compared | `draft.try` |
 | 7 | Report | One report: what was found, what was drafted, what was proven, what is open, and what the developer should look at first | `scout.report` |
 
-- **It is a fixed pipeline.** There is no model in it and no choice in it. The same system in the same state gives the same report, and the report carries a hash to show it.
-- **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage.
+- **It is a fixed pipeline.** There is no model in it and no choice in it. The same system in the same state gives the same report, and the report carries a hash of its content, which leaves out the identifiers of its runs, to show it ([decision 0171](../../decisions/0171-the-scouts-report-is-hashed-data-with-the-systems-words-kept-apart.md)).
+- **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage. Identify and discover share one discovery job per surface, because the engine runs every discoverer that suits a surface in one job ([decision 0170](../../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)).
 - **It is bounded and polite.** Every stage has a limit on time, size, depth, and number of requests, and the report says which limits were hit. The scout identifies itself as automation, keeps to the target's rate limit, and stops at a block ([principle 9](../1-product/103-design-principles.md)).
 - **It needs consent like any discovery.** On one machine the person who added the target has given it. On a server the target's consent record must exist first ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
 - **It needs a session, and cannot make one.** If a surface needs a sign-in, the scout reports `needs_login` for that surface, carries on with the others, and resumes when the person has signed in.
@@ -43,13 +43,14 @@ The drafter is kernel code. Each pack registers the drafting rules for its own f
 
 | From a finding about | The drafter writes | It leaves to the developer |
 | --- | --- | --- |
-| A published API description | Endpoint entries, field types taken from the schema, and one read operation for each method the description marks safe | Which of them become tools, and their names in the language of the work |
+| A published API description | Endpoint entries, field types taken from the schema, and one read operation for each GET the description states, with the description's own example ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Which of them become tools, and their names in the language of the work |
 | Captured exchanges, with no description | Endpoint entries with two-tier path templates ([section 401](401-overlaying-tools-on-an-existing-system.md)), marked `inferred` | Confirming every template; all operations |
-| An upstream MCP server's tool list | A pass-through binding for each tool the server marks read-only | Tools not marked read-only; whether the server's marking is believed for writes |
+| An upstream MCP server's tool list | A pass-through read operation for each tool the server marks read-only, unless its whole input is one string | Tools not marked read-only; whether the server's marking is believed for writes |
+| A request a page made by itself, with GET, answered in JSON | A page request in the web pack's `page_requests/` and a `page_http` read of the answer's plain values, a string as `untrusted_text`; requests that differ in one segment, made by pages that differ in the same value, are matched into one read whose placeholder is its key ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | Numbers with a fraction, nested values, every write, and the names |
 | A program's own help and version output, from only the help and version forms the target declares | Command definitions with typed arguments | Which commands read and which write. Help text does not say, so no operation is drafted |
-| An observed interface | Screen models: fields with their roles, names, and locators | Every action on a screen; what a field means |
-| A database's schema | Record kinds, field types, and a read by key for each table with a declared key | Joins, business names, and every write |
-| The structure of a real file a target names | A document draft for the file pack: the fingerprint, and a record kind for each defined table or plainly headed sheet ([section 308](../3-packs/308-the-file-pack.md)) | The key, unless the file states one; units; names |
+| An observed interface | For each table a snapshot names and can tell apart: a screen model that locates it by role and name and reads it by its headings, and a list read of its columns as `untrusted_text`; for the values the page labels, a `get` read of them as `untrusted_text`. Pages of one screen whose addresses differ in one segment are matched into one screen, whose placeholder is the reads' key ([decisions 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md) and [0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) | Every field that is set and every action on a screen; what a field means; a label two values share |
+| A database's schema | Record kinds, field types, and for each table with a declared key a read by key and a list bounded by the pack's row limit | Joins, business names, and every write |
+| The structure of a real file a target names | A document draft for the file pack: the fingerprint, and a record kind for each defined table or plainly headed sheet, a delimited or workbook cell as `untrusted_text`; and a `list` read of each, which compiles ([section 308](../3-packs/308-the-file-pack.md), [decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) | The key, unless the file states one, asked in a drafted read by key; units; names |
 | The structure of a real file a pipeline reads | A source draft: a source definition and a template fingerprint | The mapping from columns to fields |
 | A device's own description of itself | A map of its readable objects and a read for each | Units the device does not state; every write |
 
@@ -57,7 +58,8 @@ Every draft made this way:
 
 - is an ordinary draft at `reconstructed` ([section 219](../2-kernel/219-the-evidence-ladder.md)), and names the findings it was made from;
 - gets a mechanical name, made from the surface's own words, that is marked as provisional;
-- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled.
+- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled;
+- types an output of the system's text as `untrusted_text`, and carries an example only where the system published one about itself, such as a description's own example of a parameter. A value of the system's data is never kept as an example, and no test or fixture is drafted: a read with no example is drafted, and the report says why it was not tried ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)).
 
 ## What the scout may try
 

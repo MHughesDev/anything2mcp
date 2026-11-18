@@ -6,19 +6,20 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload,
-    PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb,
+    PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::channel::{ChannelEntry, Ownership, Role, Shape, duration_ms, problem, read_channel};
 use crate::codes;
 use crate::names::{
-    BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_PUBLISH,
-    STEP_SCAN, STEP_SUBSCRIBE, VERB_AWAIT, VERB_LIST, VERB_PUBLISH, VERB_READ, VERB_TAKE,
+    BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_POSITION,
+    STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE, STEP_TAKEN, VERB_AWAIT, VERB_LIST, VERB_PUBLISH,
+    VERB_READ, VERB_TAKE,
 };
 
 /// The time a step that does not wait for a message may take, when the
@@ -77,6 +78,16 @@ pub(crate) struct StreamLowering {
     ceiling_ms: u32,
 }
 
+/// Whether a header is one a broker acts on: a NATS server reads every
+/// header whose name begins `Nats-` (a roll-up that removes messages, a
+/// time to live, an expected sequence or stream), in any case. No binding
+/// sets one; the record's token header, which the channel declares, is
+/// placed by the driver alone.
+pub(crate) fn is_server_header(name: &str) -> bool {
+    name.get(..5)
+        .is_some_and(|start| start.eq_ignore_ascii_case("nats-"))
+}
+
 impl StreamLowering {
     pub(crate) fn new(mode: Mode, ceiling_ms: u32) -> Self {
         Self {
@@ -105,6 +116,8 @@ impl StreamLowering {
                 STEP_PUBLISH,
                 STEP_ACKNOWLEDGE,
                 STEP_SCAN,
+                STEP_POSITION,
+                STEP_TAKEN,
             ],
             ceiling_ms,
         }
@@ -225,7 +238,7 @@ impl Work<'_, '_> {
         };
         Step {
             commits: kind == STEP_PUBLISH || kind == STEP_ACKNOWLEDGE,
-            lookup: kind == STEP_LATEST || kind == STEP_SCAN,
+            lookup: kind == STEP_LATEST || kind == STEP_SCAN || kind == STEP_TAKEN,
             idempotent: kind == STEP_PUBLISH
                 && self.entry.broker_dedupe
                 && self.entry.token_header.is_some(),
@@ -420,7 +433,11 @@ impl Work<'_, '_> {
         self.wait_steps(ceiling_ms, false)
     }
 
-    fn take(&mut self, ceiling_ms: u32) -> Vec<Step> {
+    /// The steps of a take, and its read-back: a look at the queue for the
+    /// message the take recorded before it acknowledged. The look settles
+    /// a take in doubt, and it is the take's only read: a take's evidence
+    /// is the acknowledgement (see [`Lowering::evidence`]).
+    fn take(&mut self, ceiling_ms: u32) -> (Vec<Step>, Vec<Step>) {
         for key in ["headers", "body", "from", "on_nothing", "read_back"] {
             self.no_field(key);
         }
@@ -448,7 +465,8 @@ impl Work<'_, '_> {
         }
         let mut steps = self.wait_steps(ceiling_ms, true);
         steps.push(self.step(STEP_ACKNOWLEDGE, Vec::new(), &StepDetail::default()));
-        steps
+        let look = vec![self.step(STEP_TAKEN, Vec::new(), &StepDetail::default())];
+        (steps, look)
     }
 
     /// The read-back steps a publish can have: by the latest value on a
@@ -494,6 +512,19 @@ impl Work<'_, '_> {
             self.no_field(key);
         }
         let operation = self.binding.operation;
+        // What a message is decides what a publish is: the one question a
+        // drafted channel leaves to a person, asked where it is needed.
+        if self.entry.role.is_none() {
+            self.wrong(
+                "binding_invalid",
+                self.binding.doc,
+                format!(
+                    "The channel `{}` states no `role`, and a publish to it needs one: is each message the latest state for its key (`state`), or a thing that happened (`events`)?",
+                    self.name
+                ),
+                "Add `role: state` or `role: events` to the channel file.",
+            );
+        }
         let private = self.entry.is_private_state();
         if !private
             && (operation.effect() != EffectClass::Irreversible
@@ -511,7 +542,7 @@ impl Work<'_, '_> {
         }
         let strategy_fits = match operation.strategy() {
             IdentityStrategy::Natural => {
-                self.entry.shape == Shape::Retained && self.entry.role == Role::State
+                self.entry.shape == Shape::Retained && self.entry.role == Some(Role::State)
             }
             // A stamp needs somewhere the runtime can find it again: a log,
             // or a retained value. On a queue or a topic the token still
@@ -545,17 +576,38 @@ impl Work<'_, '_> {
                 "Add `body:` with each field and the expression that gives it.",
             );
         }
-        let mut args: Vec<StepArg> = key.iter().cloned().collect();
-        if let (Some(headers), Some(token)) =
-            (self.binding.field("headers"), &self.entry.token_header)
-            && headers.get(token).is_some()
+        if let Some(body) = self.binding.field("body")
+            && body.get("message_meta").is_some()
         {
             self.wrong(
                 "binding_invalid",
-                headers,
-                format!("The header `{token}` carries the record's idempotency token, which the ledger gives."),
-                "Remove the header from the binding.",
+                body,
+                "`message_meta` is the name under which a result holds what the broker says about a message, and no body may use it.".to_owned(),
+                "Give the field of the body another name.",
             );
+        }
+        let mut args: Vec<StepArg> = key.iter().cloned().collect();
+        if let Some(headers) = self.binding.field("headers") {
+            for entry in headers.entries() {
+                let name = entry.key.value.as_str();
+                if let Some(token) = &self.entry.token_header
+                    && token.eq_ignore_ascii_case(name)
+                {
+                    self.wrong(
+                        "binding_invalid",
+                        headers,
+                        format!("The header `{token}` carries the record's idempotency token, which the ledger gives."),
+                        "Remove the header from the binding.",
+                    );
+                } else if is_server_header(name) {
+                    self.wrong(
+                        "binding_invalid",
+                        headers,
+                        format!("The header `{name}` is one the broker acts on: it would change what the publish does beyond what the channel's effect declares."),
+                        "Remove the header from the binding; a header whose name begins `Nats-` is the broker's.",
+                    );
+                }
+            }
         }
         args.extend(self.map_args("headers", ARG_HEADER, Some(&ValueType::Text)));
         args.extend(self.map_args("body", ARG_BODY, None));
@@ -567,11 +619,16 @@ impl Work<'_, '_> {
         } else {
             Vec::new()
         };
-        (
-            vec![self.step(STEP_PUBLISH, args, &StepDetail::default())],
-            read_back,
-            lookup,
-        )
+        // Where the publish is read back by a scan for its token, the place
+        // the log ends at is read first and recorded before the publish is
+        // sent: the message, if it was stored, is at or after it, so a scan
+        // of a resumed run starts there and not at the log's start.
+        let mut act = Vec::new();
+        if read_back.iter().any(|step| step.kind == STEP_SCAN) {
+            act.push(self.step(STEP_POSITION, Vec::new(), &StepDetail::default()));
+        }
+        act.push(self.step(STEP_PUBLISH, args, &StepDetail::default()));
+        (act, read_back, lookup)
     }
 }
 
@@ -590,6 +647,56 @@ impl Lowering for StreamLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// `publish` and `acknowledge` always save: the first puts a message on
+    /// a channel, the second removes one from a queue. Every other kind
+    /// never does. `subscribe` and `await` only attach a consumer and hold
+    /// a delivery that is given back unless a later `acknowledge` removes
+    /// it; `latest`, `browse`, `scan`, `position`, and `taken` take
+    /// nothing; `channels` and
+    /// `describe` are the discoverer's looks.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == STEP_PUBLISH || *kind == STEP_ACKNOWLEDGE {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb: a `publish` writes, and a `take` removes a message that
+    /// cannot be put back. `read`, `list`, and `await` take nothing.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        if *binding.verb == VERB_TAKE {
+            EffectClass::Irreversible
+        } else if *binding.verb == VERB_PUBLISH {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
+    }
+
+    /// What a write offers as the evidence that it landed (decision 0161).
+    /// A `take`: its acknowledgement, the broker's answer that the message
+    /// is gone, which nothing can read back or compare; the message itself
+    /// is recorded before it (decision 0150). A `publish` that has no
+    /// read-back, to a queue, a topic, or a log that declares no
+    /// idempotency header: the broker's confirmation, with the identifier
+    /// and the position it stored the message at. A `publish` that is read
+    /// back, by the latest value of its key on a retained channel or by a
+    /// scan for its token on a log, keyed or not, offers the read-back: the
+    /// scan finds the very message, so it is never dropped for the
+    /// confirmation. On a log the key is only the subject's last token and
+    /// another producer may use it, so a key alone does not read a message
+    /// back.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if *binding.verb == VERB_TAKE
+            || (*binding.verb == VERB_PUBLISH && lowered.read_back.is_empty())
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {
@@ -684,7 +791,8 @@ impl Lowering for StreamLowering {
         } else if *binding.verb == VERB_AWAIT {
             (work.await_(self.ceiling_ms), Vec::new(), Vec::new())
         } else if *binding.verb == VERB_TAKE {
-            (work.take(self.ceiling_ms), Vec::new(), Vec::new())
+            let (act, look) = work.take(self.ceiling_ms);
+            (act, look, Vec::new())
         } else {
             work.publish()
         };

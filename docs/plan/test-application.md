@@ -101,10 +101,13 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 30 | An OpenAPI 3.1 document, written by hand; a test calls every operation it names and compares its list with the served routes | The signed-in copies are named in its text, not as paths |
 | 31 | The fault "changed shape" renames one field in a JSON answer | |
 | 32 | The four trap pages, each write counted by name | The WebSocket route refuses the upgrade after counting the handshake, so no socket opens |
+| 32 | The `/leaving/{how}/orders/{order}/items/{item}` pages for the interface driver ([decision 0144](../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)): the line-item form that moves itself to the other loopback name on load (`load`), after Save (`click`), or opens a window on it (`window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at a trap route that counts what arrives | |
 | 33 | The delivery-details page and its JSON routes | No automated test drives the page's script; that waits for the interface driver |
 | 34 | A redirect to the other loopback name on the same port | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
+
+The fault "redirect after commit" was added after case 17 ([decision 0139](../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): the write is carried out and stored, then the answer is `303` with a `Location` the test names. It applies to requests that may write, as "lost after commit" does, and it shows that a write answered by a redirect is not settled as unsent.
 - **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.
@@ -119,6 +122,16 @@ As of 2026-11-17 the stands for the other kinds of system are built too. Each fo
 - **The broker**, `targets/example-broker/`: its [README](../../targets/example-broker/README.md).
 - **The simulated device**, `targets/example-device/`: its [README](../../targets/example-device/README.md).
 - **The MCP stand**, `targets/example-mcp/`: its [README](../../targets/example-mcp/README.md).
+- **The NATS stand**, `targets/example-nats/`: its [README](../../targets/example-nats/README.md). Its faults include `ExpireAuthAfterStore`, `ExpireAuthAfterAck`, and `ForeignDelivery` ([decision 0184](../decisions/0184-the-data-and-stream-packs-after-their-second-safety-audit.md)), and `ConsumerWithoutAckWait`, which describes a consumer without its `ack_wait` ([decision 0197](../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)). The database stand's relay has the fault `HoldCommitAnswer`, which holds the answer to `COMMIT` until the step's deadline.
+
+The application stand has pages whose own script reads from the JSON interface as it loads, for the web pack's drafting of a page's own requests ([decision 0195](../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)):
+
+- `/orders/{order_id}/summary` asks for the totals with no query and no header of the page's own.
+- `/orders/{order_id}/lengths-by-query` and `/orders/{order_id}/lengths-by-header` ask for the total length in centimetres, by a query and by a header the script sets. `/api/orders/{order_id}/lengths` answers in inches unless one of them asks, with the same names either way.
+- `/notes/{note_id}` is one screen at two addresses; the page of `N-2` alone sends a write as it loads, which the control interface counts.
+- `/invitations/{token}` holds a long random text in its address, and its script sends that text in a request's path and as a bare entry of a query.
+
+The application stand also has a TLS side, behind its feature `tls` ([decision 0157](../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)): it serves the application over TLS and over plain HTTP at once, with one store behind both, so a test asks the plain control address what was stored. A `TestAuthority` made at test time signs a good certificate, one for another name, and one that expired in 2000; a second authority stands for an unknown one. A `TlsFront` puts TLS in front of the MCP stand.
 
 ## What Phase 0 delivers
 

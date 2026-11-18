@@ -6,11 +6,11 @@ use std::collections::BTreeSet;
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb,
+    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage,
+    Possible, ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes::{
@@ -261,6 +261,52 @@ impl Lowering for CliLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// A `spawn` starts a command that reads and a command that writes
+    /// alike, and which it is is the `effect` its `commands/` file declares:
+    /// the lowering marks it `commits` exactly for a command that writes,
+    /// and the driver refuses a `spawn` whose mark and command disagree.
+    /// `expect` and `parse` read how the last start ended and what it
+    /// printed, and never save.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == SPAWN {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// `create` and `update` write; `delete` cannot be taken back and is
+    /// `irreversible`. A read verb, and `call`, claim nothing more than a
+    /// read: what a `call` does is its command's declared effect, which the
+    /// lowering marks and holds the operation to.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        match binding.verb.as_str() {
+            "create" | "update" => EffectClass::Write,
+            "delete" => EffectClass::Irreversible,
+            _ => EffectClass::Read,
+        }
+    }
+
+    /// An operation declared `irreversible`, with no identity to find again
+    /// and a binding that names no `read_back` command, has nothing to read
+    /// the result back through: the program's own end is the only evidence
+    /// there can be. Every other write keeps what the default says, and a
+    /// binding that names a `read_back` always keeps it. An operation with
+    /// an identity and no read-back is left to the compiler's refusal.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        let operation = binding.operation;
+        if operation.effect() == EffectClass::Irreversible
+            && operation.strategy() == IdentityStrategy::None
+            && binding.field("read_back").is_none()
+            && lowered.read_back.is_empty()
+            && lowered.act.first().is_some_and(|step| step.commits)
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

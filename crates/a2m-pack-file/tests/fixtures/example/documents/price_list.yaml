@@ -1,6 +1,7 @@
 surface: price_files
 file: price-list.csv
 format: delimited
+may_be_open: false
 records:
   price:
     rows: all

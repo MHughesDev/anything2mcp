@@ -14,6 +14,7 @@ use crate::canonical::{self, CanonicalJson, PackPayload};
 use crate::decimal::{Decimal, Rounding};
 use crate::digest::Digest;
 use crate::effect::{EffectClass, Hazard};
+use crate::evidence::WriteEvidence;
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::ident::{
     AuthProviderName, CredentialRef, Environment, FileKindName, OperationName, StepKind,
@@ -421,6 +422,24 @@ impl DeclaredProgram {
             _ => false,
         }
     }
+
+    /// Whether `path` names its file directly: no part of it is `.` or
+    /// `..`, with either slash. A path that steps back is read differently
+    /// by a person and by the system that follows it, so a plan holds none.
+    #[must_use]
+    pub fn is_direct_path(path: &str) -> bool {
+        !path
+            .split(['/', '\\'])
+            .any(|part| part == "." || part == "..")
+    }
+
+    /// Whether `path` is on a network share (`\\server\share\tool.exe`).
+    /// The file behind such a path belongs to another machine, so a plan
+    /// names one only with the digest its bytes must have.
+    #[must_use]
+    pub fn is_share_path(path: &str) -> bool {
+        path.starts_with("\\\\") && Self::is_absolute_path(path)
+    }
 }
 
 /// How many requests a surface accepts in a period.
@@ -779,8 +798,11 @@ pub struct BindingPlan {
     pub lookup: Vec<Step>,
     /// How long a lookup may lag behind a write, in milliseconds.
     pub settle_ms: u32,
-    /// Whether the save's own response may stand for the read-back.
-    pub prefer_response: bool,
+    /// What stands as the evidence that a write landed: the read-back, the
+    /// save's own answer, or, for an irreversible operation with nothing to
+    /// read, the committing step's acknowledgement alone. A lowering's
+    /// `prefer_response` compiles to `response`.
+    pub evidence: WriteEvidence,
     /// What must hold before the binding may be chosen.
     pub precondition: Option<ExprIndex>,
 }
@@ -1134,9 +1156,14 @@ impl Plan {
     }
 
     /// Checks that the plan holds together: its format is one this crate
-    /// writes or reads, and every reference from one part to another points
-    /// at a part that exists. `encode` and `decode` both call it, so neither
-    /// the compiler nor the engine ever holds a plan with a loose reference.
+    /// writes or reads, every reference from one part to another points at a
+    /// part that exists, and every operation keeps the rules of a write: a
+    /// read commits nowhere, a write has as many committing steps in each
+    /// binding as it has commit points, at least one, only among the steps
+    /// that do the work, and a read-back unless it is irreversible with no
+    /// identity. `encode` and `decode` both call it, so neither the compiler
+    /// nor the engine ever holds a plan with a loose reference or a write
+    /// that would run unrecorded or unread.
     ///
     /// # Errors
     ///
@@ -1183,15 +1210,25 @@ impl Plan {
             if let Some(Stands::Beneath(owner)) = item.stands {
                 surface(owner)?;
             }
-            if item
-                .programs
-                .iter()
-                .any(|program| !DeclaredProgram::is_absolute_path(&program.path))
-            {
-                return Err(refused(
-                    FailureCode::PLAN_UNREADABLE,
-                    "The plan declares a program by a path that is not absolute.",
-                ));
+            for program in &item.programs {
+                if !DeclaredProgram::is_absolute_path(&program.path) {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        "The plan declares a program by a path that is not absolute.",
+                    ));
+                }
+                if !DeclaredProgram::is_direct_path(&program.path) {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        "The plan declares a program by a path that steps through `.` or `..`.",
+                    ));
+                }
+                if DeclaredProgram::is_share_path(&program.path) && program.digest.is_none() {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        "The plan declares a program on a network share and states no digest for it.",
+                    ));
+                }
             }
         }
         let mut signed_in: Vec<SurfaceIndex> = Vec::new();
@@ -1274,6 +1311,108 @@ impl Plan {
         }
         for test in &self.tests {
             within("tool", test.tool.get(), self.tools.len())?;
+        }
+        self.check_writes()
+    }
+
+    /// The rules that make a plan safe to run, whoever made it. The
+    /// compiler refuses each of these with a place and a fix; they are held
+    /// here as well, so that a plan the compiler did not make cannot run a
+    /// write as a read, with nothing recorded, or with nothing read back.
+    /// Called after the references are known to hold.
+    fn check_writes(&self) -> Result<(), Failure> {
+        let unsafe_plan = |position: usize, what: &str| {
+            Err(refused(
+                FailureCode::PLAN_UNREADABLE,
+                format!("Operation {position} of the plan {what}."),
+            ))
+        };
+        for (position, operation) in self.operations.iter().enumerate() {
+            let writes = operation.effect >= EffectClass::Write;
+            if operation.hazard != Hazard::None && operation.effect != EffectClass::Irreversible {
+                return unsafe_plan(position, "has a hazard and is not irreversible");
+            }
+            if operation.effect == EffectClass::Write
+                && operation.identity.strategy == IdentityStrategy::None
+            {
+                return unsafe_plan(position, "writes and cannot find its record again");
+            }
+            if writes && operation.commit_points == 0 {
+                return unsafe_plan(position, "writes and has no commit point");
+            }
+            if !writes && operation.commit_points != 0 {
+                return unsafe_plan(position, "reads and states commit points");
+            }
+            let needs_read_back = operation.effect == EffectClass::Write
+                || (operation.effect == EffectClass::Irreversible
+                    && operation.identity.strategy != IdentityStrategy::None);
+            for binding in &operation.bindings {
+                let commits = |steps: &[Step]| steps.iter().filter(|step| step.commits).count();
+                if commits(&binding.confirm)
+                    + commits(&binding.read_back)
+                    + commits(&binding.lookup)
+                    > 0
+                {
+                    return unsafe_plan(position, "commits in a step that does not do the work");
+                }
+                let saves = commits(&binding.act);
+                if !writes && saves > 0 {
+                    return unsafe_plan(position, "reads and has a step that commits");
+                }
+                if writes && u32::try_from(saves).ok() != Some(operation.commit_points) {
+                    return unsafe_plan(
+                        position,
+                        "has a binding whose committing steps are not its commit points",
+                    );
+                }
+                if binding.evidence == WriteEvidence::Acknowledged {
+                    if operation.effect != EffectClass::Irreversible {
+                        return unsafe_plan(
+                            position,
+                            "has a binding whose only evidence is an acknowledgement and is not irreversible",
+                        );
+                    }
+                    // A record found by its key and read back by the
+                    // binding is verified by that read, never ended on the
+                    // answer alone (decision 0193).
+                    if !acknowledgement_may_stand(operation.identity.strategy, &binding.read_back) {
+                        return unsafe_plan(
+                            position,
+                            "has a binding that reads its record back by its key and ends it on an acknowledgement",
+                        );
+                    }
+                } else if needs_read_back && binding.read_back.is_empty() {
+                    return unsafe_plan(position, "writes and has a binding with no read-back");
+                }
+            }
+        }
+        for (position, pipeline) in self.pipelines.iter().enumerate() {
+            for step in &pipeline.steps {
+                // The reference was checked above.
+                let Some(operation) = self.operation(step.operation) else {
+                    continue;
+                };
+                if pipeline.effect < operation.effect || pipeline.hazard < operation.hazard {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        format!(
+                            "Pipeline {position} of the plan states less than its operations do."
+                        ),
+                    ));
+                }
+            }
+        }
+        for (position, tool) in self.tools.iter().enumerate() {
+            let effect = match tool.runs {
+                ToolRuns::Operation(index) => self.operation(index).map(|found| found.effect),
+                ToolRuns::Pipeline(index) => self.pipeline(index).map(|found| found.effect),
+            };
+            if tool.annotations.read_only && effect != Some(EffectClass::Read) {
+                return Err(refused(
+                    FailureCode::PLAN_UNREADABLE,
+                    format!("Tool {position} of the plan is described as read-only and writes."),
+                ));
+            }
         }
         Ok(())
     }
@@ -1376,6 +1515,18 @@ impl Plan {
     }
 }
 
+/// Whether a binding whose evidence is `acknowledged` may end its record on
+/// the system's answer alone: only where the record cannot be read back by
+/// a key. That is a record of identity `none`, or one whose binding has no
+/// read-back step, such as a queue take, whose message is gone once it is
+/// acknowledged. A record found by its key that the binding reads back is
+/// verified by that read (spec section 208; decision 0193). The compiler
+/// and the plan's check ask this one question.
+#[must_use]
+pub fn acknowledgement_may_stand(strategy: IdentityStrategy, read_back: &[Step]) -> bool {
+    strategy == IdentityStrategy::None || read_back.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1474,7 +1625,7 @@ mod tests {
                 read_back: vec![step("request", 0), step("extract", 1)],
                 lookup: vec![find],
                 settle_ms: 2_000,
-                prefer_response: false,
+                evidence: WriteEvidence::ReadBack,
                 precondition: Some(ExprIndex::new(2)),
             }],
             manifest: PermissionManifest {
@@ -1728,7 +1879,7 @@ mod tests {
     /// Windows, macOS, and Linux, in every run. If the encoding or the
     /// sample changes on purpose, this changes with it, and the plan format
     /// number says whether stored plans still load.
-    const SAMPLE_HASH: &str = "be84dc86e03c4018510b74b9e4dba718d2633d3201b0d2bc9aa9065c8d2b917f";
+    const SAMPLE_HASH: &str = "a0c8f809caff95d328419cdc02052e9ae6d4d81d7f27c7c1463c354f20e45d2a";
 
     #[test]
     fn a_plan_encodes_to_the_same_bytes_every_time_and_on_every_machine() {
@@ -1953,6 +2104,189 @@ mod tests {
         assert!(failure.message().contains("tool 2"), "{failure}");
     }
 
+    /// The sample's write, turned into a read with one step that reads.
+    fn as_read(plan: &mut Plan) {
+        let operation = &mut plan.operations[0];
+        operation.effect = EffectClass::Read;
+        operation.commit_points = 0;
+        operation.bindings[0].act = vec![step("request", 0)];
+        plan.pipelines[0].effect = EffectClass::Read;
+    }
+
+    #[test]
+    fn a_plan_that_breaks_a_rule_of_a_write_is_refused_on_the_way_out_and_on_the_way_in() {
+        type Break = fn(&mut Plan);
+        let breaks: [(&str, Break); 14] = [
+            // A write that says it reads: nothing would be recorded first.
+            ("reads and states commit points", |plan| {
+                plan.operations[0].effect = EffectClass::Read;
+            }),
+            ("reads and has a step that commits", |plan| {
+                plan.operations[0].effect = EffectClass::Read;
+                plan.operations[0].commit_points = 0;
+            }),
+            // A write with nothing to record.
+            ("no commit point", |plan| {
+                plan.operations[0].commit_points = 0;
+                plan.operations[0].bindings[0].act[1].commits = false;
+            }),
+            ("not its commit points", |plan| {
+                plan.operations[0].bindings[0].act[1].commits = false;
+            }),
+            ("not its commit points", |plan| {
+                plan.operations[0].bindings[0].act[0].commits = true;
+            }),
+            ("not its commit points", |plan| {
+                plan.operations[0].commit_points = 2;
+            }),
+            ("does not do the work", |plan| {
+                plan.operations[0].bindings[0].confirm[0].commits = true;
+            }),
+            ("does not do the work", |plan| {
+                plan.operations[0].bindings[0].read_back[0].commits = true;
+            }),
+            ("does not do the work", |plan| {
+                as_read(plan);
+                plan.operations[0].bindings[0].lookup[0].commits = true;
+            }),
+            // A write nobody reads back, and one nobody could find again.
+            ("no read-back", |plan| {
+                plan.operations[0].bindings[0].read_back.clear();
+            }),
+            ("cannot find its record again", |plan| {
+                plan.operations[0].identity = IdentityPlan {
+                    strategy: IdentityStrategy::None,
+                    key: Vec::new(),
+                };
+            }),
+            ("has a hazard", |plan| {
+                plan.operations[0].hazard = Hazard::SendsOutside;
+            }),
+            // An acknowledgement stands as evidence only where nothing can
+            // be undone, and so nothing can be read back.
+            ("only evidence is an acknowledgement", |plan| {
+                plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+            }),
+            ("states less", |plan| {
+                plan.pipelines[0].effect = EffectClass::Read;
+            }),
+        ];
+        for (what, change) in breaks {
+            let mut plan = sample();
+            change(&mut plan);
+            let failure = plan.encode().unwrap_err();
+            assert_eq!(failure.class(), FailureClass::Input, "{what}");
+            assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE, "{what}");
+            assert!(failure.message().contains(what), "{what}: {failure}");
+            // The refusal names a place, never the plan's content.
+            assert!(!failure.message().contains("example"), "{failure}");
+        }
+
+        // The same on the way in, for bytes the compiler did not make: the
+        // sample's write, stored as a read under its own hash.
+        let good = String::from_utf8(sample().encode().unwrap().bytes).unwrap();
+        let as_a_read = good.replacen("\"effect\":\"write\"", "\"effect\":\"read\"", 1);
+        assert_ne!(as_a_read, good);
+        let failure = decode_own(as_a_read.as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        let unread = good.replacen("\"commits\":true", "\"commits\":false", 1);
+        assert_ne!(unread, good);
+        let failure = decode_own(unread.as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(failure.message().contains("commit point"), "{failure}");
+
+        // An irreversible operation may take the acknowledgement alone, and
+        // then needs no read-back.
+        let mut plan = sample();
+        plan.operations[0].effect = EffectClass::Irreversible;
+        plan.pipelines[0].effect = EffectClass::Irreversible;
+        plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+        plan.operations[0].bindings[0].read_back.clear();
+        plan.encode().unwrap();
+    }
+
+    /// Decision 0193, finding F-1: a record found by its key that its
+    /// binding reads back is never ended on the acknowledgement alone,
+    /// irreversible or not.
+    #[test]
+    fn a_keyed_record_its_binding_reads_back_is_not_ended_on_an_acknowledgement() {
+        let mut plan = sample();
+        plan.operations[0].effect = EffectClass::Irreversible;
+        plan.pipelines[0].effect = EffectClass::Irreversible;
+        plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+        assert!(!plan.operations[0].bindings[0].read_back.is_empty());
+        let failure = plan.encode().unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(
+            failure
+                .message()
+                .contains("reads its record back by its key"),
+            "{failure}"
+        );
+        // With no key there is nothing to read it back by.
+        let mut keyless = plan.clone();
+        keyless.operations[0].identity = IdentityPlan {
+            strategy: IdentityStrategy::None,
+            key: Vec::new(),
+        };
+        keyless.encode().unwrap();
+        // With no read-back step, the answer is the only evidence there is.
+        plan.operations[0].bindings[0].read_back.clear();
+        plan.encode().unwrap();
+        assert!(super::acknowledgement_may_stand(
+            IdentityStrategy::None,
+            &sample().operations[0].bindings[0].read_back
+        ));
+        assert!(!super::acknowledgement_may_stand(
+            IdentityStrategy::Natural,
+            &sample().operations[0].bindings[0].read_back
+        ));
+    }
+
+    #[test]
+    fn the_plans_a_write_rule_allows_still_encode() {
+        // A read commits nowhere and states no commit point.
+        let mut read = sample();
+        as_read(&mut read);
+        read.tools[0].annotations.read_only = true;
+        read.tools[1].annotations.read_only = true;
+        read.encode().unwrap();
+        // A tool described as read-only never runs a write.
+        let mut described = sample();
+        described.tools[0].annotations.read_only = true;
+        let failure = described.encode().unwrap_err();
+        assert!(failure.message().contains("read-only"), "{failure}");
+        let mut described = sample();
+        described.tools[1].annotations.read_only = true;
+        assert!(described.encode().is_err());
+
+        // An irreversible operation with no identity has no read-back to
+        // give; with an identity it needs one.
+        let mut sent = sample();
+        sent.operations[0].effect = EffectClass::Irreversible;
+        sent.operations[0].hazard = Hazard::SendsOutside;
+        sent.pipelines[0].effect = EffectClass::Irreversible;
+        sent.pipelines[0].hazard = Hazard::SendsOutside;
+        sent.encode().unwrap();
+        sent.operations[0].bindings[0].read_back.clear();
+        assert!(sent.encode().is_err());
+        sent.operations[0].identity = IdentityPlan {
+            strategy: IdentityStrategy::None,
+            key: Vec::new(),
+        };
+        sent.encode().unwrap();
+
+        // Two saves are two commit points, in every binding.
+        let mut twice = sample();
+        twice.operations[0].commit_points = 2;
+        twice.operations[0].bindings[0].act[0].commits = true;
+        twice.encode().unwrap();
+        let mut second = twice.operations[0].bindings[0].clone();
+        second.act.pop();
+        twice.operations[0].bindings.push(second);
+        assert!(twice.encode().is_err());
+    }
+
     #[test]
     fn a_declared_program_is_named_by_an_absolute_path_on_every_machine() {
         for path in [
@@ -1991,6 +2325,39 @@ mod tests {
         assert_ne!(loose, good);
         let failure = decode_own(loose.as_bytes()).unwrap_err();
         assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+
+        // A path that steps back, and a program on a share with no digest,
+        // are refused the same way; a share with a digest is declared.
+        for path in [
+            "/opt/example/../../tmp/tool",
+            "/opt/./example/tool",
+            "C:\\example\\..\\tool.exe",
+            "C:/example/../tool.exe",
+            "\\\\server\\share\\..\\tool.exe",
+        ] {
+            assert!(DeclaredProgram::is_absolute_path(path), "{path}");
+            assert!(!DeclaredProgram::is_direct_path(path), "{path}");
+            let mut plan = sample();
+            plan.surfaces[0].programs[0].path = path.to_owned();
+            let failure = plan.encode().unwrap_err();
+            assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE, "{path}");
+            assert!(failure.message().contains("steps through"), "{failure}");
+        }
+        assert!(DeclaredProgram::is_direct_path(
+            "/opt/example/tool.v2/..tool"
+        ));
+        let share = "\\\\server\\share\\example-tool.exe";
+        assert!(DeclaredProgram::is_share_path(share));
+        assert!(!DeclaredProgram::is_share_path(
+            "/opt/example/bin/example-tool"
+        ));
+        let mut plan = sample();
+        plan.surfaces[0].programs[0].path = share.to_owned();
+        plan.encode().unwrap();
+        plan.surfaces[0].programs[0].digest = None;
+        let failure = plan.encode().unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(failure.message().contains("network share"), "{failure}");
     }
 
     #[test]

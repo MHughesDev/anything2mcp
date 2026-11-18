@@ -8,6 +8,10 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Only so that starting a broker opens the stream pack's protocol for it to
+# the registration made in the same process: a test's. The shipped product
+# has the stand as no dependency, so nothing in it does (decision 0201).
+a2m-pack-stream = { path = "../../crates/a2m-pack-stream" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

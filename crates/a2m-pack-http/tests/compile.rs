@@ -198,6 +198,16 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         |text| text.replacen("quantity: input.quantity", "amount: input.quantity", 1),
         "http.body_undeclared",
     );
+    // An endpoint that sends a record's version as a precondition, read
+    // back through an endpoint that reads no version: the write could only
+    // ever go out with no precondition.
+    let unread = refused(
+        "endpoints/line_items.yaml",
+        |text| text.replacen("version:\n  read: {field: version}\n", "", 1),
+        "http.version_invalid",
+    );
+    assert_eq!(unread.at.file.as_str(), "operations/line_items.yaml");
+    assert!(unread.message.contains("`line_item_get`"), "{unread}");
     // What is not built is refused by name, not ignored.
     let not_built = refused(
         orders,
@@ -205,6 +215,26 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         "http.not_built",
     );
     assert_eq!(not_built.at.line, 6);
+}
+
+#[test]
+fn a_write_never_compiles_as_less_than_what_its_binding_does() {
+    let items = "operations/line_items.yaml";
+    // The upsert declared a read, with no commit point.
+    refused(
+        items,
+        |text| {
+            text.replacen("effect: write\n", "effect: read\n", 1)
+                .replacen("commit_points: 1\n", "", 1)
+        },
+        "kernel.effect_lower_than_derived",
+    );
+    // A delete cannot be taken back, whatever reads it back.
+    refused(
+        items,
+        |text| text.replacen("verb: upsert", "verb: delete", 1),
+        "kernel.effect_lower_than_derived",
+    );
 }
 
 #[test]
@@ -261,4 +291,51 @@ fn the_lint_rules_find_what_they_name() {
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let warning = compiled.warnings.find("http.effect_method").unwrap();
     assert_eq!((warning.level, warning.at.line), (Level::Warning, 3));
+}
+
+#[test]
+fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence() {
+    let folder = Folder::new("evidence");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    // The version a write sends is read back through the record: with no
+    // read-back the endpoint sends none.
+    let unversioned = |text: &str| text.replace("version:\n  send: {body: version}\n", "");
+    let submit = |text: &str| {
+        text.replace("verb: upsert", "verb: submit")
+            .replace("    read_back: {endpoint: line_item_get}\n", "")
+            .replace(
+                "effect: write\nkey: [order_id, item_code]\n",
+                "effect: irreversible\n",
+            )
+    };
+    let plan = common::compile_changed_files(
+        &registry,
+        "example",
+        &[
+            ("endpoints/line_items.yaml", &unversioned),
+            ("operations/line_items.yaml", &submit),
+        ],
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
+    .plan;
+    let operation = |plan: &a2m_core::Plan| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_line_item_upsert")
+            .unwrap()
+            .clone()
+    };
+    let operation_of_submit = operation(&plan);
+    assert_eq!(
+        operation_of_submit.bindings[0].evidence,
+        a2m_core::WriteEvidence::Acknowledged
+    );
+    assert_eq!(
+        operation_of_submit.effect,
+        a2m_core::EffectClass::Irreversible
+    );
+
+    // A write that names a read-back keeps it.
+    let kept = operation(&compile(&registry, "example").plan);
+    assert_eq!(kept.bindings[0].evidence, a2m_core::WriteEvidence::ReadBack);
 }

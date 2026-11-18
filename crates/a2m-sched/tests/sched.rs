@@ -16,7 +16,8 @@ use a2m_core::{Epoch, FailureClass, FailureCode, RunState, Timestamp};
 use a2m_ledger::{Durability, Fence};
 use a2m_sched::{
     Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
-    JobKind, JobState, Priority, RateLimit, ResourceKey, SchedSettings, SessionNeed, codes,
+    JobKind, JobState, Priority, RateLimit, ResourceKey, Resumed, SchedSettings, SessionNeed,
+    codes,
 };
 use common::*;
 
@@ -1020,4 +1021,516 @@ fn the_crate_never_sleeps_and_does_not_know_the_engine_or_a_pack() {
             );
         }
     }
+}
+
+// ---- the audit's three findings (decision 0148) ----------------------------
+
+/// A runner that reports nothing in doubt is not taken at its word while
+/// the ledger holds a record whose intent was stored and never read back.
+#[tokio::test]
+async fn a_stopped_job_is_reconciled_when_the_ledger_holds_a_record_in_doubt() {
+    let stand = Stand::new("doubt").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    stand
+        .sched
+        .finish(
+            &lease.lease_ref(),
+            JobEnd::Stopped {
+                class: FailureClass::Busy,
+                code: codes::RECORD_LOCKED,
+                in_doubt: false,
+            },
+        )
+        .await
+        .unwrap();
+    // The store is asked: a reconcile job waits for the run.
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{run}' AND state = 'pending'"
+        )),
+        1
+    );
+    let again = stand.claim_one(one).await;
+    assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    assert_eq!(again.run, Some(run));
+
+    // A run with no intent stored is not reconciled on the same report.
+    let (other, _job) = stand.admit(write(2, "w")).await;
+    stand
+        .sched
+        .finish(&again.lease_ref(), JobEnd::Done)
+        .await
+        .unwrap();
+    let lease = stand.claim_one(one).await;
+    assert_eq!(lease.run, Some(other));
+    start_writing(&stand.store, lease.fence().unwrap(), "order-2", false).await;
+    stand
+        .sched
+        .finish(
+            &lease.lease_ref(),
+            JobEnd::Stopped {
+                class: FailureClass::Busy,
+                code: codes::RECORD_LOCKED,
+                in_doubt: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{other}' AND state = 'pending'"
+        )),
+        0
+    );
+}
+
+/// A clock that was set back and comes forward again refills nothing for
+/// the time it passes twice. The store is given a bucket last counted an
+/// hour from now, as a clock set back by an hour would leave it.
+#[tokio::test]
+async fn a_clock_that_went_back_does_not_refill_a_budget_twice() {
+    let stand = Stand::new("clock-back").await;
+    let one = stand.hello(1).await;
+    stand.admit(read(1, "a")).await;
+    let lease = stand.claim_one(one).await.lease_ref();
+    let surface = BudgetKey::surface(workspace(), &target(), &environment(), "orders").unwrap();
+    stand
+        .sched
+        .set_budget(
+            surface.clone(),
+            RateLimit {
+                capacity: 4,
+                refill: 2,
+                per: Duration::from_secs(1),
+            },
+        )
+        .await
+        .unwrap();
+    let ahead = stand.after(3600).as_unix_millis();
+    stand
+        .raw()
+        .execute("UPDATE budgets SET updated_at = ?1", [ahead])
+        .unwrap();
+    let budgets = [surface];
+
+    // What the bucket holds is granted, and the moment it is counted to
+    // does not go back.
+    assert_eq!(
+        stand
+            .sched
+            .rate(&lease, &budgets, 4)
+            .await
+            .unwrap()
+            .requests,
+        4
+    );
+    assert_eq!(stand.counted("SELECT updated_at FROM budgets"), ahead);
+    // Ten seconds later, still before that moment: nothing has refilled,
+    // and the next refill is beyond the lease.
+    stand.advance(10);
+    refused(
+        stand.sched.rate(&lease, &budgets, 1).await,
+        &codes::RATE_LIMITED,
+    );
+    assert_eq!(stand.counted("SELECT level FROM budgets"), 0);
+    assert_eq!(stand.counted("SELECT updated_at FROM budgets"), ahead);
+}
+
+/// A job that waits for a resource and whose lease has run out, and that
+/// the scheduler has not yet declared lost, is given nothing: `acquire`
+/// would refuse it at that moment.
+#[tokio::test]
+async fn a_waiter_whose_lease_has_run_out_is_granted_nothing() {
+    let stand = Stand::new("late-grant").await;
+    let one = stand.hello(1).await;
+    stand.admit(read(1, "a")).await;
+    stand.admit(read(2, "b")).await;
+    let leases = stand.claim(one, 2).await;
+    let (a, b) = (leases[0].lease_ref(), leases[1].lease_ref());
+    let keys = [ResourceKey::new("link", "example-device").unwrap()];
+    stand
+        .sched
+        .acquire(&a, &keys, Duration::ZERO)
+        .await
+        .unwrap();
+    // B waits for as long as its lease lasts.
+    let lease_ends = stand.after(30);
+    let (sched, wanted) = (stand.sched.clone(), keys.clone());
+    let b_waits =
+        tokio::spawn(async move { sched.acquire(&b, &wanted, Duration::from_secs(600)).await });
+    stand.waits_until(lease_ends).await;
+
+    // Both leases run out. A's result is still taken, and frees the key.
+    stand.advance(30);
+    stand.sched.release(&a, &keys).await.unwrap();
+    assert_eq!(
+        stand.counted("SELECT COUNT(*) FROM resource_holds"),
+        0,
+        "a job whose lease had run out was given the resource"
+    );
+    assert_eq!(stand.sched.sweep().await.unwrap().waits_ended, 1);
+    refused(b_waits.await.unwrap(), &codes::RESOURCE_IN_USE);
+    assert_eq!(stand.counted("SELECT COUNT(*) FROM resource_holds"), 0);
+}
+
+/// What one write holds alone is named by one key, whoever submits the job:
+/// two jobs that write on one surface run one after the other, and a job on
+/// another surface is not held up.
+#[tokio::test]
+async fn two_jobs_that_write_on_one_surface_hold_it_one_after_the_other() {
+    let stand = Stand::new("held-alone").await;
+    let one = stand.hello(1).await;
+    let on = |surface: &str| {
+        ResourceKey::held_alone("file", workspace(), &target(), &environment(), surface).unwrap()
+    };
+    assert_eq!(on("reports"), on("reports"));
+    assert_ne!(on("reports"), on("ledgers"));
+    assert_ne!(
+        on("reports"),
+        ResourceKey::held_alone("link", workspace(), &target(), &environment(), "reports").unwrap()
+    );
+    assert!(
+        ResourceKey::held_alone("File", workspace(), &target(), &environment(), "reports").is_err()
+    );
+
+    let mut first = write(1, "a");
+    first.job.exclusive = vec![on("reports")];
+    let mut second = write(2, "b");
+    second.job.exclusive = vec![on("reports")];
+    let mut elsewhere = write(3, "c");
+    elsewhere.job.exclusive = vec![on("ledgers")];
+    let (_, first_job) = stand.admit(first).await;
+    let (_, second_job) = stand.admit(second).await;
+    let (_, elsewhere_job) = stand.admit(elsewhere).await;
+
+    // Three free slots, and two jobs are handed out: the second waits for
+    // the surface the first holds.
+    let leases = stand.claim(one, 3).await;
+    assert_eq!(
+        leases.iter().map(|lease| lease.job).collect::<Vec<_>>(),
+        [first_job, elsewhere_job]
+    );
+    assert_eq!(
+        stand.stored(&format!(
+            "SELECT job_id FROM resource_holds WHERE resource_key = '{}'",
+            on("reports")
+        )),
+        first_job.to_string()
+    );
+    // The end of the first frees it for the second.
+    stand
+        .sched
+        .finish(&leases[0].lease_ref(), JobEnd::Done)
+        .await
+        .unwrap();
+    assert_eq!(stand.claim_one(one).await.job, second_job);
+}
+
+/// Runs a reconcile loop for `seconds` of the stand's clock, in steps of
+/// `step` seconds: whenever a job of the run is handed out, it ends at once
+/// as `Stopped` with `class` and the record still in doubt, as a reconcile
+/// that cannot settle it does. The number of jobs handed out.
+async fn attempts(
+    stand: &Stand,
+    runner: a2m_core::RunnerId,
+    class: FailureClass,
+    seconds: u64,
+    step: u64,
+) -> u32 {
+    let mut handed = 0;
+    let mut passed = 0;
+    while passed < seconds {
+        for lease in stand.claim(runner, 1).await {
+            assert_eq!(lease.requirements.kind, JobKind::Reconcile);
+            handed += 1;
+            stand
+                .sched
+                .finish(
+                    &lease.lease_ref(),
+                    JobEnd::Stopped {
+                        class,
+                        code: FailureCode::new("still_in_doubt").unwrap(),
+                        in_doubt: true,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        stand.advance(step);
+        passed += step;
+    }
+    handed
+}
+
+/// Decision 0193: the scheduler does not spin on a run that rests. A run
+/// stopped for a person is never queued again on its own; one that may be
+/// read again is, after a wait that doubles from five seconds to a ceiling
+/// of fifteen minutes, so a paused-clock minute sees four reconciles at
+/// most, and two hours some fifteen.
+#[tokio::test]
+async fn a_reconcile_queued_again_for_one_run_waits_longer_each_time_and_a_person_stop_waits_for_a_person()
+ {
+    for class in FailureClass::ALL.iter().copied() {
+        let stand = Stand::new("spin").await;
+        let one = stand.hello(1).await;
+        let (run, _job) = stand.admit(write(1, "w")).await;
+        let lease = stand.claim_one(one).await;
+        start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+        stand
+            .sched
+            .finish(
+                &lease.lease_ref(),
+                JobEnd::Stopped {
+                    class,
+                    code: FailureCode::new("first_stop").unwrap(),
+                    in_doubt: true,
+                },
+            )
+            .await
+            .unwrap();
+        let in_a_minute = attempts(&stand, one, class, 60, 1).await;
+        let pending = stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{run}' AND state = 'pending'"
+        ));
+        if matches!(
+            class,
+            FailureClass::PossibleCommit | FailureClass::Transient | FailureClass::Busy
+        ) {
+            // At 0, 5, 15, and 35 seconds; the next would be at 75.
+            assert_eq!(in_a_minute, 4, "{class}");
+            assert_eq!(pending, 1, "{class}");
+            let in_two_hours = attempts(&stand, one, class, 2 * 3600, 60).await;
+            assert!((8..=14).contains(&in_two_hours), "{class}: {in_two_hours}");
+        } else {
+            assert_eq!(
+                in_a_minute, 0,
+                "{class}: a stop for a person was queued again"
+            );
+            assert_eq!(pending, 0, "{class}");
+        }
+    }
+}
+
+/// Decision 0193: a named condition wakes a waiting reconcile early, a
+/// resume by a person or a settle time passing, and never before the end
+/// of a lost lease's quarantine.
+#[tokio::test]
+async fn a_waiting_reconcile_is_woken_by_a_resume_or_a_settle_time_and_never_inside_a_quarantine() {
+    let stand = Stand::new("wake").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    let stop = |lease: a2m_sched::LeaseRef| {
+        let sched = stand.sched.clone();
+        async move {
+            sched
+                .finish(
+                    &lease,
+                    JobEnd::Stopped {
+                        class: FailureClass::PossibleCommit,
+                        code: FailureCode::new("still_in_doubt").unwrap(),
+                        in_doubt: true,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    };
+    stop(lease.lease_ref()).await;
+    // The first reconcile, at once; the second waits five seconds, the
+    // third ten.
+    stop(stand.claim_one(one).await.lease_ref()).await;
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(5);
+    stop(stand.claim_one(one).await.lease_ref()).await;
+    assert!(stand.claim(one, 1).await.is_empty());
+
+    // A person resumes: the enqueue is refused, as the run has its job, and
+    // that job is handed out now.
+    let resumed = stand
+        .sched
+        .enqueue(Enqueue {
+            run,
+            job: requirements(true),
+            priority: Priority::Interactive,
+            health: HealthState::Ready,
+            queue_wait: None,
+        })
+        .await;
+    assert!(resumed.is_err());
+    let woken = stand.claim_one(one).await;
+    assert_eq!(woken.requirements.kind, JobKind::Reconcile);
+    stop(woken.lease_ref()).await;
+
+    // A settle time passing brings the next forward, never before now.
+    assert!(stand.claim(one, 1).await.is_empty());
+    let soon = stand.after(1);
+    assert!(stand.sched.wake_reconcile(run, soon).await.unwrap());
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(1);
+    let woken = stand.claim_one(one).await;
+    // A lost lease: its reconcile waits out the quarantine, whatever wakes it.
+    stand.advance(30 + 5);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert_eq!(swept.lost, vec![woken.job]);
+    assert_eq!(swept.reconcile.len(), 1);
+    assert!(!stand.sched.wake_reconcile(run, stand.now()).await.unwrap());
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(59);
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(1);
+    assert_eq!(stand.claim_one(one).await.job, swept.reconcile[0]);
+}
+
+/// Polls a future once, so that it runs to its first wait: for a call of
+/// the scheduler, until it has handed its transaction to the store's one
+/// writer, which takes transactions in the order they were handed over.
+async fn handed_over<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+    std::future::poll_fn(|cx| {
+        assert!(
+            future.as_mut().poll(cx).is_pending(),
+            "the call was to wait for the store"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_resume_that_races_the_end_of_the_reconcile_it_finds_is_never_lost() {
+    let stand = Stand::new("race").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    let in_doubt = || JobEnd::Stopped {
+        class: FailureClass::PossibleCommit,
+        code: FailureCode::new("still_in_doubt").unwrap(),
+        in_doubt: true,
+    };
+    stand
+        .sched
+        .finish(&lease.lease_ref(), in_doubt())
+        .await
+        .unwrap();
+    // Two reconciles in a row: the next one would wait ten seconds.
+    let first = stand.claim_one(one).await;
+    stand
+        .sched
+        .finish(&first.lease_ref(), in_doubt())
+        .await
+        .unwrap();
+    stand.advance(5);
+    let reading = stand.claim_one(one).await;
+    assert_eq!(reading.requirements.kind, JobKind::Reconcile);
+
+    // The order is forced through the store's one writer: a transaction of
+    // the test's own holds it, a person's resume hands over its transaction
+    // while the reconcile is still leased, the reconcile's end hands over
+    // its own after that, and only then is the writer let go. Nothing
+    // sleeps; the clock does not move.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let mut hold = std::pin::pin!(stand.store.write(Durability::Relaxed, move |_tx| {
+        let _ = held.recv();
+        Ok(())
+    }));
+    handed_over(hold.as_mut()).await;
+    let sched = stand.sched.clone();
+    let mut resume = std::pin::pin!(sched.enqueue(Enqueue {
+        run,
+        job: requirements(true),
+        priority: Priority::Interactive,
+        health: HealthState::Ready,
+        queue_wait: None,
+    }));
+    handed_over(resume.as_mut()).await;
+    let lease_ref = reading.lease_ref();
+    let mut ended = std::pin::pin!(stand.sched.finish(&lease_ref, in_doubt()));
+    handed_over(ended.as_mut()).await;
+    release.send(()).unwrap();
+    hold.await.unwrap();
+    let (resumed, ended) = tokio::join!(resume, ended);
+    ended.unwrap();
+
+    // The run's one job is the next reconcile, and the resume is not lost:
+    // that reconcile is handed out now, not ten seconds from now.
+    let failure = resumed.unwrap_err();
+    assert!(!failure.next_step().is_empty());
+    let next = stand.claim(one, 1).await;
+    assert_eq!(next.len(), 1, "the resume's wake was lost: {failure}");
+    assert_eq!(next[0].requirements.kind, JobKind::Reconcile);
+}
+
+#[tokio::test]
+async fn a_resume_names_the_reconcile_it_finds_and_inside_a_quarantine_says_how_long_remains() {
+    let stand = Stand::new("resume").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    stand
+        .sched
+        .finish(
+            &lease.lease_ref(),
+            JobEnd::Stopped {
+                class: FailureClass::PossibleCommit,
+                code: FailureCode::new("still_in_doubt").unwrap(),
+                in_doubt: true,
+            },
+        )
+        .await
+        .unwrap();
+    let resume = || {
+        stand.sched.resume(Enqueue {
+            run,
+            job: requirements(true),
+            priority: Priority::Interactive,
+            health: HealthState::Ready,
+            queue_wait: None,
+        })
+    };
+    let reconciling = |resumed: Resumed| match resumed {
+        Resumed::Reconciling(found) => found,
+        Resumed::Queued(job) => panic!("a second job {job} was queued beside the reconcile"),
+    };
+
+    // Waiting: handed out now, by its true name.
+    let found = reconciling(resume().await.unwrap());
+    assert!(!found.leased);
+    assert_eq!((found.from, found.quarantine_left), (stand.now(), None));
+    assert_eq!(found.failure().code(), &codes::RUN_RECONCILING);
+    assert_eq!(found.failure().class(), FailureClass::Busy);
+
+    // Leased: a runner reads the system now.
+    let reading = stand.claim_one(one).await;
+    assert_eq!(reading.job, found.job);
+    let found = reconciling(resume().await.unwrap());
+    assert!(found.leased);
+    assert_eq!(found.job, reading.job);
+
+    // Its lease is lost. The reconcile after it waits out the quarantine
+    // whatever the resume asked, and a resume says how long remains.
+    stand.advance(30 + 5);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert_eq!(swept.lost, vec![reading.job]);
+    let found = reconciling(resume().await.unwrap());
+    assert_eq!(found.job, swept.reconcile[0]);
+    assert_eq!(found.quarantine_left, Some(Duration::from_secs(60)));
+    assert_eq!(found.from, stand.after(60));
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT available_at FROM jobs WHERE id = '{}'",
+            found.job
+        )),
+        stand.after(60).as_unix_millis()
+    );
+    let said = found.failure();
+    assert!(said.message().contains("in about 60 seconds"), "{said}");
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(60);
+    assert_eq!(stand.claim_one(one).await.job, found.job);
 }

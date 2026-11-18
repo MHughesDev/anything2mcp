@@ -6,8 +6,8 @@
 //! `providers.disabled`, which the registry builder reads: a pack that is
 //! switched off is listed as not enabled and registers nothing.
 //!
-//! Not here yet: the desktop pack, which is not built. Plug-ins found on
-//! the machine are not looked for.
+//! The desktop pack reads on Linux only so far; on other systems its driver
+//! stops by name. Plug-ins found on the machine are not looked for.
 
 use a2m_pack_web_browser::SharedBrowsers;
 use a2m_provider::{Pack, RegistryBuilder};
@@ -59,6 +59,10 @@ pub(crate) fn first_party() -> Vec<FirstParty> {
         }),
         one(a2m_pack_stream::MANIFEST, a2m_pack_stream::register),
         one(a2m_pack_device::MANIFEST, a2m_pack_device::add_to),
+        one(
+            a2m_pack_desktop::pack().manifest(),
+            a2m_pack_desktop::add_to,
+        ),
     ]
 }
 

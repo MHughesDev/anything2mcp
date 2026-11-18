@@ -92,13 +92,17 @@ async fn one_read_gives_what_the_form_shows_and_five_runs_do_the_same_thing() {
             read.values.get("length_in"),
             Some(&Value::from(format_length_in(stored.length_sixteenths)))
         );
-        runs.push((read.means(), read.values));
+        runs.push((read.means(), read.means_text(), read.values));
         assert!(handle.release(prepared, false).await.complete);
     }
-    assert!(runs.windows(2).all(|pair| pair[0] == pair[1]), "{runs:?}");
+    assert!(
+        runs.windows(2).all(|pair| pair[0] == pair[1]),
+        "{:?}",
+        runs.iter().map(|run| &run.1).collect::<Vec<_>>()
+    );
     // What was done names the template and which locator found each
     // field, never the value that filled a placeholder or a field.
-    let means = format!("{:?}", runs[0].0);
+    let means = runs[0].1.clone();
     assert!(
         means.contains("/orders/{order_id}/items/{item_code}"),
         "{means}"
@@ -160,8 +164,10 @@ async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absen
         .await
         .unwrap();
     assert!(missing.absent && missing.values.is_empty());
-    // A value cannot leave its segment of the address: it is one segment,
-    // whatever it holds, and the application knows no such order.
+    // A value cannot leave its segment of the address: one that is not a
+    // plain segment is refused before the tab is sent anywhere (decision
+    // 0187), and the application hears nothing.
+    let before = app.seen().await.unwrap();
     let escaping = scene
         .read(
             &handle,
@@ -170,9 +176,18 @@ async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absen
             &item("../../__control/reset?x=", "L-101"),
         )
         .await
-        .unwrap();
-    assert!(escaping.absent);
-    assert!(handle.release(prepared, false).await.complete);
+        .unwrap_err();
+    assert_eq!(
+        escaping.failure.code().as_str(),
+        "address_value_refused",
+        "{escaping}"
+    );
+    assert_eq!(escaping.sent, a2m_provider::Sent::NotSent);
+    assert_eq!(
+        app.heard_since(&before).await.unwrap(),
+        Vec::<String>::new()
+    );
+    assert!(handle.release(prepared, true).await.complete);
     assert!(app.stored_item("A-100", "L-101").await.unwrap().is_some());
     scene.stand.end().await;
 }
@@ -321,7 +336,7 @@ async fn one_write_is_stored_once_and_reads_back_as_the_field_type_compares_it()
         )
         .await
         .unwrap();
-    let means = format!("{:?}", acted.means());
+    let means = acted.means_text();
     assert!(
         means.contains("strategy") && means.contains("fill"),
         "{means}"
@@ -397,6 +412,10 @@ async fn a_write_the_application_refuses_is_rejected_and_stores_nothing() {
     );
     // The application answered, so nothing is in doubt.
     assert_eq!(refused.sent, Sent::Answered);
+    // What the page itself said is carried apart from the product's words.
+    let said = refused.failure.said().unwrap();
+    assert!(!said.is_empty());
+    assert!(!refused.failure.message().contains(said));
     handle.release(prepared, true).await;
     assert!(app.writes().await.unwrap().is_empty());
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
@@ -450,13 +469,11 @@ async fn commit(
     assert!(step.commits);
     let args = scene.args(step, inputs);
     let (token, record, key) = write.authority();
-    let input = StepInput {
-        args: &args,
-        record: Some(record),
-        key: Some(key),
-        stamp: None,
-        deadline: Deadline::after(Duration::from_secs(120)),
-    };
+    let input = StepInput::new(&args, Deadline::after(Duration::from_secs(120))).for_record(
+        record,
+        Some(key),
+        None,
+    );
     handle
         .act(prepared, step, &input, Authority::Write(token))
         .await
@@ -637,9 +654,9 @@ async fn a_password_on_the_page_is_never_read_traced_or_logged() {
         "{}",
         snapshots[1]
     );
-    let strategies = format!("{:?}", acted.means());
+    let strategies = acted.means_text();
     assert!(
-        strategies.contains("\"check\"") && strategies.contains("\"select\""),
+        strategies.contains("strategy=check") && strategies.contains("strategy=select"),
         "{strategies}"
     );
     // The password is masked in the evidence, and is in none of it.
@@ -656,4 +673,166 @@ async fn a_password_on_the_page_is_never_read_traced_or_logged() {
     }
     scene.stand.end().await;
     server.abort();
+}
+
+/// The plan with the line item's screen reached through one of the test
+/// application's `leaving` pages, and a write run prepared over it.
+async fn leaving(how: &str) -> (TestApp, Scene, Write, DriverHandle, Prepared) {
+    let (app, mut scene) = scene(&format!("leaving-{how}")).await;
+    scene.plan = changed(&scene, "screens/line_item.yaml", |text| {
+        text.replace(
+            "reach: {url: \"/orders/",
+            &format!("reach: {{url: \"/leaving/{how}/orders/"),
+        )
+    });
+    let write = Write::new(&["A-100", "L-101"]).await;
+    let (handle, prepared) = scene
+        .try_prepare(Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    (app, scene, write, handle, prepared)
+}
+
+/// That the other name reaches the test application, so that a trap that
+/// counts nothing means nothing arrived; then the counts are cleared.
+async fn the_other_name_is_reachable(app: &TestApp) {
+    let other = app
+        .url("/traps/write/leaving/check")
+        .replace("127.0.0.1", "localhost");
+    assert!(
+        app.http()
+            .get(other)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    assert_eq!(app.trap_writes().await.unwrap().len(), 1);
+    app.reset().await.unwrap();
+    assert!(app.trap_writes().await.unwrap().is_empty());
+}
+
+/// Waits, within a bound, until the application has stored `count` writes
+/// of the line item: a save that left the page arrives in its own time.
+async fn stored_writes(app: &TestApp, count: usize) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while app.write_count("A-100", "L-101").await.unwrap() < count {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), count);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_moves_to_another_origin_is_stopped_before_anything_is_typed() {
+    let (app, scene, write, handle, mut prepared) = leaving("load").await;
+    the_other_name_is_reachable(&app).await;
+    let binding = scene.binding(UPDATE);
+    let inputs = update("Typed on the way out", 4, "2");
+    // Step by step, as the engine would, to know which step stopped.
+    let mut stopped = None;
+    for (at, step) in binding.act.iter().enumerate() {
+        let one = std::slice::from_ref(step);
+        if let Err(failure) = scene
+            .run(
+                &handle,
+                &mut prepared,
+                one,
+                &inputs,
+                Some(write.authority()),
+            )
+            .await
+        {
+            stopped = Some((at, step.kind.clone(), failure));
+            break;
+        }
+    }
+    let (at, kind, failure) = stopped.expect("the run stops");
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "surface_not_declared"),
+        "{failure}"
+    );
+    // It stopped at reaching or waiting for the screen: no field was set
+    // and nothing was clicked, on any page.
+    assert!(at < 2, "{kind} at {at}");
+    assert_eq!(failure.sent, Sent::NotSent);
+    handle.release(prepared, true).await;
+    // The application stored nothing, and nothing reached the other name.
+    assert!(app.writes().await.unwrap().is_empty());
+    assert!(app.trap_writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_leaves_or_opens_a_window_after_the_committing_click_is_a_write_in_doubt() {
+    for how in ["click", "window"] {
+        let (app, scene, write, handle, mut prepared) = leaving(how).await;
+        the_other_name_is_reachable(&app).await;
+        let binding = scene.binding(UPDATE);
+        let inputs = update("Saved, then left", 6, "4");
+        let before = &binding.act[..binding.act.len() - 1];
+        scene
+            .run(&handle, &mut prepared, before, &inputs, None)
+            .await
+            .unwrap();
+        let left = commit(&scene, &handle, &mut prepared, &inputs, &write)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            class_and_code(&left),
+            (FailureClass::PossibleCommit, "no_confirmation"),
+            "{how}: {left}"
+        );
+        assert_eq!(left.sent, Sent::Unknown, "{how}");
+        handle.release(prepared, true).await;
+        // The save did land: the run was told it is in doubt, never that
+        // nothing was written.
+        stored_writes(&app, 1).await;
+        let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+        assert_eq!(stored.description, "Saved, then left", "{how}");
+        // And nothing reached the other name.
+        assert!(app.trap_writes().await.unwrap().is_empty(), "{how}");
+        scene.stand.end().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_state_the_page_showed_before_the_click_is_never_taken_for_its_answer() {
+    // A refusal that shows while the fields are typed, and the confirmation
+    // shown before anything is done: either way the page could not tell its
+    // answer from what it already showed, so Save is not pressed.
+    for (how, expected) in [
+        ("stale", (FailureClass::Rejected, "app_validation_error")),
+        ("saved", (FailureClass::UnknownVariant, "unexpected_page")),
+    ] {
+        let (app, scene, write, handle, mut prepared) = leaving(how).await;
+        let binding = scene.binding(UPDATE);
+        let inputs = update("Never pressed", 8, "5");
+        let before = &binding.act[..binding.act.len() - 1];
+        scene
+            .run(&handle, &mut prepared, before, &inputs, None)
+            .await
+            .unwrap();
+        let held = commit(&scene, &handle, &mut prepared, &inputs, &write)
+            .await
+            .unwrap_err();
+        assert_eq!(class_and_code(&held), expected, "{how}: {held}");
+        assert_eq!(held.sent, Sent::NotSent, "{how}");
+        handle.release(prepared, true).await;
+        assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0, "{how}");
+        assert_eq!(
+            app.stored_item("A-100", "L-101")
+                .await
+                .unwrap()
+                .unwrap()
+                .quantity,
+            2,
+            "{how}"
+        );
+        scene.stand.end().await;
+    }
 }

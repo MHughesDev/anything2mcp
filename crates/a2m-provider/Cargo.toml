@@ -16,18 +16,21 @@ a2m-sources = { path = "../a2m-sources" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 getrandom.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["io-util", "process"] }
 toml.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 command-fds.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
+# The ledger's way for a test to stand in for the policy engine.
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-cli = { path = "../../targets/example-cli" }

@@ -12,8 +12,11 @@
 
 mod compile;
 mod discovery;
+mod guards;
 mod reads;
 mod registration;
+#[cfg(feature = "postgres")]
+mod server;
 mod writes;
 
 use std::path::{Path, PathBuf};
@@ -22,14 +25,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, FailureClass,
-    FailureCode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId, RunState,
-    Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, FailureClass, FailureCode,
+    NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step,
+    TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
@@ -99,7 +102,7 @@ pub(crate) fn registry_of(pack: &DataPack, folder: &Folder, redact: Arc<dyn Reda
 pub(crate) fn compile_folder(registry: &Registry, root: &Path) -> Result<Compiled, Diagnostics> {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The pack's mode.
@@ -109,7 +112,7 @@ pub(crate) fn mode() -> a2m_core::Mode {
 
 // ---- a real store, for real intent tokens ----
 
-struct Counted(AtomicU64);
+pub(crate) struct Counted(AtomicU64);
 
 impl RandomSource for Counted {
     fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
@@ -122,11 +125,11 @@ impl RandomSource for Counted {
     }
 }
 
-fn counted() -> Arc<Counted> {
+pub(crate) fn counted() -> Arc<Counted> {
     Arc::new(Counted(AtomicU64::new(0)))
 }
 
-async fn ledger() -> Store {
+pub(crate) async fn ledger() -> Store {
     let config = StoreConfig::in_memory()
         .with_clock(Arc::new(ManualClock::starting_at(
             Timestamp::from_unix_millis(1_800_000_000_000),
@@ -144,7 +147,7 @@ async fn ledger() -> Store {
 
 /// A write run with one record planned, approved, and running, and the
 /// intent token of that record.
-async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
+pub(crate) async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
     let workspace = WorkspaceId::from_bytes([1; 16]);
     let intended = Digest::of(b"intended");
     let planned_key = key.clone();
@@ -191,23 +194,8 @@ async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentTo
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await
@@ -292,6 +280,20 @@ impl Scene {
         }
     }
 
+    /// Changes one statement of the plan's section: a plan as the compiler
+    /// would never make it, to show what the driver itself refuses.
+    pub(crate) fn alter(&mut self, name: &str, change: impl FnOnce(&mut crate::model::Statement)) {
+        let section = self
+            .plan
+            .packs
+            .iter_mut()
+            .find(|section| section.pack == crate::names::PACK)
+            .unwrap();
+        let mut held: crate::model::Section = section.payload.decode().unwrap();
+        change(held.statements.get_mut(name).unwrap());
+        section.payload = a2m_core::PackPayload::encode(&held).unwrap();
+    }
+
     pub(crate) fn handle(&self) -> DriverHandle {
         self.registry.driver(&mode()).unwrap()
     }
@@ -310,16 +312,7 @@ impl Scene {
     /// A step's arguments, evaluated from the operation's inputs as the
     /// engine evaluates them.
     pub(crate) fn args(&self, step: &Step, inputs: &Values) -> Values {
-        let input = Value::Record(inputs.clone());
-        step.args
-            .iter()
-            .map(|arg| {
-                let expr = self.plan.expression(arg.value).unwrap();
-                let program = a2m_expr::Program::load(expr).unwrap();
-                let bindings = a2m_expr::Bindings::new().with("input", &input);
-                (arg.name.clone(), program.evaluate(&bindings).unwrap())
-            })
-            .collect()
+        args_of(&self.plan, step, inputs)
     }
 
     pub(crate) async fn prepare(&self, posture: Posture) -> Run<'_> {
@@ -337,10 +330,12 @@ impl Scene {
         let handle = self.handle();
         let prepared = self.try_prepare(&handle, posture, fence).await.unwrap();
         Run {
-            scene: self,
+            plan: &self.plan,
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: Values::new(),
         }
     }
 
@@ -349,6 +344,19 @@ impl Scene {
         handle: &DriverHandle,
         posture: Posture,
         fence: Fence,
+    ) -> Result<Prepared, StepFailure> {
+        self.try_prepare_with(handle, posture, fence, &self.paths)
+            .await
+    }
+
+    /// The same, with the checked paths the test gives: a run whose
+    /// request came from another project folder.
+    pub(crate) async fn try_prepare_with(
+        &self,
+        handle: &DriverHandle,
+        posture: Posture,
+        fence: Fence,
+        paths: &CheckedPaths,
     ) -> Result<Prepared, StepFailure> {
         let supervisor = handle.supervisor(Vec::new());
         let cx = PrepareContext {
@@ -360,7 +368,7 @@ impl Scene {
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
-            paths: &self.paths,
+            paths,
             supervisor: &supervisor,
         };
         handle.prepare(&cx, None).await
@@ -384,10 +392,79 @@ impl Scene {
     }
 }
 
+/// What a run gets from a request that came from this folder: the folder,
+/// checked as the root `project`, and no path under a surface's name.
+pub(crate) fn project_of(folder: &Path) -> CheckedPaths {
+    let root = RootName::new("project").unwrap();
+    let mut roots = Roots::none();
+    roots.add(root.clone(), folder, Access::Write).unwrap();
+    CheckedPaths::none().with_project(roots.folder(&root, Access::Write).unwrap())
+}
+
+/// A step's arguments, evaluated from the operation's inputs as the engine
+/// evaluates them.
+pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+    let input = Value::Record(inputs.clone());
+    step.args
+        .iter()
+        .map(|arg| {
+            let expr = plan.expression(arg.value).unwrap();
+            let program = a2m_expr::Program::load(expr).unwrap();
+            let bindings = a2m_expr::Bindings::new().with("input", &input);
+            (arg.name.clone(), program.evaluate(&bindings).unwrap())
+        })
+        .collect()
+}
+
+/// What a read returns through the engine: each output the operation
+/// declares, taken by its name from what the last step observed and
+/// normalized by its field type, as the engine's own shaping does. A value
+/// the step gave that no output declares is not returned; an output the
+/// step gave no value for stops the test, as it stops a read in the engine.
+pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    let mut out = Values::new();
+    for output in &operation.outputs {
+        let raw = observed
+            .get(&output.name)
+            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        let value = match output
+            .field_type
+            .and_then(|index| plan.field_types[index.get()].normalizer)
+        {
+            Some(index) => {
+                let normalizer =
+                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
+                // A list output is normalized value by value. The engine's
+                // own shaping hands the normalizer the whole list, which
+                // it refuses (`value_unparsable`): reported to the engine.
+                match raw {
+                    Value::List(items) => Value::List(items.iter().map(one).collect()),
+                    other => one(other),
+                }
+            }
+            None => raw.clone(),
+        };
+        assert!(
+            value.is_null() || value.has_type(&output.ty),
+            "the output `{}` is not a {}: {value:?}",
+            output.name,
+            output.ty.name()
+        );
+        out.insert(output.name.clone(), value);
+    }
+    out
+}
+
 /// What a committing step carries: the commit point, its key, and the
 /// ledger's token for it.
 pub(crate) struct Write {
-    _store: Store,
+    pub(crate) _store: Store,
     pub(crate) record: RecordRef,
     pub(crate) key: RecordKey,
     pub(crate) token: IntentToken,
@@ -395,11 +472,17 @@ pub(crate) struct Write {
 
 /// One prepared driver, released when the test says so.
 pub(crate) struct Run<'a> {
-    scene: &'a Scene,
+    pub(crate) plan: &'a Plan,
     pub(crate) handle: DriverHandle,
-    prepared: Option<Prepared>,
+    pub(crate) prepared: Option<Prepared>,
     /// How long each step is given.
     pub(crate) wait: Duration,
+    /// How each step was done, as the trace takes it: from the step's
+    /// `acting` capture, in order.
+    pub(crate) acted: Vec<a2m_telemetry::Acting>,
+    /// What earlier steps of the record returned in `for_reconcile`, as the
+    /// engine hands it on, within a pass and on a resume.
+    pub(crate) recorded: Values,
 }
 
 impl Run<'_> {
@@ -409,7 +492,7 @@ impl Run<'_> {
         step: &Step,
         inputs: &Values,
     ) -> Result<StepOutcome, StepFailure> {
-        let args = self.scene.args(step, inputs);
+        let args = args_of(self.plan, step, inputs);
         self.step_with(step, &args, None).await
     }
 
@@ -421,17 +504,25 @@ impl Run<'_> {
         args: &Values,
         write: Option<&Write>,
     ) -> Result<StepOutcome, StepFailure> {
-        let input = StepInput {
-            args,
-            record: write.map(|write| write.record),
-            key: write.map(|write| &write.key),
-            stamp: None,
-            deadline: Deadline::after(self.wait),
-        };
+        let mut input = StepInput::new(args, Deadline::after(self.wait));
+        if let Some(write) = write {
+            input = input.for_record(write.record, Some(&write.key), None);
+        }
         let authority = write.map_or(Authority::Read, |write| Authority::Write(&write.token));
-        self.handle
-            .act(self.prepared.as_mut().unwrap(), step, &input, authority)
-            .await
+        let outcome = self
+            .handle
+            .act_recorded(
+                self.prepared.as_mut().unwrap(),
+                step,
+                &input,
+                authority,
+                &self.recorded,
+            )
+            .await;
+        if let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = &outcome {
+            self.acted.extend(observed.acting());
+        }
+        outcome
     }
 
     /// Every step of a list, in order, stopping at the first failure. The
@@ -444,7 +535,7 @@ impl Run<'_> {
     ) -> Result<StepOutcome, StepFailure> {
         let mut last = None;
         for step in steps {
-            let args = self.scene.args(step, inputs);
+            let args = args_of(self.plan, step, inputs);
             last = Some(
                 self.step_with(step, &args, write.filter(|_| step.commits))
                     .await?,
@@ -454,14 +545,8 @@ impl Run<'_> {
     }
 
     /// What the driver noted of each step, for the step trace.
-    pub(crate) fn acting(&mut self) -> Vec<a2m_telemetry::Acting> {
-        self.prepared
-            .as_mut()
-            .unwrap()
-            .state::<crate::driver::Session>()
-            .unwrap()
-            .acting
-            .clone()
+    pub(crate) fn acting(&self) -> Vec<a2m_telemetry::Acting> {
+        self.acted.clone()
     }
 
     pub(crate) async fn release(mut self) {

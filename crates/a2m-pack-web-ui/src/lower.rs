@@ -4,8 +4,8 @@
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |
-//! | `read`, `list` | `goto`, `wait`, `read` | | |
-//! | the write verbs | `goto`, `wait`, one `set` for each field, `invoke`, marked as the commit point | | `goto`, `wait`, `read` on the screen `read_back` names |
+//! | `read`, `list` | `goto` in an observing tab, `wait`, `read` | | |
+//! | the write verbs | `goto` in an acting tab, `wait`, one `set` for each field, `invoke`, marked as the commit point | | `goto` in an observing tab, `wait`, `read` on the screen `read_back` names |
 //!
 //! There is no separate `locate` step: each `read`, `set`, and `invoke`
 //! finds its own element and checks its fingerprint, because an element is
@@ -14,17 +14,18 @@
 //! empty (decision 0112).
 
 use a2m_core::{
-    FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes::{self, shown};
 use crate::model::{
-    InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep, WaitStep,
+    GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
+    TabKind, WaitStep,
 };
 use crate::screens::{SCREEN_KIND, WEB_SURFACE, problem};
 
@@ -41,6 +42,8 @@ pub const INVOKE: StepKind = StepKind::fixed("invoke");
 
 const READ_VERBS: &[&str] = &["read", "list"];
 const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "submit"];
+/// The verbs whose write cannot be taken back.
+const IRREVERSIBLE_VERBS: &[&str] = &["submit"];
 
 /// How long a step may take when the target states no timeout under the
 /// step kind's name.
@@ -165,8 +168,10 @@ impl<'a> Lower<'a, '_> {
     }
 
     /// The `goto` step: a value for every placeholder of the screen's
-    /// address, each the operation's input of the same name.
-    fn goto(&mut self, found: &Found<'_>) -> Step {
+    /// address, each the operation's input of the same name, and the tab
+    /// it is reached in: one that cannot write, unless the step is of a
+    /// write before its read-back (decision 0195).
+    fn goto(&mut self, found: &Found<'_>, tab: TabKind) -> Step {
         let mut args = Vec::new();
         for hole in found.screen.holes() {
             if self.cx.operation().input(hole).is_none() {
@@ -213,6 +218,7 @@ impl<'a> Lower<'a, '_> {
             },
         );
         step.args = args;
+        step.payload = self.encoded(&GotoStep { tab }, found.at);
         step
     }
 
@@ -426,6 +432,32 @@ impl Lowering for UiLowering {
         &self.step_kinds
     }
 
+    /// Only an `invoke` may save, and then as its action declares; a
+    /// `goto`, `wait`, `read`, or `set` never does.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == INVOKE {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// The HTTP pack's rule, for one meaning of a verb across the modes
+    /// (decision 0144): a verb that reads is a read; `submit` cannot be
+    /// taken back; any other write is a write when the binding names how
+    /// the record is read back, and `irreversible` when it names nothing,
+    /// since what was written could never be found again.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb.as_str();
+        if READ_VERBS.contains(&verb) {
+            EffectClass::Read
+        } else if IRREVERSIBLE_VERBS.contains(&verb) || binding.field("read_back").is_none() {
+            EffectClass::Irreversible
+        } else {
+            EffectClass::Write
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -524,7 +556,7 @@ impl Lowering for UiLowering {
             // how that looks; a list answers with the rows there are.
             let lookup = binding.verb.as_str() == "read" && found.screen.can_be_absent();
             let mut steps = vec![
-                lower.goto(&found),
+                lower.goto(&found, TabKind::Observe),
                 lower.wait(&found, false),
                 lower.read(&found),
             ];
@@ -533,7 +565,7 @@ impl Lowering for UiLowering {
             }
             lowered.act = steps;
         } else {
-            let mut act = vec![lower.goto(&found), lower.wait(&found, true)];
+            let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, true)];
             act.extend(lower.sets(&found, binding.doc));
             act.extend(lower.invoke(&found, binding.doc));
             lowered.act = act;
@@ -552,8 +584,11 @@ impl Lowering for UiLowering {
                         "Add a variant with `handling: absent` to the screen, with what the page shows then.",
                     );
                 }
+                // The read-back is a new visit, in a tab that cannot
+                // write: it, and the preview and the freshness check that
+                // run it on their own, are reads.
                 let mut steps = vec![
-                    lower.goto(&reader),
+                    lower.goto(&reader, TabKind::Observe),
                     lower.wait(&reader, false),
                     lower.read(&reader),
                 ];

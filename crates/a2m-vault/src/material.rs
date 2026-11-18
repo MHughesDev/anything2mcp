@@ -15,7 +15,9 @@ use crate::hex;
 /// A source of random bytes for keys and nonces.
 ///
 /// The engine uses [`OsRandom`]. A test may give a fixed source, so that what
-/// it seals is the same on every run.
+/// it seals is the same on every run; a fixed source in a running engine
+/// would make every key and nonce predictable, and nothing can check for
+/// that from inside.
 pub trait RandomSource: Send + Sync {
     /// Fills `out` with random bytes.
     ///
@@ -51,10 +53,16 @@ impl KeyMaterial {
     ///
     /// # Errors
     ///
-    /// `busy`/`randomness_unavailable` when the source fails.
+    /// `busy`/`randomness_unavailable` when the source fails, or fills the
+    /// key with one value repeated: the two halves of a key from a working
+    /// source are never the same, and those of a stuck one are.
     pub fn generate(random: &dyn RandomSource) -> Result<Self, Failure> {
         let mut bytes = Zeroizing::new(vec![0u8; Self::LENGTH]);
         random.fill(&mut bytes)?;
+        let (first, second) = bytes.split_at(Self::LENGTH / 2);
+        if first == second {
+            return Err(failure::no_randomness());
+        }
         Ok(Self(bytes))
     }
 

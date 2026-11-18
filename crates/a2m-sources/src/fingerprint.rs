@@ -91,6 +91,12 @@ pub struct DropdownList {
 /// and the fingerprint of the input given, `found`: a part missing, a part
 /// added, a part changed. In the order of the known version, then what the
 /// input adds.
+///
+/// A sentence holds the template's own text and positions, never text from
+/// the input: where a file is not laid out as the template is, its "headers"
+/// are a row of somebody's data. A part only the input has is named by its
+/// kind, and by its place where the place is a position and not a name the
+/// input chose.
 #[must_use]
 pub fn differences(known: &Fingerprint, found: &Fingerprint) -> Vec<Problem> {
     let mut problems = Vec::new();
@@ -102,8 +108,8 @@ pub fn differences(known: &Fingerprint, found: &Fingerprint) -> Vec<Problem> {
                 problems.push(difference(
                     expected,
                     &format!(
-                        "is `{}` in the template and `{}` in the input",
-                        expected.value, part.value
+                        "is `{}` in the template and is something else in the input",
+                        expected.value
                     ),
                 ));
             }
@@ -116,7 +122,20 @@ pub fn differences(known: &Fingerprint, found: &Fingerprint) -> Vec<Problem> {
             .iter()
             .any(|expected| key(expected) == key(part))
         {
-            problems.push(difference(part, "is in the input and not in the template"));
+            let what = "is in the input and not in the template";
+            // The place of these kinds holds a name the input chose.
+            let named_by_input = matches!(
+                part.kind,
+                PartKind::Table | PartKind::TableHeader | PartKind::Name | PartKind::List
+            );
+            problems.push(if named_by_input {
+                Problem::new(
+                    SOURCE_TEMPLATE_UNKNOWN,
+                    format!("{} {what}.", capitalized(part.kind.noun())),
+                )
+            } else {
+                difference(part, what)
+            });
         }
     }
     if problems.is_empty() && known.digest != found.digest {
@@ -292,7 +311,8 @@ mod tests {
         let changed = differences(&known, &renamed);
         assert_eq!(changed.len(), 1);
         assert!(changed[0].message.contains("`on_hand`"));
-        assert!(changed[0].message.contains("`stock`"));
+        // The input's own text is never quoted: it may be a row of data.
+        assert!(!changed[0].message.contains("stock"), "{:?}", changed[0]);
 
         let added = sheet(&["item_code", "on_hand", "note"]).fingerprint();
         assert_eq!(differences(&known, &added).len(), 1);
@@ -302,6 +322,28 @@ mod tests {
         let mut other_dates = sheet(&["item_code", "on_hand"]);
         other_dates.date_system = Some(DateSystem::From1904);
         assert_ne!(known.digest, other_dates.fingerprint().digest);
+
+        // A file of another layout: its first row is data, and so are the
+        // names it gives its tables. None of it reaches a sentence.
+        let mut data = sheet(&["Avery Example", "12 Example Street", "4821.50"]);
+        data.sheets[0].tables.push(TableStructure {
+            name: "payroll_private".to_owned(),
+            range: CellRange::from_a1("A1:C3").unwrap(),
+            headers: vec!["Avery Example".to_owned()],
+        });
+        data.names.push(DefinedName {
+            name: "secret_range".to_owned(),
+            sheet: None,
+            target: "Private!$A$1".to_owned(),
+        });
+        let told: String = differences(&known, &data.fingerprint())
+            .iter()
+            .map(|problem| format!("{problem:?}"))
+            .collect();
+        for private in ["Avery", "Street", "4821", "payroll", "secret", "Private"] {
+            assert!(!told.contains(private), "{private}: {told}");
+        }
+        assert!(told.contains("`item_code`"), "{told}");
 
         // Two headers that would join to the same text are different parts.
         assert_ne!(

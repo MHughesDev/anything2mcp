@@ -146,6 +146,248 @@ async fn the_catalog_is_found_and_nothing_is_written() {
     assert!(full.untrusted.iter().any(|name| name == "order_lines"));
 }
 
+/// The stand's whole catalog, drafted into a new target: for each keyed
+/// table a statements file and a read by key and a list over it, which
+/// compile in draft mode beside the two drafts that hold a question, and
+/// which read, through the driver's handle, what the stand stores. The
+/// read by key has no example, since discovery reads no row; the list
+/// needs no input. No write is drafted and nothing is written.
+#[tokio::test]
+async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let before = scene.db.data_version().unwrap();
+    let (findings, _) = discover(&scene).await;
+    let folder = Folder::new("drafted-reads");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    assert!(report.refused.is_empty(), "{report:?}");
+    let operations: Vec<&str> = report
+        .written
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    for table in [
+        "customers",
+        "orders",
+        "order_lines",
+        "shipments",
+        "order_notes",
+    ] {
+        for verb in ["get", "list"] {
+            let path = format!("operations/{table}_{verb}.yaml");
+            assert!(operations.contains(&path.as_str()), "{operations:?}");
+        }
+    }
+    // The table with no key and the view hold a question, and have no read.
+    // While they are in the folder no statements file compiles, since the
+    // kind's section is not made; without them, every draft does.
+    let mut questioned: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    questioned.dedup();
+    assert_eq!(
+        questioned,
+        [
+            "statements/order_status_history.yaml",
+            "statements/order_summaries.yaml"
+        ]
+    );
+    assert!(
+        !operations
+            .iter()
+            .any(|path| path.contains("history") || path.contains("summaries"))
+    );
+    for path in &questioned {
+        std::fs::remove_file(root.join(path)).unwrap();
+    }
+    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
+    let lines_get = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_lines_get")
+        .unwrap();
+    assert!(lines_get.examples.is_empty());
+    assert_eq!(lines_get.effect, a2m_core::EffectClass::Read);
+    let notes = lines_get
+        .outputs
+        .iter()
+        .find(|output| output.name == "description")
+        .unwrap();
+    assert!(plan.field_types[notes.field_type.unwrap().get()].untrusted);
+    for operation in &plan.operations {
+        assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+    }
+    scene.plan = plan;
+    let binding = |name: &str| {
+        scene
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .bindings[0]
+            .act
+            .clone()
+    };
+    let (get, list) = (
+        binding("example_order_lines_get"),
+        binding("example_customers_list"),
+    );
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let key = Values::new()
+        .with("order_id", "A-100")
+        .with("item_code", "L-101");
+    let row = super::values(run.steps(&get, &key, None).await.unwrap());
+    let stored = scene.db.stored_rows(Table::OrderLines).unwrap();
+    let left = stored
+        .iter()
+        .find(|row| row.get("item_code") == Some(&example_db::rows::Value::from("L-101")))
+        .unwrap();
+    let Some(example_db::rows::Value::Text(description)) = left.get("description") else {
+        panic!("{left:?}");
+    };
+    assert_eq!(
+        row.get("description").and_then(a2m_core::Value::as_text),
+        Some(description.as_str())
+    );
+    let all = super::values(run.steps(&list, &Values::new(), None).await.unwrap());
+    let ids: Vec<&str> = all
+        .get("rows")
+        .and_then(a2m_core::Value::as_list)
+        .unwrap()
+        .iter()
+        .map(|row| {
+            row.as_record()
+                .and_then(|row| row.get("customer_id"))
+                .and_then(a2m_core::Value::as_text)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(ids, ["C-001", "C-002", "C-003"]);
+    assert_eq!(all.get("more"), Some(&a2m_core::Value::Bool(false)));
+    run.release().await;
+    assert_eq!(scene.db.data_version().unwrap(), before);
+}
+
+/// The reads drafted from the stand's catalog, without the two drafts that
+/// hold a question, each list's `max_rows` set to the number given, and
+/// compiled.
+async fn drafted_plan(scene: &Scene, max_rows: u32) -> (Folder, a2m_core::Plan) {
+    let (findings, _) = discover(scene).await;
+    let folder = Folder::new("drafted-list");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(root.join(question.file.as_str()));
+    }
+    let statements = root.join("statements").join("order_lines.yaml");
+    let text = std::fs::read_to_string(&statements).unwrap();
+    assert!(text.contains("max_rows: 1000"), "{text}");
+    std::fs::write(
+        &statements,
+        text.replace("max_rows: 1000", &format!("max_rows: {max_rows}")),
+    )
+    .unwrap();
+    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
+    (folder, plan)
+}
+
+/// The stand's value as the engine's.
+fn stored(value: Option<&example_db::rows::Value>) -> a2m_core::Value {
+    match value {
+        Some(example_db::rows::Value::Text(text)) => a2m_core::Value::from(text.as_str()),
+        Some(example_db::rows::Value::Integer(number)) => a2m_core::Value::Int(*number),
+        Some(example_db::rows::Value::Null) | None => a2m_core::Value::Null,
+        Some(other) => panic!("the seed holds {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_plans_outputs() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let before = scene.db.data_version().unwrap();
+    let rows = scene.db.stored_rows(Table::OrderLines).unwrap();
+    let count = u32::try_from(rows.len()).unwrap();
+    assert!(count > 1);
+    // At the limit nothing is left; one below it, one row is.
+    for (max_rows, more) in [(count, false), (count - 1, true)] {
+        let (_folder, plan) = drafted_plan(&scene, max_rows).await;
+        scene.plan = plan;
+        let operation = scene
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_lines_list")
+            .unwrap();
+        let steps = operation.bindings[0].act.clone();
+        let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+        let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
+        run.release().await;
+        let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
+        // Every column of the record, and `more`: nothing else.
+        assert_eq!(
+            result.iter().count(),
+            scene.db.columns(Table::OrderLines).unwrap().len() + 1
+        );
+        assert_eq!(result.get("more"), Some(&a2m_core::Value::Bool(more)));
+        let read = rows.iter().take(usize::try_from(max_rows).unwrap());
+        for column in [
+            "order_id",
+            "item_code",
+            "quantity",
+            "unit_price",
+            "length_in",
+        ] {
+            let list = result
+                .get(column)
+                .and_then(a2m_core::Value::as_list)
+                .unwrap();
+            let expected: Vec<a2m_core::Value> =
+                read.clone().map(|row| stored(row.get(column))).collect();
+            assert_eq!(list, expected.as_slice(), "{column}");
+        }
+        // An exact decimal the store holds as text is that text.
+        assert!(
+            result
+                .get("unit_price")
+                .and_then(a2m_core::Value::as_list)
+                .unwrap()
+                .iter()
+                .all(|price| price.as_text().is_some_and(|text| text.contains('.')))
+        );
+        // Free text the store holds is marked untrusted.
+        let description = operation
+            .outputs
+            .iter()
+            .find(|output| output.name == "description")
+            .unwrap();
+        assert!(scene.plan.field_types[description.field_type.unwrap().get()].untrusted);
+    }
+    assert_eq!(scene.db.data_version().unwrap(), before);
+}
+
 #[tokio::test]
 async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_question() {
     let scene = Scene::new();
@@ -180,6 +422,8 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     assert_eq!(
         written,
         [
+            "operations/order_lines_get.yaml",
+            "operations/order_lines_list.yaml",
             "statements/order_lines.yaml",
             "statements/order_status_history.yaml"
         ]
@@ -187,11 +431,17 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
 
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
+    // The read by key is one the pack writes when the file is compiled: the
+    // draft holds no statement text for it, and the read can read a write
+    // back. The list's text names the catalog's own columns, quoted, in
+    // the order of the key, and nothing from an input.
+    assert!(lines.contains("form: \"table\""), "{lines}");
+    assert_eq!(lines.matches("text:").count(), 1, "{lines}");
     assert!(
-        lines.contains("WHERE \\\"order_id\\\" = ? AND \\\"item_code\\\" = ?")
-            || lines.contains("WHERE \"order_id\" = ? AND \"item_code\" = ?"),
+        lines.contains(r#"FROM \"order_lines\" ORDER BY \"order_id\", \"item_code\""#),
         "{lines}"
     );
+    assert!(lines.contains("max_rows: 1000"), "{lines}");
     // No write, and no unit: a length is text until a person says more.
     assert!(
         !lines.contains("write") && !lines.contains("length_ft_in"),
@@ -234,15 +484,92 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         std::fs::read_to_string(second.join("statements").join("order_lines.yaml")).unwrap()
     );
 
-    // The keyed draft alone compiles with the pack's registrations: its
-    // read is not bound yet, which is a warning and no error.
+    // The keyed draft alone compiles with the pack's registrations, its
+    // two statements each bound by a drafted read.
     std::fs::remove_file(root.join("statements").join("order_status_history.yaml")).unwrap();
-    let compiled = compile_folder(&scene.registry, &root);
-    match compiled {
-        Ok(compiled) => assert!(compiled.warnings.find("data.statement_unused").is_some()),
-        Err(problems) => {
-            let (errors, _) = problems.split();
-            assert!(errors.is_empty(), "{errors:#?}");
-        }
+    let compiled = compile_folder(&scene.registry, &root).unwrap();
+    assert!(compiled.warnings.find("data.statement_unused").is_none());
+}
+
+/// A rule that drafts what the pack's own rule never does: a statement
+/// that writes.
+struct DraftsAWrite(a2m_core::FindingKind);
+
+impl a2m_files::DraftingRule for DraftsAWrite {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        self.0.clone()
     }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        crate::names::STATEMENT
+    }
+
+    fn draft(
+        &self,
+        _finding: &Finding,
+        _cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, Failure> {
+        use a2m_files::DraftValue;
+        let statement = |effect: &str| {
+            DraftValue::map(vec![
+                ("effect", DraftValue::text(effect)),
+                ("form", DraftValue::text("table")),
+                ("record", DraftValue::text("order_lines")),
+            ])
+        };
+        let doc = |file: &str, effect: &str| -> Result<a2m_files::DraftDoc, Failure> {
+            Ok(a2m_files::DraftDoc {
+                path: a2m_files::RelPath::new(&format!("statements/{file}.yaml"))?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("orders")),
+                    (
+                        "statements",
+                        DraftValue::map(vec![
+                            ("order_lines_by_key", statement("read")),
+                            ("order_lines_change", statement(effect)),
+                        ]),
+                    ),
+                ]),
+            })
+        };
+        Ok(vec![
+            doc("tries_a_write", "write")?,
+            doc("only_reads", "read")?,
+        ])
+    }
+}
+
+#[tokio::test]
+async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
+    let scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (findings, _) = discover(&scene).await;
+    let kind = findings[0].kind().clone();
+    let mut builder = a2m_files::CompilerSet::builder();
+    builder
+        .file_kind(
+            crate::names::PACK,
+            std::sync::Arc::new(crate::kind::StatementKind::new(1000)),
+        )
+        .unwrap()
+        .drafting_rule(crate::names::PACK, std::sync::Arc::new(DraftsAWrite(kind)))
+        .unwrap();
+    let set = builder.build();
+    let folder = Folder::new("draft-write");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    let report = Drafter::new(&set, &TargetRoot::new(&root))
+        .draft(&findings[..1])
+        .unwrap();
+    // The file with a statement that writes is not written; the one that
+    // only reads is.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(refused, ["statements/tries_a_write.yaml"]);
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(written, ["statements/only_reads.yaml"]);
+    assert!(!root.join("statements").join("tries_a_write.yaml").exists());
 }

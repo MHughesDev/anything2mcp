@@ -1,0 +1,109 @@
+//! What the pack writes into a plan and its driver reads back: compiled
+//! screens, the payload of each step, and the surface's own fields. The
+//! kernel stores and hashes these and never decodes them.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+/// The version of the shapes below. A plan written in another is refused.
+pub(crate) const PAYLOAD_FORMAT: u16 = 1;
+
+/// Every screen of the target's desktop surfaces, by name.
+pub(crate) type ScreenSection = BTreeMap<String, Screen>;
+
+/// One compiled screen: one window of the application, and what is read
+/// in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Screen {
+    /// The surface it lives on.
+    pub surface: String,
+    /// The window, among the application's own.
+    pub window: WindowMatch,
+    /// True when the window can be read.
+    pub ready: Cond,
+    /// Its fields, by name.
+    pub fields: BTreeMap<String, Field>,
+    /// Its table of rows, when it has one.
+    pub rows: Option<Rows>,
+}
+
+/// How a screen's window is told from the application's other windows: by
+/// its role and its title, exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WindowMatch {
+    pub role: String,
+    pub title: String,
+}
+
+/// One locator: a role and an accessible name, both exact. The only kind a
+/// desktop screen has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Locator {
+    pub role: String,
+    pub name: String,
+}
+
+/// One field: the control its value is read through, and the locators
+/// tried in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Field {
+    pub control: String,
+    pub locate: Vec<Locator>,
+}
+
+/// A table: where it is, its headings as the window shows them, and the
+/// position of each column a read may name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Rows {
+    pub locate: Vec<Locator>,
+    pub header: Vec<String>,
+    pub columns: BTreeMap<String, u32>,
+}
+
+/// A condition of a screen, decided by a fresh read of the window each
+/// time the application signals a change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Cond {
+    /// At least one element matches and is showing.
+    Visible(Locator),
+    /// Exactly one element matches and its text is, or holds, the text
+    /// given.
+    Text {
+        locate: Locator,
+        text: String,
+        contains: bool,
+    },
+    /// Every one holds.
+    All(Vec<Cond>),
+}
+
+/// One value a `read` step gives: the output it fills, and the field or
+/// column it comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct ReadItem {
+    pub output: String,
+    pub from: String,
+}
+
+/// The payload of a `read` step.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct ReadStep {
+    /// Outputs read from fields.
+    pub fields: Vec<ReadItem>,
+    /// Outputs read from the table's columns, each a list.
+    pub columns: Vec<ReadItem>,
+}
+
+/// The fields of a surface of the kind `desktop` beside its program, which
+/// is its address.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct SurfaceFields {
+    /// The name the application gives itself on the accessibility bus.
+    #[serde(default)]
+    pub application: String,
+    /// The digest the program must have, when the target states one.
+    #[serde(default)]
+    pub digest: Option<String>,
+}

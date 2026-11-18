@@ -67,6 +67,19 @@ pub(crate) fn decrypt(
         .map_err(|_| failure::mismatch())
 }
 
+/// Refuses a nonce that is the beginning of the key drawn just before it: a
+/// source that hands out the same bytes at every call. With such a source
+/// every item would be sealed under one key and one nonce, and the cipher
+/// would protect nothing. This and the check on a new key's two halves are
+/// the faults of a source that can be seen from here; a source that is
+/// merely predictable looks like any other.
+pub(crate) fn not_repeated(key: &KeyMaterial, nonce: &[u8; NONCE_LENGTH]) -> Result<(), Failure> {
+    if key.expose().get(..NONCE_LENGTH) == Some(nonce.as_slice()) {
+        return Err(failure::no_randomness());
+    }
+    Ok(())
+}
+
 /// Wraps `key` under `under`: a fresh nonce, then the ciphertext.
 pub(crate) fn wrap(
     under: &KeyMaterial,
@@ -75,6 +88,7 @@ pub(crate) fn wrap(
     random: &dyn RandomSource,
 ) -> Result<Wrapped, Failure> {
     let nonce = fresh_nonce(random)?;
+    not_repeated(key, &nonce)?;
     let mut bytes = nonce.to_vec();
     bytes.extend_from_slice(&encrypt(under, &nonce, bound_to, key.expose())?);
     Ok(Wrapped::from_bytes(bytes))

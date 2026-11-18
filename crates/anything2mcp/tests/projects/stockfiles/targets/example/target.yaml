@@ -1,7 +1,9 @@
 # The imaginary order-entry system `example`, as the files it keeps its
 # stock in. It describes no real product. Its surface is a folder inside
-# the root `files`, which is the project folder; the test stand in
-# `targets/example-files` writes the files.
+# the root `files`, which stands for the project folder of each request:
+# a run resolves it in the folder of the project the request came from,
+# never in the one the engine was started in. The test stand in
+# `targets/example-files` writes the files, or a test writes its own.
 schema_version: 1
 target: example
 title: Example stock files

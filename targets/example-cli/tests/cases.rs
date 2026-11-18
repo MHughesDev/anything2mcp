@@ -673,6 +673,35 @@ fn fault_a_flood_on_either_stream() -> Outcome {
     Ok(())
 }
 
+/// C13: a text a test chooses, at the start of either stream, exactly as given.
+#[test]
+fn fault_a_chosen_text_is_said_on_either_stream() -> Outcome {
+    let stand = stand()?;
+    let said = |stream| FaultKind::Say {
+        stream,
+        text: "made-up text, no line end".to_owned(),
+    };
+    stand
+        .control()
+        .set_fault(&Fault::once(said(Stream::Stderr)))?;
+    let refused = stand.run(&["item", "set", "SK-1001", "--quantity=99999", "--yes"])?;
+    assert_eq!(code(&refused), status(exit::REJECTED));
+    assert!(
+        refused
+            .stderr
+            .starts_with("made-up text, no line endexample-cli: error: "),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(refused.stdout, "");
+    stand
+        .control()
+        .set_fault(&Fault::once(said(Stream::Stdout)))?;
+    let shown = stand.run(&["item", "show", "SK-1001"])?;
+    assert!(shown.stdout.starts_with("made-up text, no line endsku: "));
+    Ok(())
+}
+
 /// C4: the program stores something other than what it says it stored.
 #[test]
 fn fault_a_stored_value_differs_from_the_answer() -> Outcome {

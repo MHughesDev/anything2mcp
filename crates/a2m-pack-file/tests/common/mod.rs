@@ -16,15 +16,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets,
-    OperationName, Plan, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value,
-    Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan,
+    PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_expr::{Bindings, Program};
 use a2m_files::{CompileMode, CompilerSet, Diagnostics, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
@@ -76,10 +75,20 @@ pub fn roots(stand: &FileStand, access: Access) -> Roots {
     roots
 }
 
+/// The run's paths with `folder` as the project folder of the request that
+/// started it, checked as the engine checks it: as a root of its own, for
+/// writing.
+pub fn project_paths(folder: &Path) -> CheckedPaths {
+    let name = RootName::new("project").unwrap();
+    let mut roots = Roots::none();
+    roots.add(name.clone(), folder, Access::Write).unwrap();
+    CheckedPaths::none().with_project(roots.folder(&name, Access::Write).unwrap())
+}
+
 /// Compiles the target folder at `root` with the set given.
 pub fn compile(root: &Path, set: &CompilerSet) -> Result<a2m_files::Compiled, Diagnostics> {
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The stand, the registry over it, and the compiled example target.
@@ -89,6 +98,9 @@ pub struct Scene {
     pub plan: Plan,
     /// The root the surfaces are in, when it is not the one they state.
     root: Option<&'static str>,
+    /// The run's checked paths: with a project folder, for a scene whose
+    /// surfaces are in the root `project`.
+    pub paths: CheckedPaths,
 }
 
 impl Scene {
@@ -96,9 +108,28 @@ impl Scene {
         Self::with_access(Access::Write)
     }
 
+    /// With `Access::Read`, the surfaces are in the root `project`: their
+    /// files are the stand's, as the project folder of the request that
+    /// started the run, and the pack's own root of that name, the folder the
+    /// engine was started in, is the stand's folder outside its root, where
+    /// no document's file is.
     pub fn with_access(access: Access) -> Self {
         let stand = FileStand::start().unwrap();
-        let registry = registry(roots(&stand, access));
+        let (roots, paths) = match access {
+            Access::Write => (roots(&stand, access), CheckedPaths::none()),
+            Access::Read => {
+                let mut started_in = Roots::none();
+                started_in
+                    .add(
+                        RootName::new("project").unwrap(),
+                        stand.outside_folder(),
+                        Access::Read,
+                    )
+                    .unwrap();
+                (started_in, project_paths(stand.root()))
+            }
+        };
+        let registry = registry(roots);
         let plan = compile(&fixtures(), registry.compiler_set())
             .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
             .plan;
@@ -107,6 +138,31 @@ impl Scene {
             registry,
             plan,
             root: (access == Access::Read).then_some("project"),
+            paths,
+        }
+    }
+
+    /// The surfaces in the root `files`, which here stands for the project
+    /// folder of each request (`Roots::add_project`), as a served engine
+    /// holds it: the run's project folder is the stand's root, and a run
+    /// given another project's paths resolves in that project.
+    pub fn with_project_files() -> Self {
+        let stand = FileStand::start().unwrap();
+        let mut roots = Roots::none();
+        roots
+            .add_project(RootName::new("files").unwrap(), Access::Write)
+            .unwrap();
+        let registry = registry(roots);
+        let plan = compile(&fixtures(), registry.compiler_set())
+            .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
+            .plan;
+        let paths = project_paths(stand.root());
+        Self {
+            stand,
+            registry,
+            plan,
+            root: None,
+            paths,
         }
     }
 
@@ -151,6 +207,19 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> (DriverHandle, Prepared) {
+        self.prepared_in(surface, fence, posture, &self.paths)
+            .await
+            .unwrap()
+    }
+
+    /// The same, with the run's checked paths given.
+    pub async fn prepared_in(
+        &self,
+        surface: &SurfaceRef,
+        fence: Option<Fence>,
+        posture: Posture,
+        paths: &CheckedPaths,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
         let handle = self
             .registry
             .driver(&a2m_core::Mode::new("file").unwrap())
@@ -169,11 +238,11 @@ impl Scene {
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
-            paths: &CheckedPaths::none(),
+            paths,
             supervisor: &supervisor,
         };
-        let prepared = handle.prepare(&cx, None).await.unwrap();
-        (handle, prepared)
+        let prepared = handle.prepare(&cx, None).await?;
+        Ok((handle, prepared))
     }
 
     /// A step's arguments, worked out from the operation's inputs as the
@@ -202,13 +271,7 @@ impl Scene {
         let mut outcomes = Vec::new();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: Deadline::after(Duration::from_secs(30)),
-            };
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30)));
             let outcome = handle.act(prepared, step, &input, Authority::Read).await?;
             let absent = matches!(outcome, StepOutcome::Absent(_));
             outcomes.push(outcome);
@@ -231,13 +294,11 @@ impl Scene {
         let mut outcomes = Vec::new();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: Some(granted.record),
-                key: Some(&granted.key),
-                stamp: Some(&granted.stamp),
-                deadline: Deadline::after(Duration::from_secs(30)),
-            };
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30))).for_record(
+                granted.record,
+                Some(&granted.key),
+                Some(&granted.stamp),
+            );
             let authority = if step.commits {
                 Authority::Write(&granted.token)
             } else {
@@ -262,6 +323,57 @@ impl Scene {
         assert!(handle.release(prepared, outcome.is_err()).await.complete);
         outcome
     }
+}
+
+/// What a read returns through the engine: each output the operation
+/// declares, taken by its name from what the last step observed and
+/// normalized by its field type. The engine's own shaping (`outputs_of` in
+/// `a2m-engine`) does the same, which a pack cannot call: it may not depend
+/// on the engine. A value the step gave that no output declares is not
+/// returned; an output the step gave no value for stops the test, as it
+/// stops a read in the engine. A list output is normalized item by item,
+/// and a `null` item stays `null`, as the engine does (decision 0180).
+pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    let mut out = Values::new();
+    for output in &operation.outputs {
+        let raw = observed
+            .get(&output.name)
+            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        let value = match output
+            .field_type
+            .and_then(|index| plan.field_types[index.get()].normalizer)
+        {
+            Some(index) => {
+                let normalizer =
+                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                let one = |value: &Value| {
+                    if value.is_null() {
+                        Value::Null
+                    } else {
+                        normalizer.normalize(value).unwrap().normalized
+                    }
+                };
+                match raw {
+                    Value::List(items) => Value::List(items.iter().map(one).collect()),
+                    other => one(other),
+                }
+            }
+            None => raw.clone(),
+        };
+        assert!(
+            value.is_null() || value.has_type(&output.ty),
+            "the output `{}` is not a {}: {value:?}",
+            output.name,
+            output.ty.name()
+        );
+        out.insert(output.name.clone(), value);
+    }
+    out
 }
 
 /// The values of the last outcome of a run of steps.
@@ -380,23 +492,8 @@ pub async fn granted(store: &Store, caller: u8, name: &str) -> Granted {
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

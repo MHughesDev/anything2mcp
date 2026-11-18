@@ -12,7 +12,7 @@ use a2m_files::{
 use crate::shape::{Kind, Shape};
 use crate::template::{
     Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
-    VersionSink, VersionSource, parse_path,
+    VersionSink, VersionSource, is_connection_header, parse_path,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -230,10 +230,7 @@ pub(crate) fn template_of(
             );
             continue;
         }
-        if matches!(
-            name.as_str(),
-            "host" | "content-length" | "transfer-encoding" | "connection"
-        ) {
+        if is_connection_header(&name) {
             refuse(
                 "header_invalid",
                 &entry.key.at,
@@ -402,11 +399,12 @@ pub(crate) fn template_of(
     .into_iter()
     .flatten()
     {
-        if !is_header_name(name) {
+        if !is_header_name(name) || is_connection_header(name) {
             refuse(
                 "version_invalid",
                 &version_doc.map_or_else(|| doc.at.clone(), |v| v.at.clone()),
-                "A version rule's header is not a header's name.".to_owned(),
+                "A version rule's header is not a header's name, or is one the connection sets."
+                    .to_owned(),
                 "Write the header's name, such as `if-match`.",
             );
         }
@@ -414,13 +412,14 @@ pub(crate) fn template_of(
 
     let idempotency_header = doc.get("idempotency_header").and_then(|written| {
         let name = written.as_text().unwrap_or_default().to_ascii_lowercase();
-        if is_header_name(&name) {
+        if is_header_name(&name) && !is_connection_header(&name) {
             Some(name)
         } else {
             refuse(
                 "header_invalid",
                 &written.at,
-                "The idempotency header is not a header's name.".to_owned(),
+                "The idempotency header is not a header's name, or is one the connection sets."
+                    .to_owned(),
                 "Write the header's name, such as `Idempotency-Key`.",
             );
             None
@@ -515,6 +514,21 @@ impl FileKind for EndpointKind {
         // An endpoint holds templates and shapes, and no expression: values
         // arrive from a binding, into typed positions.
         Vec::new()
+    }
+
+    /// An entry describes a write unless it is marked `read` and its method
+    /// is one HTTP marks safe. An effect that is an open question is not
+    /// known to read. A method that is not safe may change something
+    /// whatever the entry says: marking such a request `read` is a person's
+    /// judgment, which the lint `http.effect_method` asks them to confirm,
+    /// and a draft never makes it. The answer is the same on every surface
+    /// kind the file kind is registered for.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let safe = doc
+            .text("method")
+            .and_then(Method::from_word)
+            .is_some_and(Method::is_safe);
+        doc.text("effect") != Some("read") || !safe
     }
 
     fn compile(
@@ -764,7 +778,29 @@ impl LintRule for SignedEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_credential;
+    use a2m_files::{FileKind, RelPath, parse_yaml};
+
+    use super::{EndpointKind, looks_like_credential};
+
+    #[test]
+    fn an_entry_describes_a_write_unless_it_is_a_read_of_a_safe_method() {
+        let kind = EndpointKind::new();
+        let file = RelPath::new("endpoints/one.yaml").unwrap();
+        let writes = |method: &str, effect: &str| {
+            let text = format!("endpoint: one\nmethod: {method}\neffect: {effect}\n");
+            let docs = parse_yaml(&file, &text).unwrap();
+            kind.writes(&docs[0])
+        };
+        assert!(!writes("GET", "read"));
+        assert!(!writes("HEAD", "read"));
+        assert!(writes("DELETE", "write"));
+        assert!(writes("GET", "write"));
+        // A method that is not safe may change something whatever the entry says.
+        assert!(writes("POST", "read"));
+        // An effect that is an open question is not known to read.
+        assert!(writes("GET", "\"?? Is this a read\""));
+        assert!(writes("FETCH", "read"));
+    }
 
     #[test]
     fn a_literal_that_looks_like_a_credential_is_recognized() {

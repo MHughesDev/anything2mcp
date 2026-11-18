@@ -16,20 +16,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName, Plan,
-    PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values,
-    Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName, PackPayload,
+    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
+    Values, Version, WorkspaceId,
 };
 use a2m_expr::{Bindings, Normalizer, Program};
 use a2m_files::{CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Authority, Capture, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
-    PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder, Roots, StepFailure,
-    StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
+    PrepareContext, Prepared, ProviderName, ProviderSettings, Registry, RegistryBuilder, Roots,
+    StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
 use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
@@ -75,6 +75,15 @@ impl Redact for Planted {
 
 /// A registry that holds the device pack and nothing else.
 pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
+    registry_set(folder, redact, None)
+}
+
+/// The same, with the pack's own settings group as a person wrote it.
+pub fn registry_set(
+    folder: &Folder,
+    redact: Arc<dyn Redact>,
+    settings: Option<Values>,
+) -> Registry {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let host = HostServices {
@@ -83,7 +92,13 @@ pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         redact: Arc::clone(&redact),
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
     };
-    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    let mut provider = ProviderSettings::default();
+    if let Some(settings) = settings {
+        provider
+            .packs
+            .insert(ProviderName::new("device").unwrap(), settings);
+    }
+    let mut builder = RegistryBuilder::new(provider, host);
     a2m_pack_device::add_to(&mut builder);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -153,7 +168,24 @@ pub fn compile_files(
 ) -> Result<Compiled, Diagnostics> {
     let root = TargetRoot::new("example");
     let sources = a2m_files::load_files(&root, files, set)?;
-    a2m_files::compile(&sources, set, mode, VERSION)
+    // A draft is compiled under the draft version: under a release version
+    // it would have a published plan's bytes.
+    let version = if matches!(mode, CompileMode::Draft) {
+        a2m_files::DRAFT_VERSION
+    } else {
+        VERSION
+    };
+    a2m_files::compile(&sources, set, mode, version)
+}
+
+/// A target folder on disk, compiled as a draft; a test stops if it does
+/// not compile.
+pub fn compile_folder(root: &Path, set: &CompilerSet) -> Plan {
+    let sources = a2m_files::load(&TargetRoot::new(root), set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .plan
 }
 
 /// The example target, compiled as a draft: publishing also asks for an
@@ -254,23 +286,8 @@ pub async fn write_run(store: &Store, caller: u8, name: &str) -> (Fence, RecordR
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await
@@ -319,6 +336,8 @@ pub struct Ran {
     pub for_reconcile: Values,
     pub captures: Vec<Capture>,
     pub kinds: Vec<String>,
+    /// How each step was done, from its `acting` capture, in order.
+    pub acting: Vec<a2m_telemetry::Acting>,
 }
 
 /// The right to write one record, as the engine holds it.
@@ -333,8 +352,13 @@ impl Scene {
     }
 
     pub async fn start_with(redact: Arc<dyn Redact>) -> Self {
+        Self::start_set(redact, None).await
+    }
+
+    /// A scene whose registry was built with the pack's settings given.
+    pub async fn start_set(redact: Arc<dyn Redact>, settings: Option<Values>) -> Self {
         let folder = Folder::new("scene");
-        let registry = registry_with(&folder, redact);
+        let registry = registry_set(&folder, redact, settings);
         let plan = compiled(registry.compiler_set()).plan;
         let device = TestDevice::start().await.unwrap();
         // The plan's surface, at the address of the run's environment: here
@@ -354,6 +378,17 @@ impl Scene {
             device,
             destinations,
         }
+    }
+
+    /// Declares another serial for the device of the environment `test`
+    /// than the target's files do, or none: what the surface's fields
+    /// would compile to.
+    pub fn declare_serial(&mut self, serial: Option<&str>) {
+        let mut fields = serde_json::json!({"protocol": "modbus_tcp", "unit": 1});
+        if let Some(serial) = serial {
+            fields["serials"] = serde_json::json!({"test": serial});
+        }
+        self.surface.surface.payload = PackPayload::encode(&fields).unwrap();
     }
 
     pub fn handle(&self) -> DriverHandle {
@@ -433,21 +468,39 @@ impl Scene {
         inputs: &Values,
         writing: Option<&Writing<'_>>,
     ) -> Result<Ran, StepFailure> {
+        self.run_recorded(handle, prepared, steps, inputs, writing, &Values::new())
+            .await
+    }
+
+    /// The same, with what the record's earlier steps gave for reconcile, as
+    /// the engine hands it on, within a pass and on a resume.
+    pub async fn run_recorded(
+        &self,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        steps: &[Step],
+        inputs: &Values,
+        writing: Option<&Writing<'_>>,
+        recorded: &Values,
+    ) -> Result<Ran, StepFailure> {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: writing.map(|writing| writing.record),
-                key: None,
-                stamp: None,
-                deadline: Deadline::after(Duration::from_millis(u64::from(step.timeout_ms))),
-            };
+            // A register has no key from an input: the record has none.
+            let mut input = StepInput::new(
+                &args,
+                Deadline::after(Duration::from_millis(u64::from(step.timeout_ms))),
+            );
+            if let Some(writing) = writing {
+                input = input.for_record(writing.record, None, None);
+            }
             let authority = match writing {
                 Some(writing) if step.commits => Authority::Write(writing.token),
                 _ => Authority::Read,
             };
-            let outcome = handle.act(prepared, step, &input, authority).await?;
+            let outcome = handle
+                .act_recorded(prepared, step, &input, authority, recorded)
+                .await?;
             let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
             ran.kinds.push(step.kind.to_string());
             for (name, value) in observed.values.iter() {
@@ -456,7 +509,13 @@ impl Scene {
             for (name, value) in observed.for_reconcile.iter() {
                 ran.for_reconcile.insert(name, value.clone());
             }
-            ran.captures.extend(observed.captures);
+            ran.acting.extend(observed.acting());
+            ran.captures.extend(
+                observed
+                    .captures
+                    .into_iter()
+                    .filter(|capture| !capture.is_acting()),
+            );
         }
         Ok(ran)
     }

@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_actions::{Caller, FrontDoor, Kernel, Request, Response, RestRouteFace, rest_routes};
+use a2m_actions::{
+    Caller, FrontDoor, Kernel, ProjectFolder, Request, Response, RestRouteFace, rest_routes,
+};
 use a2m_core::{Failure, FailureClass, FailureCode};
 use axum::Router;
 use axum::extract::{FromRequestParts, RawPathParams};
@@ -16,6 +18,7 @@ use axum::routing::{MethodFilter, MethodRouter, on};
 use serde_json::{Map, Value as Json};
 
 use crate::codes;
+use crate::events::{self, RUN_EVENTS_PATH};
 use crate::openapi::{self, OPENAPI_PATH};
 use crate::status::{json_answer, refused, render};
 
@@ -53,7 +56,8 @@ pub struct ServedRoute {
     pub method: &'static str,
     /// The path, with `{field}` for a field taken from the path.
     pub path: String,
-    /// The action it dispatches; empty for the document's own route.
+    /// The action it dispatches; empty for the two routes that dispatch
+    /// none: a run's events, and the document's own.
     pub action: String,
 }
 
@@ -90,6 +94,23 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
         };
         by_path.insert(face.path, methods);
     }
+    // A run's events: not an action, so not a route face. The handler
+    // reads no body and dispatches nothing.
+    let events_kernel = kernel.clone();
+    let events = move |request: axum::extract::Request| {
+        let kernel = events_kernel.clone();
+        async move {
+            let (parts, body) = request.into_parts();
+            drain(&settings, &parts, body).await;
+            let caller = caller_of(&parts.extensions);
+            events::serve(kernel, caller, parts).await
+        }
+    };
+    let methods = match by_path.remove(RUN_EVENTS_PATH) {
+        Some(existing) => existing.on(MethodFilter::GET, events),
+        None => on(MethodFilter::GET, events),
+    };
+    by_path.insert(RUN_EVENTS_PATH.to_owned(), methods);
     let mut router = Router::new();
     for (path, methods) in by_path {
         router = router.route(&path, methods.fallback(not_allowed(settings)));
@@ -111,8 +132,9 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
         .fallback(not_found(settings)))
 }
 
-/// Every route the router built from this registry serves, the document's
-/// own route last: what the OpenAPI document must describe.
+/// Every route the router built from this registry serves: what the
+/// OpenAPI document must describe. The two routes that are no action's
+/// come last: a run's events, then the document's own.
 #[must_use]
 pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute> {
     let mut served: Vec<ServedRoute> = rest_routes(registry)
@@ -123,11 +145,13 @@ pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute>
             action: face.action,
         })
         .collect();
-    served.push(ServedRoute {
-        method: "GET",
-        path: OPENAPI_PATH.to_owned(),
-        action: String::new(),
-    });
+    for path in [RUN_EVENTS_PATH, OPENAPI_PATH] {
+        served.push(ServedRoute {
+            method: "GET",
+            path: path.to_owned(),
+            action: String::new(),
+        });
+    }
     served
 }
 
@@ -260,7 +284,11 @@ async fn prepare(
             }
         }
     }
-    let mut request = Request::new(&route.action, Json::Object(input), caller);
+    // The project folder is what the mount stated beside the caller, and
+    // nothing in the path, the query, or the body. The dispatcher checks
+    // it before any handler sees it.
+    let mut request = Request::new(&route.action, Json::Object(input), caller)
+        .in_project_folder(parts.extensions.get::<ProjectFolder>());
     request.idempotency_key = key;
     Ok(request)
 }
@@ -425,6 +453,11 @@ async fn dispatch(
     settings: ApiSettings,
     request: Request,
 ) -> Response {
+    let fix = lost_answer_fix(
+        request.idempotency_key.is_some(),
+        &request.action,
+        &request.input,
+    );
     let task = tokio::spawn(async move { kernel.dispatch(request).await });
     match tokio::time::timeout(settings.request_timeout, task).await {
         Ok(Ok(response)) => response,
@@ -434,7 +467,7 @@ async fn dispatch(
                 FailureClass::Transient,
                 codes::ENGINE_FAULT,
                 "The engine stopped without answering this request.",
-                "Read the caller's recent runs with run.list before calling again.",
+                fix,
             ),
             false,
         ),
@@ -444,11 +477,47 @@ async fn dispatch(
                 FailureClass::Busy,
                 codes::REQUEST_TIMED_OUT,
                 "The engine did not answer in time; the action may still finish.",
-                "Read the caller's recent runs with run.list before calling again.",
+                fix,
             ),
             false,
         ),
     }
+}
+
+/// What a caller whose answer was lost does next, exactly. With an
+/// `Idempotency-Key`, the same request again with the same key, which
+/// gives back the run the first one started. Without one, the caller's
+/// runs since a minute before the request, of the tool it named, by the
+/// route that lists them (`run.list`). The moment is this machine's clock,
+/// shown and deciding nothing.
+fn lost_answer_fix(keyed: bool, action: &str, input: &Json) -> String {
+    if keyed {
+        return "Send the same request again with the same Idempotency-Key header and nothing changed: it gives back the run the first one started, finished or not, and starts no other.".to_owned();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        });
+    let since = (now - 60_000).max(0);
+    let tool = (action == "tool.call")
+        .then(|| input.get("tool").and_then(Json::as_str))
+        .flatten()
+        .filter(|tool| {
+            !tool.is_empty()
+                && tool.len() <= 128
+                && tool
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        });
+    let query = match tool {
+        Some(tool) => format!("since={since}&tool={tool}"),
+        None => format!("since={since}"),
+    };
+    format!(
+        "Do not send it again: a second request may start a second run and write twice. Find its run first with `GET {}/runs?{query}` (`run.list`), and do what that run's `next` says. A request that carries an Idempotency-Key header may be sent again with the same key instead.",
+        a2m_actions::REST_PREFIX
+    )
 }
 
 fn not_found(
@@ -625,7 +694,7 @@ fn check_routes(routes: &[RestRouteFace]) -> Result<(), Failure> {
             "Give each action's alias a path no other route has.",
         )
     };
-    let mut seen: Vec<(&str, &str)> = vec![("GET", OPENAPI_PATH)];
+    let mut seen: Vec<(&str, &str)> = vec![("GET", OPENAPI_PATH), ("GET", RUN_EVENTS_PATH)];
     for route in routes {
         if !openapi::under_prefix(&route.path) || route.method != "GET" && route.method != "POST" {
             return Err(conflict(format!(
@@ -678,6 +747,17 @@ fn fields_clash(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_answer_names_the_same_request_with_its_key_or_the_listing_without_one() {
+        let input = serde_json::json!({"tool": "example_item_upsert"});
+        let fix = lost_answer_fix(false, "tool.call", &input);
+        assert!(fix.starts_with("Do not send it again"), "{fix}");
+        assert!(fix.contains("GET /api/v1/runs?since="), "{fix}");
+        assert!(fix.contains("&tool=example_item_upsert`"), "{fix}");
+        let fix = lost_answer_fix(true, "tool.call", &input);
+        assert!(fix.starts_with("Send the same request again with the same Idempotency-Key"));
+    }
 
     fn bound(types: &[(&str, &str)]) -> Bound {
         Bound {

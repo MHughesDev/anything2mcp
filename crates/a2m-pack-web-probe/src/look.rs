@@ -15,8 +15,8 @@ use a2m_core::{
     Identity, LimitationCode, ProducedBy, Redact, Source, Subject, Value,
 };
 use a2m_pack_web_browser::{
-    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, PageEnvironment, ProfileKey,
-    Query, RawValue, ReadWhat, SafeRequests,
+    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
+    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, is_plain_name, path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
 use a2m_telemetry::Clock;
@@ -43,63 +43,23 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 /// How long a page is waited for to show the focus's ready text.
 const READY_WAIT: Duration = Duration::from_secs(10);
 
-/// Words that make a link look like an action. A link whose address or
-/// name holds one is not followed. Data: the list is a start, and what
-/// "looks like an action" means is an open point of the design.
-pub const ACTION_WORDS: &[&str] = &[
-    "activate",
-    "approve",
-    "archive",
-    "cancel",
-    "confirm",
-    "deactivate",
-    "delete",
-    "destroy",
-    "disable",
-    "enable",
-    "logoff",
-    "logout",
-    "pay",
-    "purge",
-    "reject",
-    "remove",
-    "reset",
-    "revoke",
-    "send",
-    "signoff",
-    "signout",
-    "submit",
-    "unsubscribe",
-];
-
-/// Whether an address or a name looks like an action by [`ACTION_WORDS`].
-/// It is cut into words at everything that is not a letter; `sign-out`
-/// and `log out` count as `signout` and `logout`.
-#[must_use]
-pub fn looks_like_an_action(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let words: Vec<&str> = lower
-        .split(|c: char| !c.is_alphabetic())
-        .filter(|word| !word.is_empty())
-        .collect();
-    words.iter().enumerate().any(|(at, word)| {
-        ACTION_WORDS.contains(word)
-            || words.get(at + 1).is_some_and(|next| {
-                matches!(
-                    (*word, *next),
-                    ("sign" | "log", "out" | "off") | ("check", "out")
-                )
-            })
-    })
-}
+/// The words that make an address or a link look like an action, and the
+/// check, are the web pack's base's, so that the drivers hold a key and a
+/// page request to the same list (decision 0195).
+pub use a2m_pack_web_browser::{ACTION_WORDS, looks_like_an_action};
 
 /// An address, taken apart. It holds no value of a query: only the names,
-/// each with the type of its value.
+/// each with the type of its value, and only those that are plain names; and
+/// its path is by structure, every segment that is not a plain word kept as
+/// a placeholder (decision 0195).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Place {
     pub(crate) origin: String,
     pub(crate) path: String,
     pub(crate) query: BTreeMap<String, &'static str>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// whose whole text is a value, or one whose name is not a plain name.
+    pub(crate) query_left_out: bool,
 }
 
 impl Place {
@@ -117,18 +77,26 @@ impl Place {
         let tail = tail.split('#').next().unwrap_or_default();
         let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
         let mut names = BTreeMap::new();
+        let mut query_left_out = false;
         for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            names.insert(name.to_owned(), type_of_text(value));
+            match pair.split_once('=') {
+                Some((name, value)) if is_plain_name(name) => {
+                    names.insert(name.to_owned(), type_of_text(value));
+                }
+                // A bare entry is a value, and so is a name that is not a
+                // plain one: neither is kept.
+                _ => query_left_out = true,
+            }
         }
         Some(Self {
             origin: format!("{scheme}://{}", host.to_lowercase()),
             path: if path.is_empty() {
                 "/".to_owned()
             } else {
-                path.to_owned()
+                path_by_structure(path)
             },
             query: names,
+            query_left_out,
         })
     }
 
@@ -204,7 +172,7 @@ pub(crate) fn css(selector: &str) -> Query {
 }
 
 /// What a base error means for a discoverer that was only looking.
-pub(crate) fn failure(error: &BrowserError, scope: &DiscoveryScope<'_>) -> Failure {
+pub(crate) fn failure(error: &BrowserError) -> Failure {
     if let Some(failure) = error.failure() {
         return failure;
     }
@@ -223,15 +191,31 @@ pub(crate) fn failure(error: &BrowserError, scope: &DiscoveryScope<'_>) -> Failu
             "The browser was lost, or did not answer in time, while a page was read.",
             "Run discovery again.",
         ),
-        other => Failure::new(
-            FailureClass::UnknownVariant,
-            codes::PAGE_UNREADABLE,
-            scope.redact.redact(&codes::shown(&format!(
-                "The page could not be read: {other}."
-            ))),
-            "Look at the page in a browser; report this if the page is an ordinary one.",
-        ),
+        other => unreadable(other),
     }
+}
+
+/// The failure of a page that could not be read. It names what kind of
+/// answer the browser gave and holds none of its text: the text of an
+/// answer no rule covers can be the page's own, and free text from the
+/// system goes into no message (spec section 502).
+pub(crate) fn unreadable(error: &BrowserError) -> Failure {
+    let what = match error {
+        BrowserError::NotFound => "an element it looked for is not there",
+        BrowserError::Ambiguous { .. } => "an element it looked for is there more than once",
+        BrowserError::NotActionable(_) => "an element it looked for cannot be used",
+        BrowserError::UnexpectedDialog { .. } => "the page opened a dialog",
+        BrowserError::PasswordField => "it would have read a password",
+        BrowserError::TooLarge { .. } => "what it read is larger than the limit",
+        BrowserError::RequestFailed(_) => "a request of the page did not complete",
+        _ => "the browser answered in a way no rule covers",
+    };
+    Failure::new(
+        FailureClass::UnknownVariant,
+        codes::PAGE_UNREADABLE,
+        format!("The page could not be read: {what}."),
+        "Look at the page in a browser; report this if the page is an ordinary one.",
+    )
 }
 
 /// Whether exactly one, or more than one, rendered element matches.
@@ -243,7 +227,7 @@ pub(crate) async fn present(
     match tab.locate(query, scope.deadline).await {
         Ok(_) | Err(BrowserError::Ambiguous { .. }) => Ok(true),
         Err(BrowserError::NotFound) => Ok(false),
-        Err(error) => Err(failure(&error, scope)),
+        Err(error) => Err(failure(&error)),
     }
 }
 
@@ -256,13 +240,13 @@ pub(crate) async fn json_body(
     let body = match tab.locate(&css("body"), scope.deadline).await {
         Ok(body) => body,
         Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => return Ok(None),
-        Err(error) => return Err(failure(&error, scope)),
+        Err(error) => return Err(failure(&error)),
     };
     let text = match tab.read(&body, &ReadWhat::Text, scope.deadline).await {
         Ok(RawValue::Text(text)) => text,
         Ok(RawValue::Flag(_) | RawValue::Absent)
         | Err(BrowserError::TooLarge { .. } | BrowserError::NotFound) => return Ok(None),
-        Err(error) => return Err(failure(&error, scope)),
+        Err(error) => return Err(failure(&error)),
     };
     let text = text.trim();
     if !(text.starts_with('{') || text.starts_with('[')) {
@@ -304,8 +288,10 @@ impl Core {
 
     /// An observing tab in the discovery profile of the scope's target
     /// and environment. Nothing is marked safe: every request of the page
-    /// that is not a read is refused.
+    /// that is not a read is refused. The tab is opened for the origin of
+    /// the surface it observes, and the browser keeps it there.
     pub(crate) async fn tab(&self, scope: &DiscoveryScope<'_>) -> Result<ObserveTab, Failure> {
+        let (surface, _) = Self::start(scope)?;
         let profile = ProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
@@ -316,9 +302,10 @@ impl Core {
                 &profile,
                 &PageEnvironment::default(),
                 &SafeRequests::default(),
+                &Origins::of([&surface]),
             )
             .await
-            .map_err(|error| failure(&error, scope))
+            .map_err(|error| failure(&error))
     }
 
     /// The surface's own address, taken apart.
@@ -377,10 +364,37 @@ impl Core {
         if asked.origin != declared.origin {
             return Err(not_declared("the address"));
         }
-        let loaded = tab
-            .goto(address, scope.deadline)
-            .await
-            .map_err(|error| failure(&error, scope))?;
+        // Every address the tab is sent to passes the same check, whatever
+        // named it: the surface, a focus, or a link (decision 0144).
+        if looks_like_an_action(after_origin(address.as_str())) {
+            return Err(looks_like_an_action_refused("is"));
+        }
+        let loaded = match tab.goto(address, scope.deadline).await {
+            Ok(loaded) => loaded,
+            // The answer sent the tab to another origin, and the browser
+            // ended the move there: nothing of that origin was fetched. A
+            // surface that sends its visitor elsewhere is seen as asking for
+            // a sign-in there, as before the browser held the tab.
+            Err(BrowserError::ForeignOrigin(origin)) => {
+                let ended = Place::parse(&origin).ok_or_else(|| not_declared("the address"))?;
+                return Ok(Arrival {
+                    asked,
+                    ended,
+                    title: String::new(),
+                    status: None,
+                    standing: Standing::SignIn("other_origin"),
+                });
+            }
+            Err(error) => return Err(failure(&error)),
+        };
+        // A redirect is followed by the browser before this crate sees it;
+        // one that ended at an address that looks like an action is not
+        // read, and stops the discovery.
+        if looks_like_an_action(after_origin(&loaded.address)) {
+            return Err(looks_like_an_action_refused(
+                "was sent on to an address that",
+            ));
+        }
         let ended = Place::parse(&loaded.address).ok_or_else(|| {
             Failure::new(
                 FailureClass::UnknownVariant,
@@ -405,7 +419,7 @@ impl Core {
         Ok(Arrival {
             asked,
             ended,
-            title: scope.redact.redact(&loaded.title),
+            title: codes::shown(&scope.redact.redact(&loaded.title)),
             status: loaded.status,
             standing,
         })
@@ -430,7 +444,7 @@ impl Core {
         match tab.wait(&until, deadline).await {
             Ok(()) => Ok(true),
             Err(BrowserError::Timeout { .. }) => Ok(false),
-            Err(error) => Err(failure(&error, scope)),
+            Err(error) => Err(failure(&error)),
         }
     }
 
@@ -471,6 +485,24 @@ impl Core {
         }
         Ok(builder.build()?)
     }
+}
+
+/// What follows the origin of an address: its path and its query. The
+/// host is the surface's own, and a host's name is not an action.
+fn after_origin(address: &str) -> &str {
+    let rest = address.split_once("://").map_or(address, |(_, rest)| rest);
+    rest.find(['/', '?', '#']).map_or("", |at| &rest[at..])
+}
+
+fn looks_like_an_action_refused(how: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        codes::ADDRESS_LOOKS_LIKE_AN_ACTION,
+        format!(
+            "Discovery was to look at a page whose address {how} looks like an action, and a system may act on a plain visit to such an address. It was not looked at."
+        ),
+        "Leave the address out of the focus, or look at the page in a browser yourself; discovery never visits an address that looks like an action.",
+    )
 }
 
 fn not_declared(what: &str) -> Failure {

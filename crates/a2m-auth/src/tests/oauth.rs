@@ -455,3 +455,101 @@ fn an_https_endpoint_is_named_when_tls_is_off_and_tried_when_it_is_on() {
     }
     assert_clean(&[format!("{failure:?}")], &["PLANTED"]);
 }
+
+/// The name of the test that runs in the child process below.
+const CHILD: &str = "tests::oauth::a_proxied_child_exchanges_with_the_service_it_names";
+
+/// Decision 0197: no client of the workspace takes a proxy from the
+/// environment. A listener stands in as a proxy on this machine, and the
+/// proxy variables of a child process of this test binary name it; the
+/// child exchanges a client secret with a token endpoint at a loopback
+/// address, which the loopback rule accepts over plain HTTP. The exchange
+/// must reach the identity service, and the proxy must see nothing. The
+/// variables are set for the child only: this process's environment is
+/// never changed, so no other test is touched.
+#[test]
+fn a_token_exchange_never_goes_to_a_proxy_the_environment_names() {
+    use std::io::{Read, Write};
+
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_address = format!("http://{}", proxy.local_addr().unwrap());
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    {
+        let seen = Arc::clone(&seen);
+        // Answers anything that reaches it at once, so that a client that
+        // does go through it fails quickly instead of waiting.
+        std::thread::spawn(move || {
+            for socket in proxy.incoming() {
+                let Ok(mut socket) = socket else { continue };
+                let mut buffer = [0_u8; 4096];
+                let read = socket.read(&mut buffer).unwrap_or(0);
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[..read]).into_owned());
+                let _ = socket.write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args([
+        CHILD,
+        "--exact",
+        "--ignored",
+        "--test-threads=1",
+        "--nocapture",
+    ]);
+    for name in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        child.env(name, &proxy_address);
+    }
+    // An exception for this machine would hide what is tested.
+    for name in ["NO_PROXY", "no_proxy"] {
+        child.env_remove(name);
+    }
+    let output = child.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.is_empty(),
+        "the token exchange went to the proxy the environment names: {} request(s)",
+        seen.len()
+    );
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "the child did not exchange with the service it names:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Run only by the test above, in a child process whose proxy variables
+/// name a listener that is not the identity service.
+#[test]
+#[ignore = "run by `a_token_exchange_never_goes_to_a_proxy_the_environment_names` in a child process"]
+fn a_proxied_child_exchanges_with_the_service_it_names() {
+    let world = block(World::new(STORED_HELD));
+    let service = Shared::default();
+    let key = account_key("robot");
+    logged(&world.telemetry, async {
+        let address = serve(&service).await;
+        assert!(address.starts_with("http://127.0.0.1:"));
+        let entry = client_credentials(&address);
+        world
+            .store_credential(&key, "client/secret", CLIENT_SECRET)
+            .await;
+        let lease = world
+            .keeper
+            .lease(request(&key, &entry, Wait::DEFAULT))
+            .await
+            .unwrap();
+        assert_eq!(placed(&lease)[0].1, "Bearer PLANTED-access-1");
+    });
+    assert_eq!(grants(&service), ["client_credentials"]);
+}

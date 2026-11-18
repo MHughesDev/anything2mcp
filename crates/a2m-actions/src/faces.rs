@@ -41,6 +41,11 @@ pub struct CommandArg {
     pub choices: Vec<String>,
     /// What it is.
     pub help: String,
+    /// For a `flag`: the field that standard input fills when the flag is
+    /// given. The command then reads standard input to its end, removes one
+    /// line ending from the end, sends the text as that field, and does not
+    /// send the flag. `None` for every other argument.
+    pub stdin_for: Option<String>,
 }
 
 /// The command face of one action: `anything2mcp <noun> <verb>`.
@@ -71,6 +76,11 @@ pub fn command_faces_of(def: &ActionDef) -> CommandFace {
         .input
         .fields
         .iter()
+        // The command line carries an idempotency key in its own flag for
+        // every command, and the dispatcher takes the key from beside the
+        // input as well as from inside it. A second flag of the same name
+        // would be taken for the first.
+        .filter(|field| field.name != crate::dispatch::KEY_FIELD)
         .map(|field| CommandArg {
             field: field.name.clone(),
             flag: if field.positional {
@@ -86,6 +96,7 @@ pub fn command_faces_of(def: &ActionDef) -> CommandFace {
                 _ => Vec::new(),
             },
             help: field.help.clone(),
+            stdin_for: field.stdin_for.clone(),
         })
         .collect();
     args.sort_by_key(|arg| !arg.positional);
@@ -231,17 +242,71 @@ impl McpResultFace {
     /// and branches on nothing else.
     #[must_use]
     pub fn of(response: &Response) -> Self {
+        Self::rendered(response, true)
+    }
+
+    /// The same rendering for a caller on `toolset`: where the toolset
+    /// does not list the tool of the following action, `next` names
+    /// `a2m_action_run` with the action as its argument, so that a caller
+    /// is never pointed at a tool its list does not hold.
+    #[must_use]
+    pub fn of_in(response: &Response, registry: &ActionRegistry, toolset: BuiltInToolset) -> Self {
+        let listed = response.next.as_ref().is_none_or(|next| {
+            registry
+                .toolset(toolset)
+                .iter()
+                .any(|def| def.name.as_str() == next.action)
+        });
+        Self::rendered(response, listed)
+    }
+
+    fn rendered(response: &Response, next_is_listed: bool) -> Self {
         match (&response.error, &response.result) {
-            (Some(error), _) => Self {
-                is_error: true,
-                structured: None,
-                text: error.to_json().to_string(),
-            },
-            (None, Some(result)) => Self {
-                is_error: false,
-                structured: Some(result.clone()),
-                text: result.to_string(),
-            },
+            (Some(error), result) => {
+                // A run that failed names itself, and what the system said
+                // is shown in a field of its own, apart from the sentence
+                // (decision 0176): the result is dropped, so both are
+                // carried into the error's object.
+                let mut shown = error.to_json();
+                if let Some(result) = result {
+                    if let Some(run) = result.get("run_id") {
+                        shown["run_id"] = run.clone();
+                    }
+                    if let Some(said) = result
+                        .get("failure")
+                        .and_then(|failure| failure.get("said"))
+                    {
+                        shown["said"] = said.clone();
+                    }
+                }
+                Self {
+                    is_error: true,
+                    structured: None,
+                    text: shown.to_string(),
+                }
+            }
+            (None, Some(result)) => {
+                // The most useful following call travels inside the result
+                // (spec section 221): every output schema admits `next`.
+                let mut result = result.clone();
+                if let (Some(next), Json::Object(map)) = (&response.next, &mut result)
+                    && !map.contains_key("next")
+                {
+                    map.insert(
+                        "next".to_owned(),
+                        if next_is_listed {
+                            next.to_result_json()
+                        } else {
+                            next.through_action_run()
+                        },
+                    );
+                }
+                Self {
+                    is_error: false,
+                    text: result.to_string(),
+                    structured: Some(result),
+                }
+            }
             (None, None) => Self {
                 is_error: false,
                 structured: Some(json!({})),
@@ -375,6 +440,67 @@ pub struct Shortcut {
     pub steps: &'static [ShortcutStep],
 }
 
+/// What a shortcut does on this engine: the steps to carry out, and where it
+/// stops when a step is not built yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutRun {
+    /// The steps to carry out, in order: the shortcut's steps up to the
+    /// first whose action is not built.
+    pub steps: Vec<ShortcutStep>,
+    /// The first action that is not built. The shortcut stops before it and
+    /// carries out no step after it.
+    pub stops_before: Option<&'static str>,
+    /// What to print when the shortcut stops early: what was done, what it
+    /// stopped before, and what was left undone. `None` when every step is
+    /// built.
+    pub note: Option<String>,
+}
+
+impl Shortcut {
+    /// What this shortcut does with the actions `registry` holds. A
+    /// shortcut never begins a step that is not built: it stops before it,
+    /// whatever was done already stays done, and the note says so.
+    #[must_use]
+    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun {
+        let built = |step: &&ShortcutStep| registry.find(step.action).is_some_and(ActionDef::built);
+        let steps: Vec<ShortcutStep> = self.steps.iter().take_while(built).copied().collect();
+        let rest = &self.steps[steps.len()..];
+        let Some(first) = rest.first() else {
+            return ShortcutRun {
+                steps,
+                stops_before: None,
+                note: None,
+            };
+        };
+        let names = |steps: &[ShortcutStep]| {
+            steps
+                .iter()
+                .map(|step| format!("`{}`", step.action))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let note = if steps.is_empty() {
+            format!(
+                "`{}` does nothing yet: its first step, `{}`, is not built. Call `action.search` to see which actions are built.",
+                self.word, first.action
+            )
+        } else {
+            format!(
+                "`{}` stopped before `{}`, which is not built yet. Done: {}. Not done: {}.",
+                self.word,
+                first.action,
+                names(&steps),
+                names(rest)
+            )
+        };
+        ShortcutRun {
+            steps,
+            stops_before: Some(first.action),
+            note: Some(note),
+        }
+    }
+}
+
 const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutStep {
     ShortcutStep { action, argument }
 }
@@ -388,11 +514,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         word: "add",
-        does: "Register a target, probe it, detect its sign-in, and ask for a sign-in.",
+        does: "Register a target, scout it, show the report, and ask for a sign-in.",
         steps: &[
             step("target.add", Some("name")),
-            step("target.probe", Some("target")),
-            step("auth.detect", Some("target")),
+            step("scout.run", Some("target")),
+            step("scout.report", Some("target")),
             step("session.login", Some("target")),
         ],
     },
@@ -479,3 +605,17 @@ pub const SHORTCUTS: &[Shortcut] = &[
 
 /// The process commands: they start a long-lived role and are not actions.
 pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "bridge"];
+
+/// The line a command prints for what the system itself said, apart from
+/// the failure's sentence and its next step, marked as the system's words.
+/// Every control character is shown as its escape, so that nothing the
+/// system said can move the cursor, ring, or rewrite the line before it,
+/// and a line break stays visible. The text, already redacted, is cut to
+/// [`a2m_core::SAID_LONGEST`] characters, never inside a redaction mark.
+#[must_use]
+pub fn said_line(said: &str) -> String {
+    format!(
+        "The system said: \"{}\"",
+        a2m_core::said_quoted(said, a2m_core::SAID_LONGEST)
+    )
+}

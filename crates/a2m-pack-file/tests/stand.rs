@@ -10,10 +10,12 @@
 
 mod common;
 
+use a2m_core::BindingPlan;
 use a2m_core::{Decimal, Digest, FailureClass, Value, Values};
 use a2m_ledger::Store;
-use a2m_provider::{Access, Posture, Sent, StepFailure, StepOutcome};
-use common::{Scene, for_reconcile, granted, last_values, store};
+use a2m_provider::{Access, DriverHandle, Posture, Prepared, Sent, StepFailure, StepOutcome};
+use common::{Granted, Scene, for_reconcile, granted, last_values, store};
+use example_files::control::EntryKind;
 use example_files::faults::{Change, Fault};
 use example_files::reader::JsonStep;
 use example_files::seed;
@@ -94,6 +96,94 @@ async fn write(
         .await?;
     assert!(handle.release(prepared, false).await.complete);
     Ok(Written { act, read_back })
+}
+
+/// One write, begun: prepared, and every step before the commit point done.
+/// The test decides what happens before the save, and before the confirm.
+struct Begun<'a> {
+    scene: &'a Scene,
+    binding: &'a BindingPlan,
+    handle: DriverHandle,
+    prepared: Prepared,
+    grant: Granted,
+    values: Values,
+}
+
+async fn begin<'a>(
+    scene: &'a Scene,
+    store: &Store,
+    caller: u8,
+    operation: &str,
+    values: &Values,
+) -> Begun<'a> {
+    let (binding, surface) = scene.binding(operation);
+    let grant = granted(store, caller, operation).await;
+    let (handle, mut prepared) = scene
+        .prepared(&surface, Some(grant.fence), Posture::Live)
+        .await;
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[..commit],
+            values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    Begun {
+        scene,
+        binding,
+        handle,
+        prepared,
+        grant,
+        values: values.clone(),
+    }
+}
+
+impl Begun<'_> {
+    async fn save(&mut self) -> Result<Vec<StepOutcome>, StepFailure> {
+        let commit = self
+            .binding
+            .act
+            .iter()
+            .position(|step| step.commits)
+            .unwrap();
+        self.scene
+            .write(
+                &self.handle,
+                &mut self.prepared,
+                &self.binding.act[commit..],
+                &self.values,
+                &self.grant,
+            )
+            .await
+    }
+
+    async fn confirm(&mut self) -> Result<Vec<StepOutcome>, StepFailure> {
+        self.scene
+            .read(
+                &self.handle,
+                &mut self.prepared,
+                &self.binding.confirm,
+                &self.values,
+            )
+            .await
+    }
+
+    async fn end(self, poisoned: bool) {
+        assert!(self.handle.release(self.prepared, poisoned).await.complete);
+    }
+}
+
+/// Sets a fault, and says whether it could be shown here.
+fn shown(scene: &Scene, fault: Fault) -> bool {
+    match scene.stand.set_fault(fault) {
+        Ok(()) => true,
+        Err(unsupported) if unsupported.is_unsupported() => false,
+        Err(other) => panic!("{other}"),
+    }
 }
 
 fn refused(result: Result<Written, StepFailure>) -> StepFailure {
@@ -684,27 +774,32 @@ async fn a_save_stopped_half_way_leaves_the_old_file_and_resumes_to_the_new_one(
     );
     assert_eq!(last_values(&seen).get("on_hand"), Some(&Value::Int(40)));
 
-    // The same record, tried again: the leftover is replaced, the save
-    // lands, and nothing is left behind.
+    // The same record, tried again: the save lands under a name of its own
+    // and leaves nothing of its own behind. The leftover is not this run's
+    // to prove, so it is neither used nor removed: it is where it was, with
+    // the bytes it had.
+    let leftover = format!("prices/stock.csv.a2m-{token}.tmp");
+    let half = scene.stand.sha256(&leftover).unwrap();
+    assert!(half.is_some());
     let written = write(&scene, &store, 1, "example_stock_set", &values, || {})
         .await
         .unwrap();
+    assert_eq!(scene.stand.sha256(&leftover).unwrap(), half);
+    assert!(scene.stand.strays().unwrap().is_empty());
     let new = scene.stand.sha256(seed::STOCK_CSV).unwrap().unwrap();
     assert_ne!(new, old);
     assert_eq!(
         for_reconcile(&written.act).get("intended_digest"),
         Some(&Value::from(new.clone()))
     );
-    assert_eq!(
-        scene
-            .stand
-            .listing()
-            .unwrap()
-            .iter()
-            .filter(|name| name.contains(".a2m-"))
-            .count(),
-        0
-    );
+    let temporary: Vec<String> = scene
+        .stand
+        .listing()
+        .unwrap()
+        .into_iter()
+        .filter(|name| name.contains(".a2m-"))
+        .collect();
+    assert_eq!(temporary, [leftover]);
 
     // The record of the save is lost and the run resumes: a new driver
     // opens the file and reports the intended digest, so the save landed
@@ -815,6 +910,495 @@ async fn a_locked_or_protected_file_is_not_written() {
         );
         untouched(&scene);
     }
+}
+
+// ---- the audit of decision 0149 ----
+
+#[tokio::test]
+async fn a_link_planted_at_a_temporary_files_name_costs_no_other_file() {
+    let scene = Scene::new();
+    let store = store().await;
+    // The name a save's temporary file had when it was made from the record's
+    // token alone, planted as a link to another file inside the root.
+    let stamp = "stamp-1-example_stock_set";
+    let token: String = Digest::of(stamp.as_bytes())
+        .to_string()
+        .chars()
+        .take(16)
+        .collect();
+    let planted = format!("prices/stock.csv.a2m-{token}.tmp");
+    if !shown(
+        &scene,
+        Fault::LinkInside {
+            at: planted.clone(),
+            to: seed::PRICE_LIST_CSV.to_owned(),
+        },
+    ) {
+        return;
+    }
+    let victim = scene.stand.sha256(seed::PRICE_LIST_CSV).unwrap();
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    write(&scene, &store, 1, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    // The write landed in its own file.
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["38"]
+    );
+    // The other file is the file it was: not removed, not replaced, not
+    // written through the link.
+    assert_eq!(scene.stand.sha256(seed::PRICE_LIST_CSV).unwrap(), victim);
+    let count = scene.stand.write_count(seed::PRICE_LIST_CSV).unwrap();
+    assert_eq!((count.content_changes, count.disappearances), (0, 0));
+    assert!(count.replacements.is_none_or(|replaced| replaced == 0));
+    // What the pack did not make is where it was, and nothing is left behind.
+    assert_eq!(scene.stand.inspect(&planted).unwrap().kind, EntryKind::Link);
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_document_whose_file_is_a_link_is_refused_and_a_write_follows_no_link() {
+    let scene = Scene::new();
+    let store = store().await;
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    // The document's file is moved to another surface's folder, and a link
+    // is left under its name: the link stays inside the root.
+    if !shown(
+        &scene,
+        Fault::MovedBehindLink {
+            name: seed::STOCK_CSV.to_owned(),
+            to: "config/app-data.csv".to_owned(),
+        },
+    ) {
+        return;
+    }
+    let read = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&read),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    // Nothing anywhere below the root changed, and nothing was left behind.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // The link appears after the file was read: the save refuses it too.
+    scene.stand.reset().unwrap();
+    let result = write(&scene, &store, 2, "example_stock_set", &values, || {
+        scene
+            .stand
+            .set_fault(Fault::MovedBehindLink {
+                name: seed::STOCK_CSV.to_owned(),
+                to: "config/app-data.csv".to_owned(),
+            })
+            .unwrap();
+    })
+    .await;
+    let failure = refused(result);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // A link in the way to the surface's folder: the roots' check follows it
+    // while it stays inside the root, so a read goes through. A write does
+    // not: it would land in a folder the surface does not name.
+    scene.stand.reset().unwrap();
+    scene
+        .stand
+        .set_fault(Fault::MovedBehindLink {
+            name: "prices".to_owned(),
+            to: "moved-prices".to_owned(),
+        })
+        .unwrap();
+    let found = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
+    assert_eq!(last_values(&found).get("on_hand"), Some(&Value::Int(40)));
+    let failure = refused(write(&scene, &store, 3, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert!(scene.stand.observe().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_lock_signal_that_is_a_link_to_nothing_is_a_lock_signal() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    // Some programs show that they hold a file by a link that points at
+    // nothing. It is there, so the file is held.
+    let signal = || Fault::LinkInside {
+        at: format!("{}.lock", seed::STOCK_CSV),
+        to: "prices/held-by-nobody-here".to_owned(),
+    };
+    if !shown(&scene, signal()) {
+        return;
+    }
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+
+    // It appears after the file was read: busy at the save, nothing written.
+    scene.stand.reset().unwrap();
+    let result = write(&scene, &store, 2, "example_stock_set", &values, || {
+        scene.stand.set_fault(signal()).unwrap();
+    })
+    .await;
+    let failure = refused(result);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn of_two_runs_on_one_file_the_second_to_save_is_stale() {
+    let scene = Scene::new();
+    let store = store().await;
+    // Two runs read the same file and build their changes from it.
+    let first = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let second = inputs(&[("item_code", text("EX-1001")), ("on_hand", Value::Int(7))]);
+    let mut one = begin(&scene, &store, 1, "example_stock_set", &first).await;
+    let mut two = begin(&scene, &store, 2, "example_stock_set", &second).await;
+
+    // The first saves, and its confirm sees its own file.
+    one.save().await.unwrap();
+    one.confirm().await.unwrap();
+    // The second was built from the file as it was. It is not saved: saving
+    // it would undo the first run's change.
+    let failure = two.save().await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Stale, "changed_since_preview")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    one.end(false).await;
+    two.end(true).await;
+
+    let cell = |key: &str| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", key, "on_hand")
+            .unwrap()
+    };
+    assert_eq!(
+        (cell("EX-1002"), cell("EX-1001")),
+        (vec!["38".to_owned()], vec!["12".to_owned()])
+    );
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        1
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_confirm_that_finds_another_file_is_stale_and_answered() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let mut run = begin(&scene, &store, 1, "example_stock_set", &values).await;
+    run.save().await.unwrap();
+    // Another writer saves the file between the replace and the confirm.
+    scene
+        .stand
+        .set_fault(Fault::changed(seed::STOCK_CSV, Change::Elsewhere))
+        .unwrap();
+    let failure = run.confirm().await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Stale, "changed_since_preview")
+    );
+    // The replace was called and answered: this is not a write that was
+    // never sent.
+    assert_eq!(failure.sent, Sent::Answered);
+    run.end(true).await;
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_file_whose_bits_cannot_be_kept_is_not_replaced() {
+    // A set-group bit is never copied onto a file the engine wrote, so the
+    // contract's temporary file cannot be given the old file's bits: the
+    // save stops by name before a byte is written, and nothing is left. On
+    // Windows a file has no such bits, and the stand cannot set them.
+    let scene = Scene::new();
+    let store = store().await;
+    if !shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o2640,
+            denies_this_user: false,
+        },
+    ) {
+        return;
+    }
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    if before.mode != Some(0o2640) {
+        // The system took the bit off as it was set: nothing to show.
+        return;
+    }
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::UnknownVariant, "metadata_not_kept")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    let after = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    assert_eq!(
+        (after.identity, after.mode, after.owner),
+        (before.identity, before.mode, before.owner)
+    );
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["40"]
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_file_is_replaced_only_by_one_who_may_write_it_and_keeps_its_owner_and_mode() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let stored = |scene: &Scene| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap()
+    };
+
+    // Bits that give this user no right to write the file, in a folder the
+    // user may write: the file is not replaced. The superuser is held by no
+    // bits, so the stand cannot show this to it.
+    if shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o464,
+            denies_this_user: true,
+        },
+    ) {
+        let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+        assert_eq!(
+            class_and_code(&failure),
+            (FailureClass::Policy, "file_protected")
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+        assert_eq!(stored(&scene), ["40"]);
+        assert!(scene.stand.strays().unwrap().is_empty());
+        scene.stand.clear_faults().unwrap();
+    }
+
+    // The new file has the old file's permission bits.
+    if !shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o640,
+            denies_this_user: false,
+        },
+    ) {
+        // Not Unix: a file has no owner, group, or bits the stand can show.
+        return;
+    }
+    write(&scene, &store, 2, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored(&scene), ["38"]);
+    assert_eq!(
+        scene.stand.inspect(seed::STOCK_CSV).unwrap().mode,
+        Some(0o640)
+    );
+    scene.stand.clear_faults().unwrap();
+
+    // A file of another owner and group, which only the superuser can make.
+    scene.stand.reset().unwrap();
+    if shown(
+        &scene,
+        Fault::OwnedByAnother {
+            file: seed::STOCK_CSV.to_owned(),
+        },
+    ) {
+        let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+        let may_write = std::fs::OpenOptions::new()
+            .write(true)
+            .open(scene.stand.path(seed::STOCK_CSV).unwrap())
+            .is_ok();
+        let result = write(&scene, &store, 3, "example_stock_set", &values, || {}).await;
+        let after = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+        if may_write {
+            // One who may write it replaces it, and the new file is still
+            // the other owner's, with the bits it had.
+            result.unwrap();
+            assert_eq!(stored(&scene), ["38"]);
+            assert_ne!(after.identity, before.identity);
+        } else {
+            // One who may write the folder and not the file replaces nothing.
+            let failure = refused(result);
+            assert_eq!(
+                class_and_code(&failure),
+                (FailureClass::Policy, "file_protected")
+            );
+            assert_eq!(failure.sent, Sent::NotSent);
+            assert_eq!(stored(&scene), ["40"]);
+            assert_eq!(after.identity, before.identity);
+        }
+        assert_eq!((after.owner, after.mode), (before.owner, before.mode));
+    }
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn text_a_spreadsheet_program_would_run_is_refused_and_never_altered() {
+    let scene = Scene::new();
+    let store = store().await;
+    let stored_note = |scene: &Scene, key: &str| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", key, "note")
+            .unwrap()
+    };
+    let is_refused = |failure: &StepFailure, value: &str| {
+        assert_eq!(
+            class_and_code(failure),
+            (FailureClass::Input, "value_begins_formula"),
+            "{value:?}"
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+        // The message names the field and never holds the value.
+        assert!(failure.failure.message().contains("`note`"));
+        assert!(!failure.failure.message().contains(value.trim()));
+    };
+
+    // An update: each way a field can begin that a spreadsheet program
+    // would run when a person opens the file.
+    let mut caller = 0;
+    for note in ["=1+1", "+1+1", "-1+1", "@total", "  =1+1", "\u{FF1D}1+1"] {
+        caller += 1;
+        let values = inputs(&[("item_code", text("EX-1002")), ("note", text(note))]);
+        let result = write(
+            &scene,
+            &store,
+            caller,
+            "example_stock_note_set",
+            &values,
+            || {},
+        )
+        .await;
+        is_refused(&refused(result), note);
+    }
+    // A new row: the same rule.
+    let values = inputs(&[
+        ("item_code", text("EX-1009")),
+        ("on_hand", Value::Int(5)),
+        ("note", text("=1+1")),
+    ]);
+    let result = write(&scene, &store, 20, "example_stock_add", &values, || {}).await;
+    is_refused(&refused(result), "=1+1");
+    // Nothing was written, and the value was not made safe by changing it.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+    assert_eq!(
+        stored_note(&scene, "EX-1002"),
+        ["Says \"heavy\" on the box"]
+    );
+
+    // A sign inside a value, and a negative number, are not formulas.
+    let values = inputs(&[
+        ("item_code", text("EX-1002")),
+        ("note", text("1+1=2 - checked")),
+    ]);
+    write(&scene, &store, 21, "example_stock_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1002"), ["1+1=2 - checked"]);
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(-3))]);
+    write(&scene, &store, 22, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["-3"]
+    );
+
+    // A document that declares the column free text that may begin so: the
+    // value is stored exactly as given, and reads back as given.
+    let values = inputs(&[("item_code", text("EX-1002")), ("note", text("=1+1"))]);
+    let written = write(&scene, &store, 23, "example_free_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1002"), ["=1+1"]);
+    assert_eq!(
+        last_values(&written.read_back).get("note"),
+        Some(&text("=1+1"))
+    );
+
+    // What would end a field or a row is quoted, and a quote is doubled:
+    // the stand's own reader and the pack's read-back both give the text.
+    let said = "He said \"no, thanks\", twice";
+    let values = inputs(&[("item_code", text("EX-1001")), ("note", text(said))]);
+    let written = write(&scene, &store, 24, "example_stock_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1001"), [said]);
+    assert_eq!(
+        last_values(&written.read_back).get("note"),
+        Some(&text(said))
+    );
+    let bytes = scene.stand.bytes(seed::STOCK_CSV).unwrap().unwrap();
+    let field = b"\"He said \"\"no, thanks\"\", twice\"";
+    assert!(bytes.windows(field.len()).any(|window| window == field));
+    // The file still has as many rows, each with as many fields.
+    let rows = scene.stand.stored_rows(seed::STOCK_CSV, ',').unwrap();
+    assert_eq!(rows.len(), 6);
+    assert!(rows.iter().all(|row| row.len() == 4));
 }
 
 #[tokio::test]
@@ -977,7 +1561,10 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     assert!(!described.text.contains("stock.csv"));
 
     // The drafter writes a document for each layout, with the file's own
-    // fingerprint, and leaves the key and every type as an open question.
+    // fingerprint. A cell of delimited text or a workbook is the text it
+    // holds; a JSON value's type and every key are left as questions. With
+    // no `target.yaml` in the folder, no read is drafted: a read is named
+    // after its target.
     let folder = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
@@ -1002,8 +1589,28 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
             .filter(|question| question.file.as_str() == file)
             .count()
     };
-    // One for the key, and one for the type of each of the four columns.
-    assert_eq!(questions("documents/stock.yaml"), 5);
+    // Delimited text: no question. JSON: the key, and each value's type.
+    assert_eq!(questions("documents/stock.yaml"), 0);
+    assert!(questions("documents/example_settings.yaml") > 0);
+    // A question is the pack's own words. No header, table name, or file
+    // name reaches it: text in a file may be written as an instruction.
+    for question in &drafted.open_questions {
+        for layout in &layouts {
+            let from_the_file = layout
+                .headers
+                .iter()
+                .chain(layout.tables.iter().flat_map(|table| &table.headers))
+                .chain(layout.tables.iter().map(|table| &table.name))
+                .chain(std::iter::once(&layout.file));
+            for said in from_the_file.filter(|said| !said.is_empty()) {
+                assert!(
+                    !question.question.contains(said.as_str()),
+                    "`{}` holds `{said}`",
+                    question.question
+                );
+            }
+        }
+    }
     let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
     assert!(
         stock.contains("rows: \"all\"") && stock.contains("item_code"),
@@ -1011,5 +1618,762 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     );
     // Nothing is drafted for a write.
     assert!(!stock.contains("writable"), "{stock}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// Discovers the files named, through a port that can only read, and
+/// drafts from what was found into a folder holding the fixtures' own
+/// `target.yaml`, so that reads are drafted beside the documents.
+async fn drafted_from(
+    scene: &Scene,
+    label: &str,
+    names: &[&str],
+) -> (std::path::PathBuf, a2m_files::DraftReport) {
+    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_provider::{CheckedPaths, Deadline, DiscoveryScope, ReadOnlyPort, RootName};
+
+    let surface = scene.surface("price_files");
+    let description = a2m_provider::SurfaceDescription {
+        kind: SurfaceKind::new("file").unwrap(),
+        archetype: Archetype::Artifact,
+        address: "prices".to_owned(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let roots = common::roots(&scene.stand, Access::Read);
+    let mut paths = CheckedPaths::none();
+    for name in names {
+        let path = roots
+            .check(&RootName::new("project").unwrap(), name, Access::Read)
+            .unwrap();
+        paths.insert(*name, path);
+    }
+    let (handle, prepared) = scene.prepared(&surface, None, Posture::Discovery).await;
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(std::time::Duration::from_secs(30)),
+        paths: &paths,
+        redact: &a2m_core::NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    let folder = std::env::temp_dir().join(format!(
+        "a2m-pack-file-drafted-{label}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(
+        common::fixtures().join("target.yaml"),
+        folder.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(
+        scene.registry.compiler_set(),
+        &a2m_files::TargetRoot::new(&folder),
+    )
+    .draft(&kept.0)
+    .unwrap();
+    (folder, report)
+}
+
+#[tokio::test]
+async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_the_key() {
+    let mut scene = Scene::new();
+    let (folder, report) =
+        drafted_from(&scene, "lists", &[seed::STOCK_CSV, seed::ADJUSTMENTS_CSV]).await;
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        written,
+        [
+            "documents/adjustments.yaml",
+            "documents/stock.yaml",
+            "operations/adjustments_get.yaml",
+            "operations/adjustments_list.yaml",
+            "operations/stock_get.yaml",
+            "operations/stock_list.yaml",
+        ]
+    );
+    assert!(report.refused.is_empty(), "{report:?}");
+    // The documents and the lists hold no question; the reads by key hold
+    // every one: the key, and the type of each key field.
+    let mut questioned: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    questioned.dedup();
+    assert_eq!(
+        questioned,
+        [
+            "operations/adjustments_get.yaml",
+            "operations/stock_get.yaml"
+        ]
+    );
+    let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
+    assert!(
+        stock.contains("type: \"untrusted_text\"") && !stock.contains("key:"),
+        "{stock}"
+    );
+    assert!(!stock.contains("writable"), "{stock}");
+
+    // While a read by key holds its questions, nothing compiles, and the
+    // compiler names the file and the question.
+    let held = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    let question = held.find("kernel.open_question").unwrap();
+    assert!(question.at.file.as_str().ends_with("_get.yaml"), "{held:?}");
+    // Set aside, as the scout sets aside a draft that holds a question,
+    // the documents and the lists compile.
+    for file in &questioned {
+        std::fs::remove_file(folder.join(file)).unwrap();
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let untrusted = scene
+        .plan
+        .field_types
+        .iter()
+        .position(|field_type| field_type.name == a2m_files::UNTRUSTED_TEXT)
+        .unwrap();
+    assert!(scene.plan.field_types[untrusted].untrusted);
+    let normalizer = a2m_expr::Normalizer::load(
+        scene
+            .plan
+            .expression(scene.plan.field_types[untrusted].normalizer.unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    for (file, operation) in [
+        (seed::STOCK_CSV, "example_stock_list"),
+        (seed::ADJUSTMENTS_CSV, "example_adjustments_list"),
+    ] {
+        let observed = scene
+            .read_operation(operation, &Values::new())
+            .await
+            .unwrap();
+        let result = common::outputs_of(&scene.plan, operation, last_values(&observed));
+        let plan = scene
+            .plan
+            .operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap();
+        // Each output is marked untrusted, but whether more rows were left.
+        for output in &plan.outputs {
+            let marked = output
+                .field_type
+                .is_some_and(|index| scene.plan.field_types[index.get()].untrusted);
+            assert_eq!(marked, output.name != "truncated", "{}", output.name);
+        }
+        assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
+        // What the stand holds, column by column, read by its own reader.
+        let stored = scene.stand.stored_rows(file, ',').unwrap();
+        let (headers, rows) = stored.split_first().unwrap();
+        for (position, header) in headers.iter().enumerate() {
+            let list = result.get(header).and_then(Value::as_list).unwrap();
+            let expected: Vec<Value> = rows
+                .iter()
+                .map(|row| match row[position].as_str() {
+                    // An empty field holds no value.
+                    "" => Value::Null,
+                    cell => normalizer.normalize(&text(cell)).unwrap().normalized,
+                })
+                .collect();
+            assert_eq!(list, expected.as_slice(), "{file} {header}");
+        }
+    }
+    // A field that begins with a sign a spreadsheet program would run is
+    // returned as the text it is, and marked: the formula rule is a rule of
+    // writes, and a value is never changed.
+    let observed = scene
+        .read_operation("example_adjustments_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(
+        &scene.plan,
+        "example_adjustments_list",
+        last_values(&observed),
+    );
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    assert_eq!(
+        column("amount"),
+        [text("=1+2"), text("+15"), text("-12.50"), text("7")]
+    );
+    assert_eq!(column("memo")[1], text("@reviewer"));
+    assert_eq!(column("memo")[3], text("=HYPERLINK(\"x\")"));
+    // Nothing was written.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // A write over the drafted document does not compile: its rows have no
+    // key, which is still the question of the read by key.
+    let write = "operation: example_stock_set
+effect: write
+key: item_code
+commit_points: 1
+inputs:
+  item_code: {type: identifier}
+  on_hand: {type: integer}
+outputs:
+  on_hand: {type: integer}
+bindings:
+  - mode: file
+    verb: update
+    document: stock
+    record: rows
+    key: {item_code: input.item_code}
+    fields: {on_hand: input.on_hand}
+    read_back: {record: rows}
+description: >
+  Sets the quantity on hand of one item in the stock file.
+";
+    std::fs::write(folder.join("operations").join("stock_set.yaml"), write).unwrap();
+    let refused = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    assert!(
+        refused
+            .iter()
+            .any(|problem| problem.message.contains("states no key")
+                && problem.message.contains("open question")),
+        "{refused:?}"
+    );
+    // Nor does marking a drafted field writable: a written field is of a
+    // type someone stated.
+    std::fs::write(
+        folder.join("documents").join("stock.yaml"),
+        stock.replacen(
+            "type: \"untrusted_text\"",
+            "type: \"untrusted_text\"\n        writable: true",
+            1,
+        ),
+    )
+    .unwrap();
+    let refused = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    assert!(
+        refused
+            .iter()
+            .any(|problem| problem.code.as_str() == "file.document_invalid"
+                && problem.message.contains("untrusted_text")),
+        "{refused:?}"
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn the_drafted_document_names_the_surface_its_file_was_observed_on() {
+    let mut scene = Scene::new();
+    let (folder, report) = drafted_from(&scene, "surface", &[seed::STOCK_CSV]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
+    assert!(stock.contains("surface: \"price_files\""), "{stock}");
+    // In a target whose first file surface is another, the document is
+    // still the file of the surface it was observed on.
+    let target = std::fs::read_to_string(folder.join("target.yaml")).unwrap();
+    let first = "  price_files:\n    kind: file\n    folder: prices\n    stands: alone\n";
+    let second = "  config_files:\n    kind: file\n    folder: config\n    stands: alone\n";
+    assert!(target.contains(&format!("{first}{second}")), "{target}");
+    std::fs::write(
+        folder.join("target.yaml"),
+        target.replace(&format!("{first}{second}"), &format!("{second}{first}")),
+    )
+    .unwrap();
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    assert_eq!(scene.plan.surfaces[0].name.as_str(), "config_files");
+    let (_, surface) = scene.binding("example_stock_list");
+    assert_eq!(surface.surface.name.as_str(), "price_files");
+    let observed = scene
+        .read_operation("example_stock_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(&scene.plan, "example_stock_list", last_values(&observed));
+    let stored = scene.stand.stored_rows(seed::STOCK_CSV, ',').unwrap();
+    let codes = result.get("item_code").and_then(Value::as_list).unwrap();
+    assert_eq!(codes.len(), stored.len() - 1);
+    assert_eq!(codes[0], text(&stored[1][0]));
+    assert!(scene.stand.observe().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+// ---- the guard of the driver ----
+
+#[tokio::test]
+async fn a_save_is_carried_out_only_live_or_as_the_marked_step_on_a_test_record() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let (binding, surface) = scene.binding("example_stock_set");
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+
+    // Where nothing may be written, the marked save is refused by the
+    // driver and the stand shows the file as it was.
+    for (caller, posture) in [
+        (1, Posture::Discovery),
+        (
+            2,
+            Posture::Sandbox {
+                test_records: false,
+            },
+        ),
+    ] {
+        let grant = granted(&store, caller, "example_stock_set").await;
+        let (handle, mut prepared) = scene.prepared(&surface, Some(grant.fence), posture).await;
+        scene
+            .write(
+                &handle,
+                &mut prepared,
+                &binding.act[..commit],
+                &values,
+                &grant,
+            )
+            .await
+            .unwrap();
+        let refused = refused(
+            scene
+                .write(
+                    &handle,
+                    &mut prepared,
+                    &binding.act[commit..],
+                    &values,
+                    &grant,
+                )
+                .await
+                .map(|_| Written {
+                    act: Vec::new(),
+                    read_back: Vec::new(),
+                }),
+        );
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Policy, "read_only_posture"),
+            "{posture:?}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent);
+        assert!(handle.release(prepared, true).await.complete);
+        assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+    }
+
+    // In the sandbox that writes a test record, a hand-built save with the
+    // mark taken off is refused, and the file is as it was.
+    let mut unmarked = binding.act[commit].clone();
+    assert!(unmarked.commits);
+    unmarked.commits = false;
+    let grant = granted(&store, 3, "example_stock_set").await;
+    let (handle, mut prepared) = scene
+        .prepared(
+            &surface,
+            Some(grant.fence),
+            Posture::Sandbox { test_records: true },
+        )
+        .await;
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[..commit],
+            &values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    let refused = refused(
+        scene
+            .write(&handle, &mut prepared, &[unmarked], &values, &grant)
+            .await
+            .map(|_| Written {
+                act: Vec::new(),
+                read_back: Vec::new(),
+            }),
+    );
+    assert_eq!(refused.sent, Sent::NotSent);
+    assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+
+    // The step marked `commits` is the one the guard is lifted for there.
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[commit..],
+            &values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    assert!(handle.release(prepared, false).await.complete);
+    assert_ne!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+}
+
+#[tokio::test]
+async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_is_not_marked() {
+    use a2m_provider::{Deadline, Driver as _, PrepareContext, StepInput};
+
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let (binding, surface) = scene.binding("example_stock_set");
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    // The driver alone, with no handle before it: what the handle would
+    // refuse is not what is tested here.
+    let driver = a2m_pack_file::FileDriver::new(
+        common::roots(&scene.stand, Access::Write),
+        a2m_pack_file::FileLimits::from_settings(&Values::new()),
+    );
+    let mut unmarked = binding.act[commit].clone();
+    unmarked.commits = false;
+    let cases = [
+        (Posture::Discovery, binding.act[commit].clone()),
+        (
+            Posture::Sandbox {
+                test_records: false,
+            },
+            binding.act[commit].clone(),
+        ),
+        (Posture::Sandbox { test_records: true }, unmarked.clone()),
+        (Posture::Live, unmarked),
+    ];
+    for (caller, (posture, save)) in (1_u8..).zip(cases) {
+        let grant = granted(&store, caller, "example_stock_set").await;
+        let handle = scene
+            .registry
+            .driver(&a2m_core::Mode::new("file").unwrap())
+            .unwrap();
+        let supervisor = handle.supervisor(Vec::new());
+        let cx = PrepareContext {
+            run: grant.fence.run,
+            epoch: grant.fence.epoch,
+            surface: &surface,
+            plan: &scene.plan,
+            posture,
+            deadline: Deadline::after(std::time::Duration::from_secs(30)),
+            redact: &a2m_core::NoSecrets,
+            destinations: &a2m_provider::Destinations::default(),
+            paths: &a2m_provider::CheckedPaths::none(),
+            supervisor: &supervisor,
+        };
+        let mut prepared = driver.prepare(&cx, None).await.unwrap();
+        let mut last = None;
+        for step in binding.act[..commit].iter().chain([&save]) {
+            let args = scene.args(step, &values);
+            let input = StepInput::new(&args, Deadline::after(std::time::Duration::from_secs(30)))
+                .for_record(grant.record, Some(&grant.key), Some(&grant.stamp));
+            last = Some(driver.act(&mut prepared, step, &input).await);
+        }
+        let refused = last.unwrap().unwrap_err();
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Policy, "read_only_posture"),
+            "{posture:?}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent);
+        driver.release(prepared, true).await;
+        assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+        assert!(scene.stand.strays().unwrap().is_empty());
+    }
+}
+
+// ---- the kernel's second pass (decision 0173) ----
+
+#[tokio::test]
+async fn a_project_document_is_read_from_the_project_folder_of_the_run() {
+    // The surfaces are in the root `project`. The pack's own root of that
+    // name is the folder the engine was started in, where no document's
+    // file is; the run's project folder is the stand's root.
+    let scene = Scene::with_access(Access::Read);
+    // A second project folder, whose stock file says another quantity.
+    let other = example_files::harness::FileStand::start().unwrap();
+    let stock = other.path(seed::STOCK_CSV).unwrap();
+    let bytes = std::fs::read(&stock).unwrap();
+    let changed = String::from_utf8(bytes)
+        .unwrap()
+        .replacen(",40,", ",41,", 1);
+    std::fs::write(&stock, &changed).unwrap();
+
+    let (binding, surface) = scene.binding("example_stock_get");
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut seen = Vec::new();
+    for paths in [
+        scene.paths.clone(),
+        common::project_paths(other.root()),
+        scene.paths.clone(),
+    ] {
+        let (handle, mut prepared) = scene
+            .prepared_in(&surface, None, Posture::Live, &paths)
+            .await
+            .unwrap();
+        let found = scene
+            .read(&handle, &mut prepared, &binding.act, &item)
+            .await
+            .unwrap();
+        seen.push(last_values(&found).get("on_hand").cloned());
+        handle.release(prepared, false).await;
+    }
+    assert_eq!(
+        seen,
+        [
+            Some(Value::Int(40)),
+            Some(Value::Int(41)),
+            Some(Value::Int(40))
+        ]
+    );
+
+    // A run whose request came with no project folder stops by name, and
+    // never falls back to the folder the engine was started in.
+    let stopped = scene
+        .prepared_in(
+            &surface,
+            None,
+            Posture::Live,
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+        .expect_err("a run with no project folder");
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Input, "project_folder_missing")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+    // Reads: the folder the engine was started in is untouched, and each
+    // project's file holds what it held.
+    assert!(scene.stand.outside_untouched().unwrap());
+    assert_eq!(
+        other.bytes(seed::STOCK_CSV).unwrap().unwrap(),
+        changed.as_bytes()
+    );
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+}
+
+// ---- a root of each request's project (decision 0193) ----
+
+#[tokio::test]
+async fn a_root_of_each_requests_project_resolves_in_that_project_and_never_another() {
+    // One registry, whose root `files` stands for the project folder of
+    // each request, as a served engine holds it. Project A is the scene's
+    // stand; project B a second stand, whose stock file says another
+    // quantity.
+    let mut scene = Scene::with_project_files();
+    let store = store().await;
+    let other = example_files::harness::FileStand::start().unwrap();
+    let stock = other.path(seed::STOCK_CSV).unwrap();
+    let bytes = std::fs::read(&stock).unwrap();
+    let changed = String::from_utf8(bytes)
+        .unwrap()
+        .replacen(",40,", ",41,", 1);
+    std::fs::write(&stock, &changed).unwrap();
+    let in_a = scene.paths.clone();
+    let in_b = common::project_paths(other.root());
+
+    // Each read resolves in the project of its own run, whichever ran
+    // first.
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut seen = Vec::new();
+    for paths in [&in_b, &in_a, &in_b] {
+        let (binding, surface) = scene.binding("example_stock_get");
+        let (handle, mut prepared) = scene
+            .prepared_in(&surface, None, Posture::Live, paths)
+            .await
+            .unwrap();
+        let found = scene
+            .read(&handle, &mut prepared, &binding.act, &item)
+            .await
+            .unwrap();
+        seen.push(last_values(&found).get("on_hand").cloned());
+        handle.release(prepared, false).await;
+    }
+    assert_eq!(
+        seen,
+        [
+            Some(Value::Int(41)),
+            Some(Value::Int(40)),
+            Some(Value::Int(41))
+        ]
+    );
+
+    // A write in B changes B's file, as B's stand reads it, and nothing in
+    // A.
+    scene.paths = in_b.clone();
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let written = write(&scene, &store, 1, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(
+        last_values(&written.read_back).get("on_hand"),
+        Some(&Value::Int(38))
+    );
+    assert_eq!(
+        other
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["38"]
+    );
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+
+    // A run whose request came with no project folder stops by name, unsent,
+    // and never falls back to another project.
+    let surface = scene.binding("example_stock_get").1;
+    let stopped = scene
+        .prepared_in(
+            &surface,
+            None,
+            Posture::Live,
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+        .expect_err("a run with no project folder");
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Input, "project_folder_missing")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+
+    // B's surface folder becomes a link into A's: a run in B is refused by
+    // name and never reads A's file.
+    #[cfg(unix)]
+    {
+        let prices = other.path("prices").unwrap();
+        std::fs::remove_dir_all(&prices).unwrap();
+        std::os::unix::fs::symlink(scene.stand.path("prices").unwrap(), &prices).unwrap();
+        let binding = scene.binding("example_stock_get").0;
+        let failure = match scene
+            .prepared_in(&surface, None, Posture::Live, &in_b)
+            .await
+        {
+            Err(failure) => failure,
+            Ok((handle, mut prepared)) => {
+                let read = scene
+                    .read(&handle, &mut prepared, &binding.act, &item)
+                    .await;
+                handle.release(prepared, read.is_err()).await;
+                read.expect_err("a read through a link into another project")
+            }
+        };
+        assert_eq!(
+            class_and_code(&failure),
+            (FailureClass::Input, "path_not_allowed")
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+    }
+    assert!(scene.stand.observe().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn five_reads_say_the_same_of_how_each_step_was_done() {
+    let scene = Scene::new();
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut all = Vec::new();
+    for _ in 0..5 {
+        let found = scene
+            .read_operation("example_stock_get", &item)
+            .await
+            .unwrap();
+        let means: Vec<Vec<(String, String)>> = found
+            .iter()
+            .map(|outcome| {
+                let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+                observed
+                    .acting()
+                    .expect("how the step was done")
+                    .means
+                    .into_iter()
+                    .map(|detail| (detail.name, detail.value))
+                    .collect()
+            })
+            .collect();
+        all.push(means);
+    }
+    assert!(all.windows(2).all(|pair| pair[0] == pair[1]));
+    let first: Vec<(&str, &str)> = all[0][0]
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    assert_eq!(first, [("format", "delimited"), ("open_for", "read")]);
+}
+
+#[tokio::test]
+async fn a_drafted_workbook_list_reads_each_cell_as_stored_and_a_formula_as_its_kept_result() {
+    let mut scene = Scene::new();
+    let (folder, report) = drafted_from(&scene, "workbook", &[seed::PRICE_LIST_WORKBOOK]).await;
+    let document =
+        std::fs::read_to_string(folder.join("documents").join("price_list.yaml")).unwrap();
+    // Text is marked; a number is an exact decimal; the column of formulas
+    // says so, and is read as the result the workbook kept (section 308).
+    assert!(
+        document
+            .contains("header: \"Line value\"\n        type: \"decimal\"\n        formula: true"),
+        "{document}"
+    );
+    assert!(
+        document.contains("header: \"Item code\"\n        type: \"untrusted_text\"\n"),
+        "{document}"
+    );
+    assert_eq!(document.matches("formula: true").count(), 1, "{document}");
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let list = "example_price_list_price_table_list";
+    let observed = scene.read_operation(list, &Values::new()).await.unwrap();
+    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    assert_eq!(
+        column("item_code"),
+        [text("EX-1001"), text("EX-1002"), text("EX-1003")]
+    );
+    assert_eq!(
+        column("unit_price"),
+        [decimal("4.5"), decimal("10"), decimal("1250")]
+    );
+    // What the stand wrote as each formula's kept result, never the
+    // formula's text, and never calculated here.
+    assert_eq!(
+        column("line_value"),
+        [decimal("54"), decimal("400"), decimal("50000")]
+    );
+    assert!(!format!("{result:?}").contains('*'), "{result:?}");
+    assert!(scene.stand.observe().unwrap().is_empty());
+
+    // A formula where the drafted document declares a value, as another
+    // writer may leave one, still stops the read by name.
+    scene
+        .stand
+        .set_fault(Fault::formula_at_declared_value())
+        .unwrap();
+    let stopped = scene
+        .read_operation(list, &Values::new())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::UnknownVariant, "formula_at_place")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
     let _ = std::fs::remove_dir_all(&folder);
 }

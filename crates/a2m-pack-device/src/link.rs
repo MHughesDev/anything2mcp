@@ -96,8 +96,7 @@ pub(crate) enum LinkError {
 /// How sending a frame failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SendError {
-    /// No byte left: the link was already closed, or the request cannot be
-    /// framed.
+    /// No byte left: the link was already closed.
     NotSent,
     /// Some or all of the frame may have left.
     Unknown,
@@ -105,15 +104,29 @@ pub(crate) enum SendError {
 
 /// One open link to one device.
 pub(crate) trait Link: Send {
-    /// Sends one request as one frame. Returns the frame's bytes.
+    /// Builds the frame for one request: its bytes, exactly as [`Link::send`]
+    /// will put them on the link. Nothing is sent. `None` when the protocol
+    /// cannot carry the request. A frame built is the next frame of the
+    /// link: it is sent, or nothing more is.
+    fn frame(&mut self, request: &Request) -> Option<Vec<u8>>;
+
+    /// Sends one frame that [`Link::frame`] built, whole.
     fn send<'a>(
         &'a mut self,
-        request: &'a Request,
+        frame: &'a [u8],
         within: Duration,
-    ) -> BoxFuture<'a, Result<Vec<u8>, SendError>>;
+    ) -> BoxFuture<'a, Result<(), SendError>>;
 
     /// Reads the reply to the request last sent: its bytes, whole.
     fn receive(&mut self, within: Duration) -> BoxFuture<'_, Result<Vec<u8>, LinkError>>;
+
+    /// Reads a frame that [`Link::frame`] built for a write back into the
+    /// request it carries. `None` when the bytes are not a write of a form
+    /// the protocol declares, which is also what a protocol that cannot read
+    /// its own frames answers.
+    fn written(&self, _frame: &[u8]) -> Option<Request> {
+        None
+    }
 
     /// Reads a reply's bytes as the answer to `request`. `None` when the
     /// bytes are not a reply of a form the protocol declares for it.

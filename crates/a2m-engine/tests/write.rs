@@ -357,3 +357,241 @@ async fn a_write_that_was_never_sent_fails_cleanly() {
     assert_eq!(scene.record_states().await, [RecordState::Failed]);
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
+
+// ---- what is stored and shown passes the redactor ----
+
+/// Whether any piece of evidence the engine handed over holds `text`.
+fn evidence_holds(scene: &Scene, text: &str) -> bool {
+    scene
+        .control
+        .evidence_given
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|bytes| String::from_utf8_lossy(bytes).contains(text))
+}
+
+#[tokio::test]
+async fn a_secret_the_system_shows_is_in_nothing_the_engine_stores_or_shows() {
+    let shown = "secret-for-tests-7c41e9";
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    scene.vault.register(&a2m_core::Secret::new(shown));
+
+    // The system shows a registered secret in a field that carries no
+    // label: the description of a line item that exists.
+    let seeded = scene
+        .app
+        .http()
+        .put(scene.app.url("/api/orders/A-102/items/L-300"))
+        .json(&serde_json::json!({
+            "description": format!("Rail {shown}"), "quantity": 3, "length_in": "150.5"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(seeded.status().is_success());
+
+    // The record is previewed for an update. Its diff, the values seen
+    // before, and the intended values hold the secret nowhere, and the
+    // diff shows that something was redacted.
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    approved(&scene, ITEM_UPSERT, &input).await;
+    assert!(!evidence_holds(&scene, shown), "after the preview");
+    assert!(evidence_holds(&scene, "[redacted]"));
+
+    // This binding hands the save the record as it was last read, and
+    // that now holds a mask where the secret was. A mask is never sent to
+    // the system: the save is refused before it reaches the driver, and
+    // the record stays as it was.
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::UnknownVariant, "argument_masked".to_owned())
+    );
+    assert_eq!(scene.hooks.count("put_item"), 0);
+    let stored = scene.app.stored_item("A-102", "L-300").await.unwrap();
+    assert_eq!(stored.unwrap().description, format!("Rail {shown}"));
+    assert!(
+        !evidence_holds(&scene, shown),
+        "after the write was refused"
+    );
+    assert!(!format!("{outcome:?}").contains(shown));
+}
+
+#[tokio::test]
+async fn a_write_that_carries_a_registered_secret_is_refused_before_anything_is_sent() {
+    let written = "secret-for-tests-b20f55";
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    scene.vault.register(&a2m_core::Secret::new(written));
+    let input = item("A-102", "L-301", &format!("Rail {written}"), 1, "20");
+    let outcome = scene.work(JobKind::Preview, ITEM_UPSERT, input).await;
+    // What is read back passes the redactor, so such a value could never
+    // be compared with what the system holds.
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::Input, "input_invalid".to_owned())
+    );
+    assert!(!format!("{outcome:?}").contains(written));
+    assert!(scene.hooks.postures.lock().unwrap().is_empty());
+    assert!(!evidence_holds(&scene, written));
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_value_the_redactor_masked_is_never_sent_to_the_system() {
+    // The code the system hands out before the save holds a registered
+    // secret, so what the step returned is its mask. The save would take
+    // the code as an argument.
+    let scene = Scene::new(common::SLOT_ADD, |_| {}).await;
+    scene.vault.register(&a2m_core::Secret::new("N-001"));
+    let input = common::slot("A-102", 4, "12");
+    approved(&scene, common::SLOT_ADD, &input).await;
+    let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::UnknownVariant, "argument_masked".to_owned())
+    );
+    // The save never reached the driver, nothing was written under the
+    // mask, and nothing that was stored holds the code.
+    assert_eq!(scene.hooks.count("add_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+    assert!(!evidence_holds(&scene, "N-001"));
+}
+
+#[tokio::test]
+async fn a_record_in_doubt_whose_stored_values_were_masked_is_not_looked_for_under_the_mask() {
+    // The code the system hands out before the save is recorded for
+    // reconcile. It holds a registered secret, so what is recorded is its
+    // mask. The save itself does not take the code here, so it is sent,
+    // and its answer is lost.
+    let scene = Scene::new(common::SLOT_ADD, |plan| {
+        plan.operations[7].bindings[0].act[1]
+            .args
+            .retain(|arg| arg.name != "code");
+    })
+    .await;
+    scene.vault.register(&a2m_core::Secret::new("N-001"));
+    let input = common::slot("A-102", 4, "12");
+    approved(&scene, common::SLOT_ADD, &input).await;
+    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let outcome = scene
+        .work(JobKind::Execute, common::SLOT_ADD, input.clone())
+        .await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned())
+    );
+    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+    assert!(!evidence_holds(&scene, "N-001"));
+
+    // On resume the record cannot be found by what was recorded. Reading
+    // without it could find nothing, and nothing found would be taken for
+    // a write that did not land: the run stops for a person, and nothing
+    // is written a second time.
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::PossibleCommit, "cannot_reconcile".to_owned())
+    );
+    assert_eq!(scene.hooks.count("add_item"), 1);
+    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+}
+
+// ---- the binding a person approved is the binding that writes ----
+
+/// The stored diff of the scene's run, read back.
+async fn stored_diff(scene: &Scene) -> a2m_engine::Diff {
+    let blob = scene.run_row().await.diff.expect("a diff was stored");
+    let opened = scene.control.store.blobs().get(&blob).await.unwrap();
+    a2m_engine::Diff::decode(opened.expose()).unwrap()
+}
+
+#[tokio::test]
+async fn a_write_through_another_binding_than_the_approved_one_is_not_sent() {
+    // A keyless create with two bindings: the first reads its record back,
+    // the second offers only the system's acknowledgement.
+    let scene = Scene::new(common::SLOT_ADD, |plan| {
+        common::keyless_slot_add(plan);
+        let operation = &mut plan.operations[7];
+        let mut second = operation.bindings[0].clone();
+        second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
+        second.evidence = a2m_core::WriteEvidence::Acknowledged;
+        operation.bindings.push(second);
+    })
+    .await;
+    let input = common::slot("A-102", 4, "12");
+    approved(&scene, common::SLOT_ADD, &input).await;
+    // The person was shown the first binding and its evidence.
+    let diff = stored_diff(&scene).await;
+    let named = diff.records[0]
+        .binding
+        .as_ref()
+        .expect("the binding is named");
+    assert_eq!(
+        (named.position, named.evidence),
+        (0, a2m_core::WriteEvidence::ReadBack)
+    );
+    assert!(!diff.records[0].not_read_back());
+
+    // At the write only the second binding may act: nothing is sent
+    // through it, because its evidence is not what was approved.
+    *scene.pin.lock().unwrap() = Some(a2m_core::Mode::new(common::SECOND_MODE).unwrap());
+    let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::Policy, "approval_stale".to_owned())
+    );
+    assert_eq!(scene.hooks.count("intend"), 0);
+    assert_eq!(scene.hooks.count("reserve_code"), 0);
+    assert_eq!(scene.hooks.count("add_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_could_take() {
+    let scene = Scene::new(common::KIT_ENTER, |plan| {
+        // The lines' operation gets a second binding that is only
+        // acknowledged.
+        let operation = &mut plan.operations[2];
+        operation.effect = a2m_core::EffectClass::Irreversible;
+        let mut second = operation.bindings[0].clone();
+        second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
+        second.evidence = a2m_core::WriteEvidence::Acknowledged;
+        second.read_back.clear();
+        operation.bindings.push(second);
+        for pipeline in &mut plan.pipelines {
+            pipeline.effect = a2m_core::EffectClass::Irreversible;
+        }
+        for tool in &mut plan.tools {
+            tool.annotations.read_only = false;
+        }
+    })
+    .await;
+    *scene.source.lock().unwrap() = Some(std::sync::Arc::new(common::sheet(&[(
+        "A", "Left leg", "2", "30",
+    )])));
+    let kit = a2m_core::Values::new()
+        .with("order_id", "A-102")
+        .with("title", "Table kit");
+    let outcome = scene.work(JobKind::Preview, common::KIT_ENTER, kit).await;
+    assert!(waits(&outcome), "{outcome:?}");
+    let diff = stored_diff(&scene).await;
+    // The header's binding is known; the line's waits for the header's
+    // key, so the diff names both bindings it could take, and warns that
+    // its write may not be read back.
+    assert!(diff.records[0].binding.is_some());
+    let line = &diff.records[1];
+    assert!(line.binding_unknown());
+    assert_eq!(
+        line.could_take
+            .iter()
+            .map(|binding| (binding.position, binding.evidence))
+            .collect::<Vec<_>>(),
+        [
+            (0, a2m_core::WriteEvidence::ReadBack),
+            (1, a2m_core::WriteEvidence::Acknowledged)
+        ]
+    );
+    assert!(line.not_read_back());
+}

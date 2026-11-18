@@ -1,0 +1,18 @@
+# The imaginary order-entry system `example`, used through one window of
+# its desktop program. It describes no real product. The program's path is
+# a stand-in: a test gives the surface the path of the program that hosts
+# the test stand.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  desk:
+    kind: desktop
+    program: "/opt/example/bin/example-desk"
+    application: example-desk
+environments:
+  test:
+    kind: test
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

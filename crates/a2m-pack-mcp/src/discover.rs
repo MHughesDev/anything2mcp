@@ -110,13 +110,7 @@ impl Discoverer for McpTools {
                 payload: PackPayload::none(),
             };
             let args = Values::new();
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: scope.deadline,
-            };
+            let input = StepInput::new(&args, scope.deadline);
             let observed = match port.act(&step, &input).await {
                 Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => observed,
                 Err(failure) => return Err(failure.failure),
@@ -398,11 +392,30 @@ impl DraftingRule for ToolToMapping {
         if found.get("output_schema").is_none_or(Json::is_null) {
             entry.push(("result", DraftValue::text("text")));
         }
+        // Whether the server runs the one string such a tool takes is not
+        // in its definition. It is asked, never guessed either way.
         if found.get("free_text").and_then(Json::as_bool) == Some(true) {
-            entry.push(("free_text", DraftValue::Bool(true)));
+            entry.push((
+                "free_text",
+                cx.open_question(&format!(
+                    "The whole input of the tool `{}` is one string. Does the server run it, as a command, a query, or a prompt? State `true` if it does, and the tool is never called; `false` if the string is a key or plain data.",
+                    codes::shown(tool)
+                )),
+            ));
         }
+        // An entry left with a question goes to a file of its own, beside
+        // the surface's settled entries: until a person answers it that
+        // file does not compile, and the reads beside it are not held up.
+        let undecided = entry
+            .iter()
+            .any(|(_, value)| matches!(value, DraftValue::OpenQuestion(_)));
+        let file = if undecided {
+            format!("{surface}_undecided")
+        } else {
+            surface.to_owned()
+        };
         Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("{}/{surface}.yaml", names::MAPPING_FOLDER))?,
+            path: RelPath::new(&format!("{}/{file}.yaml", names::MAPPING_FOLDER))?,
             body: DraftValue::map(vec![
                 ("surface", DraftValue::text(surface)),
                 (

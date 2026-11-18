@@ -21,15 +21,15 @@ pub const SEED_DEDUPE_HEADER: &str = "idempotency-token";
 /// Why the broker would not do what a request asked.
 #[derive(Debug)]
 pub(crate) struct Refusal {
-    pub(crate) code: &'static str,
+    pub(crate) code: String,
     pub(crate) message: String,
     pub(crate) extra: Map<String, Value>,
 }
 
 impl Refusal {
-    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            code,
+            code: code.into(),
             message: message.into(),
             extra: Map::new(),
         }
@@ -73,6 +73,13 @@ pub(crate) enum PublishEnd {
     Drop,
     /// Keep the connection and send nothing.
     Silent,
+}
+
+/// How the server ends an acknowledgement.
+pub(crate) enum AckEnd {
+    Answer(Result<Value, Refusal>),
+    /// Close the connection without answering.
+    Drop,
 }
 
 /// One message handed to a fetch.
@@ -520,8 +527,15 @@ impl State {
             }
         }
         let held = channel.held();
-        let more = all.len() > max;
+        let mut more = all.len() > max;
         all.truncate(max);
+        let empty = |k: &FaultKind| matches!(k, FaultKind::EmptyLook { .. });
+        if let Some(FaultKind::EmptyLook { more: said }) =
+            self.take_fault(Some(connection), Some(Op::Browse), Some(address), empty)
+        {
+            all.clear();
+            more = said;
+        }
         let (mut messages, extras): (Vec<Message>, Vec<_>) = all.into_iter().unzip();
         self.reshape(connection, Op::Browse, address, &mut messages);
         let items: Vec<Value> = messages
@@ -572,7 +586,7 @@ impl State {
         request: &PublishRequest,
     ) -> (PublishOutcome, PublishEnd) {
         fn refuse(refusal: Refusal) -> (PublishOutcome, PublishEnd) {
-            let code = refusal.code.to_owned();
+            let code = refusal.code.clone();
             (
                 PublishOutcome::Refused { code },
                 PublishEnd::Refuse(refusal),
@@ -589,6 +603,7 @@ impl State {
                     | FaultKind::StoreThenSilent
                     | FaultKind::DropBeforeStore
                     | FaultKind::Refuse { .. }
+                    | FaultKind::StoreThenRefuse { .. }
             )
         };
         let fault = self.take_fault(
@@ -697,6 +712,10 @@ impl State {
         let end = match fault {
             Some(FaultKind::StoreThenDrop) => PublishEnd::Drop,
             Some(FaultKind::StoreThenSilent) => PublishEnd::Silent,
+            Some(FaultKind::StoreThenRefuse { code }) => PublishEnd::Refuse(Refusal::new(
+                code,
+                "The message was stored, and the broker says otherwise.",
+            )),
             _ => PublishEnd::Reply(json!({"id": message.id, "position": message.position})),
         };
         (outcome, end)
@@ -802,6 +821,23 @@ impl State {
         let address = handle.channel.as_str();
         let shape = self.channel(address)?.spec.shape;
         let duplicate = |k: &FaultKind| matches!(k, FaultKind::DuplicateDelivery);
+        // The fault is used up only by a fetch that has something to hand over.
+        let waiting = self.channel(address).is_ok_and(|c| {
+            !c.ready.is_empty()
+                || c.subscriptions.get(&handle.name).is_some_and(|s| {
+                    !s.pending.is_empty() || (shape == Shape::Log && s.cursor < c.next_position)
+                })
+        });
+        let extra = |k: &FaultKind| matches!(k, FaultKind::ExtraDelivery);
+        let max = if waiting
+            && self
+                .take_fault(Some(connection), Some(Op::Fetch), Some(address), extra)
+                .is_some()
+        {
+            max + 1
+        } else {
+            max
+        };
         let mut handed: Vec<Handed> = Vec::new();
         let mut copies: Vec<Message> = Vec::new();
         let mut next = None;
@@ -1019,12 +1055,26 @@ impl State {
             })
     }
 
-    pub(crate) fn ack(
-        &mut self,
-        connection: u64,
-        handle: &str,
-        tag: &str,
-    ) -> Result<Value, Refusal> {
+    /// Acknowledges one delivery, and then ends as a fault says, if one applies.
+    pub(crate) fn ack(&mut self, connection: u64, handle: &str, tag: &str) -> AckEnd {
+        let channel = self.handles.get(handle).map(|h| h.channel.clone());
+        let done = self.ack_inner(connection, handle, tag);
+        if done.is_err() {
+            return AckEnd::Answer(done);
+        }
+        let after =
+            |k: &FaultKind| matches!(k, FaultKind::AckThenDrop | FaultKind::AckThenRefuse { .. });
+        match self.take_fault(Some(connection), Some(Op::Ack), channel.as_deref(), after) {
+            Some(FaultKind::AckThenDrop) => AckEnd::Drop,
+            Some(FaultKind::AckThenRefuse { code }) => AckEnd::Answer(Err(Refusal::new(
+                code,
+                "The message was acknowledged, and the broker says otherwise.",
+            ))),
+            _ => AckEnd::Answer(done),
+        }
+    }
+
+    fn ack_inner(&mut self, connection: u64, handle: &str, tag: &str) -> Result<Value, Refusal> {
         let handle = self.handle(connection, handle)?;
         let number = self.held_delivery(&handle, tag)?;
         let held = self

@@ -33,7 +33,7 @@ Every failure falls into one class, and the class alone decides what happens:
 | `transient` | Timeout on a read, dropped connection, upstream 503 | Retry up to 2 times, reads and idempotent writes only |
 | `session_expired` | Redirect to the identity provider, 401 from the backend | Session keeper tries a silent refresh once; otherwise stop with `needs_login`; resumable |
 | `edge_blocked` | 403 or 429 from a bot defense, challenge page | Stop with evidence; no retry; alert |
-| `drift` | Locator fails its fingerprint; response fails its schema; upstream tool changed | Stop; capture; mark the binding unhealthy; try the next verified binding for reads only |
+| `drift` | Locator fails its fingerprint; response fails its schema; upstream tool changed | Stop; capture; mark the binding unhealthy; try the next verified binding for reads only. A write never moves to another binding inside a job |
 | `unknown_variant` | Unexpected dialog, page, window, or status | Stop; capture; never guess |
 | `rejected` | The system refused the input with a validation message | Stop; return the system's message and the record key |
 | `mismatch` | Read-back differs from the intended value | Re-read once, then stop |

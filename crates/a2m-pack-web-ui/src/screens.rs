@@ -161,7 +161,7 @@ pub(crate) fn unreserved(c: char) -> bool {
 }
 
 /// A name a placeholder may have: an input's name.
-fn is_name(text: &str) -> bool {
+pub(crate) fn is_name(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -547,6 +547,14 @@ impl FileKind for ScreenKind {
 
     fn schema(&self) -> &JsonSchema {
         &self.schema
+    }
+
+    /// A screen that declares any action describes a write: an action is a
+    /// click on the system, and whether it saves is the word of whoever
+    /// wrote it. The drafter writes none (decision 0144).
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("actions")
+            .is_some_and(|actions| !actions.entries().is_empty())
     }
 
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {

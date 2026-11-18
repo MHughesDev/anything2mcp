@@ -41,7 +41,7 @@ A session is the signed-in state of one identity on one target in one environmen
 
 **A lease is how a run reaches a session.** The engine asks for a `SessionLease` through `Control` before prepare, and its driver receives it. A lease carries no secret and cannot print one. It names the session, the session's epoch, the state at grant, and, for a session held in a browser, the engine-owned profile. Credentials reach a driver only through the lease's `apply`, which calls the provider's `inject` to place them into the driver's client: a header, a cookie, a TLS identity, or a credential for a challenge-and-response scheme that the driver then carries out on its connection. Every secret the keeper opens is registered with the redactor before `inject` places it.
 
-**A lease is a snapshot, not a promise.** It is valid while the session's epoch is unchanged. A driver that sees a sign of expiry reports it and stops the step with `session_expired`. The engine relays the report and waits for the one renewal.
+**A lease is a snapshot, not a promise.** It is valid while the session's epoch is unchanged and the session has not been ended. The home runner remembers an end by the epoch it named, so credentials that reach it afterwards for an earlier epoch, by a restore that was slow, are neither held nor placed ([decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md)). A driver that sees a sign of expiry reports it and stops the step with `session_expired`. The engine relays the report and waits for the one renewal.
 
 ### A session with no identity
 

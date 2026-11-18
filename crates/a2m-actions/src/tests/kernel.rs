@@ -10,7 +10,7 @@
 //! `Kernel::publish_plan`, which exists only for tests.
 
 #[path = "../../../a2m-engine/tests/common/mod.rs"]
-mod engine;
+pub(super) mod engine;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -31,20 +31,26 @@ use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
 
-const USER: &str = "pat";
+pub(super) const USER: &str = "pat";
 
 /// The person surface of a test: it keeps the desk, notes what it was
 /// asked, and answers the presence prompt as the test set it.
-struct Surface {
+pub(super) struct Surface {
     desk: Mutex<Option<Arc<ApprovalDesk>>>,
-    approvals: Mutex<Vec<ApprovalAsk>>,
-    presence_asked: AtomicU32,
-    person_present: Mutex<bool>,
+    pub(super) approvals: Mutex<Vec<ApprovalAsk>>,
+    pub(super) presence_asked: AtomicU32,
+    pub(super) person_present: Mutex<bool>,
+    /// When set, the proof handed back is one kept from this long ago, in
+    /// milliseconds, as a surface that reuses an earlier prompt's would be.
+    pub(super) proof_age_ms: Mutex<i64>,
+    /// When set, the proof handed back is this person's and not the
+    /// caller's.
+    pub(super) proof_of: Mutex<Option<a2m_core::PrincipalId>>,
     clock: Arc<dyn Clock>,
 }
 
 impl Surface {
-    fn desk(&self) -> Arc<ApprovalDesk> {
+    pub(super) fn desk(&self) -> Arc<ApprovalDesk> {
         self.desk
             .lock()
             .unwrap()
@@ -82,11 +88,10 @@ impl PersonSurface for Surface {
         Box::pin(async move {
             self.presence_asked.fetch_add(1, Ordering::SeqCst);
             if *self.person_present.lock().unwrap() {
-                Ok(PresenceProof::new(
-                    PresenceCheck::OsPrompt,
-                    ask.principal,
-                    self.clock.now(),
-                ))
+                let age = *self.proof_age_ms.lock().unwrap();
+                let at = Timestamp::from_unix_millis(self.clock.now().as_unix_millis() - age);
+                let of = self.proof_of.lock().unwrap().unwrap_or(ask.principal);
+                Ok(PresenceProof::new(PresenceCheck::OsPrompt, of, at))
             } else {
                 Err(Failure::new(
                     FailureClass::Policy,
@@ -141,18 +146,52 @@ fn unreachable_store() -> Failure {
     )
 }
 
-struct World {
-    app: TestApp,
-    kernel: Kernel,
-    surface: Arc<Surface>,
-    caller: Caller,
-    _folder: Folder,
+pub(super) struct World {
+    pub(super) app: TestApp,
+    /// The clock the kernel was opened with, to move by hand.
+    pub(super) clock: Arc<ManualClock>,
+    pub(super) kernel: Kernel,
+    pub(super) surface: Arc<Surface>,
+    pub(super) caller: Caller,
+    pub(super) folder: Folder,
+    /// What the test pack's driver saw, and the faults it can be told to
+    /// make.
+    pub(super) hooks: Arc<engine::Hooks>,
+    /// The test pack's discoverer, and what each discovery handed it.
+    pub(super) discoverer: Arc<engine::WritingDiscoverer>,
 }
 
-struct Options {
+pub(super) struct Options {
     place: StorePlace,
     key_store: Arc<dyn KeyStore>,
     block_store: bool,
+    /// The settings the kernel is opened with.
+    pub(super) settings: Settings,
+    /// What is done to the folders before the kernel opens.
+    pub(super) before_open: Option<fn(&Paths)>,
+    /// The test application's pack also registers its surface kind with
+    /// the compiler, with a notice for `profile: open`.
+    pub(super) notices: bool,
+}
+
+impl Options {
+    /// The defaults, with the test application's surface kind registered
+    /// with the compiler and a notice for `profile: open`.
+    pub(super) fn with_notices() -> Self {
+        Self {
+            notices: true,
+            ..Self::default()
+        }
+    }
+
+    /// The defaults, with `before` done to the folders before the kernel
+    /// opens.
+    pub(super) fn before_open(before: fn(&Paths)) -> Self {
+        Self {
+            before_open: Some(before),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Options {
@@ -161,11 +200,31 @@ impl Default for Options {
             place: StorePlace::Memory,
             key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
             block_store: false,
+            settings: Settings::defaults(),
+            before_open: None,
+            notices: false,
         }
     }
 }
 
-async fn world(options: Options) -> World {
+impl Options {
+    /// The defaults, with a user's settings file holding `text`.
+    pub(super) fn with_user_settings(text: &str) -> Self {
+        Self {
+            settings: Settings::load(&a2m_actions::Sources {
+                user: Some(a2m_actions::settings::SourceFile::new(
+                    "settings.toml",
+                    text,
+                )),
+                ..a2m_actions::Sources::none()
+            })
+            .unwrap(),
+            ..Self::default()
+        }
+    }
+}
+
+pub(super) async fn world(options: Options) -> World {
     let app = TestApp::start().await.unwrap();
     let folder = Folder::new("actions");
     let paths = Paths::under(folder.path());
@@ -174,10 +233,13 @@ async fn world(options: Options) -> World {
         std::fs::create_dir_all(&paths.data).unwrap();
         std::fs::write(&paths.store, b"not a folder").unwrap();
     }
-    let clock: Arc<dyn Clock> =
-        Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    if let Some(before) = options.before_open {
+        before(&paths);
+    }
+    let manual = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    let clock: Arc<dyn Clock> = Arc::clone(&manual) as Arc<dyn Clock>;
     let prepared = Kernel::prepare(KernelParts {
-        settings: Settings::defaults(),
+        settings: options.settings,
         paths,
         place: options.place,
         key_store: options.key_store,
@@ -188,12 +250,18 @@ async fn world(options: Options) -> World {
     .await;
     let host = prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
-    builder.add_pack(&AppPack {
-        hooks: Arc::new(engine::Hooks::default()),
-        discoverer: Arc::new(engine::WritingDiscoverer {
-            results: Mutex::new(Vec::new()),
-        }),
-    });
+    let hooks = Arc::new(engine::Hooks::default());
+    let discoverer = Arc::new(engine::WritingDiscoverer::default());
+    let app_pack = AppPack {
+        hooks: Arc::clone(&hooks),
+        discoverer: Arc::clone(&discoverer),
+    };
+    if options.notices {
+        builder.add_pack(&NoticedAppPack(app_pack));
+    } else {
+        builder.add_pack(&app_pack);
+    }
+    builder.add_pack(&ProjectPack);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     let surface = Arc::new(Surface {
@@ -201,6 +269,8 @@ async fn world(options: Options) -> World {
         approvals: Mutex::new(Vec::new()),
         presence_asked: AtomicU32::new(0),
         person_present: Mutex::new(true),
+        proof_age_ms: Mutex::new(0),
+        proof_of: Mutex::new(None),
         clock,
     });
     let kernel = Kernel::open(
@@ -221,17 +291,20 @@ async fn world(options: Options) -> World {
     let caller = Caller::new(principal, FrontDoor::Mcp, true);
     World {
         app,
+        clock: manual,
         kernel,
         surface,
         caller,
-        _folder: folder,
+        folder,
+        hooks,
+        discoverer,
     }
 }
 
 impl World {
     /// A healthy kernel with the runner loop started and the `example`
     /// target published.
-    async fn ready() -> Self {
+    pub(super) async fn ready() -> Self {
         let world = world(Options::default()).await;
         assert_eq!(
             world.kernel.health().state,
@@ -248,13 +321,46 @@ impl World {
         world
     }
 
-    async fn call(&self, action: &str, input: Json) -> Response {
+    /// The time by the kernel's clock.
+    pub(super) fn now(&self) -> Timestamp {
+        Clock::now(self.clock.as_ref())
+    }
+
+    /// A folder under the test's own that is a project: it holds a
+    /// project file.
+    pub(super) fn project(&self, name: &str) -> std::path::PathBuf {
+        let project = self.folder.path().join(name);
+        std::fs::create_dir_all(project.join("sources")).unwrap();
+        std::fs::write(project.join("anything2mcp.toml"), "").unwrap();
+        project
+    }
+
+    /// A healthy kernel opened with `options`, with the runner loop
+    /// started and the `example` target published.
+    pub(super) async fn ready_with(options: Options) -> Self {
+        let world = world(options).await;
+        assert_eq!(
+            world.kernel.health().state,
+            HealthState::Ok,
+            "{:?}",
+            world.kernel.health()
+        );
+        world.kernel.start_runner_loop(4).await.unwrap();
+        world
+            .kernel
+            .publish_plan(&engine::plan(&world.app.url("")))
+            .await
+            .unwrap();
+        world
+    }
+
+    pub(super) async fn call(&self, action: &str, input: Json) -> Response {
         self.kernel
             .dispatch(Request::new(action, input, self.caller.clone()))
             .await
     }
 
-    async fn ok(&self, action: &str, input: Json) -> Json {
+    pub(super) async fn ok(&self, action: &str, input: Json) -> Json {
         let response = self.call(action, input).await;
         assert!(response.ok, "{action}: {:?}", response.error);
         response.result.unwrap()
@@ -262,7 +368,7 @@ impl World {
 
     /// How many decisions the audit of policy holds, through the one
     /// action that reads them back.
-    async fn explained(&self, response: &Response) -> Json {
+    pub(super) async fn explained(&self, response: &Response) -> Json {
         let decision = response.decision.expect("a decision was recorded");
         self.ok("policy.explain", json!({"decision": decision.to_string()}))
             .await
@@ -640,7 +746,12 @@ async fn a_stopped_store_serves_status_and_nothing_else() {
     );
     world.ok("provider.list", json!({})).await;
     world.ok("config.show", json!({})).await;
-    world.ok("docs.get", json!({"topic": "approvals"})).await;
+    // A guide is served from the files in `guides/`, with what the
+    // registry says of each action it names.
+    let guide = world.ok("docs.get", json!({"topic": "approvals"})).await;
+    let text = guide["text"].as_str().unwrap();
+    assert!(text.starts_with("# Approvals"), "{text}");
+    assert!(text.contains("- `run.resume`: built."), "{text}");
 
     // Every action that needs the store refuses, with the reason.
     for (action, input) in [
@@ -752,8 +863,10 @@ async fn a_planted_secret_appears_in_no_result() {
 async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     let world = World::ready().await;
     let listed = world.ok("provider.list", json!({})).await;
-    assert_eq!(listed["providers"][0]["name"], "example_json");
-    assert_eq!(listed["providers"][0]["availability"], "ready");
+    // Listed in order of name: the pack of a provider action first.
+    assert_eq!(listed["providers"][0]["name"], "example_files");
+    assert_eq!(listed["providers"][1]["name"], "example_json");
+    assert_eq!(listed["providers"][1]["availability"], "ready");
     let described = world
         .ok("provider.describe", json!({"provider": "example_json"}))
         .await;
@@ -779,6 +892,22 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     assert_eq!(status["runner"]["running"], true);
     let doctor = world.ok("doctor.run", json!({})).await;
     assert_eq!(doctor["state"], "ok");
+    // The doctor says whether a person can be proved present here: this
+    // test's surface does not say, which is reported as unknown and never
+    // as a prompt that is there.
+    let presence = doctor["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check"] == "presence")
+        .expect("the doctor reports on the presence prompt");
+    assert_eq!(presence["state"], "unknown", "{presence}");
+    assert!(
+        presence["detail"]
+            .as_str()
+            .unwrap()
+            .contains("not_available")
+    );
 
     let docs = world.ok("docs.get", json!({"topic": "tool.call"})).await;
     assert!(
@@ -858,4 +987,114 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     );
 
     world.kernel.close(CloseReason::Asked).await;
+}
+
+// ---- a surface kind that carries a notice ----
+
+/// The test application's pack, which also registers its surface kind with
+/// the compiler, as a pack does whose surfaces a person must be told of:
+/// `profile: open` carries the notice of credentials over an unencrypted
+/// link (decision 0193).
+struct NoticedAppPack(AppPack);
+
+impl a2m_provider::Pack for NoticedAppPack {
+    fn manifest(&self) -> &'static str {
+        self.0.manifest()
+    }
+
+    fn register(
+        &self,
+        cx: &a2m_provider::PackContext,
+        to: &mut a2m_provider::Registrar<'_>,
+    ) -> Result<(), a2m_core::Failure> {
+        self.0.register(cx, to)?;
+        to.compiler(
+            a2m_provider::CompilerRegistrations::new().surface_kind(
+                a2m_files::SurfaceKindSpec::new(
+                    a2m_core::SurfaceKind::new("json_app")?,
+                    "address",
+                    a2m_files::JsonSchema::object()
+                        .required("address", a2m_files::JsonSchema::text())
+                        .optional("profile", a2m_files::JsonSchema::name()),
+                )
+                .with_notice(
+                    "profile",
+                    "open",
+                    a2m_core::SurfaceNotice::UnencryptedCredentials,
+                ),
+            ),
+        )
+    }
+}
+
+// ---- a provider action that reads its project root ----
+
+const PROJECT_MANIFEST: &str = r#"manifest_format = 1
+contract = 1
+
+[provider]
+name = "example_files"
+version = "0.1.0"
+publisher = "Example"
+kind = "pack"
+
+[[actions]]
+name = "example_files.folder"
+effect = "read"
+"#;
+
+/// A pack whose one action names the folder its project root resolves to
+/// for the call (decision 0196): a root bound to no folder, resolved in the
+/// call's own checked project folder.
+struct ProjectPack;
+
+impl a2m_provider::Pack for ProjectPack {
+    fn manifest(&self) -> &'static str {
+        PROJECT_MANIFEST
+    }
+
+    fn register(
+        &self,
+        _cx: &a2m_provider::PackContext,
+        to: &mut a2m_provider::Registrar<'_>,
+    ) -> Result<(), a2m_core::Failure> {
+        to.action(Arc::new(FolderAction {
+            schema: a2m_files::JsonSchema::any(),
+        }))
+    }
+}
+
+struct FolderAction {
+    schema: a2m_files::JsonSchema,
+}
+
+impl a2m_provider::ProviderAction for FolderAction {
+    fn name(&self) -> a2m_provider::ActionName {
+        a2m_provider::ActionName::new("example_files.folder").unwrap()
+    }
+
+    fn input_schema(&self) -> &a2m_files::JsonSchema {
+        &self.schema
+    }
+
+    fn output_schema(&self) -> &a2m_files::JsonSchema {
+        &self.schema
+    }
+
+    fn handle<'a>(
+        &'a self,
+        _input: &'a a2m_core::Values,
+        cx: &'a a2m_provider::ActionContext<'a>,
+    ) -> a2m_provider::BoxFuture<'a, Result<a2m_core::Values, a2m_core::Failure>> {
+        Box::pin(async move {
+            let mut roots = Roots::none();
+            let name = a2m_provider::RootName::new("project").unwrap();
+            roots.add_project(name.clone(), a2m_provider::Access::Read)?;
+            let folder = roots.folder_in(&name, a2m_provider::Access::Read, cx.paths)?;
+            Ok(a2m_core::Values::new().with(
+                "folder",
+                folder.as_path().to_string_lossy().into_owned().as_str(),
+            ))
+        })
+    }
 }

@@ -19,8 +19,8 @@ use a2m_core::{
 };
 use a2m_provider::{Destinations, Posture, Sent, StepFailure};
 use a2m_telemetry::{
-    Acting, CaptureLevel, ChoiceReason, Detail, PassStart, Phase, StepRecord, TraceBuilder,
-    TraceIdentity, TraceOutcome, TracedValue,
+    CaptureLevel, ChoiceReason, PassStart, Phase, StepRecord, TraceBuilder, TraceIdentity,
+    TraceOutcome, TracedValue,
 };
 use common::{Planted, Ran, Scene, decimal};
 use example_device::{Answer, Corruption, Fault, FaultKind, FrameKind, Scope, Version};
@@ -97,8 +97,9 @@ impl KeyedDigest for NoKey {
     }
 }
 
-/// The trace of one run of a read, as the engine would record it: what the
-/// driver sent is the means, and the size of what came back is measured.
+/// The trace of one run of a read, as the engine would record it: how each
+/// step was done is what the driver's `acting` capture says, and the frames
+/// it sent are measured.
 fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
     let handle = scene.handle();
     let operation = OperationName::new("example_pump_speed_get").unwrap();
@@ -116,20 +117,11 @@ fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
         Arc::new(a2m_core::NoSecrets),
         Arc::new(NoKey),
     );
-    let mut captures = ran.captures.iter();
     let mut values = ran.values.iter();
     for (position, kind) in ran.kinds.iter().enumerate() {
-        let acting = (kind == "open" || kind == "expect").then(|| {
-            let capture: serde_json::Value =
-                serde_json::from_slice(&captures.next().unwrap().bytes).unwrap();
-            Acting {
-                means: vec![Detail::new("sent", capture["sent"].as_str().unwrap())],
-                measured: vec![Detail::new(
-                    "reply_bytes",
-                    capture["reply_bytes"].to_string(),
-                )],
-            }
-        });
+        // How the step was done is what the driver said: its `acting`
+        // capture, one for each step.
+        let acting = Some(ran.acting[position].clone());
         let read = (kind == "expect")
             .then(|| values.next())
             .flatten()
@@ -179,6 +171,11 @@ async fn five_runs_of_one_read_give_one_trace_signature() {
         }
     }
     assert!(signatures.windows(2).all(|pair| pair[0] == pair[1]));
+    // Every step said how it was done, and what it said is not a value.
+    let first = first.unwrap();
+    assert_eq!(first.acting.len(), first.kinds.len());
+    let means: Vec<_> = first.acting.iter().map(|step| step.means.clone()).collect();
+    assert!(means.iter().all(|step| step[0].name == "step"));
 }
 
 #[tokio::test]
@@ -342,4 +339,73 @@ async fn a_secret_in_what_the_device_says_reaches_no_value_and_no_failure() {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[tokio::test]
+async fn a_driver_in_the_discovery_posture_sends_nothing_but_identification() {
+    let scene = Scene::start().await;
+    let control = scene.device.control();
+
+    // A read's steps, handed to the driver under the discovery posture:
+    // the device is identified, and the register read is refused by the
+    // driver itself.
+    let (handle, mut prepared) = scene.prepare(None, Posture::Discovery).await;
+    let failure = scene
+        .run(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_pump_speed_get").act,
+            &Values::new(),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (class_and_code(&failure), failure.sent),
+        (
+            (FailureClass::Policy, "discovery_identifies_only"),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    scene.links_closed().await;
+
+    // The stand: one frame, the identification.
+    let frames = control.frames();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].function, 0x2B);
+}
+
+#[tokio::test]
+async fn a_run_stops_at_its_frame_ceiling() {
+    let scene = Scene::start().await;
+    let control = scene.device.control();
+
+    // One link, one run: the identification, then two frames for each
+    // pass over a read's steps. The default ceiling is one hundred frames.
+    let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
+    let act = &scene.binding("example_pump_speed_get").act;
+    let mut stopped = None;
+    for _ in 0..60 {
+        if let Err(failure) = scene
+            .run(&handle, &mut prepared, act, &Values::new(), None)
+            .await
+        {
+            stopped = Some(failure);
+            break;
+        }
+    }
+    let failure = stopped.expect("a run sent frames without a count");
+    assert_eq!(
+        (class_and_code(&failure), failure.sent),
+        (
+            (FailureClass::Policy, "frame_budget_exceeded"),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    scene.links_closed().await;
+
+    // The stand: one hundred frames, and not one more.
+    assert_eq!(control.frames().len(), 100);
 }

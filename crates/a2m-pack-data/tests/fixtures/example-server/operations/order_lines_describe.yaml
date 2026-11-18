@@ -1,0 +1,18 @@
+operation: example_order_lines_describe
+title: Describe the lines of an order
+effect: irreversible
+hazard: data_elsewhere
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  description: {type: note, description: "What the lines are"}
+outputs:
+  description: {type: note}
+bindings:
+  - mode: sql
+    verb: update
+    statement: order_line_loose_describe
+    read_back: order_line_loose_by_key
+description: >
+  A write whose record declares a key that several rows share: the store changes
+  more than one row, and the write is rolled back. Prefer example_line_item_describe.

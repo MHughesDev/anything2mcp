@@ -48,10 +48,10 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 | --- | --- |
 | Surface kinds | `web` |
 | Modes | `ui`, archetype interface; `page_http` and `site_tools`, archetype request |
-| Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe` for `ui`; `token`, `request`, `validate`, `extract` for `page_http`; `call_tool` for `site_tools`. Each a checked name within its mode |
+| Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe` for `ui`; `goto`, `token`, and `request` for `page_http`, where `request` also checks the answer and gives its values, so no unchecked answer is held between steps ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)); `call_tool` for `site_tools`. Each a checked name within its mode |
 | Drivers | One per mode, sharing one `Browsers` |
-| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)). Reads `endpoints/`, which the HTTP pack owns ([section 303](303-the-http-pack.md)), for the `page_http` lowering |
-| Binding fields | `ui`: `screen`, `verb`, `fields`, `action`. `page_http`: `endpoint`, `path_params`, `query`, `body`. `site_tools`: `tool`, `args` |
+| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)), and `page_requests/`, the `page_http` mode's entries, in the form of the endpoint catalog the HTTP pack owns ([section 303](303-the-http-pack.md)) with the page that makes each; the drafter lets a pack draft only its own kinds, so the two share one catalog only once that changes ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
+| Binding fields | `ui`: `screen`, `verb`, `fields`, `action`. `page_http`: `endpoint`; as built for reads, each placeholder takes the input of its name, and `path_params`, `query`, and `body` are not built. `site_tools`: `tool`, `args` |
 | Control names | Every control in the widget driver table below, as checked names |
 | Finding kinds | `surface`, `sign_in_method`, `screen`, `field`, `action`, `exchange`, `declared_tool`. It produces `endpoint` findings, a kind the HTTP pack owns |
 | Discoverers | Screen matching, in `a2m-pack-web-ui`; six in `a2m-pack-web-probe` (below) |
@@ -61,7 +61,7 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 
 `screens/` is also registered by the desktop pack, for surfaces of kind `desktop` ([section 305](305-the-desktop-pack.md)). Registration is keyed by file kind and surface kind, so the two do not collide.
 
-If the HTTP pack is not enabled, a `page_http` binding does not compile, and the probe's endpoint inference is not available and says why. The pack compiles the `endpoints/` entries it is handed into its own step payload; no request-template type is shared between packs.
+If the HTTP pack is not enabled, the probe's endpoint inference is not available and says why. The pack compiles its `page_requests/` entries into its own step payload; no request-template type is shared between packs.
 
 ## Verbs and how they lower
 
@@ -77,14 +77,14 @@ If the HTTP pack is not enabled, a `page_http` binding does not compile, and the
 | `submit` | Yes | Yes | If offered |
 | `call` | No | Yes | Yes |
 
-`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
+`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `goto`, `token`, and `request`; as built, a read is `goto` and `request`, and a write is refused. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
 
 ## The driver, part by part
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
-| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
-| `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` sent from inside the page | Status and response schema | The endpoint the binding names |
+| `ui` | An observing tab in the session's profile, with the target's fixed environment, for every read and every read-back in every posture; beside it an acting tab only for the steps of a write up to its commit point, which the lowering marks on each `goto` ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
+| `page_http` | An observing tab in the session's profile, for a read in every posture; a tab that may write only for the write half, not built ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | `goto` the page that makes the request, which waits for its load; `token` if declared, then `request` sent from inside the page with GET alone for a read | Status and response schema, inside `request`, before any value is returned | The endpoint the binding names |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
 The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the-engine-loop.md)). For this pack they mean:
@@ -95,6 +95,8 @@ The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the
 - **An outcome can carry outputs known before the commit point,** such as a value the form shows before saving. The engine records them before the committing step runs.
 - **A driver never signs in or renews.** It reports a sign of expiry through the lease and stops; the session keeper decides.
 - **The fixed environment never varies:** viewport, locale, time zone, color scheme, and reduced motion are set per target.
+- **A tab stays on its surface.** A `ui` tab is opened for its surface's origin, and the browser engine holds it there. A move the page tries to another origin, a window, and a download stop the run; after a committing click each leaves the write in doubt.
+- **An answer is what changed after the click.** A committing action is not clicked while the page already shows one of the screen's variants or the action's confirmation, since its answer could not be told from them ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)).
 
 A `ui` step costs under 50 ms of overhead and a `page_http` step under 20 ms, on a warm tab. These are budgets until measured ([section 225](../2-kernel/225-performance.md)).
 
@@ -270,7 +272,7 @@ Other ways of signing in to a web application, such as a token from the operatin
 | `web_endpoints` | `endpoints.infer` | Stored exchange findings, not the page | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
 | `web_declared` | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
 
-Screen matching, in `a2m-pack-web-ui`, sets a stored snapshot finding against the target's screen models. It reads findings, not the page. The describer shows an agent snapshots in the text form of the [steps reference](../../reference/steps-snapshots-and-diffs.md#snapshots), captures as exchanges by step, and endpoints as method, template, and shapes, with every string from the target marked untrusted.
+Screen matching, in `a2m-pack-web-ui`, sets a stored snapshot finding against the target's screen models. It reads findings, not the page. As built, the first half of it is in `web_snapshot`: pages of one discovery whose paths differ in exactly one segment and whose snapshots give the same named tables, headings, and labelled values are given as one `screen` finding whose path holds that segment as a placeholder, naming the pages it was seen on ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). The describer shows an agent snapshots in the text form of the [steps reference](../../reference/steps-snapshots-and-diffs.md#snapshots), captures as exchanges by step, and endpoints as method, template, and shapes, with every string from the target marked untrusted. What a finding keeps of an address and an answer is structure alone: a segment of a path that is not a plain word is the placeholder `{value}`, an entry of a query with no name is not kept and is said to have been there, the names of an object that read as a dictionary's keys are withheld, and the headers a page's script set are kept by name ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)).
 
 Hitting a bound is not a failure. It is a limitation on the findings, `truncated` or `time_limit`, and the report names it. Two scouts of the same application in the same state give the same findings.
 
@@ -282,7 +284,7 @@ This is held in four places, and each would hold without the others.
 | --- | --- |
 | The type | The probe is constructed with an `Observer`. It opens observing and watching tabs only; neither has an input method, and there is no way to get an acting tab from one. A check in CI refuses the names of the acting types in the probe's source |
 | The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames, unless a person marked that request safe |
-| Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped |
+| Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped. Every address discovery visits passes the same check, whatever named it: a link, a focus path, or the surface itself. The drivers hold a key's value and a page request's path to the same list |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox, with a lease the keeper marked for discovery. A discoverer is given only what the sandbox port offers: no driver, no ledger token, no way to act |
 
 In an observing tab:
@@ -290,10 +292,12 @@ In an observing tab:
 | What could change the system | What happens |
 | --- | --- |
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
-| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child takes its own before it runs or is not let run; service workers are bypassed ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md)) |
+| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child, a frame in another process or a service worker, takes its own before it runs or is not let run ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
-| A beacon, a form submission, a download | Failed by the same interception, or refused |
-| Navigation | Only to an address the caller passes, or a plain link as above |
+| A beacon, a form submitted with POST | Failed by the same interception |
+| A download, a window the page opens | Refused in the browser: no file is written, and the window is closed before it fetches anything. Each is reported as a limitation |
+| A permission, a file chooser | Every permission refused in the browser, for every origin, with no prompt; a file chooser opens nothing |
+| Navigation | Only to an address the caller passes, on an origin the tab was opened for, or a plain link as above. A move the page starts itself, with any method, is ended before its request leaves the browser |
 
 ### The watch tab and the explore tab
 
@@ -358,12 +362,12 @@ Codes are stable once released.
 
 | From a finding of kind | The drafter writes | Left as an open question |
 | --- | --- | --- |
-| `screen`, from a snapshot | A screen model: `reach` from the observed address with identifier segments as placeholders, `ready` from the profile's rule or a visible heading | What the screen is for; its name beyond the mechanical one |
+| `screen`, from a snapshot | For each table the page names and the snapshot can tell apart: a screen model with `reach` the observed path, `ready` the table showing, and `rows` located by the table's role and name and read by its headings, each column `untrusted_text`; and a `list` read over it. For the values the page labels (a definition labelled by a term of the same name): a screen whose fields locate each by the role `definition` and its label, and a `get` read of them as `untrusted_text`. A finding the discoverer matched from several pages has a placeholder in its path, which is each read's input and key | What the screen is for; its name beyond the mechanical one; two tables of one name; a label two terms share, apart from the read of the others |
 | `field`, from a snapshot | A field: `control` from the role by a fixed table (textbox to `text`, combobox to `combobox`, checkbox to `checkbox`); `locate` as role and name, then label; `fingerprint` from the nearest heading or section | Its field type. A field type is meaning, so the draft does not compile until it is settled |
 | `action`, from a snapshot | Nothing | Every action, and whether it commits |
 | A tool a page registers, marked read-only by the page | A `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
 
-Endpoint findings are drafted by the HTTP pack's rule. Whether drafts by rule save work is hypothesis H-31.
+As built, only the `screen` row is drafted, for tables and labelled values; fields that are set, actions, and registered tools are not ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md), [decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). Endpoint findings are drafted by the HTTP pack's rule. An `exchange` a page made by itself drafts a `page_requests/` entry and a `page_http` read only when the driver can make the request again exactly, with no query and no header the page's script set; otherwise the entry holds an open question that names them, by name alone, and no read is drafted. Every question that quotes a page's words keeps them apart from the product's sentence ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)). Whether drafts by rule save work is hypothesis H-31.
 
 ## Effects and hazards
 
@@ -451,7 +455,7 @@ The crates are built in the order their designs give: the browser base chosen by
 - How a program built on a browser runtime is started so that the protocol runs on a pipe, as for a browser.
 - Whether the shared parts of `screens/` should become the interface archetype's, in the kernel, once the desktop pack exists (hypothesis H-37).
 - How the `page_http` lowering and the probe are held to the version of the `endpoints/` and `endpoint` finding schemas they were written for, when the HTTP pack changes them.
-- The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is.
+- The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is. [Research note 25](../../research/25-webmcp-standard-status.md) found that such tools can be discovered and called through the browser's debugging protocol in a current browser build, and that the standard is still a community group draft.
 - Whether a validation message is always a declared variant, or a profile can name a generic one.
 - How a GET that a page treats as an action is recognized. A word list is a start, not an answer; it is settled in Phase 4.
 - Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser. Copying a profile is what decision 0032 avoids.

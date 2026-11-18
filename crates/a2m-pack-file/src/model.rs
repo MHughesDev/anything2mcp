@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 pub const PACK: &str = "file";
 /// The mode the pack drives.
 pub const MODE: &str = "file";
-/// The version of the section payload's shape.
-pub const SECTION_FORMAT: u16 = 1;
+/// The version of the section payload's shape. Version 2 says whether a
+/// document states `may_be_open`, and whether a field's text may begin as a
+/// formula does (decision 0149).
+pub const SECTION_FORMAT: u16 = 2;
 /// The root a file surface is in when it names none.
 pub const DEFAULT_ROOT: &str = "files";
 
@@ -169,6 +171,9 @@ pub struct FieldSpec {
     pub writable: bool,
     /// Whether the place holds a formula, read as its kept result.
     pub formula: bool,
+    /// Whether text written here may begin with a character that makes a
+    /// spreadsheet program run the text as a formula. Delimited text only.
+    pub may_begin_formula: bool,
 }
 
 /// One kind of record in a file.
@@ -208,8 +213,9 @@ pub struct DocumentSpec {
     pub line_ending: Option<String>,
     /// What identifies its layout.
     pub layout: Layout,
-    /// Whether an application may hold the file open.
-    pub may_be_open: bool,
+    /// Whether an application may hold the file open. Nothing when the
+    /// document does not say: then no write to the file compiles or runs.
+    pub may_be_open: Option<bool>,
     /// The sibling file whose presence shows that one does.
     pub lock_sibling: Option<String>,
     /// Its record kinds, by name.

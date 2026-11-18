@@ -45,8 +45,11 @@ pub struct SourceFile { pub path: RelPath, pub kind: FileKindName, pub digest: D
 pub struct Sources { pub root: TargetRoot, pub files: Vec<SourceFile>, pub digest: Digest }
 // Sources: from_files(root, files), file(path), of_kind(kind), docs_of(kind). SourceFile: read(path, bytes, set).
 
-/// Reads only inside `root`; refuses a link that leaves it and a file no kind claims. Names that start with a dot are passed over.
+/// Reads only inside `root`; refuses a link that leaves it, a link to a folder, a file no kind claims, and a file
+/// over its size limit. Names that start with a dot are passed over.
 pub fn load(root: &TargetRoot, set: &CompilerSet) -> Result<Sources, Diagnostics>;
+pub const LARGEST_TARGET_FILE: usize;     // 1 MiB, for a YAML file
+pub const LARGEST_RECORDED_FILE: usize;   // 16 MiB, for a fixture's recorded file
 /// The same from memory, such as the sources stored beside a published plan.
 pub fn load_files(root: &TargetRoot, files: &[(RelPath, Vec<u8>)], set: &CompilerSet) -> Result<Sources, Diagnostics>;
 
@@ -61,7 +64,9 @@ pub struct Diagnostic {
 pub struct Diagnostics;            // sorted by file, line, column, code; to_json() for agents; From<Diagnostics> for Failure
 ```
 
-A file's digest is taken of its text with every line ending a line feed and no byte-order mark, so a checkout with other line endings compiles to the same plan. A fixture's recorded files are digested byte for byte.
+A file's digest is taken of its text with every line ending a line feed and no byte-order mark, so a checkout with other line endings compiles to the same plan; a carriage return that stands alone is a line ending too. A fixture's recorded files are digested byte for byte.
+
+**What the loader bounds.** A folder is read once, where it is: a link to a folder is refused as `kernel.path_outside_target`, whether it leads out of the target or back into it, so no link can have the tree walked again or without end. A link to a file inside the folder is read as that file. No more than one byte past a file's limit is read, and a file over it is `kernel.file_too_large`.
 
 `Diagnostics` converts to one `Failure`: class `input`, code `lint_failed`, or `path_not_allowed` when the first error is a link that leaves the folder. The kernel's codes are the constants in the module `codes`, and `codes::KERNEL_CODES` lists each with what its rule requires.
 
@@ -84,7 +89,7 @@ pub struct Misfit { pub path: String, pub code: LintCode, pub message: String, p
 pub struct Misfits;   // as_slice(), paths(), Display, Error
 ```
 
-An `open_question` left by the drafter is refused wherever it stands in a file, whatever the schema says.
+An `open_question` left by the drafter is refused wherever it stands in a file, whatever the schema says, at any depth inside a field that takes any value.
 
 **One checker, three kinds of value.** A located document, a `Value`, and JSON are walked by the same rules, so an action's input is judged as a target file is, in the same words. `to_json` gives the standard JSON Schema document of one schema, which is what a front door publishes for a tool. Three things differ for a run-time value. No message quotes the value, only its kind and its path. An open question means nothing there. A reference is taken as text, since only the compiler can resolve it. In JSON a number with a fraction fits only where any value does, and a truth value is never one of a list of words, as the published schema says. A map's members are walked in order of name, so the order of the misfits does not depend on how the JSON library was built.
 
@@ -111,12 +116,16 @@ Stages 1 to 9 are those of [section 206](../../spec/2-kernel/206-the-compiler-an
 | 3 Resolve | Names across files; every name defined once; controls, field types, and surfaces that schemas refer to | `FileKind::names` says which names a document defines |
 | 4 Type-check | Every expression, through `a2m-expr`, with the names its place declares | `FileKind::expressions` lists the expressions inside the pack's own files |
 | 5 Lower | Calls the lowering registered for the binding's mode and verb; a mode or verb nobody registered stops the compile. A lowering that declared it reads another pack's kind is handed that kind's validated entries as data | `Lowering::lower` |
-| 6 Analyze | Commit points counted from the lowered steps' `commits` flag; effect classes raised, never lowered; identity strategies; permission manifests; no step reads a later step | `Lowering::identity` says whether each identity strategy is possible for a binding |
+| 6 Analyze | Commit points counted from the lowered steps' `commits` flag, and each step's flag held to what its pack states for the step's kind; a write saves at least once and a read never; a declared effect lower than the derived one is refused; identity strategies; permission manifests, each entry one exact address or one name; no step reads a later step | `Lowering::identity` says whether each identity strategy is possible for a binding; `Lowering::commits` says whether a kind of step saves; `Lowering::least_effect` says what a binding is by what it does |
 | 7 Lint | Kernel rules | Registered `LintRule`s |
 | 8 Describe | Tool names, descriptions, schemas, annotations; two tools that cannot be told apart are an error | None |
 | 9 Emit | The canonical encoding and the hash, both through `a2m-core` | None |
 
-Lowering comes before analysis so that commit points are counted from the lowered steps, and the count can never disagree with what runs. Every stage reports what it finds and the compiler carries on where the data is sound, so one run reports the problems of stages 2 to 8 together.
+Lowering comes before analysis so that commit points are counted from the lowered steps, and the count can never disagree with what runs.
+
+**What the compiler holds about a write, whatever a pack says** ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)). An operation whose effect is `write` or `irreversible` declares at least one commit point, and each of its bindings has exactly that many committing steps, all among the steps that do the work. An operation whose effect is `read` declares none and has no committing step in any binding. A lowered step's `commits` flag agrees with what the lowering states for the step's kind: `Never`, `Always`, or `AsDeclared`, the last for a kind that saves when the pack's own files say what it refers to does. An operation declares no less than `Lowering::least_effect` gives for each binding, which is how `irreversible` is derived: the pack states which of its verbs delete, send, or cannot be undone. A lowering names a surface of a kind its own pack registered. `Plan::check` in `a2m-core` holds the same rules for a plan the compiler did not make. What the compiler cannot hold: a lowering that states nothing leaves every kind `AsDeclared` and claims no least effect, and for it the compiler has only the lowering's own flag. Every pack's lowering is owed both statements. Every stage reports what it finds and the compiler carries on where the data is sound, so one run reports the problems of stages 2 to 8 together.
+
+**The credential lint, and what a diagnostic never quotes.** Three things are a credential in a file, as `kernel.credential_in_file`: a value, other than a vault reference, under a key whose name holds `password`, `passwd`, `passphrase`, `secret`, `api_key` or `apikey` (a hyphen in a key reads as an underscore), `private_key`, `client_secret`, or one of the kinds of token named as such, `access_token`, `refresh_token`, `auth_token`, `id_token`, `session_token`, `bearer_token`; text in a credential's shape under any key, which is key material, an authorization header's value in any letter case, or a signed token; and the same shapes on a line of a fixture's recorded file. A value under a key one of whose parts is `token`, `cookie`, `authorization`, `pin`, or `bearer` is a warning, `kernel.credential_suspected`, unless it reads as a lowercase name or an expression's dotted name: such a key holds a secret as often as it holds the name of one, and an error would refuse a correct file. A number is judged only under a key that is the word itself, as in `pin: 4821`. Every value found this way, reported or not, is taken out of each diagnostic at its place, whichever rule or pack made the diagnostic; one that does not read as a name is taken out of every diagnostic. `[not shown]` stands where it was.
 
 **The names an expression may read.**
 
@@ -156,14 +165,14 @@ These are data, with the serde form `a2m-sources` reads ([decision 0087](../../d
 | --- | --- | --- |
 | `header` | 9 | The compiler's version, the target, the version the caller gave, and the digest of the sorted list of source paths and file digests. No timestamp, no absolute path |
 | `surfaces`, `environments` | 2 and 3 | A surface's address is the value of its kind's address key; the other fields its pack added are its payload. `production` is added when the target does not declare it |
-| `field_types` | 3 | The built-in types, then the target's; each carries its normalizer as a `PlanExpr`, built from the field type through `a2m-expr`. A target's type of a built-in's name takes its place |
+| `field_types` | 3 | The built-in types, then the target's; each carries its normalizer as a `PlanExpr`, built from the field type through `a2m-expr`. A target's type of a complete built-in's name is refused, `kernel.built_in_type_redefined`, at lint and at compile, so that no target can take the untrusted mark off `untrusted_text`; `money` and `choice`, which need more, are completed by a target's type of their name ([decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) |
 | `expressions` | 4 and 5 | Every expression once, as canonical text with its type; steps and bindings refer to them by index |
 | `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's step lists are the lowering's, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one payload for each surface kind that has documents; the kernel wraps it with the owner's name, stores and hashes it, and never decodes it. Sections are in order of file kind, then surface kind |
 | `tools` | 8 | Operations, then pipelines. A decimal travels as text in a tool's schema. A tool's module is the longest of the target's modules that follows the target's name in its own |
 | `target` | 2 and 3 | The target's own facts. `defaults.timeouts` and `defaults.limits` are not here: a lowering reads a timeout and writes it into its steps, and a pipeline that states no limit takes the default, so the engine applies none |
 | `environments` | 3 | Test records as record keys, as written; the approval rule. `production` is added when the file does not declare it, and is the default environment unless the file names one |
-| `surfaces` | 2 and 3 | A surface's `programs`: what it states under the fields its kind names as program fields, and, where the path field is the address key, its address in each environment, with the surface's digest. A path that is not absolute, a digest that is not one, and a digest with no program are `program_invalid`, at the value's place |
+| `surfaces` | 2 and 3 | A surface's `programs`: what it states under the fields its kind names as program fields, and, where the path field is the address key, its address in each environment, with the surface's digest. A path that is not absolute, a path with `.` or `..` in it, a program on a network share with no digest, a digest that is not one, and a digest with no program are `program_invalid`, at the value's place |
 | `auth` | 3, after the operations and the pack sections | One entry per group of surfaces. A probe is a `read` operation with the inputs `probe_inputs` gives, or a name a pack's document defines on one of the entry's surfaces; anything else is `unknown_name` or `probe_invalid`. A credential that is not a vault reference is `credential_in_file`, and is never shown |
 | `field_types` | 3 | The normalizer and, from the same rule, the format as data: decimal mark, step, pattern, zone offset, case and whitespace |
 | `pipelines` | 3 to 7 | A source's bare columns go in its payload, a `SourceSpec`; its expressions in `mapping` |
@@ -184,6 +193,8 @@ pub trait FileKind: Send + Sync {
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>>;   // what a document defines, for stage 3
     fn expressions(&self, doc: &Located<Doc>) -> Vec<ExprSite>;         // what to type-check in stage 4
     fn compile(&self, docs: &[Located<Doc>], cx: &KindContext<'_>) -> Result<CompiledSection, Diagnostics>;
+    /// Whether a document describes something that changes the system. The drafter writes none that does.
+    fn writes(&self, doc: &Located<Doc>) -> bool { false }
 }
 pub struct DefinedName { pub name: String }
 pub struct ExprSite { pub text: String, pub at: Place, pub names: Vec<DeclaredName>, pub expected: Option<ValueType> }
@@ -197,16 +208,25 @@ pub trait Lowering: Send + Sync {
     fn default_verb(&self) -> Option<Verb> { None }      // the verb of a binding of this mode that states none
     fn reads(&self) -> &[(FileKindName, SurfaceKind)];   // kinds it reads and does not own; declared, never assumed
     fn step_kinds(&self) -> &[StepKind];            // every kind its steps may carry; the driver must know each
+    fn commits(&self, kind: &StepKind) -> StepCommits { StepCommits::AsDeclared }      // stated once for the kind
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass { EffectClass::Read }   // by what the binding does
     fn binding_schema(&self) -> &JsonSchema;        // every key of a binding but mode, verb, status, precondition
     fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible;
     fn lower(&self, binding: &ResolvedBinding<'_>, cx: &LowerContext<'_>) -> Result<Lowered, Diagnostics>;
 }
 pub enum Possible { Yes, No(String) }
+/// Whether a step of one kind saves in the system. A lowered step marked otherwise does not compile.
+pub enum StepCommits { Never, Always, AsDeclared }
 pub struct Lowered {
     pub surface: SurfaceName,
     pub act: Vec<Step>, pub confirm: Vec<Step>, pub read_back: Vec<Step>, pub lookup: Vec<Step>,
     pub settle_ms: u32, pub prefer_response: bool,
 }
+// Lowering::evidence(&self, binding, &lowered) -> WriteEvidence: what a write binding offers as evidence. Default:
+// `response` where the lowering prefers the save's answer, `read_back` otherwise. `acknowledged` makes the binding
+// `irreversible` by what it does, and such a binding needs no read-back (decision 0161).
+// LowerContext::expr also reads `current`, what the engine's last read of the record gave, by the operation's inputs,
+// each optional, and `record`, whose `key` is the record's key in the system, its parts as text (decision 0161).
 
 /// A lint rule with a stable code. Sees resolved files; cannot change them.
 pub trait LintRule: Send + Sync {
@@ -224,7 +244,13 @@ pub trait DraftingRule: Send + Sync {
 }
 
 /// A surface kind a pack serves, as data. `programs` says which of its fields name a program the surface's driver may start.
-pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema, pub programs: Vec<ProgramField> }
+pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema, pub programs: Vec<ProgramField>, pub notices: Vec<NoticeField> }
+// with_notice(key, word, SurfaceNotice): a surface of the kind carries the notice while its own field `key` holds `word`;
+// CompilerSet::surface_notices(&SurfacePlan) is what a door asks. Computed from the plan's surface and the registration,
+// so the plan's shape and pinned hash are unchanged; decision 0193
+// CompilerSet::address_key(&SurfaceKind) -> Option<&str>: the key a surface of the kind states its address under, as its
+// pack registered it, for `target.add` to write a surface from an address with no pack's knowledge; decision 0199.
+// An address of blanks states none: `kernel.missing_field`.
 impl SurfaceKindSpec {
     pub fn new(kind: SurfaceKind, address_key: &str, fields: JsonSchema) -> Self;       // starts no program
     pub fn with_program(self, path_key: &str, digest_key: Option<&str>) -> Self;
@@ -272,7 +298,7 @@ The views are read-only.
 | `OperationView` | Through a binding or a `ResolvedView` | `name()`, `effect()`, `hazard()`, `strategy()`, `key()`, `inputs()`, `input(name)`, `outputs()`, `doc()` |
 | `LowerContext` | `Lowering::lower` | `target()`, `operation()`, `expr(doc, expected)`, `expr_at(text, place, expected)`, `expr_type(index)`, `section(kind, surface_kind)` for the pack's own compiled sections, `entries(kind, surface_kind)` and `section_index(kind, surface_kind)` for a kind it owns or declared in `reads` |
 | `ResolvedView` | `LintRule::check` | `target()`, `mode()`, `sources()`, `operations()`, `entries(kind, surface_kind)` |
-| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)` |
+| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)`, `open_question_quoting(sentence, words)`: the product's sentence and the system's words kept apart (`Quoting`, `OpenQuestion::quoting`), the words redacted by the drafter's redactor (`Drafter::with_redact`), cleaned, at most 4 parts of 64 characters; `OpenQuestion::stored` and `StoredQuestion::read` keep them apart in the unknowns ledger's one text, and an older text reads whole (decision 0193) |
 
 A lowering sees its own binding, the operation's inputs and key, the field types, and its own pack's compiled sections. Of another pack's kinds it sees only those it declared in `reads`, as validated entries, never as that pack's compiled section or code. It makes expressions only through the context, which type-checks them and returns the plan's `ExprIndex`.
 
@@ -295,12 +321,13 @@ pub struct OpenQuestion { pub file: RelPath, pub question: String, pub findings:
 
 - **What it writes.** Ordinary target files, in YAML, at `reconstructed` once they compile and pass lint; a written draft that is not in `kept_failing` is at that level. Each names the findings it was made from in comment lines, and carries the name its rule gave it from the surface's own words.
 - **What it leaves out.** Any unit, key, or read-back rule the system did not state. Where one is needed, the draft holds an `open_question` marker in its place, which the compiler refuses in every mode, and the question goes to the unknowns ledger through the caller.
-- **What it never overwrites.** The first line of a draft carries the digest of the rest of the file. A file is rewritten only while that still holds, which means the drafter wrote it and nobody has changed it. Otherwise the draft is listed in `conflicts` and not written; `DraftReport::conflict_failure` gives `draft_conflict` for a caller that wants a failure.
-- **Where it stops.** It drafts no write operation, ever: an operation whose effect is not `read` is listed in `refused`. A rule that names a file outside the folder of its file kind fails the call. The scout's other stages are `a2m-actions`' work.
+- **What it never overwrites.** The first line of a draft carries the digest of the rest of the file. A file is rewritten only while that still holds, which means the drafter wrote it and nobody has changed it. Otherwise the draft is listed in `conflicts` and not written; `DraftReport::conflict_failure` gives `draft_conflict` for a caller that wants a failure. A file that cannot be read as text, and a folder where the file would go, are conflicts too.
+- **Where it writes.** To a regular file inside the target folder, and nowhere else. Every folder on the way is looked at without following a link, and a link is never written through: not a linked folder, not a link where the file would be, not one that leads nowhere. Such a draft is listed in `refused`. A new draft is made with create-new, which fails where anything has the name. An unchanged draft of the drafter's own is replaced by renaming a new file over it, so no file that exists is ever opened for writing.
+- **Where it stops.** It drafts no write, ever, in any file kind. An operation whose effect is not plainly `read` is listed in `refused`. A document of a pack's kind is refused when its file kind's `writes` says it describes a write; a kind that does not answer is taken to describe none, so every pack whose kind can describe a write is owed the answer. Of the kernel's kinds a rule may draft `operation` and `source` only: a drafted target or sign-in file would widen what the target reaches, and a pipeline or a test stands for a person's judgment. A pack drafts its own kinds and no other pack's. Registration refuses the rest, and the drafter checks the owner again, since a kind may be registered after its rule. A rule that names a file outside the folder of its file kind fails the call. The scout's other stages are `a2m-actions`' work.
 
 ### The test pack
 
-The module `testing`, behind the feature of that name, holds a small imaginary pack called `stand`: one surface kind, the file kind `call` in `calls/`, the mode `stand` with the verbs `read` and `upsert`, one control, one lint rule, and one drafting rule. `testing::stand_set()` gives a `CompilerSet` with it, `testing::register_stand(&mut builder)` adds it to a builder, and `testing::example_root()` is the `example` target in `targets/example/`, which is written for it. A crate above names the feature under its dev-dependencies. It is never enabled in the product.
+The module `testing`, behind the feature of that name, holds a small imaginary pack called `stand`: one surface kind, the file kind `call` in `calls/`, the mode `stand` with the verbs `read` and `upsert`, one control, one lint rule, and one drafting rule. It states what the compiler asks of a pack: a `fetch` step never saves and a `send` step always does, whatever a call's file says of its effect; the verb `upsert` is a write by what it does; a `fetch` of a call that writes does not compile; and a call whose effect is `write` is a document the drafter does not write. `testing::stand_set()` gives a `CompilerSet` with it, `testing::register_stand(&mut builder)` adds it to a builder, and `testing::example_root()` is the `example` target in `targets/example/`, which is written for it. A crate above names the feature under its dev-dependencies. It is never enabled in the product.
 
 A crate whose tests need a whole pack, with a driver beside the compiler side, registers the parts itself through `a2m-provider`. The objects are `testing::surface_kind_spec()`, `control()`, `file_kind()`, `lowering()`, `lint_rule()`, and `drafting_rule()`. The names its manifest declares are `PACK`, `FOLDER`, `surface_kind()`, `call_kind()`, `mode()`, `verbs()`, `step_kinds()`, `lint_code()`, and `finding_kind()`. The module's own text says what a driver meets in a plan compiled with it. A test in `a2m-provider` registers the pack this way and compiles the `example` target to the same plan as `stand_set()`. The surface kind takes an optional `helper` program with a `helper_digest`, so that a test can put a declared program in a plan.
 
@@ -340,8 +367,13 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 | The same sources and compiler give byte-identical plans, on every machine | The `example` target compiled twice, from disk, from memory, from a copy in another folder, and with other line endings, gives the same bytes. CI runs it on three operating systems |
 | A mode, verb, step kind, surface kind, control, or file kind nobody registered does not compile | Tests with planted unknowns, and the `example` target compiled with no pack |
 | The commit-point count equals the number of `commits` steps in every write binding | A test over every binding of the compiled `example` target, and a declared count that differs is refused |
-| A declared effect lower than the derived one is refused | A compiler test, for a pipeline |
-| The loader never reads outside the target folder | Tests with a link out, a `..` reference, and an absolute path. The link test runs where links can be made without a privilege |
+| A write never compiles as a read, or with nothing recorded, whatever a target's file says of what a binding refers to | `a_write_never_compiles_as_a_read_whatever_a_target_file_says_of_its_call`, on the route the audit gave; `what_a_faulty_lowering_returns_is_refused`, for a step marked against its kind and a binding that is more than its operation declares |
+| A declared effect lower than the derived one is refused | A compiler test, for a pipeline; the two tests above, for an operation |
+| The loader never reads outside the target folder, reads a folder once, and reads no file past its size limit | Tests with a link out, a `..` reference, and an absolute path; `the_loader_reads_a_file_of_bounded_size_and_a_folder_once`. The link tests run where links can be made without a privilege |
+| A permission names one exact address or one name | `a_permission_names_one_exact_address_or_one_name`, with a wildcard, a range, the address that stands for every address, a path, and user information |
+| A value the credential lint knows is reported and is quoted by no diagnostic, a pack's included | `a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic`, with a lint rule that quotes what it finds |
+| A draft is written only to a regular file inside the target folder, never through a link | `a_draft_is_never_written_through_a_link`, with a linked folder, a link that leads nowhere, and a link to an unchanged draft; `a_file_that_cannot_be_read_as_a_draft_is_not_overwritten` |
+| The drafter writes no write in any file kind, and a pack drafts only its own kinds, an operation, or a source | `a_write_is_never_drafted_in_any_file_kind_and_a_pack_drafts_only_its_own_kinds` |
 | Every kernel lint code has a passing and a failing test | A test that walks `codes::KERNEL_CODES` and fails on a code with no case; the `example` target is the passing case |
 | A draft never carries a unit, key, or read-back the finding did not state | A test with a finding that lacks a value, for the test pack's rule; each pack adds one per drafting rule |
 | What `compile` emits decodes, through `a2m-core`, to an equal `Plan` with the same hash | A round-trip test over the `example` target |
@@ -360,7 +392,21 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 7. Done: the drafter and its rules for what a draft may hold, proven with the test pack's drafting rule. Not done: no pack's drafting rules exist. Package E4.
 8. Done: three gaps the provider contract's builder found ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)): a surface kind's program fields and the plan's declared programs; run-time values and JSON checked against a `JsonSchema`; and the test pack's parts made public.
 
+9. Done: what the safety audit found ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)): the rules of a write the compiler holds by itself, with `StepCommits`, `Lowering::commits`, and `Lowering::least_effect`; the Scope rule's form; the drafter's writing and what it may draft, with `FileKind::writes`; the loader's bounds; the credential lint's words and what a diagnostic never quotes.
+
+11. Done ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)): `kernel.acknowledged_where_read_back`, a binding whose record has a key and whose read-back exists is never ended on an acknowledgement, the plan's check asks the same `acknowledgement_may_stand`; `open_question_quoting`; surface notices.
+10. Done ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)): a binding's evidence (`Lowering::evidence`), held to `irreversible` for `acknowledged` by the least-effect check; a binding's steps may read `current` and `record`; a draft compiled under any version but `DRAFT_VERSION` is refused, `kernel.draft_under_release_version`; and a tool's output schema allows the text `[redacted]` wherever it declares a number, a date, a moment, or a length of time.
+
+**Two rules every pack is held to** (decision 0161). *A delete is `irreversible`*, unless its binding declares how the record is restored, which no binding can declare yet: a pack's `least_effect` gives `irreversible` for every verb that deletes, and the compiler's least-effect check then holds every operation of it there. Today the file pack says `write` for its `delete`; the data, command, MCP, and HTTP packs say `irreversible`; the web, device, and stream packs have no delete. *An effect left as an open question is undecided, not a write* ([decision 0178](../../decisions/0178-an-effect-left-as-an-open-question-is-undecided-not-a-write.md), which changes this half of decision 0161): `FileKind::writes` is true for an entry declared to write and false for one whose effect is an open question, so the drafter may write it; nothing can use it, because the schema checker refuses an open question wherever it stands, and the file does not compile until a person answers. A pack may be stricter where it has evidence of its own, as the HTTP pack is for an unsafe method.
+
+11. Done ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)): the built-in field type `untrusted_text`, `text` marked untrusted, exported as `UNTRUSTED_TEXT`, so that a drafting rule marks an output of the system's text without a `types.yaml`. It is the last of the built-in types, so a target's own types still follow them in the plan.
+
+12. Done ([decision 0199](../../decisions/0199-the-halves-left-for-each-other-are-joined.md)): `CompilerSet::address_key`; a surface whose address is blank is refused as stating none; and the warning `kernel.acknowledged_with_lookup`, always a warning, for a binding whose evidence is `acknowledged`, on a keyed record, with no read-back step and a lookup: the engine asks the lookup only whether the record landed, and a lookup that returns the record's values is a read-back by another name. The test pack's lowering takes `lookup: {call}`. No first-party pack's lowering makes such a binding: their compile tests pass unchanged.
+
 Not built, in any step:
+
+- **The rest of the Scope rule.** The compiler checks the form of what an operation's `permissions` declares: one exact address, one name, once. It does not check a destination against a list a person registered for the target, because no file holds such a list; the review summary shows every destination, and confirming a new one is the publish gate's ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md)). It does not check that an upload or a download names an input of the operation or a root of the installation.
+- **A secret outside what the credential lint knows.** A diagnostic never quotes a value under a key the lint knows, or one in a credential's shape. A token pasted under any other key, where a name or a word is expected, is still echoed, up to 64 characters. A fixture's recorded file is looked through by line for key material, an authorization header's value, and a signed token, and for nothing else; one that is not text is not looked through.
 
 - `lint_one` compiles the whole target again; nothing is reused by file digest.
 - An operation's outputs by reference to a pack's schema, and nested records.

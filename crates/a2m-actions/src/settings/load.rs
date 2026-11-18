@@ -1087,6 +1087,27 @@ impl Loader {
     }
 
     fn finish(mut self) -> (Settings, Vec<Failure>) {
+        // No outbound proxy is built yet (decision 0197): a value would have
+        // no effect, and a person who set one would believe their traffic
+        // goes through it. It is refused by name, and left out.
+        let proxied = self
+            .entries
+            .get("network.proxy")
+            .filter(|entry| entry.value.as_text().is_some_and(|text| !text.is_empty()))
+            .map(|entry| entry.origin.clone());
+        if let Some(origin) = proxied {
+            if let Some(entry) = self.entries.get_mut("network.proxy") {
+                entry.value = Value::Text(String::new());
+                entry.layer = Layer::Default;
+                "the built-in default".clone_into(&mut entry.origin);
+                entry.overridden.clear();
+            }
+            self.problems.push(codes::input(
+                codes::SETTINGS_INVALID,
+                format!("{origin}: `network.proxy` is set, and no outbound proxy is supported yet, so the value would have no effect."),
+                "Remove `network.proxy`; traffic goes straight to each target, as the network allows.",
+            ));
+        }
         let locked: Vec<String> = self
             .entries
             .keys()

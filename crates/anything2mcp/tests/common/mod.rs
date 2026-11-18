@@ -10,6 +10,7 @@
     reason = "each test binary uses some of these helpers and not others; a helper that cannot do its work stops the test"
 )]
 
+pub mod browser;
 pub mod proxy;
 pub mod service;
 
@@ -31,6 +32,9 @@ use anything2mcp::cli::{Finished, run_on};
 use anything2mcp::{Engine, EngineOptions};
 use serde_json::Value as Json;
 
+/// The setting `engine.in_process` as a variable of the environment.
+pub const IN_PROCESS_VARIABLE: &str = "A2M_ENGINE__IN_PROCESS";
+
 /// The operating-system user of every test.
 pub const USER: &str = "pat";
 
@@ -41,22 +45,25 @@ pub struct Folder(PathBuf, bool);
 impl Folder {
     pub fn new(name: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
+        // A short name: the engine's socket lives under this folder, and
+        // macOS takes a socket path of 103 bytes at most, under a temporary
+        // folder that is itself about 60.
         let path = std::env::temp_dir().join(format!(
-            "anything2mcp-{name}-{}-{}",
+            "a2m-{name}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         // The roots resolve a folder once; a test compares paths with the
-        // resolved form.
-        Self(path.canonicalize().unwrap(), true)
+        // form they hold it in, which on Windows is not the system's own.
+        Self(a2m_provider::resolved_path(&path).unwrap(), true)
     }
 
     /// A folder that exists and belongs to somebody else, such as a test
     /// stand's own root.
     pub fn of_another(path: &Path) -> Self {
-        Self(path.canonicalize().unwrap(), false)
+        Self(a2m_provider::resolved_path(path).unwrap(), false)
     }
 
     pub fn path(&self) -> &Path {
@@ -259,6 +266,9 @@ impl Machine {
             .current_dir(self.project.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
             .envs(self.environment())
+            // A command runs the engine inside itself, as before start on
+            // demand: a test that wants an engine started removes this.
+            .env(IN_PROCESS_VARIABLE, "true")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -305,6 +315,7 @@ impl Machine {
         if let Some(clock) = clock {
             options.clock = clock;
         }
+        let clock = Arc::clone(&options.clock);
         let engine = Engine::open(options).await.expect("the settings load");
         assert!(
             engine.runner_problem().is_none(),
@@ -314,6 +325,7 @@ impl Machine {
         World {
             engine,
             surface: Arc::clone(&self.surface),
+            clock,
         }
     }
 }
@@ -322,6 +334,9 @@ impl Machine {
 pub struct World {
     pub engine: Engine,
     pub surface: Arc<Surface>,
+    /// The clock the engine was opened with: a proof of presence is taken
+    /// at its now, because the desk refuses one older than two minutes.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// What one command gave, with its standard output read as JSON.

@@ -89,6 +89,9 @@ pub(crate) struct ToolResult {
 pub(crate) struct Limits {
     pub max_message_bytes: usize,
     pub max_tools: usize,
+    /// How old the tool list a read is compared with may be, on a
+    /// connection that gives no notice of a change.
+    pub list_max_age: std::time::Duration,
 }
 
 fn client_info() -> Json {
@@ -447,6 +450,9 @@ pub(crate) struct HttpLink {
     /// The headers the session's provider placed. Held for this connection
     /// and nowhere else, and never shown.
     credentials: Vec<(String, Secret)>,
+    /// Whether the credentials would cross plain `http` to another machine
+    /// with the surface's acceptance missing: then nothing is sent.
+    refuse_credentials: bool,
     session: Mutex<Option<String>>,
     lost: AtomicBool,
     max_message_bytes: usize,
@@ -466,12 +472,17 @@ impl HttpLink {
     pub(crate) fn new(
         url: &str,
         credentials: Vec<(String, Secret)>,
+        unencrypted_accepted: bool,
         limits: Limits,
     ) -> Result<Self, StepFailure> {
         // No redirect is followed and no proxy of the environment is used:
         // nothing but the surface's declared address decides where a
-        // request goes.
-        let client = reqwest::Client::builder()
+        // request goes. The client trusts what the engine trusts, states its
+        // own TLS provider, and for an `https` address sends nothing that is
+        // not `https`.
+        let trust = a2m_auth::tls::installed().map_err(StepFailure::not_sent)?;
+        let client = a2m_auth::tls::client_builder(&trust)
+            .https_only(url.starts_with("https://"))
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()
@@ -483,6 +494,9 @@ impl HttpLink {
         Ok(Self {
             client,
             url: url.to_owned(),
+            refuse_credentials: !credentials.is_empty()
+                && !unencrypted_accepted
+                && crate::mapping::plain_to_another_machine(url),
             credentials,
             session: Mutex::new(None),
             lost: AtomicBool::new(false),
@@ -501,6 +515,9 @@ impl HttpLink {
         tool: Option<&str>,
         deadline: Deadline,
     ) -> Result<Exchange, StepFailure> {
+        if self.refuse_credentials {
+            return Err(StepFailure::not_sent(codes::link_not_encrypted()));
+        }
         let mut request = self
             .client
             .post(&self.url)
@@ -558,9 +575,13 @@ impl HttpLink {
             Ok(Ok(None)) => Err(StepFailure::unknown(codes::unexpected(
                 "The upstream server's answer is longer than the limit `max_message_bytes`.",
             ))),
-            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(codes::unavailable(
-                "The upstream server could not be reached at its address.",
-            ))),
+            // A certificate or a handshake that failed is named; nothing
+            // was sent either way.
+            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(
+                a2m_auth::tls::refusal(&error, "the upstream server").unwrap_or_else(|| {
+                    codes::unavailable("The upstream server could not be reached at its address.")
+                }),
+            )),
             Ok(Err(_)) => Err(StepFailure::unknown(codes::connection_lost(
                 "after the request was sent and before its answer came",
             ))),
@@ -672,6 +693,9 @@ pub(crate) struct Client {
     limits: Limits,
     /// What the server said it is, when the revision has a way to ask.
     pub(crate) server: Option<ServerInfo>,
+    /// Whether the server said, in the handshake, that it gives notice
+    /// when its tool list changes.
+    notice_declared: bool,
 }
 
 impl Client {
@@ -689,6 +713,7 @@ impl Client {
             next_id: AtomicU64::new(1),
             limits,
             server: None,
+            notice_declared: false,
         };
         if revision == Revision::Handshake {
             let result = client
@@ -721,6 +746,12 @@ impl Client {
             if let (Some(name), Some(version)) = (info("name"), info("version")) {
                 client.server = Some(ServerInfo { name, version });
             }
+            client.notice_declared = result
+                .get("capabilities")
+                .and_then(|capabilities| capabilities.get("tools"))
+                .and_then(|tools| tools.get("listChanged"))
+                .and_then(Json::as_bool)
+                == Some(true);
             client
                 .notify("notifications/initialized", json!({}), deadline)
                 .await?;
@@ -736,8 +767,20 @@ impl Client {
         }
     }
 
+    /// Whether a change to the server's tool list would be heard on this
+    /// connection: the server said in the handshake that it gives notice,
+    /// and the link is one a notice can arrive on. Over HTTP none can: this
+    /// build opens no stream for the server to send one on. With no
+    /// handshake the server has said nothing.
+    pub(crate) fn gives_notice(&self) -> bool {
+        match &self.link {
+            Link::Stdio(_) => self.notice_declared,
+            Link::Http(_) => false,
+        }
+    }
+
     /// Whether the server gave notice that its tool list changed since the
-    /// last time this was asked.
+    /// last time this was asked. Never over HTTP, where no notice is read.
     pub(crate) fn take_list_changed(&self) -> bool {
         match &self.link {
             Link::Stdio(link) => link.shared.list_changed.swap(false, Ordering::SeqCst),

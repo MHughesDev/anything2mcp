@@ -245,6 +245,95 @@ async fn randomness_comes_only_from_the_source_given() {
     assert_eq!(seal().await, seal().await);
 }
 
+/// A random source that is stuck: one value over and over, or the same
+/// run of bytes at every call.
+struct Stuck {
+    one_value: bool,
+}
+
+impl RandomSource for Stuck {
+    fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
+        for (at, byte) in out.iter_mut().enumerate() {
+            *byte = if self.one_value { 7 } else { at as u8 };
+        }
+        Ok(())
+    }
+}
+
+/// Audit finding V-3. The vault takes its randomness from whoever built it,
+/// and cannot tell a predictable source from a random one. It does refuse a
+/// source that repeats itself, before any key made from it is recorded:
+/// with one, every item would be sealed under the same key and nonce.
+#[tokio::test]
+async fn a_source_that_repeats_itself_seals_nothing() {
+    let (store, records) = durable();
+    let with = |one_value: bool| {
+        Vault::with_random(
+            Arc::clone(&store) as _,
+            Arc::clone(&records) as _,
+            Arc::new(Stuck { one_value }),
+        )
+    };
+
+    // One value over and over: no key is made of it, so nothing is
+    // recorded.
+    let refused = with(true).seal(&context(), PLAIN).await.unwrap_err();
+    assert_eq!(refused.code(), &codes::RANDOMNESS_UNAVAILABLE);
+    assert_eq!(refused.class(), FailureClass::Busy);
+    let digest = with(true).keyed_digest().await.unwrap_err();
+    assert_eq!(digest.code(), &codes::RANDOMNESS_UNAVAILABLE);
+    assert!(records.all().is_empty());
+
+    // The same run of bytes at every call: no item is sealed, with the
+    // upper keys a good source made or without them.
+    let refused = with(false).seal(&context(), PLAIN).await.unwrap_err();
+    assert_eq!(refused.code(), &codes::RANDOMNESS_UNAVAILABLE);
+    let (store, records) = durable();
+    vault(&store, &records)
+        .seal(&context(), PLAIN)
+        .await
+        .unwrap();
+    let before = records.all();
+    for one_value in [true, false] {
+        let stuck = Vault::with_random(
+            Arc::clone(&store) as _,
+            Arc::clone(&records) as _,
+            Arc::new(Stuck { one_value }),
+        );
+        let refused = stuck.seal(&context(), PLAIN).await.unwrap_err();
+        assert_eq!(refused.code(), &codes::RANDOMNESS_UNAVAILABLE);
+    }
+    assert_eq!(records.all(), before);
+}
+
+/// Audit finding V-1, against the store in memory. Eight engines over one
+/// key store, each with key records of its own as engines on different data
+/// directories have, seal their first item at the same moment. They end
+/// with one root: after a restart each opens what it sealed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn engines_that_start_at_once_over_one_key_store_end_with_one_root() {
+    let store = Arc::new(MemoryKeyStore::new());
+    let engines: Vec<_> = (0..8)
+        .map(|_| {
+            let store = Arc::clone(&store);
+            tokio::spawn(async move {
+                let records = Arc::new(MemoryKeyRecords::new());
+                let sealed = vault(&store, &records)
+                    .seal(&context(), PLAIN)
+                    .await
+                    .unwrap();
+                (records, sealed)
+            })
+        })
+        .collect();
+    for engine in engines {
+        let (records, sealed) = engine.await.unwrap();
+        let restarted = vault(&store, &records);
+        let opened = restarted.open(&context(), &sealed).await.unwrap();
+        assert_eq!(opened.expose(), PLAIN);
+    }
+}
+
 #[tokio::test]
 async fn no_key_and_no_plain_byte_is_in_anything_the_caller_keeps_or_sees() {
     let random = Arc::new(Recording::default());

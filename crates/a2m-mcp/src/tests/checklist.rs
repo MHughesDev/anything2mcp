@@ -409,7 +409,8 @@ async fn checklist(world: &World, wire: &mut Wire) {
                 .map(String::as_str)
                 .collect();
             keys.retain(|key| *key != "_meta");
-            assert_eq!(keys, ["progress", "progressToken", "total"], "{note}");
+            assert_eq!(keys, ["message", "progress", "progressToken"], "{note}");
+            assert!(!note["params"]["message"].as_str().unwrap().is_empty());
         }
     }
 }
@@ -473,10 +474,21 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
             "{control}: {listed:?}"
         );
     }
-    assert_eq!(
-        listed.last().map(String::as_str),
-        Some(ORDER_FILL),
+    // The control tools come first, then the pipelines: whatever else the
+    // shared plan publishes, this pipeline is listed after every built-in
+    // tool, and this operation is not listed.
+    let builtin = listed
+        .iter()
+        .take_while(|name| name.starts_with("a2m_"))
+        .count();
+    assert!(
+        listed[builtin..].iter().any(|name| name == ORDER_FILL),
         "{listed:?}"
+    );
+    assert!(
+        !listed[builtin..]
+            .iter()
+            .any(|name| name.starts_with("a2m_"))
     );
     assert!(!listed.iter().any(|name| name == ORDER_GET));
     assert!(listed.len() <= 19);
@@ -505,14 +517,30 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
             .all(|tool| tool.get("outputSchema").is_none())
     );
 
-    // With no room past the control tools, the pipeline moves to search.
-    let builtin = listed.len() - 1;
-    let narrow = McpSettings {
-        listed_max: builtin,
-        ..McpSettings::local()
-    };
-    let narrowed = name_list(&names(world.service("use", narrow)).await);
-    assert_eq!(narrowed, listed[..builtin]);
+    // With no room past the control tools, the pipelines move to search;
+    // with room for one, the first is listed.
+    for room in [0, 1] {
+        let narrow = McpSettings {
+            listed_max: builtin + room,
+            ..McpSettings::local()
+        };
+        let narrowed = name_list(&names(world.service("use", narrow)).await);
+        assert_eq!(narrowed, listed[..builtin + room]);
+    }
+
+    // A list costs one dispatch for each page of published tools, and not
+    // one for each tool: here, one.
+    for listing in [crate::Listing::Default, crate::Listing::Full] {
+        let service = world.service(
+            "use",
+            McpSettings {
+                listing,
+                ..McpSettings::local()
+            },
+        );
+        names(service.clone()).await;
+        assert_eq!(service.dispatched(), 1, "{listing:?}");
+    }
 
     // A full listing holds every operation as well.
     let full = McpSettings {
@@ -528,4 +556,57 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
     for tool in ["a2m_action_search", "a2m_action_describe", "a2m_action_run"] {
         assert!(build.iter().any(|name| name == tool), "{tool}: {build:?}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_the_result_cap_cut_is_read_again_in_smaller_pages() {
+    let names = |world: &World| {
+        let service = world.service(
+            "use",
+            McpSettings {
+                listing: crate::Listing::Full,
+                ..McpSettings::local()
+            },
+        );
+        async move {
+            let reply = Http::new(service.clone())
+                .post(&h(1, "tools/list", json!({})))
+                .await;
+            let names: Vec<String> = reply.only()["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect();
+            (names, service.dispatched())
+        }
+    };
+    let plain = World::ready().await;
+    let (whole, once) = names(&plain).await;
+    assert_eq!(once, 1);
+
+    // A cap that one tool in full fits under, and the page of all of them
+    // does not: measured, so that the test holds whatever is published.
+    let size = |input: Json| {
+        let world = &plain;
+        async move {
+            let found = world.direct("tool.search", input).await;
+            found.result.unwrap().to_string().len()
+        }
+    };
+    let mut largest = 0;
+    for offset in 0..whole.len() {
+        let one = size(json!({"full": true, "limit": 1, "offset": offset})).await;
+        largest = largest.max(one);
+    }
+    let cap = largest + 64;
+    assert!(size(json!({"full": true})).await > cap, "{cap}");
+    let capped = a2m_actions::Settings::load(
+        &a2m_actions::Sources::none().with_flag("tools.result_cap_bytes", &cap.to_string()),
+    )
+    .unwrap();
+    let world = World::with_settings(true, capped).await;
+    let (cut, dispatches) = names(&world).await;
+    assert_eq!(cut, whole);
+    assert!(dispatches > 1, "{dispatches}");
 }

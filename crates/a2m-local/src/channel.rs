@@ -7,12 +7,13 @@
 //! anyone else is closed. The first request on a connection is the hello;
 //! every later request carries the [`Peer`] in its extensions.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use a2m_actions::{CallerCredential, Paths};
+use a2m_actions::{BoxFuture, CallerCredential, Paths};
 use a2m_core::{Digest, Failure, Version};
 use axum::Router;
 use axum::extract::connect_info::Connected;
@@ -188,8 +189,9 @@ impl Peer {
 /// hold of the session keeper. The product crate implements it over the
 /// kernel and the person surface.
 pub trait IdleHolds: Send + Sync {
-    /// Whether something still needs the engine.
-    fn busy(&self) -> bool;
+    /// Whether something still needs the engine. It may read the store:
+    /// a run in hand with nobody connected holds the engine open.
+    fn busy(&self) -> BoxFuture<'_, bool>;
 }
 
 /// When an engine with no connections stops.
@@ -204,8 +206,8 @@ pub struct IdlePolicy {
 struct NoHolds;
 
 impl IdleHolds for NoHolds {
-    fn busy(&self) -> bool {
-        false
+    fn busy(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async { false })
     }
 }
 
@@ -249,6 +251,10 @@ pub enum StopReason {
     Restart,
     /// The listener failed.
     Failed,
+    /// The data directory is no longer the one the engine opened: its
+    /// engine lock is gone or is another file. The engine refuses work and
+    /// stops, so that no second engine opens a new store beside it.
+    DataGone,
 }
 
 /// A handle on a serving channel: stops it, and tells how many connections
@@ -283,13 +289,38 @@ impl ChannelControl {
 }
 
 /// The engine's end of the local channel, bound and not yet serving. It
-/// holds the engine lock until it is dropped or [`Channel::serve`] returns.
+/// holds the engine lock until it is dropped; [`Channel::serve`] hands the
+/// lock back, still held, when it returns.
 pub struct Channel {
     listener: os::Listener,
     lock: EngineLock,
     expected: OsUser,
     version: Version,
+    /// The engine's start variables, each by its name and the digest of
+    /// its value, which the hello answers with.
+    start_variables: BTreeMap<String, String>,
     control: ChannelControl,
+}
+
+/// The digest of one start variable, as the hello carries it: of its name
+/// and its value together, so that one value under two names differs.
+fn variable_digest(name: &str, value: &str) -> String {
+    Digest::of(format!("{name}={value}").as_bytes()).to_string()
+}
+
+/// Each variable by its name and the digest of its value.
+pub(crate) fn variable_digests(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    variables
+        .iter()
+        .map(|(name, value)| (name.clone(), variable_digest(name, value)))
+        .collect()
+}
+
+/// What the hello answers with.
+#[derive(Clone)]
+struct Hello {
+    version: Version,
+    start_variables: Arc<BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for Channel {
@@ -311,11 +342,14 @@ pub(crate) fn place(paths: &Paths, user: &OsUser) -> os::Place {
 impl Channel {
     /// Takes the engine lock, removes a stale socket, and binds the
     /// channel so that only this process's user can open it. The engine
-    /// calls this after `Kernel::open` has returned. `version` is this
-    /// program's, which the hello answers with.
+    /// calls this before `Kernel::open`, so that it holds the lock before
+    /// it opens the store, and serves only once the kernel is open.
+    /// `version` is this program's, which the hello answers with.
     ///
     /// # Errors
     ///
+    /// `input`/`socket_path_too_long`, before anything is made, when the
+    /// socket's path is longer than the system takes;
     /// `busy`/`engine_running` when another engine holds the lock, or
     /// another process made the pipe first; `busy`/`channel_unavailable`
     /// when the directories, the lock files, or the channel cannot be
@@ -335,6 +369,10 @@ impl Channel {
     ) -> Result<Self, Failure> {
         let me = OsUser::current()?;
         let place = place(paths, &me);
+        // Before anything is made: a socket of that path cannot be bound.
+        if let Some((socket, length, longest)) = place.too_long() {
+            return Err(codes::socket_path_too_long(socket, length, longest));
+        }
         let paths = paths.clone();
         let bound = tokio::task::spawn_blocking(move || {
             let lock = EngineLock::take(&paths)?;
@@ -358,11 +396,30 @@ impl Channel {
             lock,
             expected,
             version,
+            start_variables: BTreeMap::new(),
             control: ChannelControl {
                 stop,
                 refused: Arc::new(AtomicU64::new(0)),
             },
         })
+    }
+
+    /// The same channel, whose hello names the variables the engine was
+    /// started with that would change what it does, so that a client can
+    /// tell whether its own differ (decision 0192). Each is answered as
+    /// its name and the digest of its value, never the value; the channel
+    /// does not know what any of them means.
+    #[must_use]
+    pub fn with_start_variables(mut self, variables: &BTreeMap<String, String>) -> Self {
+        self.start_variables = variable_digests(variables);
+        self
+    }
+
+    /// Where the engine lock of the data directory was taken, which the
+    /// engine asks before each use of its data directory it can see.
+    #[must_use]
+    pub fn lock_place(&self) -> crate::LockPlace {
+        self.lock.place()
     }
 
     /// The handle that stops this channel once it serves.
@@ -375,14 +432,19 @@ impl Channel {
     /// stopped or goes idle. Every connection's user is checked before a
     /// byte is read from it. The channel answers the hello itself; every
     /// other request reaches `service` with a [`Peer`] in its extensions,
-    /// and only after its connection said hello. When this returns, the
-    /// socket is gone and the engine lock is released.
-    pub async fn serve(self, service: Router, idle: IdlePolicy) -> StopReason {
+    /// and only after its connection said hello.
+    ///
+    /// When this returns, the socket is gone and the engine lock is still
+    /// held: it comes back to the caller, who drops it once the kernel has
+    /// closed. Until then no second engine can bind, and so none opens the
+    /// store while this one still writes to it.
+    pub async fn serve(self, service: Router, idle: IdlePolicy) -> (StopReason, EngineLock) {
         let Self {
             listener,
             lock,
             expected,
             version,
+            start_variables,
             control,
         } = self;
         let (open, open_seen) = watch::channel(0_usize);
@@ -392,7 +454,11 @@ impl Channel {
             open,
             refused: Arc::clone(&control.refused),
         };
-        let app = service.layer(axum::middleware::from_fn_with_state(version, front));
+        let hello = Hello {
+            version,
+            start_variables: Arc::new(start_variables),
+        };
+        let app = service.layer(axum::middleware::from_fn_with_state(hello, front));
         let mut asked = control.stop.subscribe();
         let stop = control.stop.clone();
         let signal = async move {
@@ -411,13 +477,13 @@ impl Channel {
         let served = axum::serve(accepting, app.into_make_service_with_connect_info::<Seat>())
             .with_graceful_shutdown(signal)
             .await;
-        // The listener is gone with the serve; the lock is released last,
-        // so that no second engine binds while this one still listens.
-        drop(lock);
-        match (served, *control.stop.borrow()) {
+        // The listener is gone with the serve. The lock goes back to the
+        // caller, held, so that it outlives the kernel.
+        let why = match (served, *control.stop.borrow()) {
             (Ok(()), Some(reason)) => reason,
             _ => StopReason::Failed,
-        }
+        };
+        (why, lock)
     }
 }
 
@@ -433,7 +499,7 @@ async fn idle_stop(mut open: watch::Receiver<usize>, idle: IdlePolicy) {
         }
         tokio::select! {
             () = tokio::time::sleep(after) => {
-                if *open.borrow() == 0 && !idle.holds.busy() {
+                if *open.borrow() == 0 && !idle.holds.busy().await && *open.borrow() == 0 {
                     return;
                 }
             }
@@ -558,7 +624,7 @@ fn hello_invalid(why: &str) -> Response {
 
 /// What stands in front of the composed service: the hello, and the peer.
 async fn front(
-    State(version): State<Version>,
+    State(hello): State<Hello>,
     ConnectInfo(seat): ConnectInfo<Seat>,
     mut request: Request,
     next: Next,
@@ -593,7 +659,11 @@ async fn front(
         }
         // The first hello names the connection; a second changes nothing.
         let _ = seat.label.set(label);
-        let body = json!({"engine_version": version.to_string(), "local_api": LOCAL_API});
+        let body = json!({
+            "engine_version": hello.version.to_string(),
+            "local_api": LOCAL_API,
+            "start_variables": *hello.start_variables,
+        });
         return (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],

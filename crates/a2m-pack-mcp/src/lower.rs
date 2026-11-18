@@ -4,11 +4,12 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, LintCode, Mode,
-    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, Verb,
+    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, Place, Possible, ResolvedBinding, ResolvedView, Stage, TargetView,
+    Lowered, Lowering, Place, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
+    TargetView,
 };
 
 use crate::codes;
@@ -112,6 +113,62 @@ fn tool_problem(
         None => Some(unmapped(&tool.at, name, surface)),
         Some(found) if found.discovery => Some(discovery_bound(&tool.at, name, surface)),
         Some(_) => None,
+    }
+}
+
+/// The refusal of a binding that uses a tool whose mapping entry says the
+/// server runs the text it is given. Such a tool is never called, so no
+/// binding may be lowered onto it.
+fn runs_free_text(at: &Place, tool: &str) -> Diagnostic {
+    Diagnostic::error(
+        names::FREE_TEXT,
+        Stage::Lower,
+        at,
+        format!(
+            "The binding uses the tool `{}`, whose mapping entry says `free_text: true`: the server runs the text it is given. Such a tool is never called.",
+            codes::shown(tool)
+        ),
+        "Bind the operation to a tool that takes typed arguments. If a person finds that the server does not run the tool's one string, state `free_text: false` in its mapping entry.",
+    )
+}
+
+/// The refusal of a step whose tool takes the record's key from the key the
+/// engine gives the step, when the operation has no key input to give it.
+/// A record with no key input is known to the engine only by its place in
+/// the run, and that place is not a key the server knows: it must never be
+/// sent as an argument. An argument the step states itself is not filled
+/// from the key.
+fn place_key_problem(
+    at: &Place,
+    tool: &str,
+    entry: &ToolEntry,
+    given: &[StepArg],
+    key_inputs: usize,
+) -> Option<Diagnostic> {
+    let unfilled = entry.key_args.iter().enumerate().find(|(at, argument)| {
+        *at >= key_inputs && !given.iter().any(|arg| &arg.name == *argument)
+    })?;
+    Some(Diagnostic::error(
+        names::BINDING_INCOMPLETE,
+        Stage::Lower,
+        at,
+        format!(
+            "The mapping of the tool `{}` takes the argument `{}` from the record's key, and the operation has only {key_inputs} key input(s). A record with no key input has only its place in the run, which is never sent to a server.",
+            codes::shown(tool),
+            unfilled.1
+        ),
+        "Give the operation the key inputs the tool needs, or state the argument in the binding's `args`.",
+    ))
+}
+
+/// Whether a value of this type is or holds text. One of a field type's
+/// stored codes is not: the kernel admits only the codes.
+fn holds_text(ty: &ValueType) -> bool {
+    match ty {
+        ValueType::Text => true,
+        ValueType::List(of) => holds_text(of),
+        ValueType::Record(fields) => fields.iter().any(|field| holds_text(&field.ty)),
+        _ => false,
     }
 }
 
@@ -239,6 +296,54 @@ impl Lowering for McpLowering {
         &self.step_kinds
     }
 
+    /// A `call_tool` sends a read and a write alike, and which it is is the
+    /// `effect` the mapping gives the tool it names: the lowering marks it
+    /// `commits` exactly when the tool is mapped as a write and the step is
+    /// the binding's own act, and the driver refuses a tool mapped as a
+    /// write from any step not so marked. No kind always saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == names::CALL_TOOL {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// `create`, `update`, and `upsert` write. `delete` and `submit` cannot
+    /// be taken back. The rest claim nothing more than a read: what a tool
+    /// does is the mapping's effect, which the lowering holds the operation
+    /// to.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        match binding.verb.as_str() {
+            "create" | "update" | "upsert" => EffectClass::Write,
+            "delete" | "submit" => EffectClass::Irreversible,
+            _ => EffectClass::Read,
+        }
+    }
+
+    /// A call to a tool mapped `irreversible`, in an operation with no
+    /// identity to find again and a binding that names no `read_back`, has
+    /// nothing to read the result back through: the tool's own answer is
+    /// the only evidence there can be. (A tool mapped as a write that names
+    /// no read tool is refused by the lint `mcp.write_no_readback`, so an
+    /// operation declared `irreversible` here is calling a tool mapped so.)
+    /// Every other write keeps the read-back, and a binding that names a
+    /// `read_back` always keeps it. An operation with an identity and no
+    /// read-back is left to the compiler's refusal.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        let operation = binding.operation;
+        if operation.effect() == EffectClass::Irreversible
+            && operation.strategy() == IdentityStrategy::None
+            && binding.field("read_back").is_none()
+            && lowered.read_back.is_empty()
+            && lowered.act.iter().any(|step| step.commits)
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -331,29 +436,39 @@ impl Lowering for McpLowering {
                 "State the operation's effect as the mapping judges the tool, and use a verb that writes for a tool that writes.",
             ));
         }
-        // Text the system's users wrote must arrive under a field type that
-        // marks it untrusted.
+        if entry.free_text == Some(true) {
+            problems.push(runs_free_text(&tool_doc.at, tool));
+        }
+        // Every value of the mode comes from the upstream server, whichever
+        // tool of the binding fills it: the act, the read-back, or the
+        // lookup. So every output that is or holds text must arrive under a
+        // field type that marks it untrusted.
         for output in operation
             .doc()
             .get("outputs")
             .map(Located::entries)
             .unwrap_or_default()
         {
+            let text = operation
+                .outputs()
+                .iter()
+                .find(|plan| plan.name == output.key.value)
+                .is_some_and(|plan| holds_text(&plan.ty));
             let marked = output
                 .value
                 .text("type")
                 .and_then(|name| target.field_type(name))
                 .is_some_and(|field_type| field_type.plan.untrusted);
-            if entry.untrusted_fields.contains(&output.key.value) && !marked && !entry.writes() {
+            if text && !marked {
                 problems.push(Diagnostic::error(
                     names::UNTRUSTED_UNMARKED,
                     Stage::Lower,
                     &output.key.at,
                     format!(
-                        "The output `{}` is filled from a member the mapping lists under `untrusted_fields`, and its field type is not marked untrusted.",
+                        "The output `{}` is text, and text an upstream server returns is untrusted: its field type is not marked untrusted.",
                         output.key.value
                     ),
-                    "Give the output a field type with `untrusted: true`.",
+                    "Give the output a field type with `untrusted: true`, or a type that is not text, such as a choice with its codes.",
                 ));
             }
         }
@@ -364,12 +479,21 @@ impl Lowering for McpLowering {
             .and_then(|timeout| u32::try_from(timeout).ok())
             .or_else(|| target.default_timeout_ms("step"))
             .unwrap_or(DEFAULT_TIMEOUT_MS);
+        let key_inputs = operation.key().len();
+        let act_args = args_of(binding.field("args"), cx, &mut problems);
+        problems.extend(place_key_problem(
+            &tool_doc.at,
+            tool,
+            &entry,
+            &act_args,
+            key_inputs,
+        ));
         let act = step(
             Call {
                 surface: &surface_name,
                 tool,
                 entry: &entry,
-                args: args_of(binding.field("args"), cx, &mut problems),
+                args: act_args,
                 timeout_ms,
                 acts: true,
                 one_record: binding.verb.as_str() == "read",
@@ -386,6 +510,9 @@ impl Lowering for McpLowering {
             match find_tool(mappings, &surface_name, read_tool).map(|found| tool_entry(found.entry))
             {
                 Some(read_entry) if !read_entry.writes() => {
+                    if read_entry.free_text == Some(true) {
+                        problems.push(runs_free_text(&tool_doc.at, read_tool));
+                    }
                     // The record's key reaches the read tool through the
                     // arguments its mapping names under `key_args`, or
                     // else through the operation's key inputs by name.
@@ -396,6 +523,18 @@ impl Lowering for McpLowering {
                         }
                         None => Vec::new(),
                     };
+                    // A read-back that runs after the write is given the key
+                    // the server assigned, when the tool that wrote reports
+                    // one under `key`: then no key input is needed.
+                    if entry.key.is_empty() {
+                        problems.extend(place_key_problem(
+                            &tool_doc.at,
+                            read_tool,
+                            &read_entry,
+                            &args,
+                            key_inputs,
+                        ));
+                    }
                     read_back.extend(step(
                         Call {
                             surface: &surface_name,
@@ -427,6 +566,9 @@ impl Lowering for McpLowering {
                 && let Some(found) = find_tool(mappings, &surface_name, name)
             {
                 let lookup_entry = tool_entry(found.entry);
+                if lookup_entry.free_text == Some(true) {
+                    problems.push(runs_free_text(&lookup_tool.at, name));
+                }
                 if lookup_entry.writes() || !lookup_entry.can_be_absent() {
                     problems.push(Diagnostic::error(
                         names::BINDING_INCOMPLETE,
@@ -439,12 +581,20 @@ impl Lowering for McpLowering {
                         "Map the lookup tool with `effect: read` and with `records` or `absent_error`.",
                     ));
                 } else {
+                    let lookup_args = args_of(lookup_doc.get("args"), cx, &mut problems);
+                    problems.extend(place_key_problem(
+                        &lookup_tool.at,
+                        name,
+                        &lookup_entry,
+                        &lookup_args,
+                        key_inputs,
+                    ));
                     lookup.extend(step(
                         Call {
                             surface: &surface_name,
                             tool: name,
                             entry: &lookup_entry,
-                            args: args_of(lookup_doc.get("args"), cx, &mut problems),
+                            args: lookup_args,
                             timeout_ms,
                             acts: false,
                             one_record: true,
@@ -502,16 +652,20 @@ pub(crate) enum Rule {
     WriteNoReadback,
     DiscoveryBound,
     FreeText,
+    EnvironmentRefused,
+    UnencryptedCredentials,
 }
 
 impl Rule {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::ToolUnmapped,
         Self::ToolUnpinned,
         Self::ProgramUnpinned,
         Self::WriteNoReadback,
         Self::DiscoveryBound,
         Self::FreeText,
+        Self::EnvironmentRefused,
+        Self::UnencryptedCredentials,
     ];
 }
 
@@ -546,12 +700,14 @@ impl LintRule for Rule {
             Self::WriteNoReadback => names::WRITE_NO_READBACK,
             Self::DiscoveryBound => names::DISCOVERY_BOUND,
             Self::FreeText => names::FREE_TEXT,
+            Self::EnvironmentRefused => names::ENVIRONMENT_REFUSED,
+            Self::UnencryptedCredentials => names::UNENCRYPTED_CREDENTIALS,
         }
     }
 
     fn level(&self, _mode: CompileMode) -> Level {
         match self {
-            Self::FreeText => Level::Warning,
+            Self::FreeText | Self::UnencryptedCredentials => Level::Warning,
             _ => Level::Error,
         }
     }
@@ -568,7 +724,13 @@ impl LintRule for Rule {
                 "No binding uses a tool of a mapping whose purpose is discovery."
             }
             Self::FreeText => {
-                "A mapped tool whose input is one free-text string is reviewed before it is used."
+                "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
+            }
+            Self::EnvironmentRefused => {
+                "A local server program is handed no variable of the engine's and none named for a credential."
+            }
+            Self::UnencryptedCredentials => {
+                "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
             }
         }
     }
@@ -640,6 +802,58 @@ impl LintRule for Rule {
                     )
                 })
                 .collect(),
+            Self::UnencryptedCredentials => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .filter_map(|surface| {
+                    let field = surface.doc.get(crate::mapping::UNENCRYPTED_CREDENTIALS)?;
+                    (field.as_text() == Some(crate::mapping::ACCEPTED)).then(|| {
+                        problem(
+                            &field.at,
+                            format!(
+                                "The surface `{}` accepts that its credentials cross an unencrypted link to another machine, where anyone on the path can read them.",
+                                surface.name
+                            ),
+                            "Reach the server over `https` and remove `unencrypted_credentials`, once it offers it.",
+                        )
+                        .as_warning()
+                    })
+                })
+                .collect(),
+            Self::EnvironmentRefused => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .flat_map(|surface| {
+                    let set = surface
+                        .doc
+                        .get("environment")
+                        .map(Located::entries)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|entry| (entry.key.value.clone(), entry.key.at.clone()));
+                    let passed = surface
+                        .doc
+                        .get("pass_environment")
+                        .map(Located::items)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|item| Some((item.as_text()?.to_owned(), item.at.clone())));
+                    set.chain(passed).collect::<Vec<_>>()
+                })
+                .filter_map(|(name, at)| {
+                    let why = crate::mapping::refused_variable(&name)?;
+                    Some(problem(
+                        &at,
+                        format!(
+                            "The variable `{}` {why}.",
+                            codes::shown(&name)
+                        ),
+                        "Remove it. A credential for a local server program goes through the session keeper, never through its environment.",
+                    ))
+                })
+                .collect(),
             Self::WriteNoReadback => tool_entries(mappings)
                 .into_iter()
                 .filter(|(surface, _, entry, _)| {
@@ -669,10 +883,10 @@ impl LintRule for Rule {
                     problem(
                         at,
                         format!(
-                            "The input of the tool `{}` is one free-text string, which the server could run as a command or a query.",
+                            "The mapping says of the tool `{}` that the server runs the text it is given, as a command, a query, or a prompt. The tool is never called, and no binding may use it.",
                             codes::shown(tool)
                         ),
-                        "Review what the server does with the text. A tool that runs free text must not be mapped.",
+                        "Take the tool out of the mapping, or leave it as the record that it was reviewed and refused. State `free_text: false` only if a person finds that the server does not run the tool's one string.",
                     )
                 })
                 .collect(),

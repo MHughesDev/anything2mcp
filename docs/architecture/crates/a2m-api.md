@@ -15,26 +15,30 @@ The REST face of the kernel, and the server's network listener. It serves `/api/
 
 ## Owns
 
-- The REST router under `/api/v1`, built from the registry when the role starts.
+- The REST router under `/api/v1`, built from the registry when the role starts, and the two routes that no action generates: the OpenAPI document and a run's events.
 - The OpenAPI 3.1 document, generated from the registry and served at `/api/v1/openapi.json`.
-- Server-sent events for a run, resumable from an event's sequence number.
+- A run's events: a page of them from a sequence number, and the same as server-sent events, resumable from an event's sequence number.
 - Webhook delivery: reading the outbox, signing, posting, retrying, and recording the outcome.
 - On a server: the network listener, TLS, proxy headers, the health answer, protected resource metadata, and the mounting of the routes the product crate hands it, such as `a2m-mcp`'s endpoints.
 - On a server: `ServerSurface`, its implementation of `PersonSurface`: the console's approval page, the sign-in status page, and later the hosted sign-in page.
 
-It must never: hold a route that the registry did not generate; check a credential itself instead of through the kernel's verifier; serve an approval route on the local channel; send a webhook anywhere that settings and the egress rules do not name.
+It must never: hold a route that the registry did not generate, beyond the two named above; check a credential itself instead of through the kernel's verifier; serve an approval route on the local channel; send a webhook anywhere that settings and the egress rules do not name.
 
 ## Interface
 
 ```rust
 /// Built from the registry. Pure: the caller decides which listener carries it,
-/// and puts the verified `Caller` on each request as an extension (decision 0116).
+/// and puts the verified `Caller` on each request as an extension (decision 0116),
+/// and beside it the `ProjectFolder` the client end stated, when it stated one.
 pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<axum::Router, Failure>;
+// Re-exported from the action layer: `ProjectFolder`, the one type every door reads.
 pub struct ApiSettings { pub max_body_bytes: usize, pub body_timeout: Duration, pub request_timeout: Duration }
 pub fn status_of(response: &Response) -> StatusCode;      // the one status table
 pub fn openapi(registry: &ActionRegistry) -> serde_json::Value;
 pub fn served_routes(registry: &ActionRegistry) -> Vec<ServedRoute>;  // what the router serves
 pub const OPENAPI_PATH: &str = "/api/v1/openapi.json";
+pub const RUN_EVENTS_PATH: &str = "/api/v1/runs/{run_id}/events";   // not an action
+pub const KEEP_ALIVE: Duration;                           // 15 s: a silent stream sends a comment
 pub mod codes;  // caller_missing, body_too_large, content_type_unsupported, query_invalid, ...
 
 // Not built yet (sketch):
@@ -54,7 +58,7 @@ impl PersonSurface for ServerSurface { /* see a2m-actions */ }
 
 ## Routes
 
-Every route is generated from an `ActionDef`. There are two forms.
+Every route is generated from an `ActionDef`, but two that dispatch no action: the OpenAPI document, and a run's events (see "Events"). There are two forms of a generated route.
 
 | Form | Example | From |
 | --- | --- | --- |
@@ -71,9 +75,9 @@ The aliases in the technical reference map onto actions as follows. Each is the 
 | `POST /api/v1/runs/{id}/resume`, `/cancel` | `run.resume`, `run.cancel` |
 | `GET /api/v1/sessions` | `session.status` |
 | `GET /api/v1/openapi.json` | Generated from the registry; served by this crate, not an action |
-| `GET /api/v1/runs/{id}/events` | The event stream below; reading a run's events is authorized as `run.get` |
+| `GET /api/v1/runs/{run_id}/events` | A run's events, below. Not an action: served by this crate; the kernel shows a caller only a run the same caller started |
 
-A request is turned into a `Request` with the caller, the toolset if the route names one, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen by `status_of` from the exit class and the failure class: 200 for success, 202 for a run that rests waiting for a person, 400 for malformed, 401 for no caller, 403 for `policy`, 409 for `stale`, 503 for `busy`, 500 for anything else, and the door's own codes for 404, 405, 408, 413, and 415 ([decision 0116](../../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). A still-running run is 200.
+A request is turned into a `Request` with the caller, the toolset if the route names one, the project folder the mount stated, through `Request::in_project_folder`, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen by `status_of` from the exit class and the failure class: 200 for success, 202 for a run that rests waiting for a person, 400 for malformed, 401 for no caller, 403 for `policy`, which a kill switch is (`kill_switch_on`), 409 for `stale`, 503 for `busy`, 500 for anything else, and the door's own codes for 404, 405, 408, 413, and 415 ([decision 0116](../../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). A still-running run is 200.
 
 What a caller that sends too much, or too slowly, sees:
 
@@ -88,18 +92,31 @@ The `/api/v1/admin/...` row of the technical reference is not a separate surface
 
 ## OpenAPI
 
-The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
+The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. The route of a run's events is described in it with both of its answers, a page as JSON and a stream, and carries no `x-action`. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
 
 ## Events
 
-`GET /api/v1/runs/{id}/events` is a server-sent event stream.
+`GET /api/v1/runs/{run_id}/events` gives the events of a run ([decision 0151](../../decisions/0151-the-doors-take-up-the-action-registrys-second-pass.md)).
 
-1. The caller is authorized as for `run.get` on that run.
-2. The stream starts with every stored event after the `Last-Event-ID` the client sent, read from the store, then follows `Kernel::events` for new ones.
-3. Each event's `id` is its sequence number in the ledger, so a reconnecting client misses nothing and sees nothing twice.
-4. The stream ends with the run's final state. A comment line is sent at a fixed interval so idle proxies do not cut it.
+**Where the route lives, and why.** It is fixed in the router beside the route of the OpenAPI document. `served_routes` lists both, last, with an empty action, and the document describes both. No action generates it, because reading a run's events is not an action: `Kernel::events` and `Kernel::next_events` record no decision and show a caller only a run that the same caller started, which the decision about the call that started the run covered. An action for it would record a decision for every page of a stream. The route takes no body and dispatches nothing, so nothing a request carries chooses what runs.
 
-Events pass the redactor before they are stored, so the stream never holds a secret.
+| A request that | Gets |
+| --- | --- |
+| Accepts `text/event-stream` | A stream of server-sent events |
+| Anything else | One page as JSON, in the shape of every answer: `ok`, an empty `action`, and `result` with `run_id`, `events`, `last`, `status`, `working`, `ended`, `settled` |
+
+1. The caller is the one the mount put on the request. The kernel refuses a run the caller did not start as `input`, `not_found`, the same answer as for no run at all. A path that holds no run's identifier is `input`, `schema_invalid`.
+2. A page starts after `after` (0 when not given) and holds at most `limit` events, 200 at most. Any other field of the query is refused as `query_invalid`.
+3. A stream starts after the `Last-Event-ID` the client sent, or else after `after`. Each event's `id` is its sequence number in the ledger, and its data is the event: `seq`, `lease`, `at` in milliseconds, `kind`, `detail`. A reconnecting client misses nothing and sees nothing twice.
+4. A stream ends with one event named `settled`, which says where the run stands, once the run has ended or rests with every event sent. A run that waits for a person may wait for days, so the stream does not stay open across a rest: a client opens it again, with the last identifier, after the run is resumed.
+5. The first page is read before anything is answered. A refusal is therefore an ordinary answer with its status, and never the start of a stream. A failure after the stream began is its last event, named `failed`.
+6. A comment line is sent when a stream has said nothing for 15 seconds, so that an idle connection is not taken for dead.
+7. A run whose state rests while its job is still in a runner's hands settles without a further event. Each wait is `Kernel::next_events_from` with what the last page showed, so the kernel answers the moment the job is recorded as ended, with no timer ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
+8. Each line waits at most 60 s for the reader to take it (`READER_PATIENCE`). A reader that keeps the connection open and reads nothing for that long is treated as gone, and the stream ends. Following only reads, so ending it leaves nothing half done.
+
+Events pass the redactor before they are stored, and their detail passes it again as the kernel hands it out, so the stream never holds a secret.
+
+**No redaction pass of its own.** Unlike the MCP door, this crate does not walk what it sends through the redactor. Everything it sends is the dispatcher's response or the kernel's events, both redacted before they are handed over, and this door's own texts quote nothing a caller sent except the HTTP method and, for a JSON error, a line and a column. The MCP door needs its pass because its protocol errors echo a tool's name, a request's id, and a progress token. A route of this crate that comes to quote its input must add the pass.
 
 ## Webhooks
 
@@ -154,7 +171,9 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 | Every route is generated from an action | The router binds only `rest_routes`; `served_routes` is its list, and the OpenAPI test holds the document to it |
 | The OpenAPI document equals the routes | `the_openapi_document_describes_every_route_and_nothing_else`: equal both ways, and every operation called |
 | The router has no approval page and no approval route | `the_door_offers_no_way_to_approve`: over every served route, and a resting write that a resume through the door does not write |
-| An event stream resumed from an identifier misses and repeats nothing | A test that cuts a stream mid-run |
+| An event stream resumed from an identifier misses and repeats nothing | `a_runs_events_are_read_from_a_number_and_streamed_until_the_run_settles`: a stream to the rest of a write, the approval, and a second stream from the last identifier to the end |
+| A run's events are shown only to its caller | The kernel's check, proven in `a2m-actions` with a second principal. Here: a run's identifier the caller never got, in both forms of the route, and no caller at all. This build has one user, so a second principal cannot be made outside the kernel |
+| A kill switch is answered 403 | `a_kill_switch_is_the_policy_engines_refusal_and_status_403`, and the status table's own test |
 | A webhook goes only to a configured destination | A test with an input naming another address |
 | A caller cannot approve through the server's pages | The exit test of package 6.5 |
 
@@ -163,7 +182,7 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 1. Done: the router with the action route, carried on whatever the product crate mounts it on; the caller comes as a request extension; limits on body size and time. Package 1.4.
 2. Done, partly: the aliases the registry declares as `rest_alias` data: `tool.search`, `run.get`, `run.resume`, `run.cancel`, `session.status`. Not built: `POST /operations/{name}/calls` and `/pipelines/{name}/runs` for `tool.call`, because the catalog gives `tool.call` no alias and one action has at most one; `a2m-actions` must give it one (or two) with `{name}` filling `tool`.
 3. Done: the OpenAPI document and its test (every served route described, nothing else, every operation called). Not built: a toolset's own document. Package 6.4.
-4. Not built: the event stream; the kernel exposes no event stream yet (`Kernel::events`, resumable from a sequence number, is what it needs). The outbox and the deliverer: the store has no outbox table and settings no destinations. Package 6.4.
+4. Done: a run's events, as a page and as a stream, over `Kernel::events` and `Kernel::next_events`. Not built: the outbox and the deliverer; the store has no outbox table and settings no destinations. Package 6.4.
 5. Not built: the server listener, its token checks, protected resource metadata; `verify_caller` refuses bearer tokens and API keys in this build. With package 6.2.
 6. Not built: `ServerSurface` and the console's approval page; needs a person's sign-in on a server and the console's pages. Package 6.5.
 
@@ -172,4 +191,6 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 - Actions to manage webhook destinations and toolset export: neither is in the action catalog yet.
 - The `/api/v1/admin/...` row of the technical reference should be removed or defined as aliases.
 - Where a remote caller fetches a kept blob: a generated alias of `trace.show`, most likely.
+- `engine_fault` and `request_timed_out` give the exact next step (decision 0160): with an `Idempotency-Key`, the same request again with the same key, which gives back the run the first one started; without one, `GET /api/v1/runs?since=<a minute before>&tool=<tool>`, by this machine's clock. `GET /api/v1/runs` is `run.list`, an alias its definition declares.
+- A second principal for this crate's tests, so that the refusal of another caller's run is proven through the door and not only in the kernel.
 - The health answer for a load balancer, which has no caller: a reduced, generated alias of `engine.status` that shows only the state.

@@ -18,6 +18,8 @@ let received = broker.received();                 // ground truth
 
 The broker stops, with every connection it holds, when the `TestBroker` is dropped. Two brokers in one test share nothing. There is no binary and no fixed port.
 
+Its protocol, `example-broker/1`, is offered by the stream pack only to a test's own registration: the pack's `register_with_test_broker`, or its ordinary `register` in a process where `TestBroker::start` has run, which tells the pack so. The shipped product, which has the stand as no dependency, never runs that, so whatever a build unifies it offers `nats` alone ([decision 0201](../../docs/decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md), which replaces the feature of decision 0197). The pack dials it, as every plain TCP link, only at a loopback address written as an IP address; the stand listens on `127.0.0.1`.
+
 ## The wire protocol, and why it is our own
 
 **The choice.** The broker speaks `example-broker/1`: a line protocol of our own, JSON over TCP. Section 309 names no protocol; which one the pack speaks first is one of its open points, and it says a log with positions may need a second protocol. The stand has to hold a channel of every shape the section lists (retained, log, queue), with a look that takes nothing and a broker that can refuse a repeated token. No one small open protocol offers all of that, so an honest subset of a standard would have covered part of the pack and needed a binary codec to do it. The alternative weighed was exactly that subset; it was put off, not rejected. When the pack's first slice chooses its protocol, that protocol is added here as a second way in to the same broker: `src/server.rs` is the only file that knows the wire, and `src/state.rs` holds every rule.
@@ -137,6 +139,11 @@ Each fault is a setting: `Fault::once(kind)`, `Fault::times(kind, n)`, or `Fault
 | `DuplicateDelivery` | `fetch` | The message handed over is handed over again on the next fetch, with a new delivery tag and the same `attempt`, even after it was acknowledged | Delivery at least once |
 | `SilentConsumer` | A queue | A consumer of the stand's own, named `silent`, takes messages as they become ready, as many as the fault's `times`, and never acknowledges. `clear_faults()` makes it let go | Another consumer on the queue; a consumer that never acknowledges |
 | `RenameField { from, to }` | `latest`, `browse`, `fetch` | A top-level field of every body returned is renamed. What is stored does not change | A changed message shape |
+| `StoreThenRefuse { code }` | `publish` | The message is stored; the answer is a refusal under `code`, which need not be a code of the table above | A write in doubt behind an answer that looks like a refusal |
+| `AckThenDrop` | `ack` | The message is acknowledged and gone; the connection is dropped before the answer | A take whose acknowledgement is in doubt |
+| `AckThenRefuse { code }` | `ack` | The message is acknowledged and gone; the answer is a refusal under `code` | The same, behind an answer that looks like a refusal |
+| `EmptyLook { more }` | `browse` | The answer holds no messages, whatever the channel holds, and says `more` as the fault states | A look that does not cover the channel, which must never be read as "nothing is there" |
+| `ExtraDelivery` | `fetch` | One message more than `max` is handed over, when something waits | A broker that breaks the bound of a read |
 
 Settings of the control interface reproduce the rest: a channel that is gone or has changed shape (`remove_channel`, `declare_channel`), retention that ran out (`expire_retention`), a repeated token accepted (`set_dedupe_header`), an acknowledgement that came too late (`redeliver_unacknowledged`), credentials that stopped working (`set_required_token`), and a lost connection on a read (`drop_connections`). A stale value, a second producer, and a second consumer need no fault: the test acts as one, with `client(name)`.
 
@@ -161,6 +168,7 @@ Each case exists because of a risk named in section 309. Each is a test in `test
 | 13 | Shows a changed field, a changed shape, a missing channel, and an answer outside the protocol | `drift`; `unknown_variant` |
 | 14 | Requires a token, and stops accepting one it accepted | `needs_login`; no credential in any report |
 | 15 | Drops every connection; restores the seed data on reset | `connection_lost`; a known starting state |
+| 16 | Carries a publish or an acknowledgement out and then loses the answer or answers with an unknown code; answers a look with nothing; hands over more than a fetch asked for | A write in doubt that looks refused; a take whose message is gone; "absent" said of a log that was not covered; an unbounded read |
 
 ## What is not built
 

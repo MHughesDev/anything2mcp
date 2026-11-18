@@ -15,7 +15,8 @@ archetype = "stream"
 verbs = ["read", "list", "await", "publish", "take"]
 # `channels` and `describe` are sent by the discoverer only; no lowering
 # gives them.
-steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "channels", "describe"]
+steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "position", "taken", "channels", "describe"]
+commit_steps = ["publish", "acknowledge"]
 rank = 60
 intent_window = 1
 session_reads = 4
@@ -112,6 +113,16 @@ code = "stream.consumers_unknown"
 level = "warning"
 summary = "A channel that is published to says who reads it."
 
+[[lint_rules]]
+code = "stream.protocol_unfit"
+level = "error"
+summary = "A channel states only what the wire protocol its surface speaks can carry."
+
+[[lint_rules]]
+code = "stream.untrusted_unmarked"
+level = "error"
+summary = "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
+
 [[drafting_rules]]
 finding_kind = "channel"
 file_kind = "channel"
@@ -140,6 +151,14 @@ code = "message_too_large"
 class = "input"
 code = "protocol_unknown"
 
+[[failure_codes]]
+class = "input"
+code = "credential_not_carried"
+
+[[failure_codes]]
+class = "input"
+code = "nothing_recorded"
+
 # A plan compiled by another build of the pack: `a2m-core`'s own code.
 [[failure_codes]]
 class = "input"
@@ -156,6 +175,14 @@ code = "surface_not_declared"
 [[failure_codes]]
 class = "policy"
 code = "scan_limit"
+
+[[failure_codes]]
+class = "policy"
+code = "transport_refused"
+
+[[failure_codes]]
+class = "policy"
+code = "take_too_large"
 
 [[failure_codes]]
 class = "rejected"
@@ -193,6 +220,14 @@ code = "nothing_arrived"
 class = "busy"
 code = "subscription_in_use"
 
+[[failure_codes]]
+class = "busy"
+code = "message_may_be_held"
+
+[[failure_codes]]
+class = "policy"
+code = "scan_inconclusive"
+
 [effects]
 network = "surfaces"
 sessions = ["broker"]
@@ -212,6 +247,14 @@ default = 5
 min = 0
 max = 100
 doc = "How many messages of one channel a discovery looks at, without taking any, to learn the shape of its messages."
+
+[[settings]]
+key = "message_ceiling_bytes"
+type = "int"
+default = 8388608
+min = 1024
+max = 67108864
+doc = "The largest message, in bytes, the pack reads from or sends to a broker, whatever the broker states as its own limit. A larger one stops by name before anything is set aside for it."
 
 [[settings]]
 key = "idle_links"

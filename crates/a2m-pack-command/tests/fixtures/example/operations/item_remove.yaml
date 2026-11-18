@@ -1,6 +1,6 @@
 operation: example_item_remove
 title: Remove an item
-effect: write
+effect: irreversible
 key: sku
 commit_points: 1
 inputs:

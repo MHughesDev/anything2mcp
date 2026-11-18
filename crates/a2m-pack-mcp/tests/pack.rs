@@ -64,10 +64,12 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         codes,
         [
             "mcp.discovery_bound",
+            "mcp.environment_refused",
             "mcp.free_text",
             "mcp.program_unpinned",
             "mcp.tool_unmapped",
             "mcp.tool_unpinned",
+            "mcp.unencrypted_credentials",
             "mcp.write_no_readback"
         ]
     );
@@ -99,14 +101,9 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(one.encoded.bytes, other.encoded.bytes);
     assert_eq!(one.encoded.hash, other.encoded.hash);
 
-    // The one warning is the reviewer's: a tool that takes free text.
-    let warnings: Vec<String> = one
-        .warnings
-        .iter()
-        .filter(|warning| warning.code.as_str().starts_with("mcp."))
-        .map(|warning| warning.code.to_string())
-        .collect();
-    assert_eq!(warnings, ["mcp.free_text"]);
+    // The pack has nothing to warn of: no mapped tool is one a reviewer
+    // found to run free text.
+    assert_eq!(pack_warnings(&one), Vec::<String>::new());
 
     // A write commits and has the mapped read tool as its read-back; a read
     // by key is a lookup; a create carries its lookup.
@@ -139,6 +136,50 @@ async fn the_fixture_pins_are_the_stands_definitions() {
         wrong.is_empty(),
         "the fixture pins other digests than the stand's definitions have: {wrong:#?}"
     );
+}
+
+/// The codes of the pack's own warnings on a compiled target.
+fn pack_warnings(compiled: &a2m_files::Compiled) -> Vec<String> {
+    compiled
+        .warnings
+        .iter()
+        .filter(|warning| warning.code.as_str().starts_with("mcp."))
+        .map(|warning| warning.code.to_string())
+        .collect()
+}
+
+const SEARCH_REVIEWED: &str = "    free_text: false\n  orders_create:";
+const SEARCH_RUNS_TEXT: &str = "    free_text: true\n  orders_create:";
+
+#[test]
+fn a_tool_that_runs_free_text_can_be_recorded_and_never_bound() {
+    // A binding to a tool whose mapping entry says the server runs the
+    // text it is given does not compile.
+    let problems = problems_after("mappings/orders.yaml", SEARCH_REVIEWED, SEARCH_RUNS_TEXT);
+    let bound = problems
+        .iter()
+        .find(|problem| {
+            problem.code.as_str() == "mcp.free_text" && problem.level == a2m_files::Level::Error
+        })
+        .expect("free_text, as an error");
+    assert_eq!(bound.at.file.as_str(), "operations/order_search.yaml");
+    assert!(bound.at.line > 1 && !bound.fix.is_empty());
+
+    // With no binding on it, the entry stands as the record of a review,
+    // and the compiler warns that the tool is never called.
+    let folder = Folder::new("free-text");
+    let registry = registry(&folder);
+    let root = folder.path().join("target");
+    write_target(&root, &|path, text| match path {
+        "mappings/orders.yaml" => text.replace(SEARCH_REVIEWED, SEARCH_RUNS_TEXT),
+        "operations/order_search.yaml" => text
+            .replace("tool: orders_search", "tool: orders_report")
+            .replace("    args: {query: input.query}\n", ""),
+        _ => text,
+    });
+    let compiled = compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)));
+    assert_eq!(pack_warnings(&compiled), ["mcp.free_text"]);
 }
 
 /// Compiles the fixture with one file changed, and gives the problems.
@@ -243,12 +284,116 @@ fn what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix() {
     );
     assert!(problems.find("mcp.effect_understated").is_some());
 
-    // Text the system's users wrote, under a field type that does not mark
-    // it untrusted.
-    let problems = problems_after(
-        "operations/order_get.yaml",
-        "  note: {type: free_text}",
-        "  note: {type: identifier}",
+    // Text from the server, under a field type that does not mark it
+    // untrusted: in what a read returns, in what a write returns after its
+    // read-back, and in the one value of a tool whose result is text.
+    for (file, from, to) in [
+        (
+            "operations/order_get.yaml",
+            "  note: {type: free_text}",
+            "  note: {type: identifier}",
+        ),
+        (
+            "operations/order_note_update.yaml",
+            "outputs:\n  note: {type: free_text}",
+            "outputs:\n  note: {type: identifier}",
+        ),
+        (
+            "operations/order_search.yaml",
+            "  text: {type: free_text}",
+            "  text: {type: identifier}",
+        ),
+    ] {
+        let problems = problems_after(file, from, to);
+        let unmarked = problems
+            .find("mcp.untrusted_unmarked")
+            .unwrap_or_else(|| panic!("`{file}` compiled:\n{}", shown(&problems)));
+        assert_eq!(unmarked.at.file.as_str(), file);
+    }
+}
+
+#[test]
+fn a_write_never_compiles_as_less_than_what_its_binding_does() {
+    // A verb that writes, bound to a tool the mapping calls a read, in an
+    // operation declared a read: the pack's own check passes, and the
+    // compiler holds the operation to what the verb does.
+    let problems = problems_after("operations/order_get.yaml", "verb: read", "verb: update");
+    assert!(
+        problems.find("kernel.effect_lower_than_derived").is_some(),
+        "{}",
+        shown(&problems)
     );
-    assert!(problems.find("mcp.untrusted_unmarked").is_some());
+    // A delete cannot be taken back.
+    let problems = problems_after("operations/order_get.yaml", "verb: read", "verb: delete");
+    assert!(
+        problems.find("kernel.effect_lower_than_derived").is_some(),
+        "{}",
+        shown(&problems)
+    );
+}
+
+#[test]
+fn a_key_argument_is_never_filled_from_the_place_of_a_record_in_the_run() {
+    // The create names a lookup tool whose argument takes the record's key,
+    // and the operation has no key input: the engine would hand the step the
+    // record's place in the run, which is not a key the server knows.
+    let problems = problems_after(
+        "mappings/orders.yaml",
+        "    records: orders\n    stamp: reference\n",
+        "    records: orders\n    stamp: reference\n    key_args: [order_id]\n",
+    );
+    let refused = problems
+        .iter()
+        .find(|problem| {
+            problem.code.as_str() == "mcp.binding_incomplete"
+                && problem.message.contains("place in the run")
+        })
+        .unwrap_or_else(|| panic!("no refusal:\n{}", shown(&problems)));
+    assert_eq!(refused.at.file.as_str(), "operations/order_create.yaml");
+    assert!(refused.at.line > 1 && !refused.fix.is_empty());
+
+    // A read-back after a write that reports the assigned key, and a
+    // binding that states the argument itself, are not refused: the fixture
+    // compiles with its own read-back of the created order.
+    let folder = Folder::new("place-key");
+    compiled_fixture(&registry(&folder));
+}
+
+#[test]
+fn a_call_to_an_irreversible_tool_with_no_read_back_states_the_acknowledgement() {
+    let folder = Folder::new("evidence");
+    let registry = registry(&folder);
+    let root = folder.path().join("target");
+    // The tool is mapped as one that cannot be taken back, and read by no
+    // other tool; the operation has no record to find again.
+    write_target(&root, &|path, text| match path {
+        "mappings/orders.yaml" => text.replace(
+            "    effect: write\n    read_back: orders_get\n    result: text\n",
+            "    effect: irreversible\n    result: text\n",
+        ),
+        "operations/order_note_update.yaml" => text
+            .replace("effect: write\nkey: order_id\n", "effect: irreversible\n")
+            .replace("    read_back: {}\n", ""),
+        _ => text,
+    });
+    let plan = compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)))
+        .plan;
+    let evidence = |plan: &a2m_core::Plan, name: &str| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .bindings[0]
+            .evidence
+    };
+    assert_eq!(
+        evidence(&plan, "example_order_note_update"),
+        a2m_core::WriteEvidence::Acknowledged
+    );
+    // A write that names a read-back keeps it.
+    assert_eq!(
+        evidence(&compiled_fixture(&registry), "example_order_note_update"),
+        a2m_core::WriteEvidence::ReadBack
+    );
 }

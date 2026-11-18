@@ -33,7 +33,7 @@ pub use names::{
     SealContext, SealedKind,
 };
 pub use records::{KeyRecord, KeyRecords, MemoryKeyRecords, key_record_conflict};
-pub use redactor::{Redactor, RedactorHealth};
+pub use redactor::{RedactStream, Redactor, RedactorHealth};
 pub use sealed::Sealed;
 pub use store::{
     BoxFuture, KeyStore, MemoryKeyStore, OsKeyStore, PassphraseKeyStore, PassphraseRoute,
@@ -46,6 +46,6 @@ pub mod codes {
     pub use crate::failure::{
         KEY_RECORD_CONFLICT, KEY_STORE_ENTRY_MISSING, KEY_STORE_UNREACHABLE,
         RANDOMNESS_UNAVAILABLE, SEALED_FORMAT_UNSUPPORTED, SEALED_ITEM_MISMATCH,
-        VAULT_PASSPHRASE_MISMATCH, VAULT_PASSPHRASE_NOT_ENABLED,
+        VAULT_PASSPHRASE_MISMATCH, VAULT_PASSPHRASE_NOT_ENABLED, VAULT_PASSPHRASE_TOO_SHORT,
     };
 }

@@ -11,7 +11,7 @@ The base of the web pack: a browser engine that speaks the DevTools protocol to 
 | May depend on | Layers 1 to 5 |
 | Depends on | `a2m-core` for `Failure`, `Redact`, `Digest`, `Availability`, and the names of a profile key; `a2m-provider` for the pack context: the scoped supervisor, checked paths, the redactor, and `Deadline`. Outside: `tokio`, `serde`, and `serde_json`, and nothing else. The base is a DevTools-protocol client of the crate's own ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)); there is no outside base library |
 | Built in | Slice 0.4 chose the base. Slice 1.1 built the client, launch, tabs, locating, reading, waiting, snapshots, input, the observing tab, and in-page requests. Package 2.3 the visible window. Package 8.5 the hard cases |
-| Carries out | Spec sections [302](../../spec/3-packs/302-the-web-pack-browser-engine.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (profiles and tabs), [204](../../spec/2-kernel/204-supervising-subsystems.md) (for the browser), [225](../../spec/2-kernel/225-performance.md) (the browser budgets); decisions [0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md), [0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md), [0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md), [0110](../../decisions/0110-the-browser-engines-interface-as-building-it-settled-it.md), [0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md) |
+| Carries out | Spec sections [302](../../spec/3-packs/302-the-web-pack-browser-engine.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (profiles and tabs), [204](../../spec/2-kernel/204-supervising-subsystems.md) (for the browser), [225](../../spec/2-kernel/225-performance.md) (the browser budgets); decisions [0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md), [0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md), [0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md), [0110](../../decisions/0110-the-browser-engines-interface-as-building-it-settled-it.md), [0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md), [0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md) |
 
 ## Owns
 
@@ -24,9 +24,10 @@ The base of the web pack: a browser engine that speaks the DevTools protocol to 
 - Building a snapshot from the accessibility tree, in the form of [steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md#snapshots), so that a run's evidence and discovery's findings use one builder.
 - Requests sent from inside the page.
 - The posture of each tab: one that may act, or one that may only observe (below).
+- Keeping each tab on the origins it was opened for, and refusing what leaves the page: a download, and a window the page opens.
 - Detecting a crash, a disconnect, and a dialog, and saying for each act whether its input reached the page.
 
-Designed and not built: recycling by run count, age, and memory; declared frames; platform profiles as data; the stream of network exchanges; pop-ups and downloads.
+Built since ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)): an observing tab records each request its page makes by itself from a script with GET to one of the tab's origins, as a `PageExchange` of names and kinds only (method, origin, path, the query's names, the names of headers whose name says they carry a credential or an anti-forgery token, status, media type, and a JSON answer's names and kinds to one level), taken with `ObserveTab::exchanges(deadline)`, which waits until no such request is awaiting its answer; the helper gives `dt` and `dd` the roles `term` and `definition`. Built since ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)): a read from inside an observing tab's page, `ObserveTab::read_from_page`, GET alone to a `PagePath`. Built since ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)): recording is off until `ObserveTab::record_exchanges` is called, so a tab whose exchanges nobody takes fetches no answer; an answer's body is read off the tab's one stream of events, and the browser keeps none longer than four bytes for each character the tab reads (`Network.enable` with `maxResourceBufferSize`); `exchanges` gives `PageExchanges`, with how many were left out at 256 and how many were still awaited; a `PageExchange` keeps its path by structure (`path_by_structure`: a segment that is not a plain word is `{value}`), only plain names of its query and whether an entry was left out (`query_names`: an entry with no `=` is a value and is never kept), the names of the headers the page's script set (`set_headers`: every header but `BROWSER_HEADERS`, and `accept`, `accept-language`, `user-agent`, and `referer` only when they hold what the browser itself sends), and an answer's names only where they are structure (`names_are_structure`: at most 64 names, each a plain name; otherwise `names_withheld`); the action words and their check (`ACTION_WORDS`, `looks_like_an_action`) live here, for the probe and the drivers alike; a redirect answering `read_from_page` is `BrowserError::Redirected`. Designed and not built: recycling by run count, age, and memory; declared frames; platform profiles as data; the stream of every network exchange; pop-ups and downloads a step declares (an undeclared one is refused and reported).
 
 It must never: start a process except through its scoped supervisor; connect to any browser process it did not start; resolve a path itself, or open a data directory it was not handed as a checked path; read or copy another program's cookie store; hide that it is automation, alter its fingerprint, or answer a challenge; know about screen models, widget drivers, endpoints, or modes; decide whether a failure means a write may have landed; retry.
 
@@ -53,7 +54,10 @@ pub struct BrowserSettings {
     pub max_read_chars: usize,            // 1 Mi: a longer read is `TooLarge`, never cut
 }
 impl Default for BrowserSettings;
-impl BrowserSettings { pub fn with_program(self, PathBuf) -> Self; pub fn with_known_digests(self, Vec<Digest>) -> Self; }
+impl BrowserSettings { pub fn with_program(self, PathBuf) -> Self; pub fn with_known_digests(self, Vec<Digest>) -> Self;
+    /// Reads `browser_digests`, a list of digests, from a pack's settings group. A value it cannot read is refused.
+    pub fn with_pack_settings(self, settings: &Values) -> Result<Self, Failure>; }
+pub const DIGESTS_SETTING: &str = "browser_digests";   // the key a pack's manifest declares under `[[settings]]`, type `list`
 
 /// One per engine process. Cheap to clone; every clone is the same set.
 pub struct Browsers;
@@ -78,7 +82,7 @@ pub struct OpenBrowser { pub profile, pub subsystem: SubsystemId, pub product: S
 
 pub struct Browser;                                        // cheap to clone; one process
 impl Browser {
-    pub async fn acting_tab(&self, env: &PageEnvironment) -> Result<ActTab, BrowserError>;
+    pub async fn acting_tab(&self, env: &PageEnvironment, origins: &Origins) -> Result<ActTab, BrowserError>;
     pub fn health(&self) -> BrowserHealth;
     pub fn product(&self) -> &str;                         // what the browser reports itself to be
     pub fn subsystem(&self) -> SubsystemId;
@@ -86,15 +90,20 @@ impl Browser {
 
 pub struct Observer;                                       // a `Browsers` that can only look
 impl Observer {
-    pub async fn observing_tab(&self, profile: &ProfileKey, env: &PageEnvironment, allow: &SafeRequests)
-        -> Result<ObserveTab, BrowserError>;
+    pub async fn observing_tab(&self, profile: &ProfileKey, env: &PageEnvironment, allow: &SafeRequests,
+        origins: &Origins) -> Result<ObserveTab, BrowserError>;
     pub fn availability(&self) -> Availability;
 }
 
 pub struct PageEnvironment { pub viewport: (u32, u32), pub locale: String, pub time_zone: String,
                              pub dark: bool, pub reduced_motion: bool }    // has a Default
 pub struct Address;                                        // an absolute http or https address
-impl Address { pub fn new(text: &str) -> Result<Self, Failure>; pub fn as_str(&self) -> &str; }
+impl Address { pub fn new(text: &str) -> Result<Self, Failure>; pub fn as_str(&self) -> &str;
+                pub fn origin(&self) -> String; }         // as the browser writes it: `https://app.example.com`
+/// The origins a tab may be on: given when it is opened, from the plan's destinations. Empty: nowhere.
+pub struct Origins;
+impl Origins { pub fn of<'a>(addresses: impl IntoIterator<Item = &'a Address>) -> Self;
+                pub fn allows(&self, address: &Address) -> bool; pub fn iter(&self) -> impl Iterator<Item = &str>; }
 
 /// Everything that only looks. Both tab kinds have it. Each method returns a future that is Send.
 pub trait Look {
@@ -111,7 +120,16 @@ impl ActTab {
     pub async fn fetch(&self, request: &PageRequest, deadline: Deadline) -> Result<PageResponse, BrowserError>;
     pub async fn answer_dialog(&self, how: &DialogAnswer, deadline: Deadline) -> Result<(), BrowserError>;
 }
-impl ObserveTab { pub fn blocked(&self) -> Vec<RequestShape>; }   // what it refused, taken out
+impl ActTab { pub fn blocked(&self) -> Vec<RequestShape>; }       // NAVIGATION, POPUP, DOWNLOAD: what it refused, taken out
+impl ObserveTab { pub fn blocked(&self) -> Vec<RequestShape>; }   // those, and every request and socket it refused
+impl ObserveTab { pub fn record_exchanges(&self); pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges;
+    /// GET alone, to `path` on the page's own origin, with no header and no body; no redirect followed.
+    pub async fn read_from_page(&self, path: &PagePath, deadline: Deadline) -> Result<PageAnswer, BrowserError>; }
+pub fn plain_segment(text: &str) -> bool;                  // letters, digits, `-`, `.`, `_`, `~`; not dots only; at most 512 bytes
+pub const MAX_SEGMENT_BYTES: usize;                         // 512
+pub struct PagePath;                                        // a pattern with each `{placeholder}` one plain segment
+impl PagePath { pub fn fill(pattern: &str, values: &BTreeMap<String, String>) -> Result<Self, Failure>; pub fn as_str(&self) -> &str; }
+pub struct PageAnswer { pub status: u16, pub media_type: String, pub body: String }   // no header; the body redacted
 
 pub struct Loaded { pub address: String, pub title: String, pub status: Option<u16> }
 pub struct Element;                                        // one element of one page generation and one tab
@@ -130,7 +148,7 @@ pub enum DialogAnswer { Accept, AcceptWith(String), Dismiss }
 pub struct PageRequest { pub method: String, pub address: Address, pub headers: Vec<(String, String)>, pub body: Option<String> }
 pub struct PageResponse { pub status: u16, pub address: String, pub headers: Vec<(String, String)>, pub body: String }
 pub struct SafeRequests { pub allowed: Vec<SafeRequest> }  // empty by default
-pub struct SafeRequest { pub method: String, pub address_prefix: String }
+pub struct SafeRequest { pub method: String, pub address_prefix: String }   // the same origin, and the same path or one below it
 
 pub struct SnapshotLimits { pub max_elements: usize }      // 400 by default
 pub struct Snapshot { pub address: String, pub title: String, pub elements: Vec<SnapshotElement>, pub cut: bool }
@@ -148,8 +166,8 @@ pub struct RequestShape { pub method: String, pub address: String }
 pub enum BrowserError {
     NotFound, Ambiguous { count: usize }, NotActionable(Reason),
     Timeout { dispatch: Dispatch }, Crashed { dispatch: Dispatch }, Disconnected { dispatch: Dispatch },
-    UnexpectedDialog { dispatch: Dispatch }, NotLoaded(String), PasswordField, TooLarge { limit: usize },
-    RequestFailed(String), Unexpected(String), LaunchFailed(LaunchReason),
+    UnexpectedDialog { dispatch: Dispatch }, NotLoaded(String), PasswordField, ForeignOrigin(String),
+    TooLarge { limit: usize }, RequestFailed(String), Unexpected(String), LaunchFailed(LaunchReason),
 }
 impl BrowserError {
     pub fn dispatch(&self) -> Dispatch;           // every error answers
@@ -175,7 +193,7 @@ Contracts that the signatures do not show:
 - **Writing is one task's alone.** A call that is dropped, or passes its deadline, never leaves half a message on the stream, and a request the writer had not reached is never written. That is what lets every failure say `Sent`, `NotSent`, or `Unknown` truthfully.
 - **The DevTools connection is a pipe, and a foreign link.** The browser is started with its protocol on an inherited pipe, not a port, as section 204 asks. The protocol is fixed by someone else, so there is no handshake of ours in it: the engine owns a browser by the digest of the program the supervisor started, when settings list known digests, and by its answer to the first request over the pipe, which only its owner holds. A program that does not answer, or speaks another protocol version, is closed. A message is JSON ended by a NUL byte; one that is too large, is not a protocol message, or answers a request that was never made closes the link, and every pending request fails saying whether it had been written. Handing the pipe to the child is the supervisor's: this crate states descriptors 3 and 4, and the Windows argument, as data.
 - **A browser is found, never fetched.** A program named in settings, then a fixed list of known places per operating system. No search path, no registry, no environment variable, and no download. A program named in settings that is not there is not replaced by another. Only the program is used; its own profile is never named.
-- **The launch arguments are a fixed list.** It never holds `--no-sandbox` or a flag that hides automation, and it does hold `--enable-automation`, which tells the page and a person that the browser is automated. The data directory keeps its own key: the operating system's key store, where a person's own browser keeps its key, is never asked.
+- **The launch arguments are a fixed list.** It never holds `--no-sandbox` or a flag that hides automation, and it does hold `--enable-automation`, which tells the page and a person that the browser is automated. The data directory keeps its own key: the operating system's key store, where a person's own browser keeps its key, is never asked. Every connection is direct: `--no-proxy-server` outranks a proxy in the environment, in the operating system's settings (automatic discovery included), and in the profile's stored settings, and `--disable-extensions` keeps any extension, one another program installs into every profile included, from setting a proxy that would outrank it ([decision 0201](../../decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md)). A machine policy that sets the browser's proxy outranks every launch argument; the launch cannot close it, and it is the machine administrator's.
 - **One browser starts at a time in the whole process,** from the start of the program to its first answer, whichever `Browsers` asks. Browsers that start cold at the same moment each take many times longer than one after the other: four at once on a hosted Windows machine each took more than 30 seconds, and three at once a minute later took under 9. The launch deadline is 120 seconds for the same reason, and a browser that is silent to that deadline is `transient`, `timeout`, not "not a browser": silence proves only slowness. ([decision 0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md))
 - **A dialog is answered when the tab has heard it close.** `answer_dialog` returns after the browser's event, not only its reply, so the next call is not told a dialog is still open.
 - **The environment is cleared.** The supervisor passes nothing but the few variables an operating system needs to start a program at all, listed as data.
@@ -187,21 +205,37 @@ Contracts that the signatures do not show:
 - **The helper runs in an isolated world.** The injected script that locates, checks, and observes cannot be read or changed by the page's own scripts.
 - **A method that only looks sends no input,** so each of its errors says `NotSent`, whatever was written to the browser on its way.
 - **Everything read is redacted and bounded.** Every text that leaves the crate passes the redactor; a read longer than the limit is `TooLarge`. Cookie, authorization, and set-cookie headers are removed from a `PageResponse` by name.
-- **A password input's value is never read.** `read` refuses it, whatever the caller asks, and so does a wait on its text. An input whose `autocomplete` names a password counts as one. A snapshot shows `MASK` for each: the engine learns which nodes they are, not what they hold.
+- **Redaction comes before any cut.** A message, a refused address, and an origin taken out of a longer text are redacted whole and only then cut to length or at the query. Cut first, a secret that the cut divides would leave its first part behind.
+- **A password input's value is never read.** `read` refuses it, whatever the caller asks, and so does a wait on its text. An input whose `autocomplete` names a password counts as one. A snapshot shows `MASK` for each: the helper lists the ones it sees before the accessibility tree is taken, and after it the browser itself is asked about every node that carries a value, which also reaches into a closed shadow root. A text input that a page switched from a password, and that names none in `autocomplete`, is not recognized; only the redactor knows that value.
+- **A selector cannot ask what a password was served with.** On a page where a password input carries a `value` attribute, a `css` query that asks about that attribute, or holds an escape that could spell its name, is `PasswordField`, in a locate and in a wait. A right guess and a wrong one are refused alike.
+- **A tab stays on the origins it was opened for.** `Origins` is given when the tab is opened and never changes. Three things hold it, and each would hold without the others: `goto` and `fetch` refuse an address of another origin before the browser hears of it; the browser ends the request of the tab's next document when it is for another origin, whoever started the move and at every redirect; and the helper checks the page's origin in the same in-page call as every locate, read, wait, check, focus, and in-page request, so the check falls after the element is located and before any input is sent. Each refusal is `ForeignOrigin`, and nothing was sent. An origin is compared as text with what the browser reports, so a host written in a form the browser rewrites matches nothing: a difference can only close the tab's reach.
+- **What leaves the page is refused, and reported.** Every download is denied for the whole browser when it starts: no file is written, and the tab reports `DOWNLOAD`. A window a page opens is held before it runs, every request of it is ended, and it is closed; the tab that opened it reports `POPUP`. Both hold in an acting tab too, where a step that declares one is still to be built. Every permission is refused for every origin when the browser starts, so no page is granted one and none waits on a prompt: left to itself, the headless browser granted a page the clipboard, sensors, and the background sync and fetch by which a service worker sends requests after its page has gone. A file chooser opens nothing, and the page goes on. A browser that does not take the refusal of downloads or of permissions is closed as not owned.
+- **An address that is kept carries no query.** A snapshot's address, the address of a `PageResponse`, and every address `blocked()` reports are cut at the query, where tokens travel. `Loaded.address` keeps its query, redacted, because the crates above decide by it; it is not for showing.
+- **An in-page request follows no redirect.** A redirect's next address was checked by nobody, so the answer is `RequestFailed` and what the first request did is for the crate above to find out. `page_http` follows none either.
+- **A read from inside the page cannot send anything but a read** ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). `read_from_page` takes no method, header, body, or origin: the helper makes the address from the page's own origin and a `PagePath`, refuses a page with no origin, checks the page's origin against the tab's in the same call, fetches with GET, the page's cookies of the same origin and nothing more, and stops reading past `max_read_chars` (`TooLarge`). A value that is not one plain segment is refused by `PagePath::fill`, `input`, `address_value_refused`, and nothing is sent. Only an observing tab has the call, so its guard still fails any request of the page that could write; a test sends POST from the same page and the application sees none. No credential is read out of the page: the answer's headers are not returned.
+- **What is typed is not printed.** The debug form of `Input` gives the length of a text, and that of `PageRequest` the names of its headers and the length of its body. The fields are plain text all the same: the crates above hold a password in a `String` until it is typed.
+- **A data directory is its owner's alone.** On Linux and macOS it is set to mode 0700 before the browser starts on it, and one that is still open to others afterwards is refused. The browser's cookie store is written under a key that is no secret, so the folder is what keeps a session; the browser's own files are 0600 and 0700, measured. On Windows the folder takes its parent's access list and the engine reads none.
+- **Looking at the disk for a launch is off the async threads:** finding the program and making the folder run on a blocking thread. `availability()` is not async and looks when it is called.
 
 ### Two postures
 
-An `ObserveTab` cannot act, because it has no method that acts. That is the first lock. The second is in the browser itself, so that the page's own scripts cannot write either:
+An `ObserveTab` cannot act, because it has no method that acts. That is the first lock. The second is in the browser itself, so that the page's own scripts cannot write either. Each row was tried with a page of the test application that attempts it ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)):
 
 | What could change the system | In an observing tab |
 | --- | --- |
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's `SafeRequests`, which only a person sets ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)). Each one is reported by `blocked()`. If the answer to the interception is lost, the request stays paused: it is never sent |
 | A request from a dedicated worker the tab starts | Passes through the page's own interception, which is on before the page can run; measured, [decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md). The worker waits until its sockets are refused, then runs |
-| A frame in another process, or any other child | Takes its own interception before it runs. One that cannot take it is not let run, and is reported as `WORKER` |
+| A frame in another process | Takes its own interception before it runs, and the refusal of sockets on every document it loads. One that cannot take them is not let run, and is reported as `WORKER` |
+| A service worker of the page's origin | Attached under the page, also when it was already running: it takes its own interception and the refusal of sockets |
 | A WebSocket, a WebTransport, a peer connection | Refused when the page makes it, and reported. This is a script in the page: a page that sets out to defeat it can |
-| A shared worker, a service worker | Refused when the page makes or registers it, and reported; service workers already installed are bypassed |
-| A beacon, a form submission | Failed by the same interception |
-| Navigation | Only through `goto`, to an address the caller passes |
+| A shared worker, a service worker | Refused when the page makes or registers it, and reported, also from a frame the page makes for the purpose. A shared worker that an acting tab of the same browser keeps running cannot be reached. The page's own requests pass by a service worker already installed; one woken all the same is locked, as the row above says |
+| A permission, a file chooser | Every permission refused in the browser, and no chooser opened, as in an acting tab |
+| A beacon, a form submitted with POST | Failed by the same interception. The page stays as it was |
+| Navigation | Only through `goto`, to an address the caller passes, on one of the tab's origins, and through its redirects on those origins. A move the page starts, by script, a refresh tag, or a form, is ended before its request leaves the browser, and reported as `NAVIGATION`. A move through the tab's history makes no request and is not ended: it shows a page the tab was already sent to |
+| A download | Denied for the whole browser: no file is written. Reported as `DOWNLOAD` |
+| A window the page opens | Held before it runs, every request of it ended, and closed. Reported as `POPUP` |
+
+In an `ActTab` the page may write, and three rows still hold: the tab's own document is held to the tab's origins, a download is denied, and a window is closed. `ActTab::blocked()` reports them as `NAVIGATION`, `POPUP`, and `DOWNLOAD`.
 
 `a2m-pack-web-probe` is given an `Observer`, so it can hold an `ObserveTab` and never an `ActTab`. The watching tab, a visible window in which a person uses the system while the tab only listens, needs a window and is not built.
 
@@ -209,7 +243,7 @@ An `ObserveTab` cannot act, because it has no method that acts. That is the firs
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-pack-web-ui` | `Browsers::new` inside its `Pack::register`; `Browsers::open`, `ActTab` and `Look` for the `ui`, `page_http`, and `site_tools` drivers; `Visibility::Window`, `export_state`, and `import_state` for its auth providers, once they are built |
+| `a2m-pack-web-ui` | `Browsers::new` inside its `Pack::register`; `Browsers::open`, `ActTab` and `Look` for the `ui` and `site_tools` drivers; `Observer`, `ObserveTab::read_from_page`, `PagePath`, and `plain_segment` for `page_http` and the `ui` driver's `goto`; `Visibility::Window`, `export_state`, and `import_state` for its auth providers, once they are built |
 | `a2m-pack-web-probe` | `Observer` only: observing tabs, `Look`, `blocked()` |
 | `anything2mcp` | Nothing of this crate by name. It registers the web pack, which builds the one `Browsers` and hands its `observer()` to the discoverers |
 
@@ -221,7 +255,7 @@ It calls the scoped supervisor in `a2m-provider` to start and stop browser proce
 | --- | --- | --- |
 | Open browsers, by profile, with tab and run counts | Memory | The engine process |
 | A browser's data directory | `profiles/<target>/<environment>/<kind>-<digest>/` in the data directory | Until the session is revoked. Erasing it is not built |
-| Known browser digests | Settings | Read at start |
+| Known browser digests | The settings group of the pack that builds the `Browsers`, under `browser_digests` | Read at start, by `BrowserSettings::with_pack_settings` |
 
 It owns no table. A session's saved state will be sealed by `export_state` and stored by the session keeper, not here.
 
@@ -238,8 +272,11 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 | `LaunchFailed(NoAnswer(_))`: the pipe stayed open and nothing answered before the launch deadline | `transient` | `timeout` |
 | `Crashed` or `Disconnected` with `NotSent` | `transient` | `connection_lost` |
 | `Timeout` with `NotSent` | `transient` | `timeout` |
+| `LaunchFailed(DataDirectory(_))` for a folder others can read and the engine cannot make private | `input` | `path_not_allowed` |
 | `PasswordField` | `policy` | `password_read_refused` |
+| `ForeignOrigin` | `policy` | `surface_not_declared`, the code the packs built on this crate already declare |
 | `Address::new` refusing a text | `input` | `address_invalid` |
+| `PagePath::fill` refusing a value | `input` | `address_value_refused` |
 
 `Crashed`, `Disconnected`, `Timeout`, or `UnexpectedDialog` with `Sent` or `Unknown`, and `RequestFailed`, are never converted here: the driver above decides, and for a commit it is `possible_commit`. `NotFound`, `Ambiguous`, `NotActionable`, `NotLoaded`, `TooLarge`, and `Unexpected` are the driver's to class too: a query that finds nothing is `drift` for a screen model and an answer for a probe.
 
@@ -252,14 +289,26 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 | A program that is not a browser, or whose digest is not a known one, is closed and leaves nothing | A test with the test's own program substituted; a test with another digest |
 | Two identities never share a process or a data directory | A test that opens two profiles and asks the supervisor |
 | An observing tab sends no request other than GET, HEAD, OPTIONS, or a declared safe one, from the page and from a worker, and makes no socket | A test in which the page's own script, and a worker, write: the test application stores the write from an acting tab, and its control interface counts none from an observing tab |
+| A page cannot move an observing tab, and no `goto` ends on an origin the tab was not given | A test with six pages of the test application that try, by script, a refresh tag, a form with GET and with POST, a beacon, and a move to another origin, and a `goto` that is redirected there: the control interface counts nothing |
+| A download writes no file, and a window a page opens fetches nothing, in either kind of tab | A test that clicks a download link and a link that opens a window, and a page that opens one with a gesture: no file in any place a browser saves to, and nothing counted |
+| A frame from another site runs, locked in every document it loads | A test whose frame opens a socket and sends a POST in two documents: four refusals reported, nothing counted |
+| A service worker woken by an observed page writes nothing, and no frame a page makes gives it an unlocked socket | A test in which the worker writes from an acting tab first, and then is woken from an observing one |
+| A tab goes to, looks at, and acts on no origin it was not opened for | A test of `goto`, a redirect, a page that moves itself after `goto` returned, `fetch`, and a page with no origin placed in the tab: each is `ForeignOrigin`, nothing is counted, and the form's page still takes input |
+| A request marked safe is matched by origin and path | A test with a longer host and a longer last name of the path |
+| A shared worker cannot be reached from an observed page | A test in which an acting tab keeps one running that writes, and an observed page of the same origin connects to it directly and through a frame |
+| No permission is granted and no prompt is left open, in either kind of tab | A test that asks for a location, notifications, and the clipboard with a gesture, and the state of twenty permissions, and opens a file chooser |
+| A profile folder is its owner's alone | A test, on Linux and macOS, of a new folder and of one left open |
 | A late element is noticed without polling; a wait survives a navigation | A test with an element added by a timer of the page, and a page that moves on while the wait is under way |
 | An ambiguous query fails; it never picks the first | A test: four inputs match, and the error says four |
-| No password, and no value the redactor knows, leaves the crate in a read, a title, or a snapshot | A test with a planted secret and two kinds of password input |
+| No password, and no value the redactor knows, leaves the crate in a read, a title, a snapshot, a selector's answer, or a message cut to length | A test with a planted secret, three kinds of password input of which one is in a closed shadow root, five selectors that guess, and the secret laid across the cut |
+| A snapshot's address carries no query, and `Loaded.address` keeps it | A test that sends a tab to the form with a query |
 | A write through the page is stored once, with the values sent | A test that fills and saves the test application's form, and asks its control interface |
+| A read from inside an observing tab's page is one GET to the path made, nothing else; a value that leaves its segment, a redirect, and a page with no origin send nothing further; POST from the same page is failed; an answer over the limit is refused whole | `an_observing_tab_reads_from_inside_its_page_with_get_alone_and_its_guard_still_holds`, `a_read_from_inside_the_page_longer_than_the_limit_is_refused_whole`, against the control interface's record of what it saw |
 | A browser killed during a call reports whether the request was sent, and nothing is left | A test that kills the browser while a write is held by the test application: the call says `Sent`, a later call says `NotSent`, the next `open` starts afresh, and no process names the data directory |
 | Browsers asked for at once, from several sets, start one after the other and all answer | A test that opens six at once and counts the starts under way |
 | With no browser, the failure is `busy`, `browser_unavailable`; a test that needs a browser fails with it and never skips | A test with a program that is not there |
 | The launch arguments never hold `--no-sandbox` or a flag that hides automation, and the browser reports itself as automated | A test over the fixed list; a test that asks the page |
+| The browser takes no proxy from the environment around it, and no extension runs | `the_browser_takes_no_proxy_from_the_environment_around_it`: every proxy variable set for the browser names a listener that stands for a proxy, a page at a name no resolver knows is asked for, and the listener sees nothing (five connections without the flag); `every_launch_connects_directly_and_runs_no_extension` over the fixed list. Run on Linux. On Windows and macOS the browser reads no such variable, so there the test passes with or without the flag: CI shows only that a browser started with both flags works; that the system's own proxy settings and automatic discovery are refused there rests on what the flag is documented to do |
 | The browser budgets of section 225 hold | Not measured in this crate yet. The spike measured 26 to 33 ms for a warm tab and 0.35 to 0.40 s for a cold start on Linux, headless |
 
 ## Tests and the browser they use
@@ -275,10 +324,10 @@ A test finds its browser as the product does: in the known places. Two variables
 3. Done: the browser finder; launch through the scoped supervisor with the fixed arguments and a checked data directory; `Browsers::new`, `open`, `list`, `close`, `shutdown`; ownership by digest and by the answer over the pipe. Run on Linux, macOS, and Windows.
 4. Done: `ActTab` and `Look`: `goto` on a protocol event, the helper in an isolated world, `locate` by every `By` with exactly one or a failure, `within`, open shadow roots, `read`, every `Primitive`, `snapshot`.
 5. Done: `input` with `Dispatch` reported, `answer_dialog`, and `fetch` from inside the page.
-6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets.
+6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets. Done after the safety audit ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)): `Origins` on every tab; the lock on a tab's moves; downloads denied, permissions refused, and windows closed; the lock of a frame in another process; the private data directory; the settings reader for digests.
 7. Not built, slice 1.6: declared frames; the check of a helper's match against the browser's own accessibility query; recycling; the stable-position check before a click; `Input::Scroll`; one telemetry span per round trip group.
 8. Not built, package 2.3: `Visibility::Window`, `export_state`, `import_state`, the watching tab.
-9. Not built, package E2 and later: platform profiles as data; the stream of network exchanges and the `Response` wait; browser events for pop-ups and downloads; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
+9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); a read from inside the page, GET alone, in an observing tab ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
 
 ## Open points
 
@@ -287,9 +336,14 @@ A test finds its browser as the product does: in the known places. Two variables
 - The fixed list of known places was written from what the hosted build machines and the common installers use. It has not been collected from a primary source, and per-person installs, which have no fixed path, are not on it.
 - The supervisor digests the program before every start. A browser program is about 300 MB, and digesting it is most of a cold start in an unoptimized build. Whether the digest of an unchanged file may be remembered is the supervisor's question.
 - The helper computes role and accessible name by the common steps of the naming rules, not all of them. A name it computes differently from the browser makes a field not found, which fails closed; a wrong match is what a fingerprint above is for. Whether the browser's own accessibility query checks every locate is for slice 1.6 and research brief 3.
-- The refusal of sockets in an observing tab is a script in the page. A browser-level refusal was not found.
+- The refusal of sockets in an observing tab is a script in the page. A browser-level refusal was looked for twice and not found: the browser's list of blocked addresses does not stop a WebSocket. A shared worker is refused when the page makes it, and one an acting tab keeps running was not reached; whether one made past that refusal would be attached was not measured.
+- A hidden tab's request for a location is held by the browser, unanswered, until the tab is shown, though the permission is denied. A step that waits on such a page ends at its deadline.
+- An observing tab knows the `goto`'s own request as the first, since the `goto` began, that the page did not announce. If the browser's announcement of a page's move came after that move's request while a `goto` was under way, the page's request would pass, as a GET to one of the tab's origins. The order has not been seen to differ.
+- On Windows the data directory is as private as the folder it is made in. Reading or setting its access list needs the system's own interface, which this crate does not bind.
+- An acting step's keys and clicks go to the document that has the focus when they arrive. Between the check and the input the page can have moved, though only within the tab's origins; the stable-position check of slice 1.6 is where this belongs.
+- Tabs of one origin in one browser can talk to each other, through a broadcast channel or shared storage. An observed page could ask an acting tab's page to write.
 - No session longer than a few seconds has been run, and no memory figure taken. The recycling rule and hypothesis H-01 both need them.
 - Whether the browser's sandbox starts on the hosted Linux build machine as it is.
 - Fetching and pinning a Chromium build without another project's installer ([research note 09](../../research/09-rust-building-blocks.md)). The `browser.install` action needs it.
 - Whether a GET that a page treats as an action can be recognized at this level, or only by the probe's rules above. [Section 402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) leaves it to Phase 4.
-- Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser on a copy of the profile. Copying a profile is what decision 0032 avoids.
+- Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser on a copy of the profile. Copying a profile is what decision 0032 avoids. The point above is one reason to doubt it.

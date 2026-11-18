@@ -34,7 +34,7 @@ A provider may also add actions to the registry, under its own name space. They 
 - Decide whether something may happen. Only the policy engine decides.
 - Sign in or renew. Only the session keeper does, calling the provider's auth provider.
 - Approve anything, or mark anything verified.
-- Write to the ledger. The engine writes; a driver returns outcomes.
+- Write to the ledger. The engine writes; a driver returns outcomes. A driver may ask, within a step, whether another record of its operation holds a value it recorded, and is told which record, or no, or that the engine cannot tell; it is never given another record's values ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - Read the vault. A secret reaches a provider only through injection, for one step.
 - Retry inside a step.
 
@@ -55,7 +55,7 @@ One declaration per provider. It is data: the runtime can read it without loadin
 | Reads | The file kinds and finding kinds of other packs it reads as data |
 | Actions | The actions it adds, each with its effect |
 | Effects | What it may do: start which programs, read and write which file roots, reach which network destinations, hold a session, change a device. [Section 213](213-effects-hazards-and-consent.md) |
-| Requirements | Outside programs and runtimes it needs: how each is detected, which digests are known, and what to tell a person who lacks one |
+| Requirements | Outside programs and runtimes it needs: how each is detected, which digests are known, and what to tell a person who lacks one. Known digests are checked when availability is reported and again at every start |
 | Platforms | The operating systems and architectures it supports |
 | Evidence | The highest level its findings may claim, and the sources it can vouch for |
 

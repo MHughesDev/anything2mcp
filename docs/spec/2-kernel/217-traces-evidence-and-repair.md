@@ -51,7 +51,7 @@ The plan and policy decide a run's level; `a2m-telemetry` applies it. Screenshot
 
 Redaction happens on the runner, at capture, before anything is written or sent. Every text field passes the redactor when it is recorded, so nothing unredacted is held even in memory longer than the call. The redactor is the vault's ([section 216](216-the-vault-and-its-keys.md)).
 
-1. **Registered secrets.** Every secret the vault releases is registered with the redactor, which masks exact matches anywhere in text, and the same secret where it was percent-encoded, JSON-escaped, or base64-encoded on the way.
+1. **Registered secrets.** Every secret the vault releases is registered with the redactor, which masks exact matches anywhere in text, and the same secret where it was percent-encoded, JSON-escaped, written with character references, written out in hexadecimal, or base64-encoded on the way, also across the line breaks that mail and key files put into base64. A secret whose form is case-insensitive is masked in any letter case. The redactor sees one text at a time: a text that arrives in pieces goes through the redactor's stream, which holds back the end of what it was given, and is never redacted piece by piece. What the redactor does not cover is listed in the [vault's design](../../architecture/crates/a2m-vault.md).
 2. **Headers and cookies.** In an exchange, only headers on a fixed allowlist are kept. Cookie and authorization values are always dropped, whatever the level.
 3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a keyed digest, never as a value. One labelled `internal` is kept at `standard` and above, and as a keyed digest at `minimal`. A record's key is kept only as a keyed digest. Policy may also say a labelled field is masked or left out.
 4. **Free text.** Length-limited and stripped of markup and hidden characters.
@@ -117,9 +117,9 @@ When a canary or a run reports `drift`:
 
 ## Fixtures from traces
 
-`fixture.record` turns captured evidence into a fixture for offline tests.
+`fixture.record` records a fixture for offline tests from one real read, run in the sandbox for that purpose: the evidence a trace keeps holds shapes and digests, not values ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)). Writes are not recorded.
 
-- Values are replaced with synthetic ones of the same field type, keeping structure and lengths.
+- Values pass the redactor, then are replaced with synthetic ones of the same field type by fixed rules, keeping structure, names, and length classes; a value whose type has no rule stops the recording, and nothing is written.
 - The fixture carries a marker stating that it was scrubbed, and a hash.
 - The linter refuses a fixture without the marker.
 

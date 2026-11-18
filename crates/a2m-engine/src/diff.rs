@@ -2,8 +2,8 @@
 //! approval is bound to. The engine alone computes its hash.
 
 use a2m_core::{
-    CanonicalJson, Digest, Environment, Failure, FieldHasher, Identity, OperationName, RecordKey,
-    TargetName, Value,
+    CanonicalJson, Digest, Environment, Failure, FieldHasher, Identity, Mode, OperationName,
+    RecordKey, TargetName, Value, WriteEvidence,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,20 @@ pub enum DiffAction {
     Update,
     /// The record already holds the intended values.
     Unchanged,
+    /// The record has a key, and its binding has nothing to read it with:
+    /// its only evidence is the system's acknowledgement and it has no
+    /// read-back step, such as a write-only register of a device. It will
+    /// be written; what it holds now is not known, and each field's
+    /// `current` is `None` for that reason, never because the record is
+    /// absent. A door shows [`NOW_CANNOT_BE_READ`] in its place (decision
+    /// 0196).
+    Write,
 }
+
+/// The fixed words a door shows for what a record holds now when its
+/// binding cannot read it ([`DiffAction::Write`]).
+pub const NOW_CANNOT_BE_READ: &str =
+    "cannot be read: this binding has nothing to read the record with";
 
 impl DiffAction {
     /// The action as the diff and its hash write it.
@@ -27,6 +40,7 @@ impl DiffAction {
             Self::Create => "create",
             Self::Update => "update",
             Self::Unchanged => "unchanged",
+            Self::Write => "write",
         }
     }
 }
@@ -37,7 +51,9 @@ pub struct DiffField {
     /// The field's name.
     pub name: String,
     /// The current value after normalization; `None` when the record does
-    /// not exist. For a field labelled restricted, the hash of the value.
+    /// not exist, or, in a record whose action is [`DiffAction::Write`],
+    /// because nothing can read it. For a field labelled restricted, the
+    /// hash of the value.
     pub current: Option<Value>,
     /// The current value as the system gave it. Not in the hash, and never
     /// kept for a restricted field.
@@ -63,6 +79,89 @@ pub struct DiffRecord {
     pub action: DiffAction,
     /// Its fields, in the record's declared order.
     pub fields: Vec<DiffField>,
+    /// What will stand as the evidence that its write landed. A record
+    /// whose write is `acknowledged` is accepted by the system and not read
+    /// back, and the diff a person approves says so. In the hash only when
+    /// it is not `read_back`, so a diff of before this field hashes the
+    /// same.
+    #[serde(default, skip_serializing_if = "reads_back")]
+    pub evidence: WriteEvidence,
+    /// The binding that writes it, as the preview chose it, with its mode
+    /// and its evidence. The engine writes the record through this binding
+    /// and no other: one it would write with in its place stops the run,
+    /// unsent, as a stale approval (decision 0185). `None` when the binding
+    /// is chosen only once the record's key is known, because the key waits
+    /// for a record written earlier in the run; then `could_take` names
+    /// every binding it may be written by, and `evidence` is the weakest of
+    /// theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<DiffBinding>,
+    /// Every binding a record whose binding is not known at the preview
+    /// could be written by, each with its evidence. Empty when `binding`
+    /// names it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub could_take: Vec<DiffBinding>,
+}
+
+/// One binding of an operation, as a diff names it for a record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffBinding {
+    /// Its position among the operation's bindings, from 0.
+    pub position: u32,
+    /// Its mode.
+    pub mode: Mode,
+    /// What will stand as the evidence that a write through it landed.
+    pub evidence: WriteEvidence,
+}
+
+impl DiffBinding {
+    fn hashed(&self, hasher: &mut FieldHasher) {
+        hasher.field("binding", &u64::from(self.position).to_le_bytes());
+        hasher.field("mode", self.mode.as_str().as_bytes());
+        hasher.field("binding_evidence", self.evidence.as_str().as_bytes());
+    }
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the form serde's `skip_serializing_if` calls"
+)]
+fn reads_back(evidence: &WriteEvidence) -> bool {
+    *evidence == WriteEvidence::ReadBack
+}
+
+impl DiffRecord {
+    /// Whether the record's write is accepted by the system and not read
+    /// back, or may be, by a binding it could take: what a person who
+    /// approves the diff is told of it.
+    #[must_use]
+    pub fn not_read_back(&self) -> bool {
+        self.evidence == WriteEvidence::Acknowledged
+    }
+
+    /// Whether the record's binding cannot read what it holds now: the
+    /// page shows [`NOW_CANNOT_BE_READ`] for each field's current value.
+    #[must_use]
+    pub fn now_cannot_be_read(&self) -> bool {
+        self.action == DiffAction::Write
+    }
+
+    /// Whether the binding that writes the record is chosen only once its
+    /// key is known: the approval names every binding it could take.
+    #[must_use]
+    pub fn binding_unknown(&self) -> bool {
+        self.binding.is_none() && !self.could_take.is_empty()
+    }
+
+    /// The positions of the bindings the approval lets write the record.
+    #[must_use]
+    pub fn approved_bindings(&self) -> Vec<usize> {
+        self.binding
+            .iter()
+            .chain(&self.could_take)
+            .filter_map(|binding| usize::try_from(binding.position).ok())
+            .collect()
+    }
 }
 
 /// How many records a diff would create, update, and leave alone.
@@ -74,6 +173,9 @@ pub struct DiffCounts {
     pub update: u32,
     /// Records that already hold the intended values.
     pub unchanged: u32,
+    /// Records that will be written and whose binding cannot read what
+    /// they hold now.
+    pub write: u32,
 }
 
 /// A diff.
@@ -115,6 +217,7 @@ impl Diff {
                 DiffAction::Create => counts.create += 1,
                 DiffAction::Update => counts.update += 1,
                 DiffAction::Unchanged => counts.unchanged += 1,
+                DiffAction::Write => counts.write += 1,
             }
         }
         counts
@@ -166,6 +269,22 @@ impl Diff {
             hasher.field("key", &key);
             hasher.field("operation", record.operation.as_str().as_bytes());
             hasher.field("action", record.action.as_str().as_bytes());
+            if record.evidence != WriteEvidence::ReadBack {
+                hasher.field("evidence", record.evidence.as_str().as_bytes());
+            }
+            // The binding the approval names is part of what was approved.
+            if let Some(binding) = &record.binding {
+                binding.hashed(&mut hasher);
+            }
+            if !record.could_take.is_empty() {
+                hasher.field(
+                    "could_take",
+                    &(record.could_take.len() as u64).to_le_bytes(),
+                );
+                for binding in &record.could_take {
+                    binding.hashed(&mut hasher);
+                }
+            }
             let mut fields: Vec<&DiffField> = record.fields.iter().collect();
             fields.sort_by(|left, right| left.name.cmp(&right.name));
             hasher.field("fields", &(fields.len() as u64).to_le_bytes());

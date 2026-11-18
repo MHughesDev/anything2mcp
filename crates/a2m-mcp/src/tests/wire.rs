@@ -93,6 +93,8 @@ fn messages(content_type: &str, body: &[u8]) -> Vec<Json> {
 pub struct Http {
     pub service: McpService,
     pub peer: Option<McpPeer>,
+    /// The project folder the mount states beside the caller, if any.
+    pub project: Option<a2m_actions::ProjectFolder>,
 }
 
 impl Http {
@@ -100,6 +102,7 @@ impl Http {
         Self {
             service,
             peer: Some(super::world::peer()),
+            project: None,
         }
     }
 
@@ -117,6 +120,9 @@ impl Http {
         let mut request = request.body(Body::from(body.to_vec())).unwrap();
         if let Some(peer) = &self.peer {
             request.extensions_mut().insert(peer.clone());
+        }
+        if let Some(project) = &self.project {
+            request.extensions_mut().insert(project.clone());
         }
         let response = tokio::time::timeout(PATIENCE, self.service.handle(request))
             .await

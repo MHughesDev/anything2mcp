@@ -19,14 +19,14 @@ use a2m_auth::{
     SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
-    AccountName, ApprovalId, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch,
-    Failure, Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId,
-    RunState, Secret, Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
+    AccountName, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch, Failure,
+    Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId,
+    RunState, Secret, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Authority, BoxFuture, Capture, CheckedPaths, Deadline, Destinations, DriverHandle,
@@ -93,7 +93,7 @@ pub fn compile(registry: &Registry, name: &str) -> Compiled {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(fixture(name)), set)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
 }
 
@@ -104,6 +104,18 @@ pub fn compile_changed(
     name: &str,
     path: &str,
     change: impl Fn(&str) -> String,
+) -> Result<Compiled, Diagnostics> {
+    compile_changed_files(registry, name, &[(path, &change)])
+}
+
+/// A change to one file's text.
+pub type Change<'a> = (&'a str, &'a dyn Fn(&str) -> String);
+
+/// The same, with a change to each of several files.
+pub fn compile_changed_files(
+    registry: &Registry,
+    name: &str,
+    changes: &[Change<'_>],
 ) -> Result<Compiled, Diagnostics> {
     fn walk(root: &Path, folder: &Path, out: &mut Vec<(RelPath, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
@@ -131,15 +143,17 @@ pub fn compile_changed(
     let root = fixture(name);
     let mut files = Vec::new();
     walk(&root, &root, &mut files);
-    match files.iter_mut().find(|(known, _)| known.as_str() == path) {
-        Some((_, bytes)) => {
-            *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+    for (path, change) in changes {
+        match files.iter_mut().find(|(known, _)| known.as_str() == *path) {
+            Some((_, bytes)) => {
+                *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+            }
+            None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
         }
-        None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn shown(problems: &Diagnostics) -> String {
@@ -292,12 +306,10 @@ impl Scene {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: write.map(|(_, record, _)| record),
-                key: write.map(|(_, _, key)| key),
-                stamp: None,
-                deadline: Deadline::after(within),
+            let input = StepInput::new(&args, Deadline::after(within));
+            let input = match write {
+                Some((_, record, key)) => input.for_record(record, Some(key), None),
+                None => input,
             };
             let authority = match write {
                 Some((token, _, _)) if step.commits => Authority::Write(token),
@@ -437,23 +449,8 @@ pub async fn running(store: &Store, keys: &[RecordKey]) -> Fence {
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

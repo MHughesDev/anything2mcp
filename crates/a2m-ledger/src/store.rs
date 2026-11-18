@@ -8,6 +8,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::thread;
@@ -21,7 +22,7 @@ use crate::failure;
 use crate::keys::StoreKeyRecords;
 use crate::migrate;
 use crate::sqlite::{Db, Place};
-use crate::tx::{Durability, Owner, Tx};
+use crate::tx::{Durability, Owner, PolicyKey, Tx};
 
 /// The name of the database file in the data directory.
 pub const DATABASE_FILE_NAME: &str = "store.sqlite3";
@@ -36,6 +37,7 @@ const READERS: usize = 2;
 /// Where the store is, and where its time and randomness come from.
 pub struct StoreConfig {
     data_dir: Option<PathBuf>,
+    throwaway: bool,
     clock: Arc<dyn Clock>,
     random: Arc<dyn RandomSource>,
     telemetry: Option<Telemetry>,
@@ -48,6 +50,7 @@ impl StoreConfig {
     pub fn in_dir(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: Some(data_dir.into()),
+            throwaway: false,
             clock: Arc::new(SystemClock::new()),
             random: Arc::new(OsRandom),
             telemetry: None,
@@ -60,9 +63,24 @@ impl StoreConfig {
     pub fn in_memory() -> Self {
         Self {
             data_dir: None,
+            throwaway: false,
             clock: Arc::new(SystemClock::new()),
             random: Arc::new(OsRandom),
             telemetry: None,
+        }
+    }
+
+    /// A store an offline test opens for itself: in memory, gone when it is
+    /// dropped, never a file. It holds the same tables and keeps the same
+    /// nine rules as every store, and it alone accepts the clearance of an
+    /// offline test, [`WriteClearance::OfflineTest`](crate::WriteClearance)
+    /// (decision 0180). No store with a data directory can be made
+    /// throwaway, so the installation's ledger never accepts that clearance.
+    #[must_use]
+    pub fn throwaway() -> Self {
+        Self {
+            throwaway: true,
+            ..Self::in_memory()
         }
     }
 
@@ -98,6 +116,12 @@ pub(crate) struct Attached {
 
 /// What every transaction can reach.
 pub(crate) struct Shared {
+    /// This store's number in the process: what a [`PolicyKey`] is bound to.
+    pub(crate) id: u64,
+    /// Whether this is an offline test's own store (decision 0180).
+    pub(crate) throwaway: bool,
+    /// Whether the policy engine's key was handed out.
+    policy_key_taken: AtomicBool,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) random: Arc<dyn RandomSource>,
     pub(crate) blob_dir: Option<PathBuf>,
@@ -264,7 +288,14 @@ impl Store {
             }
             None => (Place::Memory, None),
         };
+        static NEXT_STORE: AtomicU64 = AtomicU64::new(1);
         let shared = Arc::new(Shared {
+            id: NEXT_STORE.fetch_add(1, Ordering::Relaxed),
+            // Only a store in memory can be throwaway.
+            throwaway: config.throwaway && config.data_dir.is_none(),
+            // A throwaway store keeps its policy key: no policy engine is
+            // opened over an offline test's store (decision 0180).
+            policy_key_taken: AtomicBool::new(config.throwaway && config.data_dir.is_none()),
             clock: config.clock,
             random: config.random,
             blob_dir,
@@ -291,6 +322,34 @@ impl Store {
                 shared,
             }),
         })
+    }
+
+    /// The right to write the policy engine's tables, handed out once for
+    /// the life of this store. The policy engine takes it when it is
+    /// opened; nothing else asks for it (decision 0145).
+    ///
+    /// # Errors
+    ///
+    /// `unknown_variant`/`table_not_owned` when it was handed out before.
+    pub fn policy_key(&self) -> Result<PolicyKey, Failure> {
+        if self
+            .inner
+            .shared
+            .policy_key_taken
+            .swap(true, Ordering::SeqCst)
+        {
+            return Err(failure::not_owned(
+                "the policy engine's key is handed out once, and it was",
+            ));
+        }
+        Ok(PolicyKey::new(self.inner.shared.id))
+    }
+
+    /// Whether this is an offline test's own store, made by
+    /// [`StoreConfig::throwaway`].
+    #[must_use]
+    pub fn is_throwaway(&self) -> bool {
+        self.inner.shared.throwaway
     }
 
     /// What the vault is opened with: where its wrapped keys are kept. It

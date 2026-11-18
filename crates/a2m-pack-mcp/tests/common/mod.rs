@@ -13,14 +13,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan,
-    PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values,
-    Version, WorkspaceId,
+    Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan, PrincipalId,
+    RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_pack_mcp::{ToolDefinition, definition_digest};
 use a2m_provider::{
@@ -60,6 +59,12 @@ impl Drop for Folder {
 
 /// A registry that holds only the MCP pack, with the redactor given.
 pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
+    registry_set(folder, redact, Values::new())
+}
+
+/// A registry that holds only the MCP pack, with the redactor and the
+/// pack's own settings given.
+pub fn registry_set(folder: &Folder, redact: Arc<dyn Redact>, settings: Values) -> Registry {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let host = HostServices {
@@ -68,7 +73,12 @@ pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         redact: Arc::clone(&redact),
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
     };
-    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    let mut provider_settings = ProviderSettings::default();
+    provider_settings.packs.insert(
+        a2m_provider::ProviderName::new(a2m_pack_mcp::PACK).unwrap(),
+        settings,
+    );
+    let mut builder = RegistryBuilder::new(provider_settings, host);
     builder.add_pack(&a2m_pack_mcp::pack());
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -92,7 +102,10 @@ pub fn fixture_root() -> PathBuf {
 /// wire with a plain HTTP client, so that it does not pass through the code
 /// under test.
 pub async fn listed_pins(url: &str) -> Vec<(String, String)> {
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let mut pins = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
@@ -154,7 +167,7 @@ pub fn write_target(to: &Path, edit: &dyn Fn(&str, String) -> String) {
 pub fn compile(registry: &Registry, root: &Path) -> Result<Compiled, Diagnostics> {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The fixture target, compiled as it is in the repository.
@@ -220,7 +233,32 @@ pub fn fence_of(run: u8) -> Fence {
     }
 }
 
-/// Prepares the driver for a surface through the handle.
+/// The plan with one mapped tool's entry changed, as a plan compiled by
+/// something other than this build's compiler could hold it. The driver is
+/// the second line behind the compiler, so it is tested with plans the
+/// compiler would refuse.
+pub fn remapped(
+    plan: &Plan,
+    surface: &str,
+    tool: &str,
+    change: impl FnOnce(&mut serde_json::Value),
+) -> Plan {
+    let mut plan = plan.clone();
+    let section = plan
+        .packs
+        .iter_mut()
+        .find(|section| section.pack == a2m_pack_mcp::PACK)
+        .expect("the plan has the pack's section");
+    let mut body: serde_json::Value = section.payload.decode().unwrap();
+    let entry = &mut body["surfaces"][surface]["tools"][tool];
+    assert!(entry.is_object(), "the mapping names the tool `{tool}`");
+    change(entry);
+    section.payload = a2m_core::PackPayload::encode(&body).unwrap();
+    plan
+}
+
+/// Prepares the driver for a surface through the handle. The run may
+/// reach the surface's own address.
 pub async fn prepare(
     registry: &Registry,
     plan: &Plan,
@@ -228,6 +266,30 @@ pub async fn prepare(
     fence: Fence,
     posture: Posture,
     lease: Option<&a2m_auth::SessionLease>,
+) -> Result<(DriverHandle, Prepared), StepFailure> {
+    let destinations = Destinations::new([surface.surface.address.clone()]);
+    prepare_reaching(
+        registry,
+        plan,
+        surface,
+        fence,
+        posture,
+        lease,
+        &destinations,
+    )
+    .await
+}
+
+/// Prepares the driver for a surface through the handle, for a run that
+/// may reach `destinations` and nothing else.
+pub async fn prepare_reaching(
+    registry: &Registry,
+    plan: &Plan,
+    surface: &SurfaceRef,
+    fence: Fence,
+    posture: Posture,
+    lease: Option<&a2m_auth::SessionLease>,
+    destinations: &Destinations,
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
     let handle = registry.driver(&mode).unwrap();
@@ -238,7 +300,6 @@ pub async fn prepare(
         .map(ProgramRef::from)
         .collect();
     let supervisor = handle.supervisor(programs);
-    let destinations = Destinations::new([surface.surface.address.clone()]);
     let cx = PrepareContext {
         run: fence.run,
         epoch: fence.epoch,
@@ -247,7 +308,7 @@ pub async fn prepare(
         posture,
         deadline: Deadline::after(Duration::from_secs(30)),
         redact: &NoSecrets,
-        destinations: &destinations,
+        destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
     };
@@ -261,13 +322,16 @@ pub fn input<'a>(
     key: Option<&'a RecordKey>,
     stamp: Option<&'a str>,
 ) -> StepInput<'a> {
-    StepInput {
-        args,
-        record,
-        key,
-        stamp,
-        deadline: Deadline::after(Duration::from_secs(30)),
+    let mut input = StepInput::new(args, Deadline::after(Duration::from_secs(30)));
+    match record {
+        Some(record) => input = input.for_record(record, key, stamp),
+        // A step of no record may still be given a key or a stamp.
+        None => {
+            input.key = key;
+            input.stamp = stamp;
+        }
     }
+    input
 }
 
 // ---- a real store, for real intent tokens ----
@@ -366,23 +430,8 @@ pub async fn running(store: &Store, caller: u8, names: &[&str]) -> Fence {
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

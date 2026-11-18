@@ -17,6 +17,7 @@ use a2m_provider::{
 };
 use a2m_telemetry::Clock;
 
+use crate::channel::{JsonType, MessageSchema};
 use crate::codes;
 use crate::json::Json;
 use crate::lower::StepDetail;
@@ -112,13 +113,7 @@ impl Discoverer for BrokerLook {
         Box::pin(async move {
             let broker = scope.surface.surface.address.as_str();
             let no_args = Values::new();
-            let input = StepInput {
-                args: &no_args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: scope.deadline,
-            };
+            let input = StepInput::new(&no_args, scope.deadline);
             let listed = port
                 .act(&Self::step(STEP_CHANNELS, &StepDetail::default()), &input)
                 .await
@@ -165,6 +160,10 @@ impl Discoverer for BrokerLook {
                 // its channel cannot be looked at is an answer: no sample.
                 let mut look = "none";
                 let mut shape_finding = None;
+                // The fields the look saw, each with the one plain JSON type
+                // every message gave it: what a drafted list returns where
+                // the broker holds no schema the pack reads.
+                let mut sampled_fields = Json::Null;
                 if self.sample > 0 && shape.is_some_and(|shape| LOOKABLE.contains(&shape)) {
                     let detail = StepDetail {
                         address: Some(address.to_owned()),
@@ -207,6 +206,21 @@ impl Discoverer for BrokerLook {
                                 .and_then(|count| u64::try_from(count).ok())
                                 .unwrap_or(0);
                             if sampled > 0 {
+                                sampled_fields = Json::Object(
+                                    fields
+                                        .iter()
+                                        .filter_map(|(name, types)| match types.as_list()? {
+                                            [one] => {
+                                                let one = one.as_str()?;
+                                                ["string", "integer", "number", "boolean"]
+                                                    .contains(&one)
+                                                    .then(|| (name.clone(), Json::text(one)))
+                                            }
+                                            _ => None,
+                                        })
+                                        .filter(|(name, _)| !name.is_empty())
+                                        .collect(),
+                                );
                                 let more = sample.values.get("more").and_then(Value::as_bool)
                                     == Some(true);
                                 shape_finding = Some((
@@ -233,14 +247,44 @@ impl Discoverer for BrokerLook {
                     .map(Json::text)
                     .collect();
                 let schema = facts.get("schema").and_then(Value::as_text);
+                // What a read drafted from this one finding returns: the
+                // plain fields the broker's registered schema states, by
+                // name and JSON type, where the pack reads the schema. A
+                // drafting rule sees one finding at a time, so the channel
+                // finding carries them; they are the broker's claim about
+                // its messages, as the schema finding is, and no value.
+                let schema_fields = schema
+                    .and_then(|text| Json::parse(text).ok())
+                    .and_then(|json| MessageSchema::from_registered(&json))
+                    .map_or(Json::Null, |read| {
+                        Json::Object(
+                            read.fields
+                                .iter()
+                                .filter(|(_, rule)| {
+                                    !matches!(rule.ty, JsonType::Array | JsonType::Object)
+                                })
+                                .map(|(name, rule)| (name.clone(), Json::text(rule.ty.as_str())))
+                                .collect(),
+                        )
+                    });
                 let found = Json::object([
                     ("address", Json::text(address)),
                     ("shape", text_json(facts.get("shape"))),
                     ("key_field", text_json(facts.get("key_field"))),
                     ("dedupe_header", text_json(facts.get("dedupe_header"))),
+                    (
+                        "dedupe_window_ms",
+                        facts
+                            .get("dedupe_window_ms")
+                            .and_then(Value::as_int)
+                            .and_then(|ms| u64::try_from(ms).ok())
+                            .map_or(Json::Null, Json::number),
+                    ),
                     ("subscriptions", Json::List(subscriptions)),
                     ("look", Json::text(look)),
                     ("schema", Json::Bool(schema.is_some())),
+                    ("schema_fields", schema_fields),
+                    ("sampled_fields", sampled_fields),
                 ])
                 .to_line();
                 bytes += u64::try_from(found.len()).unwrap_or(u64::MAX);

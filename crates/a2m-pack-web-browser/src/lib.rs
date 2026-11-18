@@ -15,16 +15,23 @@
 //! without touching the crates above. The design is
 //! `docs/architecture/crates/a2m-pack-web-browser.md`.
 //!
+//! An observing tab records, by structure alone, the requests its page
+//! makes by itself with GET to its own origins ([`PageExchange`]).
+//!
 //! Not built yet: a visible window, exporting and importing a session's
-//! state, the watching tab, frames, the stream of network exchanges,
-//! pop-ups, downloads, uploads, recycling, and the platform profiles.
+//! state, the watching tab, frames, the stream of every network exchange,
+//! declared pop-ups and downloads (an undeclared one is refused and
+//! reported), uploads, recycling, and the platform profiles.
 
 mod browsers;
 mod client;
 mod error;
 mod launch;
+mod origin;
+mod page_read;
 mod protocol;
 mod snapshot;
+mod structure;
 mod tab;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -36,14 +43,22 @@ mod tests;
 pub use a2m_provider::Deadline;
 
 pub use browsers::{
-    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, Observer,
-    OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
+    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, DIGESTS_SETTING,
+    Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
+pub use origin::Origins;
+pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
+pub use structure::{
+    ACTION_WORDS, LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART,
+    MOST_NAMES, PLACEHOLDER, is_plain_name, is_plain_segment_word, looks_like_an_action,
+    names_are_structure, path_by_structure, query_names,
+};
 pub use tab::{
-    ActTab, By, DialogAnswer, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment,
-    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests,
-    TextMatch,
+    ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
+    EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment, PageExchange,
+    PageExchanges, PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest,
+    SafeRequests, TextMatch,
 };

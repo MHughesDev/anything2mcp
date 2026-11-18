@@ -47,7 +47,7 @@ The store also holds published versions and their plans, findings, and the audit
 | `needs_input` | A declared decision point is waiting for a person | Input or cancel |
 | `needs_login` | The session expired and could not renew itself | Sign-in |
 | `stopped` | Halted with a failure class; can be resumed | Resume or cancel |
-| `completed` | Every record verified or unchanged | Final |
+| `completed` | Every record verified, unchanged, or acknowledged | Final |
 | `failed` | Halted and cannot be resumed | Final |
 | `cancelled` | Stopped at a person's or caller's request | Final |
 
@@ -55,7 +55,7 @@ The store also holds published versions and their plans, findings, and the audit
 
 The `status` a caller sees is this state. Reads skip the preview and approval, going from `validating` straight to `running`. Writes cannot reach `running` without an approval of their diff, unless policy pre-approved them. A stopped run re-enters `running` only after reconciliation. Resume does not create a new run: the same run gets a new attempt number and a new lease.
 
-**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished gets that run back instead of starting another (rule 6).
+**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished, a stopped run that can be resumed included, gets that run back instead of starting another, marked `earlier_run` (rule 6). A call that carries the caller's own idempotency key goes further: the same caller making the same call with the same key gets back the run the first call started, unfinished or finished, for as long as that run is kept, and the same key with another call is refused by name. A key is scoped to its caller and workspace and kept as a keyed digest ([decision 0160](../../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)). `run.list` shows a caller its own runs, newest first, so that a caller whose answer was lost can find its run.
 
 ## Record states
 
@@ -76,9 +76,9 @@ These are written as tests, and a change that breaks one cannot merge. Each is e
 
 1. **Intent before action.** A record reaches `acted` only if its `intent` was durably stored before the write was sent.
 2. **Proof before verified.** A record reaches `verified` only with a value read from the system that equals the intended value after normalization, and a link to that evidence.
-3. **Approval bound to the diff.** A write run first enters `running` only with an approval whose diff hash (defined in [steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md#diffs)) equals the run's, that is unexpired and unused, or with a recorded policy decision that allowed this run to write without a person. Marking the approval used and changing the run's state happen in one transaction. A resumed run is the same run: it continues under the approval it has already used and writes only what that diff holds, with rule 5 and the freshness check guarding each record.
+3. **Approval bound to the diff.** A write run first enters `running` only with an approval whose diff hash (defined in [steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md#diffs)) equals the run's, that is unexpired and unused, for the run's tool version, and backed by a presence check where the channel needs one, or with a policy decision that allowed this run to write without a person, recorded in the same transaction; in a store an offline test opens for itself, and in no other, the test's own clearance stands in for both ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)). Marking the approval used and changing the run's state happen in one transaction. Only the policy engine can write approvals and decisions ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)). A resumed run is the same run: it continues under the approval it has already used and writes only what that diff holds, with rule 5 and the freshness check guarding each record.
 4. **One writer per run.** Only the holder of the run's current lease number may change its records. Anything carrying an older number is refused.
-5. **Reconcile after any doubt.** After a lease is lost or an engine stops, no record of that run is written until it has been read back. The ledger refuses to store a new intent while any record of the run is in `intent` or `acted` under an older lease number, so there is no flag to forget to set.
+5. **Reconcile after any doubt.** After a lease is lost or an engine stops, no record of that run is written until it has been read back. The ledger refuses to store a new intent while any record of the run is in `intent` or `acted` under an older lease number, so there is no flag to forget to set. A record that ended `acted` on the system's acknowledgement is settled, not in doubt.
 6. **One run per identical call.** At most one unfinished run exists for the same caller, tool version, and input hash. A second identical call returns the first run. For a file input the hash covers the file's content, not its path.
 7. **One lock per record.** At most one run holds the lock for a record key in a target and environment.
 8. **Final means final.** A run in a final state never changes again.
@@ -112,7 +112,7 @@ Then, for each record in a write run:
 1. Take the record lock.
 2. If the preview is older than the freshness window (60 seconds by default), or policy is strict, read the record again and compare it with what the preview saw. A difference stops the run with the class `stale` and the code `changed_since_preview`, because the approved diff no longer describes what would happen.
 3. Store the intent and receive its token. In a single process this is one synchronous database commit; on a split deployment the runner waits for the control plane's acknowledgement.
-4. Act: one commit point in the system, sent with the token.
+4. Act: one commit point in the system, sent with the token, and only while the job's lease covers the step's time limit.
 5. Mark `acted`, with any key the system assigned.
 6. Read back, normalize, compare. Mark `verified`, or stop with `mismatch` after one re-read.
 
@@ -144,14 +144,24 @@ How the record is read depends on how it is found again:
 | --- | --- |
 | `natural`, `composite` | The binding's read-back steps alone, from the identity inputs |
 | `stamped` | The lookup by the record's token |
-| `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches inside the settle time waits |
+| `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches waits the settle time out once and looks again |
 | Any, once a key was assigned | By the assigned key |
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
-| `none` | Cannot be read. The run is never resumed by itself and stops for a person |
+| `none` | There is no key, so "absent" is never proof by itself ([decision 0185](../../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)). The binding's read-back, given the values the record's own attempt recorded before its save, may find it; what it finds is compared with the intended values like every read-back: equal is `verified`, different is `mismatch` and stays in doubt. The record returns to `planned` only when the binding's lookup is one its provider states authoritative for absence (`absence_steps`, [section 201](201-archetypes-and-modes.md)), asked once the settle time has passed since the send was recorded, and it answers "absent" twice, the second after another settle time. A record whose recorded values were masked is not read. In every other case the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded, rests for a person, and nothing is sent |
 
-Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged` are skipped. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
+What was recorded before a commit point belongs to that attempt: a reconcile is given the values recorded after the record's current intent, and never an earlier attempt's. Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged`, and records that ended `acted` on an acknowledgement, are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
 
 **Records with no way to be found again cannot be read back,** so they cannot be reconciled. An operation that creates them is classed `irreversible`, is approved per run, and is never resumed automatically. A pipeline that creates such records avoids this by storing its own key in the system, such as a source id in a reference field; [section 209](209-record-identity-and-dependent-records.md) gives the ways.
+
+**What a binding offers as evidence.** Each write binding states it, and the engine holds the binding to it ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)):
+
+| Evidence | What stands as proof that the write landed | The record ends |
+| --- | --- | --- |
+| `read_back` | The binding's read-back steps read the record; normalized, it must equal the intended values | `verified` |
+| `response` | The save's own answer, where it carries every intended field; otherwise the read-back | `verified` |
+| `acknowledged` | Nothing is read and nothing compared: the committing step's own answer is the only evidence there can be. Only for an operation declared `irreversible`, such as a queue take, a publish with no key, or a call to an irreversible tool, and never for a record its binding reads back by its key: that read is its evidence ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)) | `acted`, never `verified`; the result and the diff say "accepted by the system, not read back" |
+
+The stored diff names, for each record, the binding that writes it and that binding's evidence, or, for a record whose binding is chosen only once its key is known, every binding it could take with its evidence; the engine writes a record only through a binding the approval names for it, and stops unsent with `policy`, `approval_stale`, otherwise. The outputs an acknowledged record's save gave are stored with it and handed back on resume. The ledger ends a record on an acknowledgement only when the run's own stored diff says its write is `acknowledged`, never on the caller's word, and only for a cleared irreversible run; it keeps the answer as evidence, releases the lock, and the record is settled, not in doubt ([decision 0172](../../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)). A record with a key whose binding is `acknowledged` and has no read-back step, such as a write-only register, is not read before it is written either: the diff's action for it is `write`, and each field's current value is shown as the fixed words that it cannot be read. A lost answer to an `acknowledged` save leaves the record in doubt; a reconcile goes on only through a lookup its mode's manifest states can prove absence, as for a record with no key, and a record such a look finds stays in doubt; otherwise the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded before the save ([decision 0196](../../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 
 **Who resumes.** A run stopped by the engine's own death is resumed by its caller with `run.resume`, never by the engine alone at its next start. A job whose lease ended without a result is treated as `possible_commit` and reconciled before anyone else gets it ([section 223](223-the-runner-protocol.md)).
 
@@ -163,7 +173,7 @@ The class alone decides what happens next ([section 207](207-the-engine-loop.md)
 
 | Class | Run state | Lock on a record in `intent` or `acted` |
 | --- | --- | --- |
-| `input` | `rejected` | None is held |
+| `input` | `rejected` before anything ran; `failed` once the run is `running` | None is held |
 | `policy`, `stale` | `failed` | Released by the ledger; nothing is in doubt once read |
 | `session_expired` | `needs_login` | Quarantined |
 | `transient` after retries, `busy`, `mismatch`, `edge_blocked`, `unknown_variant`, `rejected` | `stopped` | Quarantined if a record is in doubt, released otherwise |
@@ -171,6 +181,8 @@ The class alone decides what happens next ([section 207](207-the-engine-loop.md)
 | `possible_commit` | `stopped` | Quarantined until reconcile |
 
 The class `rejected` (the system refused the input) and the run state `rejected` (the inputs were invalid before anything ran) are different things; the first ends in `stopped`.
+
+**After the save was sent.** A record whose committing step was sent is failed with `policy`, `stale`, or `input`, the classes that release its lock, only when the system itself answered that it refused the write: `stale` for the version sent with it. Any other failure of those classes between the save and `verified`, in the save's own answer, a confirm step, or the read-back, is `possible_commit`: the lock is kept and reconcile decides. The engine holds this whatever a driver reports ([decision 0147](../../decisions/0147-the-engine-after-its-safety-audit.md)).
 
 A run stopped as `stale` ends `failed`, because resuming could never succeed: its approved diff no longer describes the system. It is therefore final, and rule 6 does not hand it back to an identical call; that call starts a new run with a new preview.
 
@@ -185,7 +197,7 @@ A read has a run row and events but no record rows. Reads are recorded for audit
 Record locks belong to the ledger, because storing an intent must check the lock in the same transaction. The scheduler only queues the wait ([section 211](211-concurrency.md)).
 
 - A lock names a workspace, target, environment, and record key, and its holder's run and lease number.
-- It is taken just before the intent and released by the ledger when the record is verified or unchanged, so a long pipeline holds one lock at a time, not all of them.
+- It is taken just before the intent and released by the ledger when the record is verified, unchanged, or acknowledged, so a long pipeline holds one lock at a time, not all of them.
 - A second run that needs a locked record waits in the queue up to a limit, then returns `busy`, `record_locked` with a retry time.
 - A lock is `held` or `quarantined`. When a lease is lost, or a run stops with a record in doubt, the locks for those records are quarantined, not released. They pass to reconcile, so no other run can write those records before they have been read back.
 
@@ -197,7 +209,7 @@ Record locks belong to the ledger, because storing an intent must check the lock
 - Each blob has a retention class: short for traces and screenshots, longer for diffs and before-and-after values, longest for the audit log.
 - A retention job deletes whole runs and their unreferenced blobs once they are past their class. Legal hold on a run suspends it.
 - Values classified as sensitive are stored only as hashes unless policy allows the values themselves, which limits undo for those fields.
-- Event payloads, audit entries, and failure messages pass the redactor before they are written.
+- Event payloads, audit entries, and failure messages pass the redactor before they are written. A stored failure keeps what the system said apart from its message, and hands it back apart.
 
 What a trace and its evidence contain is [section 217](217-traces-evidence-and-repair.md).
 
@@ -227,7 +239,7 @@ Storing an intent: under 2 ms locally and under 5 ms to a control plane on the s
 ## Open points
 
 - **What a write step's inputs may depend on.** A proposed value has to be known at the preview to be approved. A write step whose inputs use the result of a read step that runs after an earlier write cannot be previewed. The compiler should refuse it, and no rule says so yet. An earlier write step's assigned key is the one case section 209 already covers.
-- **The failure class to run state table** is the engine's design and has no decision record yet; slice 3.7 confirms it.
+- **The failure class to run state table** is as the engine carries it out, recorded in [decision 0091](../../decisions/0091-the-engine-loop-as-its-first-two-passes-settled-it.md).
 - **The intent window across bindings** in one pipeline step, when records of two bindings interleave.
 - **Durability on SQLite** is a setting changed per transaction on the one writing connection ([decision 0080](../../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). Its cost is still to be measured against hypothesis H-15.
 - **Whether run rows of reads are summarized at scale.** It follows the open point on sampling decisions in [section 212](212-policy-and-approvals.md).

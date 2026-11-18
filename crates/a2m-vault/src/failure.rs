@@ -18,6 +18,9 @@ pub const VAULT_PASSPHRASE_NOT_ENABLED: FailureCode =
     FailureCode::fixed("vault_passphrase_not_enabled");
 /// The passphrase given is not the one the keys were wrapped under.
 pub const VAULT_PASSPHRASE_MISMATCH: FailureCode = FailureCode::fixed("vault_passphrase_mismatch");
+/// The passphrase given is too short to derive a root key from.
+pub const VAULT_PASSPHRASE_TOO_SHORT: FailureCode =
+    FailureCode::fixed("vault_passphrase_too_short");
 /// A key record already exists, or changed before it could be replaced.
 pub const KEY_RECORD_CONFLICT: FailureCode = FailureCode::fixed("key_record_conflict");
 /// The operating system gave no random bytes, so no key or nonce was made.
@@ -81,6 +84,16 @@ pub(crate) fn passphrase_mismatch() -> Failure {
         VAULT_PASSPHRASE_MISMATCH,
         "The passphrase given is not the one this installation's keys were wrapped under.",
         "Start again with the passphrase used before. Without it, saved sessions and stored evidence cannot be read.",
+    )
+}
+
+/// The passphrase is shorter than the floor. The message never holds it.
+pub(crate) fn passphrase_too_short() -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        VAULT_PASSPHRASE_TOO_SHORT,
+        "The passphrase for the root key is shorter than 16 bytes, so no key was derived from it.",
+        "Start again with a passphrase of at least 16 bytes: several unrelated words, or random characters from a password manager. A short one can be found by trying every candidate against the stored keys.",
     )
 }
 

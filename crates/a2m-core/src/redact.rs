@@ -31,36 +31,75 @@ pub trait Redact: Send + Sync {
         self.redact(text) != text
     }
 
-    /// The failure with its sentence and its next step redacted. The class
-    /// and the code are names and are kept.
+    /// The failure with its sentence, its next step, and what the system
+    /// said redacted. The class and the code are names and are kept.
     fn redact_failure(&self, failure: &Failure) -> Failure {
-        Failure::new(
+        let clean = Failure::new(
             failure.class(),
             failure.code().clone(),
             self.redact(failure.message()),
             self.redact(failure.next_step()),
-        )
-    }
-
-    /// The value with every text in it redacted, at any depth. A field's
-    /// name is redacted too, because a system chooses the names it returns.
-    fn redact_value(&self, value: &Value) -> Value {
-        match value {
-            Value::Text(text) => Value::Text(self.redact(text)),
-            Value::List(items) => {
-                Value::List(items.iter().map(|item| self.redact_value(item)).collect())
-            }
-            Value::Record(values) => Value::Record(self.redact_values(values)),
-            other => other.clone(),
+        );
+        match failure.said() {
+            Some(said) => clean.with_said(self.redact(said)),
+            None => clean,
         }
     }
 
-    /// The named values with every text in them redacted.
+    /// The value with every secret in it redacted, at any depth. A field's
+    /// name is redacted too, because a system chooses the names it returns.
+    ///
+    /// A value that is not text is judged by the text it is written as: a
+    /// whole number and a length of time by their digits, a decimal by its
+    /// shortest exact form, a date as `2026-11-17` and as `20261117`, a
+    /// moment by its milliseconds. One that holds a registered secret is
+    /// replaced whole by the text [`REDACTED`], so a secret that is a
+    /// number, such as a PIN, does not pass as a number. The cost is that a
+    /// short numeric secret also removes every number whose digits hold it,
+    /// and that the value's kind becomes text. A secret written with leading
+    /// zeros, or with trailing zeros after a decimal mark, is not found in a
+    /// number that has lost them.
+    fn redact_value(&self, value: &Value) -> Value {
+        let holds = |text: &str| self.contains_secret(text);
+        let secret = match value {
+            Value::Text(text) => return Value::Text(self.redact(text)),
+            Value::List(items) => {
+                return Value::List(items.iter().map(|item| self.redact_value(item)).collect());
+            }
+            Value::Record(values) => return Value::Record(self.redact_values(values)),
+            Value::Null | Value::Bool(_) => false,
+            Value::Int(number) => holds(&number.to_string()),
+            Value::Decimal(number) => holds(&number.to_string()),
+            Value::Duration(length) => holds(&length.get().to_string()),
+            Value::Instant(moment) => holds(&moment.as_unix_millis().to_string()),
+            Value::Date(date) => {
+                let written = date.to_string();
+                holds(&written) || holds(&written.replace('-', ""))
+            }
+        };
+        if secret {
+            Value::Text(REDACTED.to_owned())
+        } else {
+            value.clone()
+        }
+    }
+
+    /// The named values with every secret in them redacted. Two names that
+    /// redact to the same text are both kept: the later one, in order of
+    /// name, has a number added, so no value takes another's place.
     fn redact_values(&self, values: &Values) -> Values {
-        values
-            .iter()
-            .map(|(name, value)| (self.redact(name), self.redact_value(value)))
-            .collect()
+        let mut clean = Values::new();
+        for (name, value) in values.iter() {
+            let redacted = self.redact(name);
+            let mut unique = redacted.clone();
+            let mut count = 1u32;
+            while clean.contains(&unique) {
+                count += 1;
+                unique = format!("{redacted} ({count})");
+            }
+            clean.insert(unique, self.redact_value(value));
+        }
+        clean
     }
 }
 
@@ -94,6 +133,8 @@ vocabulary! {
         RestrictedValue => "restricted_value",
         /// Naming a record's key in the ledger and in a lock.
         RecordKey => "record_key",
+        /// Matching a caller's idempotency key without keeping it.
+        CallerKey => "caller_key",
     }
 }
 
@@ -167,7 +208,8 @@ mod tests {
         DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,
     };
     use crate::{
-        Digest, Failure, FailureClass, FailureCode, Timestamp, Value, Values, WorkspaceId,
+        Date, Decimal, Digest, Failure, FailureClass, FailureCode, Millis, Timestamp, Value,
+        Values, WorkspaceId,
     };
 
     const SECRET: &str = "correct horse battery staple";
@@ -214,6 +256,95 @@ mod tests {
     }
 
     #[test]
+    fn what_the_system_said_is_kept_apart_bounded_and_redacted() {
+        let failure = Failure::new(
+            FailureClass::Rejected,
+            FailureCode::new("system_refused").unwrap(),
+            "The system refused the record.",
+            "Correct the record and call again.",
+        )
+        .with_said(format!("total must be positive\n\u{1b}[31m {SECRET}"));
+        // Never joined into the product's own words, and kept whole: line
+        // breaks and control characters as the system gave them.
+        assert_eq!(failure.message(), "The system refused the record.");
+        assert_eq!(
+            failure.said(),
+            Some(format!("total must be positive\n\u{1b}[31m {SECRET}").as_str())
+        );
+        let clean = Knows(SECRET).redact_failure(&failure);
+        assert_eq!(
+            clean.said(),
+            Some("total must be positive\n\u{1b}[31m [redacted]")
+        );
+        // A door shows it escaped, never flattened.
+        assert_eq!(
+            crate::said_shown(clean.said().unwrap(), crate::SAID_LONGEST),
+            (
+                "total must be positive\\n\\u{1b}[31m [redacted]".to_owned(),
+                false
+            )
+        );
+        // Above the ceiling it is dropped whole, never cut to a prefix.
+        let long = failure
+            .clone()
+            .with_said("x".repeat(crate::SAID_CEILING + 1));
+        assert_eq!(long.said(), Some(crate::SAID_TOO_LONG));
+        let whole = failure.clone().with_said("x".repeat(5_000));
+        assert_eq!(whole.said().unwrap().len(), 5_000);
+        // Nothing to keep is nothing.
+        assert_eq!(failure.clone().with_said(" \n\t ").said(), None);
+        // A failure that stands in for another carries its words.
+        let standing = Failure::new(
+            FailureClass::PossibleCommit,
+            FailureCode::new("no_confirmation").unwrap(),
+            "In doubt.",
+            "Reconcile.",
+        )
+        .carrying_said(&clean);
+        assert_eq!(standing.said(), clean.said());
+    }
+
+    /// Decision 0185: nothing is cut, joined, or flattened before the
+    /// redactor sees what the system said.
+    #[test]
+    fn a_secret_of_several_lines_or_across_the_display_cut_is_redacted_whole() {
+        const KEY: &str = "secret-for-tests-line-one\nsecret-for-tests-line-two\n";
+        let failure = Failure::new(
+            FailureClass::Rejected,
+            FailureCode::new("system_refused").unwrap(),
+            "The system refused the record.",
+            "Correct the record and call again.",
+        );
+        // A secret of several lines, echoed in an error.
+        let echoed = failure
+            .clone()
+            .with_said(format!("could not parse key:\n{KEY}end"));
+        let clean = Knows(KEY).redact_failure(&echoed);
+        let said = clean.said().unwrap();
+        assert!(
+            !said.contains("line-one") && !said.contains("line-two"),
+            "{said}"
+        );
+        assert_eq!(said, "could not parse key:\n[redacted]end");
+
+        // A secret that starts near the old cut of 400 characters.
+        let before = "x".repeat(crate::SAID_LONGEST - 20);
+        let straddles = failure.with_said(format!("{before}{SECRET} and more"));
+        let clean = Knows(SECRET).redact_failure(&straddles);
+        let said = clean.said().unwrap();
+        assert!(!said.contains("battery"), "the secret's tail passed");
+        assert!(!said.contains("correct horse"), "the secret's head passed");
+        // Cut for display after redaction, the mark is never split: what is
+        // shown ends before it.
+        let (shown, cut) = crate::said_shown(said, crate::SAID_LONGEST - 10);
+        assert!(cut);
+        assert_eq!(shown, format!("{before}[redacted]…"));
+        let (shown, cut) = crate::said_shown(said, crate::SAID_LONGEST - 15);
+        assert!(cut);
+        assert_eq!(shown, format!("{before}…"));
+    }
+
+    #[test]
     fn values_are_redacted_at_every_depth_and_in_their_names() {
         let values = Values::new()
             .with("note", format!("see {SECRET}"))
@@ -232,6 +363,68 @@ mod tests {
         );
         assert_eq!(clean.get("count"), Some(&Value::Int(3)));
         assert_eq!(clean.get("note"), Some(&Value::from("see [redacted]")));
+    }
+
+    #[test]
+    fn a_secret_that_is_a_number_does_not_pass_as_a_number() {
+        let pin = Knows("4821");
+        // The system echoes the PIN as a number, alone and inside others.
+        let values = Values::new()
+            .with("pin", 4821i64)
+            .with("amount", Decimal::parse("4821.50").unwrap())
+            .with("longer", 148_210i64)
+            .with("wait", Value::Duration(Millis::new(4821)))
+            .with("at", Value::Instant(Timestamp::from_unix_millis(4821)))
+            .with("count", 3i64)
+            .with("total", Decimal::parse("48.21").unwrap())
+            .with("flag", true)
+            .with("lines", vec![Value::Int(4821), Value::Int(7)]);
+        let clean = pin.redact_values(&values);
+        for name in ["pin", "amount", "longer", "wait", "at"] {
+            assert_eq!(clean.get(name), Some(&Value::from(REDACTED)), "{name}");
+        }
+        assert_eq!(
+            clean.get("lines"),
+            Some(&Value::List(vec![Value::from(REDACTED), Value::Int(7)]))
+        );
+        // What does not hold the secret keeps its kind and its value.
+        assert_eq!(clean.get("count"), Some(&Value::Int(3)));
+        assert_eq!(
+            clean.get("total"),
+            Some(&Value::Decimal(Decimal::parse("48.21").unwrap()))
+        );
+        assert_eq!(clean.get("flag"), Some(&Value::Bool(true)));
+        assert!(!pin.contains_secret(&String::from_utf8(clean.canonical_bytes()).unwrap()));
+
+        // A date is found as it is written and as eight digits.
+        let day = Value::Date(Date::new(1990, 1, 31).unwrap());
+        assert_eq!(Knows("19900131").redact_value(&day), Value::from(REDACTED));
+        assert_eq!(
+            Knows("1990-01-31").redact_value(&day),
+            Value::from(REDACTED)
+        );
+        assert_eq!(Knows("19900201").redact_value(&day), day);
+        assert_eq!(NoSecrets.redact_value(&Value::Int(4821)), Value::Int(4821));
+    }
+
+    #[test]
+    fn two_names_that_both_hold_a_secret_keep_both_values() {
+        let values = Values::new()
+            .with(format!("a {SECRET}"), 1i64)
+            .with(SECRET, 2i64)
+            .with(format!("{SECRET}{SECRET}"), 3i64)
+            .with("plain", 4i64);
+        let clean = Knows(SECRET).redact_values(&values);
+        assert_eq!(clean.len(), values.len());
+        assert_eq!(clean.get("[redacted]"), Some(&Value::Int(2)));
+        assert_eq!(clean.get("[redacted][redacted]"), Some(&Value::Int(3)));
+        assert_eq!(clean.get("a [redacted]"), Some(&Value::Int(1)));
+        // Two names that redact alike: the second is numbered.
+        let alike =
+            Knows("x").redact_values(&Values::new().with("ax", 1i64).with("a[redacted]", 2i64));
+        assert_eq!(alike.len(), 2);
+        assert_eq!(alike.get("a[redacted]"), Some(&Value::Int(2)));
+        assert_eq!(alike.get("a[redacted] (2)"), Some(&Value::Int(1)));
     }
 
     #[test]

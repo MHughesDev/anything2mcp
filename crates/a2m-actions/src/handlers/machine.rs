@@ -32,7 +32,29 @@ handler!(
 handler!(
     /// `config.show`: every effective setting and the layer that set it.
     config_show,
-    |kernel, call| { Ok(Output::ok(kernel.settings().show(call.text("key"))?)) }
+    |kernel, call| {
+        let mut shown = kernel.settings().show(call.text("key"))?;
+        let mut output_warnings = Vec::new();
+        // A protected setting whose value is not the one the policy engine
+        // works by is never shown as in force: it is marked, and the
+        // reason is given. The kernel is stopped while there is one.
+        if let Some(settings) = shown.get_mut("settings").and_then(Json::as_array_mut) {
+            for refused in &kernel.inner.not_in_force {
+                let found = settings
+                    .iter_mut()
+                    .find(|setting| setting["key"] == refused.key);
+                if let Some(Json::Object(setting)) = found {
+                    setting.insert("in_force".to_owned(), json!(false));
+                    output_warnings.push(refused.failure.message().to_owned());
+                }
+            }
+        }
+        let mut output = Output::ok(shown);
+        for warning in output_warnings {
+            output = output.warn(warning);
+        }
+        Ok(output)
+    }
 );
 
 fn check(
@@ -163,6 +185,15 @@ handler!(
                     "A valid policy set is in force.",
                     "",
                 )
+            } else if let Some(refused) = kernel.inner.not_in_force.first() {
+                // A protected setting says what the policy engine does not
+                // work by: the engine serves nothing until it is taken out.
+                check(
+                    "policy",
+                    DoctorState::ConfigDrift,
+                    refused.failure.message(),
+                    refused.failure.next_step(),
+                )
             } else {
                 check(
                     "policy",
@@ -172,6 +203,25 @@ handler!(
                 )
             },
         );
+        // Whether a person can be proved present here, which an approval,
+        // a publish, and the release of a kill switch need. The surface is
+        // asked what its prompt can do; no prompt is raised.
+        let presence = kernel.person().presence().await;
+        checks.push(check(
+            "presence",
+            if presence.available() {
+                DoctorState::Healthy
+            } else if presence.reason == "unknown" {
+                DoctorState::Unknown
+            } else {
+                DoctorState::ComponentMissing
+            },
+            format!(
+                "{} (prompt: {}, {})",
+                presence.message, presence.kind, presence.reason
+            ),
+            presence.fix,
+        ));
 
         // The providers.
         for provider in kernel.providers().listing() {

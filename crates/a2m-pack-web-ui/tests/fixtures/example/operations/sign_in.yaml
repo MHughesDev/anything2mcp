@@ -1,6 +1,6 @@
 operation: example_account_enter
 title: Enter an account
-effect: write
+effect: irreversible
 key: account
 commit_points: 1
 inputs:

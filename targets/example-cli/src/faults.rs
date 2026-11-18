@@ -78,6 +78,15 @@ pub enum FaultKind {
         /// At least this many bytes are printed.
         bytes: u64,
     },
+    /// Print this text on a stream, exactly as given, before anything else.
+    /// A test uses it to put a registered secret at a chosen place in what
+    /// the program prints.
+    Say {
+        /// The stream to print on.
+        stream: Stream,
+        /// The text, with no line end added.
+        text: String,
+    },
     /// Store a quantity rounded down to a multiple, while printing the
     /// quantity that was asked for.
     RoundQuantity {

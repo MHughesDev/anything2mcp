@@ -40,6 +40,29 @@ pub enum FaultKind {
         /// The name a reader sees.
         to: String,
     },
+    /// Store a publish, then answer with a refusal under this code, which need not be one
+    /// the protocol has.
+    StoreThenRefuse {
+        /// The code the client is given under `error`.
+        code: String,
+    },
+    /// Carry an acknowledgement out, then drop the connection before the answer is sent.
+    AckThenDrop,
+    /// Carry an acknowledgement out, then answer with a refusal under this code, which
+    /// need not be one the protocol has.
+    AckThenRefuse {
+        /// The code the client is given under `error`.
+        code: String,
+    },
+    /// Answer a browse with no messages, whatever the channel holds. With `more` true the
+    /// look says more is held and gives no place to go on from; with `more` false it says
+    /// that was all, against its own count of what the channel holds.
+    EmptyLook {
+        /// What the answer says under `more`.
+        more: bool,
+    },
+    /// Hand over one message more than a fetch asked for.
+    ExtraDelivery,
 }
 
 impl FaultKind {
@@ -50,9 +73,12 @@ impl FaultKind {
             Self::StoreThenDrop
             | Self::StoreThenSilent
             | Self::DropBeforeStore
-            | Self::Refuse { .. } => op == Op::Publish,
+            | Self::Refuse { .. }
+            | Self::StoreThenRefuse { .. } => op == Op::Publish,
             Self::Delay { .. } | Self::UnexpectedReply => true,
-            Self::DuplicateDelivery => op == Op::Fetch,
+            Self::DuplicateDelivery | Self::ExtraDelivery => op == Op::Fetch,
+            Self::AckThenDrop | Self::AckThenRefuse { .. } => op == Op::Ack,
+            Self::EmptyLook { .. } => op == Op::Browse,
             Self::SilentConsumer => false,
             Self::RenameField { .. } => matches!(op, Op::Latest | Op::Browse | Op::Fetch),
         }

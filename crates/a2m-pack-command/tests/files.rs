@@ -78,7 +78,7 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
         &loaded,
         set,
         a2m_files::CompileMode::Draft,
-        a2m_core::Version::new(1, 0, 0),
+        a2m_files::DRAFT_VERSION,
     )
     .unwrap();
     assert_eq!(first.encoded.bytes, third.encoded.bytes);
@@ -100,6 +100,28 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
     );
     assert_eq!(plan.packs.len(), 1);
     assert_eq!(plan.packs[0].pack, "command");
+
+    // The one write with no identity and no read-back states that its own
+    // end is the only evidence; every write that names a read-back keeps it.
+    let evidence = |name: &str| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .bindings[0]
+            .evidence
+    };
+    assert_eq!(
+        evidence("example_catalog_push"),
+        a2m_core::WriteEvidence::Acknowledged
+    );
+    for kept in [
+        "example_item_set_quantity",
+        "example_item_add",
+        "example_item_remove",
+    ] {
+        assert_eq!(evidence(kept), a2m_core::WriteEvidence::ReadBack, "{kept}");
+    }
 
     // A write starts its program in one committing step, sees it end and
     // reads its output to confirm, and reads the record back.
@@ -304,4 +326,138 @@ fn a_file_that_breaks_a_rule_does_not_compile() {
         "lookup: {command: item_list}",
         "command.stamp_missing",
     );
+}
+
+#[test]
+fn no_form_of_argument_hands_a_value_to_a_flag_that_runs_it() {
+    const FILE: &str = "commands/inventory.yaml";
+    let code_flag = |from: &str, to: &str| refused(FILE, from, to, "command.code_flag");
+    // A list of values, each after the flag.
+    code_flag(
+        "params: {location: {type: location_code, required: false}}\n    args: [item, list, {flag: --location, param: location}]",
+        "params: {location: {type: location_code, required: false, list: true}}\n    args: [item, list, {flag: -e, each: location}]",
+    );
+    // The flag written as an element of its own, and the value after it.
+    code_flag(
+        "args: [item, remove, {param: sku}, --yes]",
+        "args: [item, remove, -c, {param: sku}, --yes]",
+    );
+    code_flag(
+        "args: [item, remove, {param: sku}, --yes]",
+        "args: [item, remove, --Eval, {param: sku}, --yes]",
+    );
+    // The joining character written into the flag, and a flag with one dash.
+    code_flag(
+        "{flag: --quantity, param: quantity, join: \"=\"}",
+        "{flag: \"--exec=\", param: quantity, join: \"\"}",
+    );
+    code_flag(
+        "{flag: --quantity, param: quantity, join: \"=\"}",
+        "{flag: -exec, param: quantity}",
+    );
+    // The record's stamp is a value too.
+    code_flag(
+        "{flag: --ref, stamp: true}",
+        "{flag: --command, stamp: true}",
+    );
+    // A help form puts a word the program printed after its flag.
+    code_flag("[\"help\", \"{command}\"]]", "[\"-c\", \"{command}\"]]");
+    // A flag that takes a folder is not one that runs its value.
+    let folder = Folder::new("allowed");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let fine = changed(
+        FILE,
+        "{flag: --quantity, param: quantity, join: \"=\"}",
+        "{flag: -C, param: quantity}",
+    );
+    assert!(compile(&fine, registry.compiler_set()).is_ok());
+}
+
+#[test]
+fn a_variable_of_the_engine_is_never_set_or_copied_for_a_program() {
+    const FILE: &str = "commands/inventory.yaml";
+    for name in ["A2M_HOME", "a2m_vault_passphrase", "A2m_Anything"] {
+        refused(
+            FILE,
+            "TZ: UTC,",
+            &format!("TZ: UTC, {name}: elsewhere,"),
+            "command.engine_variable",
+        );
+        refused(
+            FILE,
+            "    pass: []",
+            &format!("    pass: [{name}]"),
+            "command.engine_variable",
+        );
+    }
+}
+
+#[test]
+fn a_credential_is_never_written_in_a_commands_file_or_carried_as_an_argument() {
+    const FILE: &str = "commands/inventory.yaml";
+    // A variable named for a credential, set or copied.
+    refused(
+        FILE,
+        "TZ: UTC,",
+        "TZ: UTC, EXAMPLE_CLI_TOKEN: example-token-0001,",
+        "command.secret_variable",
+    );
+    refused(
+        FILE,
+        "    pass: []",
+        "    pass: [EXAMPLE_CLI_PASSWORD]",
+        "command.secret_variable",
+    );
+    // A value that looks like a key, in a variable and as an element.
+    refused(
+        FILE,
+        "TZ: UTC,",
+        "TZ: UTC, EXAMPLE_CLI_MODE: example0key1example2key3example4key5,",
+        "command.secret_literal",
+    );
+    refused(
+        FILE,
+        "args: [catalog, push, --yes]",
+        "args: [catalog, push, example0key1example2key3example4key5, --yes]",
+        "command.secret_literal",
+    );
+    // A flag named for a credential never carries a value: other programs
+    // on the machine can read a process's arguments.
+    refused(
+        FILE,
+        "args: [catalog, push, --yes]",
+        "args: [catalog, push, --token=example-token-0001, --yes]",
+        "command.secret_argument",
+    );
+    refused(
+        FILE,
+        "args: [catalog, push, --yes]",
+        "args: [catalog, push, --password, example, --yes]",
+        "command.secret_argument",
+    );
+    refused(
+        FILE,
+        "{flag: --location, param: location}]\n    output: {table",
+        "{flag: --api-key, param: location}]\n    output: {table",
+        "command.secret_argument",
+    );
+}
+
+#[test]
+fn a_program_that_starts_another_is_never_a_program_surface() {
+    for launcher in [
+        "/usr/bin/timeout",
+        "/usr/bin/nice",
+        "/usr/bin/find",
+        "/usr/bin/java",
+        "/usr/bin/Rscript",
+        "/usr/sbin/chroot",
+    ] {
+        refused(
+            "target.yaml",
+            "path: '/opt/example/bin/example-cli'",
+            &format!("path: '{launcher}'"),
+            "command.shell_program",
+        );
+    }
 }

@@ -48,6 +48,76 @@ pub fn clean_text(text: &str) -> String {
     out
 }
 
+/// Returns `text` without hidden characters, and with its markup left as it
+/// is: for a line of the engine's log, where a `<` is ordinary text and a
+/// character nobody can see can make a terminal or a viewer show something
+/// other than what the line holds.
+#[must_use]
+pub fn strip_hidden(text: &str) -> String {
+    text.chars()
+        .filter(|character| !is_hidden(*character))
+        .collect()
+}
+
+/// The longest character reference that is decoded: `&#x10FFFF;` is ten
+/// characters, and no name known here is longer.
+const LONGEST_REFERENCE: usize = 10;
+
+/// Returns `text` with its character references written out: `&amp;`,
+/// `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`, and the numbered forms
+/// `&#38;` and `&#x26;`. A reference this does not know, or one that names
+/// no character, is left as it stands.
+///
+/// It is for checking, never for keeping: a secret written with a
+/// reference in it is not the secret's own text, and the redactor is asked
+/// about this form as well.
+#[must_use]
+pub fn decode_references(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let decoded = after
+            .char_indices()
+            .take(LONGEST_REFERENCE)
+            .find(|(_, character)| *character == ';')
+            .and_then(|(end, _)| Some((reference(&after[..end])?, end)));
+        match decoded {
+            Some((character, end)) => {
+                out.push(character);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character a reference names, without its `&` and `;`.
+fn reference(name: &str) -> Option<char> {
+    if let Some(number) = name.strip_prefix('#') {
+        let code = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => number.parse::<u32>().ok()?,
+        };
+        return char::from_u32(code).filter(|character| *character != '\0');
+    }
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some(' '),
+        _ => None,
+    }
+}
+
 /// Returns at most `limit` characters of `text`, with a mark when it was cut.
 #[must_use]
 pub fn limit_text(text: &str, limit: usize) -> String {
@@ -82,7 +152,29 @@ const fn is_hidden(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_text, limit_text};
+    use super::{clean_text, decode_references, limit_text, strip_hidden};
+
+    #[test]
+    fn character_references_are_written_out_and_unknown_ones_are_left() {
+        assert_eq!(decode_references("a&amp;b"), "a&b");
+        assert_eq!(
+            decode_references("&lt;b&gt; &quot;x&quot; &apos;"),
+            "<b> \"x\" '"
+        );
+        assert_eq!(decode_references("k&#38;v &#x26; &#X3d;"), "k&v & =");
+        // Not a reference, not closed, not a character, or not known.
+        assert_eq!(
+            decode_references("a & b; &; &#; &#xZZ; &copy; &#0;"),
+            "a & b; &; &#; &#xZZ; &copy; &#0;"
+        );
+        assert_eq!(decode_references("ends with &amp"), "ends with &amp");
+        assert_eq!(decode_references("naïve &amp; café"), "naïve & café");
+    }
+
+    #[test]
+    fn hidden_characters_leave_a_log_line_and_its_markup_stays() {
+        assert_eq!(strip_hidden("Vec<u8> pa\u{202E}id\u{2028}"), "Vec<u8> paid");
+    }
 
     #[test]
     fn markup_is_removed_and_ordinary_angle_brackets_are_kept() {

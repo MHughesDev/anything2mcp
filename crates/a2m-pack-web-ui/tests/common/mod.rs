@@ -19,14 +19,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, Mode, NoSecrets,
-    OperationName, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
-    Timestamp, Value, Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, Mode, NoSecrets, OperationName,
+    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
+    Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_pack_web_browser::{PROFILE_ROOT, test_support};
 use a2m_pack_web_ui::SharedBrowsers;
@@ -73,6 +73,9 @@ impl Drop for Folder {
 struct TestPack {
     manifest: &'static str,
     browsers: SharedBrowsers,
+    /// Drafting rules a test adds to the pack's own, each declared in the
+    /// manifest.
+    rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
 }
 
 impl Pack for TestPack {
@@ -82,18 +85,26 @@ impl Pack for TestPack {
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         self.browsers.get_or_create(cx, test_support::settings())?;
-        a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)
+        a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)?;
+        if self.rules.is_empty() {
+            return Ok(());
+        }
+        let mut more = a2m_provider::CompilerRegistrations::new();
+        for rule in &self.rules {
+            more = more.drafting_rule(Arc::clone(rule));
+        }
+        to.compiler(more)
     }
 }
 
 /// The pack's own manifest, with its requirement replaced by the test
-/// environment's.
-fn test_manifest() -> &'static str {
+/// environment's, and `more` added before it.
+fn test_manifest(more: &str) -> &'static str {
     let own = a2m_pack_web_ui::pack(SharedBrowsers::default()).manifest();
     let (before, _) = own
         .split_once("\n[[requirements]]")
         .expect("the manifest ends with its requirement");
-    Box::leak(format!("{before}{}", test_support::requirement()).into_boxed_str())
+    Box::leak(format!("{before}{more}{}", test_support::requirement()).into_boxed_str())
 }
 
 /// A registry that holds only the web pack's drivers, and what a test
@@ -107,6 +118,16 @@ pub struct Stand {
 
 impl Stand {
     pub fn new(name: &str, redact: Arc<dyn Redact>) -> Self {
+        Self::with_rules(name, redact, Vec::new())
+    }
+
+    /// The same, with drafting rules of a test's own added to the pack's,
+    /// each from a finding kind of its own to a file kind of the pack's.
+    pub fn with_rules(
+        name: &str,
+        redact: Arc<dyn Redact>,
+        rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
+    ) -> Self {
         let folder = Folder::new(name);
         let profiles = folder.path().join("profiles");
         let logs = folder.path().join("logs");
@@ -129,9 +150,20 @@ impl Stand {
         };
         let browsers = SharedBrowsers::default();
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+        let declared: String = rules
+            .iter()
+            .map(|rule| {
+                format!(
+                    "\n[[drafting_rules]]\nfinding_kind = \"{}\"\nfile_kind = \"{}\"\n",
+                    rule.finding_kind().as_str(),
+                    rule.file_kind()
+                )
+            })
+            .collect();
         builder.add_pack(&TestPack {
-            manifest: test_manifest(),
+            manifest: test_manifest(&declared),
             browsers: browsers.clone(),
+            rules,
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
@@ -188,7 +220,7 @@ pub fn compile(registry: &Registry, name: &str) -> Compiled {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(fixture(name)), set)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
 }
 
@@ -234,7 +266,7 @@ pub fn compile_changed(
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn shown(problems: &Diagnostics) -> String {
@@ -247,6 +279,10 @@ pub fn shown(problems: &Diagnostics) -> String {
 
 pub fn ui_mode() -> Mode {
     Mode::new("ui").unwrap()
+}
+
+pub fn page_http_mode() -> Mode {
+    Mode::new("page_http").unwrap()
 }
 
 /// What a list of steps gave when none of them failed.
@@ -278,6 +314,17 @@ impl Ran {
                     .means
             })
             .collect()
+    }
+
+    /// The same, as text a test can search: one `name=value` for each
+    /// detail. A detail's debug form shows only that it is there.
+    pub fn means_text(&self) -> String {
+        self.means()
+            .iter()
+            .flatten()
+            .map(|detail| format!("{}={}", detail.name, detail.value))
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 
@@ -314,7 +361,12 @@ impl Scene {
     }
 
     pub fn handle(&self) -> DriverHandle {
-        self.stand.registry.driver(&ui_mode()).unwrap()
+        self.handle_of(&ui_mode())
+    }
+
+    /// The registry's handle on the driver of a mode.
+    pub fn handle_of(&self, mode: &Mode) -> DriverHandle {
+        self.stand.registry.driver(mode).unwrap()
     }
 
     pub async fn try_prepare(
@@ -322,7 +374,17 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.handle();
+        self.try_prepare_in(&ui_mode(), fence, posture).await
+    }
+
+    /// The same, for the driver of a mode.
+    pub async fn try_prepare_in(
+        &self,
+        mode: &Mode,
+        fence: Option<Fence>,
+        posture: Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle_of(mode);
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -359,6 +421,11 @@ impl Scene {
 
     /// The first `ui` binding of an operation.
     pub fn binding(&self, operation: &str) -> &BindingPlan {
+        self.binding_in(operation, &ui_mode())
+    }
+
+    /// The first binding of an operation in a mode.
+    pub fn binding_in(&self, operation: &str, mode: &Mode) -> &BindingPlan {
         self.plan
             .operations
             .iter()
@@ -366,7 +433,7 @@ impl Scene {
             .unwrap_or_else(|| panic!("no operation named `{operation}`"))
             .bindings
             .iter()
-            .find(|binding| binding.mode == ui_mode())
+            .find(|binding| binding.mode == *mode)
             .unwrap()
     }
 
@@ -400,12 +467,10 @@ impl Scene {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: write.map(|(_, record, _)| record),
-                key: write.map(|(_, _, key)| key),
-                stamp: None,
-                deadline: Deadline::after(Duration::from_secs(60)),
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(60)));
+            let input = match write {
+                Some((_, record, key)) => input.for_record(record, Some(key), None),
+                None => input,
             };
             let authority = match write {
                 Some((token, _, _)) if step.commits => Authority::Write(token),
@@ -437,6 +502,20 @@ impl Scene {
         inputs: &Values,
     ) -> Result<Ran, StepFailure> {
         let steps = &self.binding(operation).act;
+        self.run(handle, prepared, steps, inputs, None).await
+    }
+
+    /// Reads through the `act` steps of a read operation's binding in a
+    /// mode.
+    pub async fn read_in(
+        &self,
+        mode: &Mode,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        operation: &str,
+        inputs: &Values,
+    ) -> Result<Ran, StepFailure> {
+        let steps = &self.binding_in(operation, mode).act;
         self.run(handle, prepared, steps, inputs, None).await
     }
 }
@@ -537,23 +616,8 @@ pub async fn running(store: &Store, keys: &[RecordKey]) -> Fence {
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

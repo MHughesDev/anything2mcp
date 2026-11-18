@@ -128,6 +128,7 @@ A fault is set for the next matching request (`Fault::once`) or until cleared (`
 | `ProtocolError { code, message }` | A JSON-RPC error of the test's choosing | No |
 | `InjectText` | A tool result with one more text block, holding the instruction text | Yes |
 | `ResultOffSchema` | A tool result whose structured content does not fit the output schema | Yes |
+| `ResultStructured { content }` | A tool result whose structured content is the one the test gives, whether or not the tool has an output schema | Yes |
 | `HttpStatus { status }` | An HTTP status, such as 503 or 429. HTTP only | No |
 
 ## Drift

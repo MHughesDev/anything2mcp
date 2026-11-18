@@ -7,6 +7,12 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# HTTPS surfaces: the session keeper's TLS stack, and the stand served over
+# TLS for this crate's tests (decision 0157). Off by default; without it an
+# `https` surface is refused by name with `tls_not_enabled`.
+tls = ["a2m-auth/tls", "example-app/tls"]
+
 [dependencies]
 a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
@@ -19,7 +25,7 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-a2m-ledger = { path = "../a2m-ledger" }
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-app = { path = "../../targets/example-app" }
 tokio = { workspace = true, features = ["io-util"] }

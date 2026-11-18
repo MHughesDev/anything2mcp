@@ -18,42 +18,61 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 6.
 
+mod acts;
+mod bounds;
 mod catalog;
 pub mod codes;
 mod control;
 mod def;
 mod dispatch;
+mod events;
 mod faces;
+mod fixture;
 mod handlers;
 mod health;
+pub mod init;
 mod keeper;
 mod kernel;
+mod offline;
 mod paths;
 mod person;
+mod project;
 mod registry;
+mod render;
 mod runner;
 pub mod settings;
+mod signals;
 mod tools;
 
+/// An idempotency key, as the store keeps it (decision 0160).
+pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
+pub use acts::{
+    ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS,
+    ShownField,
+};
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
     HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
 };
 pub use dispatch::{
-    Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, Request, Response,
+    Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, ProjectFolder, Request,
+    Response,
 };
+pub use events::{EVENTS_PAGE, Followed, RunEventView, RunEvents, RunsInHand};
 pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
-    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutStep, TOOL_PREFIX,
+    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,
     ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
-    sdk_methods, tool_name,
+    said_line, sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
-    ApprovalAsk, ApprovalDesk, PersonSurface, PresenceAsk, PresenceProof, SessionAsk, SignInAsk,
-    SurfaceLink, WaitingApproval,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, MAY_NOT_BE_READ_BACK, NOT_READ_BACK,
+    NOW_CANNOT_BE_READ, PRESENCE_WINDOW_MS, PREVIEW_RECORDS, PREVIEW_VALUE_CHARS, PersonSurface,
+    PresenceAsk, PresenceProof, PresenceReport, PreviewBinding, PreviewField, PreviewNotice,
+    PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;
@@ -71,5 +90,11 @@ extern crate self as a2m_actions;
     reason = "tests; the helpers they share do not carry the test attribute"
 )]
 mod tests {
+    mod audit;
+    mod authoring;
     mod kernel;
+    mod keys;
+    mod pass_two;
+    mod runs;
+    mod second;
 }

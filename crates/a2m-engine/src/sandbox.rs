@@ -12,27 +12,29 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Failure, FailureClass, Finding, Hazard, OperationName, RunState, Step,
+    EffectClass, Failure, FailureClass, Finding, Hazard, OperationName, Redact, RunState, Step,
     SurfaceIndex,
 };
 use a2m_provider::{
-    BoxFuture, CheckedPaths, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
-    SandboxPort, StepFailure, StepInput, StepOutcome, SurfaceDescription,
+    BoxFuture, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort, SandboxPort,
+    StepFailure, StepInput, StepOutcome, SurfaceDescription,
 };
 use a2m_telemetry::ChoiceReason;
 
 use crate::codes;
 use crate::control::{Control, EngineEvent, GuardQuestion};
 use crate::engine::Engine;
+use crate::guard::{Timed, caught};
 use crate::job::{JobOutcome, JobSpec, ToolRef};
 use crate::run::{Candidate, Run};
 
 /// The name discovery is asked about at guard: the built-in tool.
 const DISCOVER_TOOL: &str = "a2m_discover";
 
-/// The port a discoverer is handed.
+/// The port a discoverer is handed: the surface's own driver, read only,
+/// or why there is none.
 struct Sandbox {
-    inner: Option<ReadOnlyPort>,
+    inner: Result<ReadOnlyPort, Failure>,
 }
 
 impl SandboxPort for Sandbox {
@@ -50,24 +52,73 @@ impl SandboxPort for Sandbox {
                     "Report this to the provider's author; a discoverer only reads.",
                 )));
             }
-            let Some(port) = &self.inner else {
-                return Err(StepFailure::not_sent(codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_BINDING,
-                    "No driver is ready for the surface, so nothing on it can be observed.",
-                    "Enable a provider that drives a mode of the surface.",
-                )));
-            };
-            port.act(step, input).await
+            match &self.inner {
+                Ok(port) => port.act(step, input).await,
+                Err(why) => Err(StepFailure::not_sent(why.clone())),
+            }
         })
     }
 }
 
-struct Collected(Vec<Finding>);
+/// The most findings one discoverer may hand over in one job, whatever
+/// their size.
+const MOST_FINDINGS: usize = 10_000;
 
-impl FindingSink for Collected {
+/// Where a discoverer's findings go. It keeps them up to the size its
+/// manifest declares and up to a fixed count; what comes after is counted
+/// and not kept, so a discoverer that floods cannot grow the engine's
+/// memory without bound. A finding that still holds a registered secret is
+/// not kept either: nothing of it leaves the engine.
+struct Collected<'r> {
+    redact: &'r dyn Redact,
+    kept: Vec<Finding>,
+    /// The bytes the kept findings take, as they are stored.
+    bytes: u64,
+    /// The most bytes that are kept.
+    most_bytes: u64,
+    /// How many findings came after the bound and were not kept.
+    over: u64,
+    /// How many findings held a registered secret and were not kept.
+    withheld: u64,
+}
+
+impl<'r> Collected<'r> {
+    fn new(redact: &'r dyn Redact, most_bytes: u64) -> Self {
+        Self {
+            redact,
+            kept: Vec::new(),
+            bytes: 0,
+            most_bytes,
+            over: 0,
+            withheld: 0,
+        }
+    }
+}
+
+impl FindingSink for Collected<'_> {
     fn found(&mut self, finding: Finding) -> Result<(), Failure> {
-        self.0.push(finding);
+        // A finding that cannot be written out cannot be measured or
+        // checked: it is counted as not kept.
+        let Ok(text) = serde_json::to_string(&finding) else {
+            self.over = self.over.saturating_add(1);
+            return Ok(());
+        };
+        if self.redact.contains_secret(&text) {
+            self.withheld = self.withheld.saturating_add(1);
+            return Ok(());
+        }
+        let size = u64::try_from(text.len()).unwrap_or(u64::MAX);
+        let fits = self.kept.len() < MOST_FINDINGS
+            && self
+                .bytes
+                .checked_add(size)
+                .is_some_and(|total| total <= self.most_bytes);
+        if fits {
+            self.bytes += size;
+            self.kept.push(finding);
+        } else {
+            self.over = self.over.saturating_add(1);
+        }
         Ok(())
     }
 }
@@ -92,6 +143,8 @@ impl Engine {
                 "A discovery job names a surface, and this one names a tool.",
             ));
         };
+        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let control: &dyn Control = &timed;
         let loaded = self.plan(&job.plan, control).await?;
         let position = Self::environment(&loaded, job)?;
         let plan = &loaded.plan;
@@ -134,29 +187,35 @@ impl Engine {
             .await?;
         run.moved(RunState::Running).await?;
 
-        // The driver behind the port: that of the first binding in the plan
-        // that acts on this surface and whose driver the registry has. It
-        // is prepared in the `Discovery` posture.
-        let mut port = Sandbox { inner: None };
-        let binding = plan
-            .operations
-            .iter()
-            .flat_map(|operation| &operation.bindings)
-            .find(|binding| {
-                binding.surface.get() == surface_position && registry.driver(&binding.mode).is_ok()
-            });
+        // The driver behind the port is the surface's own: discovery is
+        // about a surface, not a binding, so a target that declares only
+        // its surface is observed all the same. It is prepared in the
+        // `Discovery` posture.
         let surface_ref = run.surface_at(SurfaceIndex::new(
             u32::try_from(surface_position).unwrap_or(u32::MAX),
         ))?;
-        if let Some(binding) = binding {
-            let handle = registry.driver(&binding.mode)?;
-            let candidate = Candidate {
-                binding: 0,
-                reason: ChoiceReason::FirstInOrder,
-                handle: handle.clone(),
-            };
-            let held = run.hold(&tool, binding, &candidate, false).await?;
-            port.inner = Some(ReadOnlyPort::new(handle, run.take(held)));
+        let mut port = Sandbox {
+            inner: Err(codes::fail(
+                FailureClass::Busy,
+                codes::NO_BINDING,
+                "No driver is ready for the surface, so nothing on it can be observed.",
+                "Enable a provider that drives a mode of the surface.",
+            )),
+        };
+        match surface_mode(registry, &surface.kind, archetype, &entry.provider) {
+            Ok((mode, handle)) => {
+                let candidate = Candidate {
+                    binding: 0,
+                    reason: ChoiceReason::FirstInOrder,
+                    handle: handle.clone(),
+                };
+                let at = SurfaceIndex::new(u32::try_from(surface_position).unwrap_or(u32::MAX));
+                let held = run
+                    .hold_on(&tool, &mode, at, &candidate, false, false)
+                    .await?;
+                port.inner = Ok(ReadOnlyPort::new(handle, run.take(held)));
+            }
+            Err(why) => port.inner = Err(why),
         }
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
@@ -164,26 +223,68 @@ impl Engine {
             address: surface_ref.surface.address.clone(),
             facts: job.input.clone(),
         };
-        let paths = CheckedPaths::none();
+        // The project folder of the request that started the discovery, as
+        // every step of the run is handed it (decision 0196).
+        let paths = run.paths().clone();
         let mut outcome = Ok(());
         for discoverer in registry.discoverers_for(&description) {
             let declared = discoverer.declared();
+            // The time a discoverer may take is the time its manifest
+            // declares, and never more than the job's lease has left.
+            let declared_time = Duration::from_secs(u64::from(declared.bounds.seconds));
+            let time = job
+                .lease
+                .remaining()
+                .map_or(declared_time, |left| left.min(declared_time));
             let scope = DiscoveryScope {
                 surface: &surface_ref,
                 bounds: declared.bounds,
-                deadline: Deadline::after(Duration::from_secs(u64::from(declared.bounds.seconds))),
+                deadline: Deadline::after(time),
                 paths: &paths,
                 redact: self.deps.redact.as_ref(),
                 focus: &job.input,
             };
-            let mut sink = Collected(Vec::new());
-            let report = discoverer.discover(&port, &scope, &mut sink).await;
+            let mut sink = Collected::new(self.deps.redact.as_ref(), declared.bounds.bytes);
+            // A discoverer is a provider's code: it is held to the time its
+            // manifest declares, and a panic in it ends it and not the job.
+            // Every step it asks for only reads, so its future may be
+            // dropped.
+            let looking = caught(discoverer.discover(&port, &scope, &mut sink));
+            let report = match tokio::time::timeout_at(scope.deadline.at(), looking).await {
+                Ok(Some(report)) => report,
+                Ok(None) => Err(codes::fail(
+                    FailureClass::UnknownVariant,
+                    codes::DRIVER_PANICKED,
+                    format!("The discoverer `{}` panicked.", declared.name),
+                    "Report this to the provider's author; the findings made before stand.",
+                )),
+                Err(_) => Err(codes::fail(
+                    FailureClass::Busy,
+                    codes::RUN_TIME_EXCEEDED,
+                    format!(
+                        "The discoverer `{}` did not end within the time its manifest declares.",
+                        declared.name
+                    ),
+                    "Narrow what is observed, or raise the discoverer's bound.",
+                )),
+            };
+            // The bound the sink held is reported with the discoverer's own.
+            let report = report.map(|mut report| {
+                if sink.over > 0 {
+                    if !report.bounds_hit.iter().any(|bound| bound == "bytes") {
+                        report.bounds_hit.push("bytes".to_owned());
+                    }
+                    report.dropped = report.dropped.saturating_add(sink.over);
+                }
+                report.dropped = report.dropped.saturating_add(sink.withheld);
+                report
+            });
             let sent = control
                 .send(EngineEvent::Discovered {
                     surface: name.clone(),
                     provider: discoverer.provider().to_string(),
                     discoverer: declared.name.to_string(),
-                    findings: sink.0,
+                    findings: sink.kept,
                     report,
                 })
                 .await;
@@ -192,10 +293,63 @@ impl Engine {
                 break;
             }
         }
-        if let Some(inner) = port.inner.take() {
+        if let Ok(inner) = port.inner {
             let (handle, prepared) = inner.into_parts();
-            let _ = handle.release(prepared, outcome.is_err()).await;
+            let _ = caught(handle.release(prepared, outcome.is_err())).await;
         }
         outcome
+    }
+}
+
+/// The mode a discovery of a surface is made through, and its driver: of
+/// the modes the provider that serves the surface's kind declares, those of
+/// the kind's archetype whose driver the registry can hand over; the one an
+/// operation would try first, by the `rank` its manifest declares. Two of
+/// one rank are a choice nothing states, and none is guessed (rule 7).
+fn surface_mode(
+    registry: &a2m_provider::Registry,
+    kind: &a2m_core::SurfaceKind,
+    archetype: a2m_core::Archetype,
+    provider: &a2m_provider::ProviderName,
+) -> Result<(a2m_core::Mode, a2m_provider::DriverHandle), Failure> {
+    let listing = registry
+        .listing()
+        .into_iter()
+        .find(|listing| &listing.name == provider);
+    let mut ready = Vec::new();
+    let mut refused = None;
+    for mode in listing
+        .iter()
+        .flat_map(|listing| listing.manifest.modes.iter())
+        .filter(|mode| mode.archetype == archetype)
+    {
+        match registry.driver(&mode.name) {
+            Ok(handle) => ready.push((mode.rank, mode.name.clone(), handle)),
+            Err(failure) => {
+                refused.get_or_insert(failure);
+            }
+        }
+    }
+    ready.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    match ready.as_slice() {
+        [] => Err(refused.unwrap_or_else(|| {
+            codes::fail(
+                FailureClass::Busy,
+                codes::NO_BINDING,
+                format!(
+                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its archetype, so nothing on the surface can be observed."
+                ),
+                "Enable a provider that drives a mode of the surface's kind.",
+            )
+        })),
+        [(first, ..), (second, ..), ..] if first == second => Err(codes::fail(
+            FailureClass::Busy,
+            codes::NO_BINDING,
+            format!(
+                "The provider `{provider}` drives more than one mode of the surface kind `{kind}` at the same rank, and nothing says which one observes it."
+            ),
+            "Give the modes different ranks in the provider's manifest.",
+        )),
+        [(_, mode, handle), ..] => Ok((mode.clone(), handle.clone())),
     }
 }

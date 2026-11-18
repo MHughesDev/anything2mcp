@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use a2m_core::{Failure, SessionId, Timestamp};
+use a2m_core::{Failure, Redact, SessionId, Timestamp};
 use a2m_telemetry::Clock;
 use a2m_vault::{
     BoxFuture, ItemId, OsRandom, OwnerRef, RandomSource, SealContext, Sealed, SealedKind, Vault,
@@ -35,11 +35,16 @@ pub enum Work {
     /// Renew at one rung of the ladder, and hold the new credentials at the
     /// next epoch. [`Rung::FullSignIn`] signs in afresh.
     Renew(Rung),
-    /// Sign out where the provider can, and drop the credentials held.
+    /// The session ended at the job's epoch. Sign out where the provider
+    /// can, and drop the credentials held at that epoch or an earlier one.
+    /// Newer credentials are not this end's and stay.
     SignOut,
-    /// Drop the credentials held, without telling the other side.
+    /// The same, without telling the other side. The keeper also sends it
+    /// for work whose credentials were never made the session's, with the
+    /// epoch they were held at.
     Forget,
-    /// Open saved state and hold it at the present epoch.
+    /// Open saved state and hold it at the job's epoch. Nothing is held when
+    /// the session has ended at a later epoch since the state was read.
     Restore(Sealed),
 }
 
@@ -77,7 +82,8 @@ pub enum WorkOutcome {
     NeedsPerson(PersonReason),
     /// A stored credential was refused.
     Refused,
-    /// The credentials were dropped.
+    /// The credentials were dropped, or were not held because the session
+    /// had ended or moved on before the work finished.
     Ended,
     /// The work could not be done.
     Failed(Failure),
@@ -124,19 +130,85 @@ pub(crate) struct Held {
     pub(crate) material: Arc<Material>,
 }
 
+/// What this runner knows of one session: the credentials it holds, and the
+/// newest end it was told of.
+#[derive(Default)]
+struct Slot {
+    held: Option<Held>,
+    /// The epoch the newest end named: the epoch of the session's record
+    /// once it was ended, or the epoch of credentials that were dropped.
+    /// Credentials of an earlier epoch ended with it. They are never held
+    /// again and no lease for them places anything. Nothing ends below 0.
+    ended: u64,
+}
+
 /// The live sessions of one runner: credentials in memory, by session.
+///
+/// The session's record is in the store, which this half of the keeper
+/// cannot read: it may be another machine, and a lease is applied without
+/// waiting. So the order of a session's changes is carried here by epochs.
+/// An end names an epoch and is remembered; whatever arrives after it for an
+/// earlier epoch, a restore that was slow above all, is refused.
 #[derive(Default)]
 pub(crate) struct Live {
-    table: Mutex<BTreeMap<SessionId, Held>>,
+    table: Mutex<BTreeMap<SessionId, Slot>>,
 }
 
 impl Live {
-    fn table(&self) -> MutexGuard<'_, BTreeMap<SessionId, Held>> {
+    fn table(&self) -> MutexGuard<'_, BTreeMap<SessionId, Slot>> {
         self.table.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The credentials held for a session, whatever their epoch.
     pub(crate) fn held(&self, session: SessionId) -> Option<Held> {
-        self.table().get(&session).cloned()
+        self.table()
+            .get(&session)
+            .and_then(|slot| slot.held.clone())
+    }
+
+    /// The credentials a lease for `epoch` may place: those held at exactly
+    /// that epoch, of a session that has not ended since.
+    pub(crate) fn usable(&self, session: SessionId, epoch: u64) -> Option<Held> {
+        let table = self.table();
+        let slot = table.get(&session)?;
+        if epoch < slot.ended {
+            return None;
+        }
+        slot.held.clone().filter(|held| held.epoch == epoch)
+    }
+
+    /// Holds `held`, unless its epoch has ended or newer credentials are
+    /// held already. False when it was not held.
+    fn hold(&self, session: SessionId, held: Held) -> bool {
+        let mut table = self.table();
+        let slot = table.entry(session).or_default();
+        let newer_held = slot.held.as_ref().is_some_and(|now| now.epoch > held.epoch);
+        if held.epoch < slot.ended || newer_held {
+            return false;
+        }
+        slot.held = Some(held);
+        true
+    }
+
+    /// Notes that the session ended at `epoch`, and takes away what is held
+    /// at that epoch or an earlier one. Newer credentials stay: an end that
+    /// arrives late is not about them.
+    fn end(&self, session: SessionId, epoch: u64) -> Option<Held> {
+        let mut table = self.table();
+        let slot = table.entry(session).or_default();
+        slot.ended = slot.ended.max(epoch);
+        if slot.held.as_ref().is_some_and(|held| held.epoch <= epoch) {
+            slot.held.take()
+        } else {
+            None
+        }
+    }
+
+    fn holding(&self) -> usize {
+        self.table()
+            .values()
+            .filter(|slot| slot.held.is_some())
+            .count()
     }
 }
 
@@ -180,17 +252,16 @@ impl KeeperWorker {
         self
     }
 
-    /// Whether this runner holds the session's credentials at `epoch`.
+    /// Whether this runner holds the session's credentials at `epoch`, for
+    /// a session it has not been told ended since.
     #[must_use]
     pub fn holds(&self, session: SessionId, epoch: u64) -> bool {
-        self.live
-            .held(session)
-            .is_some_and(|held| held.epoch == epoch)
+        self.live.usable(session, epoch).is_some()
     }
 
     /// Turns a grant into a lease that reaches the credentials this runner
     /// holds. The lease's `apply` fails with `lease_stale` once the
-    /// credentials are replaced or dropped.
+    /// credentials are replaced or dropped, or the session has ended.
     #[must_use]
     pub fn bind(&self, grant: SessionGrant) -> SessionLease {
         SessionLease::new(
@@ -241,17 +312,17 @@ impl KeeperWorker {
                 self.hold(&job, &provider, made, next).await
             }
             Work::SignOut => {
-                let held = self.live.table().remove(&session);
+                let held = self.live.end(session, job.session.epoch);
                 match held {
                     Some(held) => match provider.sign_out(&held.material, &cx).await {
                         Ok(()) => WorkOutcome::Ended,
-                        Err(failure) => WorkOutcome::Failed(failure),
+                        Err(failure) => WorkOutcome::Failed(self.redacted(&failure)),
                     },
                     None => WorkOutcome::Ended,
                 }
             }
             Work::Forget => {
-                self.live.table().remove(&session);
+                self.live.end(session, job.session.epoch);
                 WorkOutcome::Ended
             }
             Work::Restore(sealed) => self.restore(&job, &provider, sealed).await,
@@ -269,7 +340,7 @@ impl KeeperWorker {
     ) -> WorkOutcome {
         let material = match made {
             Ok(material) => material,
-            Err(failure) => return classify(failure),
+            Err(failure) => return classify(self.redacted(&failure)),
         };
         for secret in material.secrets() {
             self.vault.register(secret);
@@ -296,15 +367,18 @@ impl KeeperWorker {
             profile: material.profile().cloned(),
             confirmed: needs.confirms,
         };
-        self.live.table().insert(
-            job.session.session,
-            Held {
-                epoch,
-                provider: Arc::clone(provider),
-                material: Arc::new(material),
-            },
-        );
-        outcome
+        let held = Held {
+            epoch,
+            provider: Arc::clone(provider),
+            material: Arc::new(material),
+        };
+        if self.live.hold(job.session.session, held) {
+            outcome
+        } else {
+            // The session ended, or newer credentials were held, while this
+            // work ran. What it made is dropped here and never the session's.
+            WorkOutcome::Ended
+        }
     }
 
     async fn restore(
@@ -336,15 +410,26 @@ impl KeeperWorker {
             profile: material.profile().cloned(),
             confirmed: false,
         };
-        self.live.table().insert(
-            job.session.session,
-            Held {
-                epoch: job.session.epoch,
-                provider: Arc::clone(provider),
-                material: Arc::new(material),
-            },
-        );
-        outcome
+        let held = Held {
+            epoch: job.session.epoch,
+            provider: Arc::clone(provider),
+            material: Arc::new(material),
+        };
+        if self.live.hold(job.session.session, held) {
+            outcome
+        } else {
+            // The saved state was read before the session ended or was
+            // renewed, and opened after. It brings nothing back.
+            WorkOutcome::Ended
+        }
+    }
+
+    /// A provider's failure with every registered secret masked. A provider
+    /// must put no secret in a failure; this holds a secret it registered
+    /// back from a provider that does. A value nobody registered cannot be
+    /// recognized here.
+    fn redacted(&self, failure: &Failure) -> Failure {
+        self.vault.redactor().redact_failure(failure)
     }
 }
 
@@ -352,7 +437,7 @@ impl fmt::Debug for KeeperWorker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeeperWorker")
             .field("providers", &self.providers)
-            .field("live", &self.live.table().len())
+            .field("live", &self.live.holding())
             .finish_non_exhaustive()
     }
 }

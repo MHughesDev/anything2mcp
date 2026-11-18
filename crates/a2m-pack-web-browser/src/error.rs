@@ -21,6 +21,13 @@ pub mod codes {
     pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
     /// An address is not one a tab may be sent to.
     pub const ADDRESS_INVALID: FailureCode = FailureCode::fixed("address_invalid");
+    /// A value cannot stand in one segment of a path: it is refused, never
+    /// encoded.
+    pub const ADDRESS_VALUE_REFUSED: FailureCode = FailureCode::fixed("address_value_refused");
+    /// A page, or an address, is on an origin the tab was not opened for.
+    /// The same name, with the same class, as the code the packs built on
+    /// this crate give a surface nobody declared.
+    pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
 
     /// Every code of this crate with its one class.
     pub const ALL: &[(FailureClass, &str)] = &[
@@ -30,6 +37,8 @@ pub mod codes {
         (FailureClass::Transient, "timeout"),
         (FailureClass::Policy, "password_read_refused"),
         (FailureClass::Input, "address_invalid"),
+        (FailureClass::Input, "address_value_refused"),
+        (FailureClass::Policy, "surface_not_declared"),
     ];
 }
 
@@ -145,8 +154,15 @@ pub enum BrowserError {
     /// The page did not load: the browser's own reason, such as a refused
     /// connection.
     NotLoaded(String),
-    /// A password input was asked for its value. It is never read.
+    /// A password input was asked for its value, or a selector asked about
+    /// the `value` attribute on a page that holds a password in it. It is
+    /// never read, and never told match by match.
     PasswordField,
+    /// The page is on an origin the tab was not opened for, or the tab was
+    /// asked to go, or to send a request, to one. Nothing was located,
+    /// read, or sent there. It holds that origin, or, for a page that has
+    /// none, its scheme.
+    ForeignOrigin(String),
     /// What was read is larger than the limit. Nothing is cut silently.
     TooLarge {
         /// The limit, in characters.
@@ -155,6 +171,10 @@ pub enum BrowserError {
     /// A request sent from inside the page did not complete. Whether it was
     /// sent is not known.
     RequestFailed(String),
+    /// A request sent from inside the page was answered with a redirect,
+    /// which it does not follow: the application answered, and where it
+    /// sent the request is not looked at (decision 0195).
+    Redirected,
     /// The browser, or the helper in the page, answered in a shape no rule
     /// covers.
     Unexpected(String),
@@ -175,12 +195,13 @@ impl BrowserError {
             | Self::UnexpectedDialog { dispatch } => *dispatch,
             Self::RequestFailed(_) => Dispatch::Unknown,
             // The browser answered, so the request reached it.
-            Self::Unexpected(_) | Self::TooLarge { .. } => Dispatch::Sent,
+            Self::Unexpected(_) | Self::TooLarge { .. } | Self::Redirected => Dispatch::Sent,
             Self::NotFound
             | Self::Ambiguous { .. }
             | Self::NotActionable(_)
             | Self::NotLoaded(_)
             | Self::PasswordField
+            | Self::ForeignOrigin(_)
             | Self::LaunchFailed(_) => Dispatch::NotSent,
         }
     }
@@ -242,6 +263,14 @@ impl BrowserError {
                 "The value of a password input is never read.",
                 "Remove the read of this field from the target's files.",
             ),
+            Self::ForeignOrigin(origin) => Some(Failure::new(
+                FailureClass::Policy,
+                codes::SURFACE_NOT_DECLARED,
+                format!(
+                    "The page is on `{origin}`, or was to be sent there, and that is not an origin this target declares. Nothing was read or sent there."
+                ),
+                "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.",
+            )),
             _ => None,
         }
     }
@@ -270,6 +299,10 @@ impl fmt::Display for BrowserError {
             }
             Self::NotLoaded(why) => write!(f, "the page did not load: {why}"),
             Self::PasswordField => f.write_str("the value of a password input is never read"),
+            Self::ForeignOrigin(origin) => write!(
+                f,
+                "`{origin}` is not an origin the tab was opened for; nothing was read or sent there"
+            ),
             Self::TooLarge { limit } => {
                 write!(
                     f,
@@ -279,6 +312,9 @@ impl fmt::Display for BrowserError {
             Self::RequestFailed(why) => {
                 write!(f, "a request from the page did not complete: {why}")
             }
+            Self::Redirected => f.write_str(
+                "a request from the page was answered with a redirect, which it does not follow",
+            ),
             Self::Unexpected(what) => write!(f, "an answer no rule covers: {what}"),
             Self::LaunchFailed(reason) => match reason {
                 LaunchReason::NotInstalled => f.write_str("no browser is installed"),

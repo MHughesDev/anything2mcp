@@ -883,6 +883,45 @@ fn merged_and_hidden_cells_and_an_empty_row_inside_the_data_are_problems() {
     assert_eq!(rejected.problems[0].at, Some(CellRef::new(0, 3, 1)));
 }
 
+/// A crafted or damaged workbook stops; it is never read by a default.
+#[test]
+fn a_workbook_whose_attributes_break_the_format_is_refused_not_read_by_default() {
+    let sources = Sources::builtin();
+    let mut target = Target::new();
+    let fields = stock_fields(&mut target);
+    let good = Book::new(&stock_sheet(&stock_row(2, "EX-1", "5", "45000")));
+    let def = {
+        let bytes = good.bytes();
+        let spec = spec(
+            "xlsx",
+            &input(&bytes),
+            Locate::Sheet("Stock".to_owned()),
+            fields,
+        );
+        let def = target.load("xlsx", &spec, vec![], None);
+        assert_eq!(sources.read(&def, &bytes, &LIMITS).unwrap().rows.len(), 1);
+        def
+    };
+    let row = stock_row(2, "EX-1", "5", "45000");
+    let broken = [
+        // A hidden row whose flag is not quoted: once read as a shown row.
+        row.replacen("<row r=\"2\">", "<row r=\"2\" hidden=1>", 1),
+        // A flag that is neither true nor false.
+        row.replacen("<row r=\"2\">", "<row r=\"2\" hidden=\"yes\">", 1),
+        // A style the workbook lacks: once read as a plain number, not a date.
+        row.replacen("s=\"1\"", "s=\"7\"", 1),
+        row.replacen("s=\"1\"", "s=\"one\"", 1),
+        // A cell closed by another element's tag.
+        row.replacen("</v></c></row>", "</v></row></c>", 1),
+    ];
+    for rows in broken {
+        assert_ne!(rows, row);
+        let bytes = Book::new(&stock_sheet(&rows)).bytes();
+        let failure = sources.read(&def, &bytes, &LIMITS).unwrap_err().failure;
+        assert_eq!(failure.code(), &SOURCE_MALFORMED, "{rows}");
+    }
+}
+
 #[test]
 fn deflated_parts_shared_strings_and_spans_read_the_same() {
     let rows = "<row r=\"2\"><c r=\"A2\" t=\"s\"><v>1</v></c><c r=\"B2\"><v>1.50</v></c><c r=\"C2\" t=\"b\"><v>1</v></c></row>\
@@ -984,7 +1023,8 @@ fn a_changed_header_changes_the_fingerprint_and_stops_with_the_differences() {
     assert_eq!(rejected.failure.class(), a2m_core::FailureClass::Input);
     assert_eq!(rejected.problems.len(), 1);
     assert!(rejected.problems[0].message.contains("`on_hand`"));
-    assert!(rejected.problems[0].message.contains("`quantity_on_hand`"));
+    // The input's own text is not quoted: only the template's.
+    assert!(!rejected.problems[0].message.contains("quantity_on_hand"));
     // A column added, a column taken away: each is listed.
     let added = String::from_utf8(bytes.clone())
         .unwrap()
@@ -1031,16 +1071,24 @@ fn a_changed_header_changes_the_fingerprint_and_stops_with_the_differences() {
         .iter()
         .map(|p| p.message.as_str())
         .collect();
+    // Each difference names the template's own text and the place; what the
+    // input holds there is not quoted.
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("`Prices|shown`") && m.contains("`Price list|shown`")),
+            .any(|m| m.contains("`Prices|shown`") && m.contains("sheet 1")),
         "{messages:?}"
     );
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("`Unit price`") && m.contains("`Price`")),
+            .any(|m| m.contains("`Unit price`") && m.contains("column 3")),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("Price list") || m.contains("`Price`")),
         "{messages:?}"
     );
     // A value changed and nothing else: the same template.

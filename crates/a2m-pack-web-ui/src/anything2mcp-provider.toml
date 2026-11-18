@@ -1,7 +1,6 @@
 # The manifest of the web pack's drivers. What is not built is not declared:
-# the `page_http` and `site_tools` modes, the auth providers, the screen
-# matcher, the drafting rules, platform profiles, and every control beyond
-# the ones listed here.
+# the `site_tools` mode, the write half of `page_http`, the auth providers, the screen
+# matcher, platform profiles, and every control beyond the ones listed here.
 manifest_format = 1
 contract = 1
 
@@ -16,7 +15,25 @@ name = "ui"
 archetype = "interface"
 verbs = ["read", "list", "create", "update", "upsert", "submit"]
 steps = ["goto", "wait", "read", "set", "invoke"]
+# No kind of step always saves: an `invoke` saves when its action is
+# declared to, and the lowering refuses a `commits` mark on any other kind.
+commit_steps = []
 rank = 60
+session_reads = 4
+session_writes = 1
+exclusive = "none"
+
+# A read made as a request from inside the page, with the page's own
+# session, in an observing tab whatever the run's posture (decision 0190).
+# Reads only: the lowering refuses a write by name until the write half is
+# designed. Neither step saves.
+[[modes]]
+name = "page_http"
+archetype = "request"
+verbs = ["read"]
+steps = ["goto", "request"]
+commit_steps = []
+rank = 40
 session_reads = 4
 session_writes = 1
 exclusive = "none"
@@ -27,12 +44,44 @@ archetype = "interface"
 session = true
 
 [points]
-driver = ["ui"]
+driver = ["ui", "page_http"]
 
 [[file_kinds]]
 name = "screen"
 directory = "screens/"
 surface_kinds = ["web"]
+
+# The reads a page makes from inside itself, in the form of entries of the
+# endpoint catalog (decision 0190).
+[[file_kinds]]
+name = "page_request"
+directory = "page_requests/"
+surface_kinds = ["web"]
+
+# The `screen` finding belongs to the web pack's discoverers, a provider of
+# their own; this pack drafts from it as data and does not own its form. It
+# is not declared under `reads`, so that a registry with only this pack has
+# no missing owner: with no discoverer, the rules are never called.
+# From a snapshot: a screen that reads each table the page names by its
+# headings, and a `list` read over it. Never a field or an action.
+[[drafting_rules]]
+finding_kind = "screen"
+file_kind = "screen"
+
+[[drafting_rules]]
+finding_kind = "screen"
+file_kind = "operation"
+
+# From a request a page made by itself with GET to its own origin, with a
+# JSON answer: its entry, and a `page_http` read over it (decision 0190).
+# The `exchange` finding is the web pack's discoverers', read as data.
+[[drafting_rules]]
+finding_kind = "exchange"
+file_kind = "page_request"
+
+[[drafting_rules]]
+finding_kind = "exchange"
+file_kind = "operation"
 
 [[controls]]
 name = "text"
@@ -83,6 +132,14 @@ class = "drift"
 code = "fingerprint_mismatch"
 
 [[failure_codes]]
+class = "drift"
+code = "response_schema_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_status"
+
+[[failure_codes]]
 class = "unknown_variant"
 code = "unexpected_dialog"
 
@@ -113,6 +170,10 @@ code = "app_validation_error"
 [[failure_codes]]
 class = "policy"
 code = "surface_not_declared"
+
+[[failure_codes]]
+class = "policy"
+code = "page_write_refused"
 
 [[failure_codes]]
 class = "policy"
@@ -154,6 +215,13 @@ default = 400
 min = 10
 max = 5000
 doc = "The most elements a snapshot kept as evidence may hold."
+
+[[settings]]
+key = "browser_digests"
+type = "list"
+default = []
+scope = "installation"
+doc = "The digests of the browser programs a person has reviewed. When the list is not empty, a browser with another digest is closed."
 
 # The places a browser is looked for: every path of the browser engine's
 # list of known places, for every operating system. The supervisor starts

@@ -136,6 +136,16 @@ pub(crate) enum EventKind {
     RequestPaused(RequestPaused),
     ResponseReceived(ResponseReceived),
     BindingCalled(BindingCalled),
+    /// The page itself asked for a move of one of its frames.
+    MoveAsked(MoveAsked),
+    /// A move of a frame to another document has started.
+    MoveStarted(MoveStarted),
+    /// A download is about to begin.
+    DownloadBegins(DownloadBegins),
+    /// A request's answer has arrived whole.
+    LoadingFinished(Loading),
+    /// A request failed, or was ended.
+    LoadingFailed(Loading),
 }
 
 impl EventKind {
@@ -159,6 +169,11 @@ impl EventKind {
             "Fetch.requestPaused" => Self::RequestPaused(of(params)?),
             "Network.responseReceived" => Self::ResponseReceived(of(params)?),
             "Runtime.bindingCalled" => Self::BindingCalled(of(params)?),
+            "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
+            "Page.frameStartedNavigating" => Self::MoveStarted(of(params)?),
+            "Page.downloadWillBegin" => Self::DownloadBegins(of(params)?),
+            "Network.loadingFinished" => Self::LoadingFinished(of(params)?),
+            "Network.loadingFailed" => Self::LoadingFailed(of(params)?),
             _ => return None,
         })
     }
@@ -212,10 +227,15 @@ pub(crate) struct Attached {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TargetInfo {
     /// `page`, `iframe`, `worker`, and so on.
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default)]
+    pub target_id: String,
+    /// The target that opened this one, when one did.
+    pub opener_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -229,17 +249,33 @@ pub(crate) struct Detached {
 pub(crate) struct RequestPaused {
     pub request_id: String,
     pub request: PausedRequest,
+    #[serde(default)]
+    pub frame_id: String,
+    /// `Document` for the request of a frame's own document.
+    #[serde(default)]
+    pub resource_type: String,
+    /// For a document, the loader of the move it belongs to.
+    pub network_id: Option<String>,
+    /// The request this one follows, when it follows a redirect.
+    pub redirected_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct PausedRequest {
     pub url: String,
     pub method: String,
+    /// The request's headers. Only their names are kept; the values of
+    /// the few headers the browser sets by itself are compared with the
+    /// page's own document's, and then dropped.
+    #[serde(default)]
+    pub headers: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResponseReceived {
+    #[serde(default)]
+    pub request_id: String,
     #[serde(default)]
     pub loader_id: String,
     #[serde(default, rename = "type")]
@@ -248,8 +284,44 @@ pub(crate) struct ResponseReceived {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ResponseDescription {
     pub status: u16,
+    #[serde(default)]
+    pub mime_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Loading {
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MoveAsked {
+    pub frame_id: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MoveStarted {
+    pub frame_id: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub loader_id: String,
+    /// `differentDocument`, `reload`, `historyDifferentDocument`, and so on.
+    #[serde(default)]
+    pub navigation_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct DownloadBegins {
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -285,6 +357,21 @@ pub(crate) struct Version {
 #[derive(Debug, Serialize)]
 pub(crate) struct CloseBrowser {}
 command!(CloseBrowser, "Browser.close" => Nothing);
+
+/// What the browser does with every download: `deny` writes no file.
+#[derive(Debug, Serialize)]
+pub(crate) struct SetDownloadBehavior<'a> {
+    pub behavior: &'a str,
+}
+command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
+
+/// The permissions the browser grants: those listed, for every origin,
+/// and no other. An empty list refuses every permission a page asks for.
+#[derive(Debug, Serialize)]
+pub(crate) struct GrantPermissions {
+    pub permissions: Vec<String>,
+}
+command!(GrantPermissions, "Browser.grantPermissions" => Nothing);
 
 // ---- Target ----
 
@@ -327,8 +414,21 @@ pub(crate) struct SetAutoAttach {
     pub auto_attach: bool,
     pub wait_for_debugger_on_start: bool,
     pub flatten: bool,
+    /// Which targets attach; the first entry that fits a target decides.
+    /// Left out, the browser's own choice applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Vec<TargetFilter>>,
 }
 command!(SetAutoAttach, "Target.setAutoAttach" => Nothing);
+
+/// One entry of a target filter: a kind of target, or every kind when it
+/// names none, taken in or left out.
+#[derive(Debug, Serialize)]
+pub(crate) struct TargetFilter {
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    pub exclude: bool,
+}
 
 // ---- Page ----
 
@@ -445,6 +545,21 @@ pub(crate) struct Evaluate<'a> {
 }
 command!(Evaluate<'_>, "Runtime.evaluate" => Evaluated);
 
+/// An expression run as if a person had just used the page. For this
+/// crate's tests only: it stands for a page that has a person's gesture to
+/// spend, which a tab that only observes never gives it.
+#[cfg(test)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvaluateAsUser<'a> {
+    pub expression: &'a str,
+    pub return_by_value: bool,
+    pub await_promise: bool,
+    pub user_gesture: bool,
+}
+#[cfg(test)]
+command!(EvaluateAsUser<'_>, "Runtime.evaluate" => Evaluated);
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Evaluated {
@@ -507,7 +622,11 @@ pub(crate) struct Property {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DescribeNode<'a> {
-    pub object_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<&'a str>,
+    /// The browser's own number of the node, where no object is held.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_node_id: Option<i64>,
 }
 command!(DescribeNode<'_>, "DOM.describeNode" => DescribedNode);
 
@@ -520,6 +639,22 @@ pub(crate) struct DescribedNode {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NodeDescription {
     pub backend_node_id: i64,
+    #[serde(default)]
+    pub local_name: String,
+    /// The node's attributes: a name, then its value, and so on.
+    #[serde(default)]
+    pub attributes: Vec<String>,
+}
+
+impl NodeDescription {
+    /// The value of one attribute, when the node has it.
+    pub(crate) fn attribute(&self, name: &str) -> Option<&str> {
+        let (pairs, _) = self.attributes.as_chunks::<2>();
+        pairs
+            .iter()
+            .find(|[found, _]| found.eq_ignore_ascii_case(name))
+            .map(|[_, value]| value.as_str())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -629,6 +764,10 @@ command!(SetEmulatedMedia<'_>, "Emulation.setEmulatedMedia" => Nothing);
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequestPattern<'a> {
     pub url_pattern: &'a str,
+    /// Only requests of this kind, such as `Document`; every kind when
+    /// left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_type: Option<&'a str>,
     pub request_stage: &'a str,
 }
 
@@ -654,14 +793,54 @@ pub(crate) struct FailRequest<'a> {
 command!(FailRequest<'_>, "Fetch.failRequest" => Nothing);
 
 #[derive(Debug, Serialize)]
-pub(crate) struct NetworkEnable {}
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkEnable {
+    /// The most bytes of one answer the browser keeps for
+    /// `Network.getResponseBody`; a longer answer is not kept at all.
+    pub max_resource_buffer_size: u64,
+    /// The most bytes of answers it keeps for the tab in all.
+    pub max_total_buffer_size: u64,
+}
 command!(NetworkEnable, "Network.enable" => Nothing);
+
+impl NetworkEnable {
+    /// The bounds for a tab that reads at most `max_read` characters of an
+    /// answer: four bytes for each, the most one character takes, so that
+    /// an answer the tab could read is kept, and one far longer is not, and
+    /// never comes near the most a message of the link may hold. The whole
+    /// is four answers' worth.
+    pub(crate) fn keeping(max_read: usize) -> Self {
+        let one = u64::try_from(max_read)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(4)
+            .max(1);
+        Self {
+            max_resource_buffer_size: one,
+            max_total_buffer_size: one.saturating_mul(4),
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct BypassServiceWorker {
     pub bypass: bool,
 }
 command!(BypassServiceWorker, "Network.setBypassServiceWorker" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetResponseBody<'a> {
+    pub request_id: &'a str,
+}
+command!(GetResponseBody<'_>, "Network.getResponseBody" => ResponseBody);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResponseBody {
+    pub body: String,
+    #[serde(default)]
+    pub base64_encoded: bool,
+}
 
 // ---- Input ----
 

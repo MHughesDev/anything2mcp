@@ -476,7 +476,7 @@ fn own_pages(own: Own) -> Router {
                 (
                     [(CONTENT_TYPE, "application/json")],
                     format!(
-                        "{{\"token\":\"{SECRET}\",\"{SECRET}\":1,\"items\":[{{\"id\":7,\"note\":\"{SECRET}\"}},{{\"id\":8}}]}}"
+                        "{{\"token\":\"{SECRET}\",\"by_key\":{{\"{SECRET}\":1}},\"items\":[{{\"id\":7,\"note\":\"{SECRET}\"}},{{\"id\":8}}]}}"
                     ),
                 )
                     .into_response()
@@ -499,7 +499,7 @@ impl Site {
             .unwrap();
         let own = Own {
             base: Arc::new(format!("http://{}", listener.local_addr().unwrap())),
-            http: reqwest::Client::new(),
+            http: example_app::harness::client_builder().build().unwrap(),
         };
         let router = example_app::router().merge(own_pages(own.clone()));
         let server = tokio::spawn(async move {
