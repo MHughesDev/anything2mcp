@@ -358,28 +358,113 @@ pub(crate) struct Version {
 pub(crate) struct CloseBrowser {}
 command!(CloseBrowser, "Browser.close" => Nothing);
 
-/// What the browser does with every download: `deny` writes no file.
+/// What the browser does with every download: `deny` writes no file. With
+/// no context named, for the browser's default context.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SetDownloadBehavior<'a> {
     pub behavior: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
 command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
 
 /// The permissions the browser grants: those listed, for every origin,
 /// and no other. An empty list refuses every permission a page asks for.
+/// With no context named, for the browser's default context.
 #[derive(Debug, Serialize)]
-pub(crate) struct GrantPermissions {
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GrantPermissions<'a> {
     pub permissions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
-command!(GrantPermissions, "Browser.grantPermissions" => Nothing);
+command!(GrantPermissions<'_>, "Browser.grantPermissions" => Nothing);
 
 // ---- Target ----
 
+/// A browser context of its own, which keeps its cookies and storage in
+/// memory and writes none of them to the data directory.
 #[derive(Debug, Serialize)]
+pub(crate) struct CreateBrowserContext {}
+command!(CreateBrowserContext, "Target.createBrowserContext" => CreatedBrowserContext);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreatedBrowserContext {
+    pub browser_context_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CreateTarget<'a> {
     pub url: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
 }
 command!(CreateTarget<'_>, "Target.createTarget" => CreatedTarget);
+
+// ---- Storage ----
+
+/// One cookie as the browser holds it. Only the parts the engine keeps are
+/// read; the value is a credential and is handled as one by the caller.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// Seconds since the epoch; negative for a cookie that ends with the
+    /// browser. Carried, never compared.
+    #[serde(default)]
+    pub expires: Option<serde_json::Number>,
+    #[serde(default)]
+    pub http_only: bool,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub session: bool,
+    #[serde(default)]
+    pub same_site: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetCookies<'a> {
+    pub browser_context_id: &'a str,
+}
+command!(GetCookies<'_>, "Storage.getCookies" => GotCookies);
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GotCookies {
+    #[serde(default)]
+    pub cookies: Vec<StoredCookie>,
+}
+
+/// One cookie to place, in the form the browser takes it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CookieToSet<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+    pub domain: &'a str,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<&'a serde_json::Number>,
+    pub http_only: bool,
+    pub secure: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub same_site: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetCookies<'a> {
+    pub cookies: Vec<CookieToSet<'a>>,
+    pub browser_context_id: &'a str,
+}
+command!(SetCookies<'_>, "Storage.setCookies" => Nothing);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

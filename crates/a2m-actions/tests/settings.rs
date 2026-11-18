@@ -271,7 +271,9 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
         assert_eq!(failure.code().as_str(), "setting_protected");
         assert!(
             failure.message().contains("installation.toml")
-                && failure.message().contains("only when no account but an administrator"),
+                && failure
+                    .message()
+                    .contains("only when no account but an administrator"),
             "{failure}"
         );
         let tightened = Settings::load(&Sources {
@@ -372,7 +374,10 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     })
     .unwrap_err();
     assert_eq!(failure.code().as_str(), "setting_protected");
-    assert!(failure.message().contains("lock keys only when"), "{failure}");
+    assert!(
+        failure.message().contains("lock keys only when"),
+        "{failure}"
+    );
     // Only the installation file may lock.
     assert!(
         Settings::load(&Sources {

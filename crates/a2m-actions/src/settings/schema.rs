@@ -147,11 +147,12 @@ impl Safer {
     }
 }
 
-/// When a change to a setting takes effect.
+/// When a change to a setting takes effect. Settings are loaded once, when
+/// the engine starts, and nothing reloads them, so every change takes
+/// effect at the next start; a value that takes effect while the engine
+/// runs arrives with a reload, which is not built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effective {
-    /// At once.
-    AtOnce,
     /// At the next start of the engine.
     NextStart,
 }
@@ -161,9 +162,33 @@ impl Effective {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::AtOnce => "at once",
             Self::NextStart => "at the next start of the engine",
         }
+    }
+}
+
+/// Whether the part a setting governs is built (decision 0236).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Built {
+    /// Code reads the setting and honours its values; where it honours
+    /// only part, the setting's description says which.
+    Yes,
+    /// Nothing reads it yet. A value written for it, from any layer, is
+    /// refused by name.
+    No {
+        /// What happens instead, as a sentence.
+        instead: &'static str,
+        /// What it arrives with: a roadmap package, a milestone, or a
+        /// decision.
+        arrives_with: &'static str,
+    },
+}
+
+impl Built {
+    /// Whether it is built.
+    #[must_use]
+    pub const fn is_built(&self) -> bool {
+        matches!(self, Self::Yes)
     }
 }
 
@@ -216,6 +241,8 @@ pub struct SettingDef {
     pub effective: Effective,
     /// What it does, in a sentence.
     pub doc: &'static str,
+    /// Whether the part it governs is built.
+    pub built: Built,
 }
 
 impl SettingDef {
@@ -276,11 +303,26 @@ const fn def(
         protected: None,
         effective,
         doc,
+        built: Built::Yes,
     }
 }
 
 const fn protected(mut setting: SettingDef, safer: Safer) -> SettingDef {
     setting.protected = Some(safer);
+    setting
+}
+
+/// A setting whose part is not built: what happens instead, and what it
+/// arrives with.
+const fn not_built(
+    mut setting: SettingDef,
+    instead: &'static str,
+    arrives_with: &'static str,
+) -> SettingDef {
+    setting.built = Built::No {
+        instead,
+        arrives_with,
+    };
     setting
 }
 
@@ -293,7 +335,7 @@ const BYTES: Kind = Kind::Int {
     max: i64::MAX,
 };
 use DefaultValue::{Bool as B, Int as N, List as L, Text as T};
-use Effective::{AtOnce, NextStart};
+use Effective::NextStart;
 use Scope::{Installation as I, Project as P, User as U};
 
 /// Every setting of the kernel, in the order of spec section 226.
@@ -307,46 +349,62 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "The deployment profile: the shape this installation runs in.",
     ),
-    def(
-        "profile.roles",
-        Kind::Words(&["control_plane", "runner"]),
-        L(&["control_plane", "runner"]),
-        I,
-        NextStart,
-        "Which roles this process takes.",
+    not_built(
+        def(
+            "profile.roles",
+            Kind::Words(&["control_plane", "runner"]),
+            L(&["control_plane", "runner"]),
+            I,
+            NextStart,
+            "Which roles this process takes.",
+        ),
+        "One process takes both roles.",
+        "remote runners, with the server (milestone 9 of the roadmap)",
     ),
     def(
         "profile.preset",
         Kind::Text,
         T("standard"),
         U,
-        AtOnce,
+        NextStart,
         "A named bundle of values: a built-in preset, or a site's own.",
     ),
     // Storage, the vault, and files.
-    def(
-        "store.database",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "Where the store is. Empty means one file in the data directory.",
+    not_built(
+        def(
+            "store.database",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "Where the store is. Empty means one file in the data directory.",
+        ),
+        "The store is one file in the data directory.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "store.blobs",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "Where evidence blobs are kept. Empty means the data directory.",
+    not_built(
+        def(
+            "store.blobs",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "Where evidence blobs are kept. Empty means the data directory.",
+        ),
+        "Evidence blobs are kept in the store's folder in the data directory.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "store.free_space_floor",
-        BYTES,
-        N(1_073_741_824),
-        I,
-        AtOnce,
-        "The free space, in bytes, below which the engine is degraded. A draft.",
+    not_built(
+        def(
+            "store.free_space_floor",
+            BYTES,
+            N(1_073_741_824),
+            I,
+            NextStart,
+            "The free space, in bytes, below which the engine is degraded. A draft.",
+        ),
+        "No free space is checked.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     def(
         "vault.backend",
@@ -357,13 +415,17 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "Where the vault's root key is kept: the operating system's key store, a key derived from a passphrase (the default where this build has no key store), or a key service by reference.",
     ),
-    def(
-        "vault.root_key",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "A reference to the root key. Empty means the key store's own.",
+    not_built(
+        def(
+            "vault.root_key",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "A reference to the root key. Empty means the key store's own.",
+        ),
+        "The root key is the key store's own, or the passphrase's.",
+        "a key service by reference, with the server (milestone 9 of the roadmap)",
     ),
     protected(
         def(
@@ -371,7 +433,7 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::List,
             L(&["<project>"]),
             U,
-            AtOnce,
+            NextStart,
             "The named folders files may be read from and written to.",
         ),
         Safer::Fewer,
@@ -381,7 +443,7 @@ pub const SCHEMA: &[SettingDef] = &[
         BYTES,
         N(104_857_600),
         U,
-        AtOnce,
+        NextStart,
         "The largest file a caller may hand in, in bytes. A draft.",
     ),
     // Policy.
@@ -391,18 +453,22 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Word(&["named_approver", "person_each_run", "caller_confirms"]),
             T("person_each_run"),
             U,
-            AtOnce,
-            "Who must approve a write.",
+            NextStart,
+            "Who must approve a write. On one machine only `person_each_run` is in force: `named_approver` and `caller_confirms` stop the kernel by name.",
         ),
         Safer::Rank(&["named_approver", "person_each_run", "caller_confirms"]),
     ),
-    def(
-        "policy.two_person_irreversible",
-        Kind::Bool,
-        B(false),
-        U,
-        AtOnce,
-        "Whether an irreversible operation needs two people.",
+    protected(
+        def(
+            "policy.two_person_irreversible",
+            Kind::Bool,
+            B(false),
+            U,
+            NextStart,
+            "Whether an irreversible operation needs two people.",
+        ),
+        // Turning it off is the loosening (decision 0236).
+        Safer::On,
     ),
     protected(
         def(
@@ -413,7 +479,7 @@ pub const SCHEMA: &[SettingDef] = &[
             },
             N(50),
             U,
-            AtOnce,
+            NextStart,
             "The most records one run may write.",
         ),
         Safer::Lower,
@@ -426,7 +492,7 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Int { min: 1, max: 1_440 },
             N(15),
             U,
-            AtOnce,
+            NextStart,
             "How long an approval may be used after it is given.",
         ),
         Safer::Lower,
@@ -440,7 +506,7 @@ pub const SCHEMA: &[SettingDef] = &[
             },
             N(60),
             U,
-            AtOnce,
+            NextStart,
             "How old a preview may be when its writes begin.",
         ),
         Safer::Lower,
@@ -451,7 +517,7 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Word(&["read", "write", "irreversible"]),
             T("irreversible"),
             U,
-            AtOnce,
+            NextStart,
             "The highest effect class a grant gives an agent, whatever the grant says.",
         ),
         Safer::Rank(&["read", "write", "irreversible"]),
@@ -462,7 +528,7 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Bool,
             B(true),
             U,
-            AtOnce,
+            NextStart,
             "Whether a pre-approval rule may let a write proceed without a person each run.",
         ),
         Safer::Off,
@@ -473,44 +539,52 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Bool,
             B(true),
             U,
-            AtOnce,
+            NextStart,
             "Whether writes may go anywhere but declared test records in a test environment.",
         ),
         Safer::Off,
     ),
     // Identity and sessions.
-    def(
-        "identity.default_mode",
-        Kind::Word(&[
-            "per_user_token",
-            "per_user_session",
-            "per_user_device",
-            "service_account",
-        ]),
-        T("per_user_session"),
-        I,
-        NextStart,
-        "How the identity a run acts as is obtained.",
+    not_built(
+        def(
+            "identity.default_mode",
+            Kind::Word(&[
+                "per_user_token",
+                "per_user_session",
+                "per_user_device",
+                "service_account",
+            ]),
+            T("per_user_session"),
+            I,
+            NextStart,
+            "How the identity a run acts as is obtained.",
+        ),
+        "Each target's auth file says how its identity is obtained.",
+        "the server, milestone 9 of the roadmap",
     ),
-    def(
-        "identity.allowed_modes",
-        Kind::Words(&[
-            "per_user_token",
-            "per_user_session",
-            "per_user_device",
-            "service_account",
-        ]),
-        L(&["per_user_session"]),
-        I,
-        NextStart,
-        "The identity modes a toolset may use.",
+    not_built(
+        def(
+            "identity.allowed_modes",
+            Kind::Words(&[
+                "per_user_token",
+                "per_user_session",
+                "per_user_device",
+                "service_account",
+            ]),
+            L(&["per_user_session"]),
+            I,
+            NextStart,
+            "The identity modes a toolset may use.",
+        ),
+        "Each target's auth file says how its identity is obtained; no toolset limits it.",
+        "the server, milestone 9 of the roadmap",
     ),
     def(
         "sessions.keep_alive_hours",
         Kind::Int { min: 0, max: 8_760 },
         N(8),
         U,
-        AtOnce,
+        NextStart,
         "How long after its last use a session is still checked.",
     ),
     def(
@@ -518,7 +592,7 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Int { min: 1, max: 1_440 },
         N(15),
         U,
-        AtOnce,
+        NextStart,
         "How often a session is probed when its auth file declares no idle timeout.",
     ),
     def(
@@ -526,16 +600,20 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Int { min: 0, max: 1_440 },
         N(5),
         U,
-        AtOnce,
+        NextStart,
         "How long an interactive call waits for a sign-in.",
     ),
-    def(
-        "sessions.attempt_limit",
-        Kind::Int { min: 1, max: 3 },
-        N(1),
-        I,
-        AtOnce,
-        "How many times a stored credential is tried.",
+    not_built(
+        def(
+            "sessions.attempt_limit",
+            Kind::Int { min: 1, max: 3 },
+            N(1),
+            I,
+            NextStart,
+            "How many times a stored credential is tried.",
+        ),
+        "Each target's auth file sets how often a stored credential is tried, 1 by default; no ceiling of the installation is applied.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     // The engine.
     def(
@@ -546,7 +624,7 @@ pub const SCHEMA: &[SettingDef] = &[
         },
         N(30),
         U,
-        AtOnce,
+        NextStart,
         "How long the local engine stays up with nothing to do.",
     ),
     def(
@@ -562,27 +640,31 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Word(&["present", "absent"]),
         T("present"),
         U,
-        AtOnce,
-        "Whether work that needs a person waits for one, or stops at once with its named state.",
+        NextStart,
+        "Whether work that needs a person waits for one, or stops at once with its named state. Only the wait for a sign-in honours `absent` yet; no other wait for a person does.",
     ),
     def(
         "engine.retries.transient",
         Kind::Int { min: 0, max: 5 },
         N(2),
         U,
-        AtOnce,
+        NextStart,
         "How often a read or an idempotent step is tried again after a `transient` failure.",
     ),
-    def(
-        "engine.time_limit_ceiling_seconds",
-        Kind::Int {
-            min: 1,
-            max: 86_400,
-        },
-        N(600),
-        I,
-        AtOnce,
-        "The longest step time limit a target may declare here. A draft.",
+    not_built(
+        def(
+            "engine.time_limit_ceiling_seconds",
+            Kind::Int {
+                min: 1,
+                max: 86_400,
+            },
+            N(600),
+            I,
+            NextStart,
+            "The longest step time limit a target may declare here. A draft.",
+        ),
+        "A target's step time limits are bounded by each pack's own ceilings; no ceiling of the installation is checked.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     protected(
         def(
@@ -593,7 +675,7 @@ pub const SCHEMA: &[SettingDef] = &[
             },
             N(5),
             I,
-            AtOnce,
+            NextStart,
             "The matching reads a shadow binding needs before a person may promote it.",
         ),
         Safer::Higher,
@@ -607,7 +689,7 @@ pub const SCHEMA: &[SettingDef] = &[
             },
             N(20),
             I,
-            AtOnce,
+            NextStart,
             "The matching writes a shadow binding needs before a person may promote it.",
         ),
         Safer::Higher,
@@ -623,46 +705,66 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "How long a binding in shadow may read beside a live read before it is left uncompared.",
     ),
-    def(
-        "engine.promoted_writes",
-        Kind::Word(&["after_promotion", "never"]),
-        T("after_promotion"),
-        U,
-        AtOnce,
-        "Whether writes may use a binding promoted from shadow.",
+    not_built(
+        def(
+            "engine.promoted_writes",
+            Kind::Word(&["after_promotion", "never"]),
+            T("after_promotion"),
+            U,
+            NextStart,
+            "Whether writes may use a binding promoted from shadow.",
+        ),
+        "A write may use a binding promoted from shadow.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "ledger.intent_window.*",
-        Kind::Int { min: 1, max: 1_000 },
-        N(1),
-        U,
-        AtOnce,
-        "How many intents of one mode may be open at once, up to its manifest's value.",
+    not_built(
+        def(
+            "ledger.intent_window.*",
+            Kind::Int { min: 1, max: 1_000 },
+            N(1),
+            U,
+            NextStart,
+            "How many intents of one mode may be open at once, up to its manifest's value.",
+        ),
+        "Each mode's manifest sets how many of its intents may be open at once.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "modes.disabled",
-        Kind::List,
-        L(&[]),
-        U,
-        AtOnce,
-        "Modes that may not be used here.",
+    not_built(
+        def(
+            "modes.disabled",
+            Kind::List,
+            L(&[]),
+            U,
+            NextStart,
+            "Modes that may not be used here.",
+        ),
+        "Every mode a ready provider offers may be used.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     // Scheduling.
-    def(
-        "scheduler.*.session_reads",
-        COUNT,
-        N(0),
-        U,
-        AtOnce,
-        "Reads at once on one session of a mode, up to its manifest's value.",
+    not_built(
+        def(
+            "scheduler.*.session_reads",
+            COUNT,
+            N(0),
+            U,
+            NextStart,
+            "Reads at once on one session of a mode, up to its manifest's value.",
+        ),
+        "Each mode's manifest sets how many reads run at once on one session.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "scheduler.*.session_writes",
-        COUNT,
-        N(0),
-        U,
-        AtOnce,
-        "Writes at once on one session of a mode, up to its manifest's value.",
+    not_built(
+        def(
+            "scheduler.*.session_writes",
+            COUNT,
+            N(0),
+            U,
+            NextStart,
+            "Writes at once on one session of a mode, up to its manifest's value.",
+        ),
+        "Each mode's manifest sets how many writes run at once on one session.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     def(
         "scheduler.queue_length_per_target",
@@ -672,16 +774,20 @@ pub const SCHEMA: &[SettingDef] = &[
         },
         N(100),
         U,
-        AtOnce,
+        NextStart,
         "How many jobs may wait for one target.",
     ),
-    def(
-        "scheduler.priority",
-        Kind::Word(&["interactive_first", "fifo"]),
-        T("interactive_first"),
-        I,
-        AtOnce,
-        "Which waiting job is served first.",
+    not_built(
+        def(
+            "scheduler.priority",
+            Kind::Word(&["interactive_first", "fifo"]),
+            T("interactive_first"),
+            I,
+            NextStart,
+            "Which waiting job is served first.",
+        ),
+        "A person's interactive call is served before other waiting work.",
+        "the server, milestone 9 of the roadmap",
     ),
     def(
         "runners.lease_seconds",
@@ -689,7 +795,7 @@ pub const SCHEMA: &[SettingDef] = &[
         N(30),
         I,
         NextStart,
-        "How long a job's lease lasts without a heartbeat.",
+        "How long a job's lease lasts without a heartbeat. In one process the lease is at least 600 seconds, whatever the value.",
     ),
     def(
         "runners.heartbeat_seconds",
@@ -710,13 +816,17 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "How long the locks of a lost run are kept from others.",
     ),
-    def(
-        "runners.certificate_hours",
-        Kind::Int { min: 1, max: 8_760 },
-        N(24),
-        I,
-        NextStart,
-        "How long a runner's certificate lasts.",
+    not_built(
+        def(
+            "runners.certificate_hours",
+            Kind::Int { min: 1, max: 8_760 },
+            N(24),
+            I,
+            NextStart,
+            "How long a runner's certificate lasts.",
+        ),
+        "Runners are in the engine's own process and hold no certificate.",
+        "remote runners, with the server (milestone 9 of the roadmap)",
     ),
     // Authoring and the scout.
     def(
@@ -724,103 +834,139 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Word(&["off", "on_request", "on_add"]),
         T("on_add"),
         P,
-        AtOnce,
-        "When the scout runs: never, when asked, or when a target is added.",
+        NextStart,
+        "When the scout runs: never, when asked, or when a target is added. Only `off` is told apart yet: `on_request` and `on_add` both run a scout when one is asked for.",
     ),
     def(
         "authoring.scout.try_reads",
         Kind::Bool,
         B(true),
         P,
-        AtOnce,
+        NextStart,
         "Whether the scout tries the reads it drafted.",
     ),
-    def(
-        "authoring.scout.budget.seconds",
-        Kind::Int {
-            min: 1,
-            max: 86_400,
-        },
-        N(300),
-        P,
-        AtOnce,
-        "The time one scout may take. A target until measured.",
-    ),
-    def(
-        "authoring.scout.budget.requests",
-        Kind::Int {
-            min: 1,
-            max: 1_000_000,
-        },
-        N(500),
-        P,
-        AtOnce,
-        "The requests one scout may send. A target until measured.",
-    ),
-    def(
-        "authoring.scout.budget.depth",
-        Kind::Int { min: 1, max: 100 },
-        N(3),
-        P,
-        AtOnce,
-        "How deep one scout follows what it finds. A target until measured.",
-    ),
-    def(
-        "authoring.scout.providers",
-        Kind::List,
-        L(&[]),
-        P,
-        AtOnce,
-        "Optional discoverers, by name. First-party discoverers are always available.",
-    ),
-    def(
-        "authoring.capture.enabled",
-        Kind::Bool,
-        B(true),
-        P,
-        AtOnce,
-        "Whether recording may be started at all.",
-    ),
-    protected(
+    not_built(
         def(
-            "authoring.capture.values",
-            Kind::Bool,
-            B(false),
+            "authoring.scout.budget.seconds",
+            Kind::Int {
+                min: 1,
+                max: 86_400,
+            },
+            N(300),
             P,
-            AtOnce,
-            "Whether a recording keeps values, not only shapes.",
+            NextStart,
+            "The time one scout may take. A target until measured.",
         ),
-        Safer::Off,
+        "A scout has no time budget; its report says `budget_in_force: false`.",
+        "the scout's budget, roadmap package E5",
     ),
-    def(
-        "authoring.capture.limits.seconds",
-        Kind::Int {
-            min: 1,
-            max: 86_400,
-        },
-        N(600),
-        P,
-        AtOnce,
-        "The longest one recording may run. A draft.",
+    not_built(
+        def(
+            "authoring.scout.budget.requests",
+            Kind::Int {
+                min: 1,
+                max: 1_000_000,
+            },
+            N(500),
+            P,
+            NextStart,
+            "The requests one scout may send. A target until measured.",
+        ),
+        "A scout has no budget of requests; its report says `budget_in_force: false`.",
+        "the scout's budget, roadmap package E5",
     ),
-    def(
-        "authoring.capture.limits.bytes",
-        BYTES,
-        N(52_428_800),
-        P,
-        AtOnce,
-        "The most one recording may keep, in bytes. A draft.",
+    not_built(
+        def(
+            "authoring.scout.budget.depth",
+            Kind::Int { min: 1, max: 100 },
+            N(3),
+            P,
+            NextStart,
+            "How deep one scout follows what it finds. A target until measured.",
+        ),
+        "A scout has no budget of depth; its report says `budget_in_force: false`.",
+        "the scout's budget, roadmap package E5",
     ),
-    def(
-        "authoring.capture.limits.exchanges",
-        Kind::Int {
-            min: 1,
-            max: 1_000_000,
-        },
-        N(2_000),
-        P,
-        AtOnce,
-        "The most exchanges one recording may keep. A draft.",
+    not_built(
+        def(
+            "authoring.scout.providers",
+            Kind::List,
+            L(&[]),
+            P,
+            NextStart,
+            "Optional discoverers, by name. First-party discoverers are always available.",
+        ),
+        "Only first-party discoverers run; no optional one exists.",
+        "optional discoverers, roadmap package E6",
+    ),
+    not_built(
+        def(
+            "authoring.capture.enabled",
+            Kind::Bool,
+            B(true),
+            P,
+            NextStart,
+            "Whether recording may be started at all.",
+        ),
+        "Recording cannot be started: `capture.start` is not built.",
+        "recording, `capture.start`",
+    ),
+    not_built(
+        protected(
+            def(
+                "authoring.capture.values",
+                Kind::Bool,
+                B(false),
+                P,
+                NextStart,
+                "Whether a recording keeps values, not only shapes.",
+            ),
+            Safer::Off,
+        ),
+        "Recording cannot be started: `capture.start` is not built.",
+        "recording, `capture.start`",
+    ),
+    not_built(
+        def(
+            "authoring.capture.limits.seconds",
+            Kind::Int {
+                min: 1,
+                max: 86_400,
+            },
+            N(600),
+            P,
+            NextStart,
+            "The longest one recording may run. A draft.",
+        ),
+        "Recording cannot be started: `capture.start` is not built.",
+        "recording, `capture.start`",
+    ),
+    not_built(
+        def(
+            "authoring.capture.limits.bytes",
+            BYTES,
+            N(52_428_800),
+            P,
+            NextStart,
+            "The most one recording may keep, in bytes. A draft.",
+        ),
+        "Recording cannot be started: `capture.start` is not built.",
+        "recording, `capture.start`",
+    ),
+    not_built(
+        def(
+            "authoring.capture.limits.exchanges",
+            Kind::Int {
+                min: 1,
+                max: 1_000_000,
+            },
+            N(2_000),
+            P,
+            NextStart,
+            "The most exchanges one recording may keep. A draft.",
+        ),
+        "Recording cannot be started: `capture.start` is not built.",
+        "recording, `capture.start`",
     ),
     // Evidence and telemetry.
     def(
@@ -828,7 +974,7 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Word(&["minimal", "standard", "full"]),
         T("minimal"),
         U,
-        AtOnce,
+        NextStart,
         "How much evidence a read keeps.",
     ),
     protected(
@@ -837,136 +983,188 @@ pub const SCHEMA: &[SettingDef] = &[
             Kind::Word(&["standard", "full"]),
             T("standard"),
             U,
-            AtOnce,
+            NextStart,
             "How much evidence a write keeps.",
         ),
         Safer::Rank(&["full", "standard"]),
     ),
-    def(
-        "evidence.trace_retention_days",
-        Kind::Int {
-            min: 1,
-            max: 36_500,
-        },
-        N(30),
-        U,
-        AtOnce,
-        "How long traces are kept.",
-    ),
-    protected(
+    not_built(
         def(
-            "evidence.audit_retention_days",
+            "evidence.trace_retention_days",
             Kind::Int {
                 min: 1,
                 max: 36_500,
             },
-            N(365),
-            I,
-            AtOnce,
-            "How long the audit log is kept.",
+            N(30),
+            U,
+            NextStart,
+            "How long traces are kept.",
         ),
-        Safer::Higher,
+        "Traces and captures are kept; nothing is deleted yet.",
+        "retention, the first of the slices decision 0236 orders",
     ),
-    def(
-        "evidence.redaction.extra",
-        Kind::List,
-        L(&[]),
-        U,
-        AtOnce,
-        "Further patterns and field names to mask, added to the built-in rules.",
+    not_built(
+        protected(
+            def(
+                "evidence.audit_retention_days",
+                Kind::Int {
+                    min: 1,
+                    max: 36_500,
+                },
+                N(365),
+                I,
+                NextStart,
+                "How long the audit log is kept.",
+            ),
+            Safer::Higher,
+        ),
+        "The audit is kept; nothing is deleted yet.",
+        "retention, the first of the slices decision 0236 orders",
     ),
-    protected(
+    not_built(
         def(
-            "telemetry.export",
+            "evidence.redaction.extra",
+            Kind::List,
+            L(&[]),
+            U,
+            NextStart,
+            "Further patterns and field names to mask, added to the built-in rules.",
+        ),
+        "Only registered secrets and the built-in rules are masked.",
+        "a slice of its own, as decision 0236 orders them",
+    ),
+    not_built(
+        protected(
+            def(
+                "telemetry.export",
+                Kind::Text,
+                T(""),
+                I,
+                NextStart,
+                "An OpenTelemetry endpoint spans and metrics are sent to. Empty sends nothing.",
+            ),
+            Safer::Empty,
+        ),
+        "Nothing is sent anywhere.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    not_built(
+        protected(
+            def(
+                "telemetry.crash_reports",
+                Kind::Bool,
+                B(false),
+                I,
+                NextStart,
+                "Whether a crash report is sent to the project.",
+            ),
+            Safer::Off,
+        ),
+        "No crash report is ever sent.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    // Front doors.
+    not_built(
+        def(
+            "server.listen",
             Kind::Text,
             T(""),
             I,
             NextStart,
-            "An OpenTelemetry endpoint spans and metrics are sent to. Empty sends nothing.",
+            "The address the server listens on. Empty opens no port.",
         ),
-        Safer::Empty,
+        "The engine listens only on the person's own channel.",
+        "the server, milestone 9 of the roadmap",
     ),
-    protected(
+    not_built(
         def(
-            "telemetry.crash_reports",
-            Kind::Bool,
-            B(false),
+            "server.tls.certificate",
+            Kind::Text,
+            T(""),
             I,
             NextStart,
-            "Whether a crash report is sent to the project.",
+            "A reference to the server's certificate.",
         ),
-        Safer::Off,
+        "No port is opened, so no certificate is used.",
+        "the server, milestone 9 of the roadmap",
     ),
-    // Front doors.
-    def(
-        "server.listen",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "The address the server listens on. Empty opens no port.",
-    ),
-    def(
-        "server.tls.certificate",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "A reference to the server's certificate.",
-    ),
-    def(
-        "server.tls.key",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "A reference to the certificate's key.",
-    ),
-    def(
-        "server.base_url",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "The address callers reach the server by.",
-    ),
-    def(
-        "server.trusted_proxies",
-        Kind::List,
-        L(&[]),
-        I,
-        NextStart,
-        "Proxies whose forwarding headers are believed.",
-    ),
-    def(
-        "server.front_doors",
-        Kind::Words(&["mcp_http", "rest", "console"]),
-        L(&[]),
-        I,
-        NextStart,
-        "The network front doors that are served.",
-    ),
-    protected(
+    not_built(
         def(
-            "server.local_http",
-            Kind::Bool,
-            B(false),
+            "server.tls.key",
+            Kind::Text,
+            T(""),
             I,
             NextStart,
-            "Whether a workstation opens a local port.",
+            "A reference to the certificate's key.",
         ),
-        Safer::Off,
+        "No port is opened, so no key is used.",
+        "the server, milestone 9 of the roadmap",
     ),
-    protected(
+    not_built(
         def(
-            "server.webhooks",
+            "server.base_url",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "The address callers reach the server by.",
+        ),
+        "No port is opened.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    not_built(
+        def(
+            "server.trusted_proxies",
             Kind::List,
             L(&[]),
             I,
-            AtOnce,
-            "Destinations run events are sent to, each checked against egress.",
+            NextStart,
+            "Proxies whose forwarding headers are believed.",
         ),
-        Safer::Fewer,
+        "No port is opened, so no forwarding header is read.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    not_built(
+        def(
+            "server.front_doors",
+            Kind::Words(&["mcp_http", "rest", "console"]),
+            L(&[]),
+            I,
+            NextStart,
+            "The network front doors that are served.",
+        ),
+        "Only the local front doors are served, on the person's own channel.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    not_built(
+        protected(
+            def(
+                "server.local_http",
+                Kind::Bool,
+                B(false),
+                I,
+                NextStart,
+                "Whether a workstation opens a local port.",
+            ),
+            Safer::Off,
+        ),
+        "No local port is opened.",
+        "the server, milestone 9 of the roadmap",
+    ),
+    not_built(
+        protected(
+            def(
+                "server.webhooks",
+                Kind::List,
+                L(&[]),
+                I,
+                NextStart,
+                "Destinations run events are sent to, each checked against egress.",
+            ),
+            Safer::Fewer,
+        ),
+        "No run event is sent anywhere.",
+        "the server, milestone 9 of the roadmap",
     ),
     def(
         "mcp.revisions",
@@ -976,36 +1174,48 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "The revisions of MCP that are served.",
     ),
-    def(
-        "auth.callers.issuer",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "The identity provider that issues callers' tokens.",
+    not_built(
+        def(
+            "auth.callers.issuer",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "The identity provider that issues callers' tokens.",
+        ),
+        "The caller is the person's own account, as the local channel sees it.",
+        "the server, milestone 9 of the roadmap",
     ),
-    def(
-        "auth.callers.audience",
-        Kind::Text,
-        T(""),
-        I,
-        NextStart,
-        "The audience a caller's token must name.",
+    not_built(
+        def(
+            "auth.callers.audience",
+            Kind::Text,
+            T(""),
+            I,
+            NextStart,
+            "The audience a caller's token must name.",
+        ),
+        "The caller is the person's own account, as the local channel sees it.",
+        "the server, milestone 9 of the roadmap",
     ),
-    def(
-        "auth.callers.api_keys",
-        Kind::Bool,
-        B(false),
-        I,
-        NextStart,
-        "Whether API keys are accepted.",
+    not_built(
+        def(
+            "auth.callers.api_keys",
+            Kind::Bool,
+            B(false),
+            I,
+            NextStart,
+            "Whether API keys are accepted.",
+        ),
+        "No API key is accepted.",
+        "the server, milestone 9 of the roadmap",
     ),
     def(
         "tools.listed_limit",
         Kind::Int { min: 1, max: 200 },
         N(19),
         U,
-        AtOnce,
+        NextStart,
         "How many tools are listed up front.",
     ),
     def(
@@ -1013,55 +1223,71 @@ pub const SCHEMA: &[SettingDef] = &[
         Kind::Bool,
         B(false),
         U,
-        AtOnce,
+        NextStart,
         "Whether every tool is listed, for clients with their own tool search.",
     ),
-    def(
-        "tools.results",
-        Kind::Word(&["concise", "detailed"]),
-        T("concise"),
-        U,
-        AtOnce,
-        "How much a result says by default.",
+    not_built(
+        def(
+            "tools.results",
+            Kind::Word(&["concise", "detailed"]),
+            T("concise"),
+            U,
+            NextStart,
+            "How much a result says by default.",
+        ),
+        "A result is in its one, concise form.",
+        "a slice of its own, as decision 0236 orders them",
     ),
     def(
         "tools.result_cap_bytes",
         BYTES,
         N(262_144),
         U,
-        AtOnce,
+        NextStart,
         "The largest result returned, in bytes. A draft.",
     ),
     // The network.
-    def(
-        "network.egress",
-        Kind::Word(&["declared_surfaces"]),
-        T("declared_surfaces"),
-        I,
-        NextStart,
-        "Where the engine may connect to.",
-    ),
-    protected(
+    not_built(
         def(
-            "network.allowed_hosts",
-            Kind::List,
-            L(&[]),
+            "network.egress",
+            Kind::Word(&["declared_surfaces"]),
+            T("declared_surfaces"),
             I,
             NextStart,
-            "Further hosts the engine may connect to.",
+            "Where the engine may connect to.",
         ),
-        Safer::Fewer,
+        "Connections go only to the surfaces a target declares, which is this key's one value; nothing reads the key.",
+        "network awareness (decision 0222)",
     ),
-    protected(
-        def(
-            "network.proxy",
-            Kind::Text,
-            T(""),
-            I,
-            NextStart,
-            "An outbound proxy.",
+    not_built(
+        protected(
+            def(
+                "network.allowed_hosts",
+                Kind::List,
+                L(&[]),
+                I,
+                NextStart,
+                "Further hosts the engine may connect to.",
+            ),
+            Safer::Fewer,
         ),
-        Safer::Empty,
+        "Connections go only to the surfaces a target declares.",
+        "network awareness (decision 0222)",
+    ),
+    not_built(
+        protected(
+            def(
+                "network.proxy",
+                Kind::Text,
+                T(""),
+                I,
+                NextStart,
+                "An outbound proxy.",
+            ),
+            Safer::Empty,
+        ),
+        "No outbound proxy is supported yet: traffic goes straight to each target, as the network allows.",
+        "an outbound proxy (decisions 0197 and 0208)",
     ),
     protected(
         def(
@@ -1074,13 +1300,17 @@ pub const SCHEMA: &[SettingDef] = &[
         ),
         Safer::Fewer,
     ),
-    def(
-        "network.private_addresses",
-        Kind::Word(&["refused", "declared"]),
-        T("refused"),
-        I,
-        NextStart,
-        "Whether a private address may be reached when a target declares it.",
+    not_built(
+        def(
+            "network.private_addresses",
+            Kind::Word(&["refused", "declared"]),
+            T("refused"),
+            I,
+            NextStart,
+            "Whether a private address may be reached when a target declares it.",
+        ),
+        "A target may declare a private address, as the network allows.",
+        "the server, milestone 9 of the roadmap",
     ),
     // Providers, packs, and plug-ins.
     def(
@@ -1091,16 +1321,20 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "First-party packs switched off.",
     ),
-    protected(
-        def(
-            "providers.enabled",
-            Kind::List,
-            L(&[]),
-            I,
-            NextStart,
-            "Optional providers switched on.",
+    not_built(
+        protected(
+            def(
+                "providers.enabled",
+                Kind::List,
+                L(&[]),
+                I,
+                NextStart,
+                "Optional providers switched on.",
+            ),
+            Safer::Fewer,
         ),
-        Safer::Fewer,
+        "Every first-party pack is on unless `providers.disabled` names it; no optional provider exists.",
+        "plug-ins, roadmap package F3",
     ),
     def(
         "providers.mode.*",
@@ -1110,98 +1344,134 @@ pub const SCHEMA: &[SettingDef] = &[
         NextStart,
         "The provider that drives a mode two ready providers offer.",
     ),
-    protected(
-        def(
-            "providers.attach",
-            Kind::List,
-            L(&[]),
-            U,
-            AtOnce,
-            "Processes a person has named that a provider may attach to.",
+    not_built(
+        protected(
+            def(
+                "providers.attach",
+                Kind::List,
+                L(&[]),
+                U,
+                NextStart,
+                "Processes a person has named that a provider may attach to.",
+            ),
+            Safer::Fewer,
         ),
-        Safer::Fewer,
+        "No provider attaches to a process a person names.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    protected(
-        def(
-            "plugins.allow_unsigned",
-            Kind::List,
-            L(&[]),
-            I,
-            NextStart,
-            "Unsigned plug-ins that may run, by digest.",
+    not_built(
+        protected(
+            def(
+                "plugins.allow_unsigned",
+                Kind::List,
+                L(&[]),
+                I,
+                NextStart,
+                "Unsigned plug-ins that may run, by digest.",
+            ),
+            Safer::Fewer,
         ),
-        Safer::Fewer,
+        "No plug-in runs: plug-ins are not built.",
+        "plug-ins, roadmap package F3",
     ),
     // Updates, logging, and locale.
-    protected(
+    not_built(
+        protected(
+            def(
+                "updates.check",
+                Kind::Bool,
+                B(false),
+                I,
+                NextStart,
+                "Whether the engine asks whether a newer release exists.",
+            ),
+            Safer::Off,
+        ),
+        "The engine never asks whether a newer release exists.",
+        "a release, roadmap package R1",
+    ),
+    not_built(
         def(
-            "updates.check",
-            Kind::Bool,
-            B(false),
+            "updates.channel",
+            Kind::Word(&["stable", "beta"]),
+            T("stable"),
             I,
             NextStart,
-            "Whether the engine asks whether a newer release exists.",
+            "Which releases an update takes.",
         ),
-        Safer::Off,
+        "The engine never asks whether a newer release exists.",
+        "a release, roadmap package R1",
     ),
-    def(
-        "updates.channel",
-        Kind::Word(&["stable", "beta"]),
-        T("stable"),
-        I,
-        NextStart,
-        "Which releases an update takes.",
-    ),
-    protected(
-        def(
-            "alerts.destinations",
-            Kind::List,
-            L(&[]),
-            I,
-            AtOnce,
-            "Where alerts are sent.",
+    not_built(
+        protected(
+            def(
+                "alerts.destinations",
+                Kind::List,
+                L(&[]),
+                I,
+                NextStart,
+                "Where alerts are sent.",
+            ),
+            Safer::Fewer,
         ),
-        Safer::Fewer,
+        "No alert is sent anywhere; alerts are shown on the machine.",
+        "the server, milestone 9 of the roadmap",
     ),
     def(
         "logging.level",
         Kind::Word(&["error", "warn", "info", "debug"]),
         T("info"),
         U,
-        AtOnce,
+        NextStart,
         "How much is logged.",
     ),
-    def(
-        "logging.format",
-        Kind::Word(&["text", "json"]),
-        T("text"),
-        U,
-        AtOnce,
-        "The form of a log line.",
+    not_built(
+        def(
+            "logging.format",
+            Kind::Word(&["text", "json"]),
+            T("text"),
+            U,
+            NextStart,
+            "The form of a log line.",
+        ),
+        "Log lines are text.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "logging.to",
-        Kind::Word(&["file", "stderr", "stdout"]),
-        T("file"),
-        U,
-        AtOnce,
-        "Where log lines go: the logs directory, standard error, or standard output.",
+    not_built(
+        def(
+            "logging.to",
+            Kind::Word(&["file", "stderr", "stdout"]),
+            T("file"),
+            U,
+            NextStart,
+            "Where log lines go: the logs directory, standard error, or standard output.",
+        ),
+        "Log lines go to the logs folder in the data directory.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "locale.messages",
-        Kind::Text,
-        T("en"),
-        U,
-        AtOnce,
-        "The language of messages and the console.",
+    not_built(
+        def(
+            "locale.messages",
+            Kind::Text,
+            T("en"),
+            U,
+            NextStart,
+            "The language of messages and the console.",
+        ),
+        "Every message is in English.",
+        "a slice of its own, as decision 0236 orders them",
     ),
-    def(
-        "locale.display_timezone",
-        Kind::Text,
-        T(""),
-        U,
-        AtOnce,
-        "The time zone of times shown to people. Empty means the machine's.",
+    not_built(
+        def(
+            "locale.display_timezone",
+            Kind::Text,
+            T(""),
+            U,
+            NextStart,
+            "The time zone of times shown to people. Empty means the machine's.",
+        ),
+        "Times are shown as the machine gives them; none is converted.",
+        "a slice of its own, as decision 0236 orders them",
     ),
 ];
 
@@ -1267,7 +1537,7 @@ keep_alive_hours = 1
     },
     BuiltInPreset {
         name: "ci",
-        purpose: "A job in continuous integration, with no person present.",
+        purpose: "A job in continuous integration, with no person present: the engine in the command's own process, writes only to declared test records, no scout, and no wait for a sign-in. It does not yet change the form or place of logs.",
         toml: r#"
 [engine]
 in_process = true
@@ -1278,13 +1548,6 @@ writes_outside_tests = false
 
 [authoring.scout]
 run = "off"
-
-[authoring.capture]
-enabled = false
-
-[logging]
-format = "json"
-to = "stdout"
 
 [sessions]
 login_wait_minutes = 0

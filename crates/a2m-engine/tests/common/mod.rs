@@ -282,6 +282,8 @@ pub struct Hooks {
     pub says: Mutex<Option<String>>,
     /// The project folder and the destinations each `prepare` was given.
     pub prepared_with: Mutex<Vec<(Option<PathBuf>, Vec<String>)>>,
+    /// The scope each destination carried, as each `prepare` was given it.
+    pub scoped_with: Mutex<Vec<Vec<(String, Option<a2m_core::ScopedHost>)>>>,
     /// How many orders were read, for what a read measures.
     pub reads: AtomicU64,
     /// A step of this kind returns, beside what it observed, a capture
@@ -1007,6 +1009,12 @@ impl Driver for AppDriver {
                     .map(|project| project.as_path().to_path_buf()),
                 cx.destinations.iter().map(str::to_owned).collect(),
             ));
+            self.hooks.scoped_with.lock().unwrap().push(
+                cx.destinations
+                    .iter()
+                    .map(|address| (address.to_owned(), cx.destinations.scope_of(address).cloned()))
+                    .collect(),
+            );
             if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }

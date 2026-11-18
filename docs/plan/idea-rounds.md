@@ -1,6 +1,6 @@
 # Idea rounds
 
-Every ten minutes while a session runs, the lead agent puts forward one new idea that is not part of the work already in hand, tests it at once, and either takes it up or rules it out. The owner asked for this on 2026-11-18. This page is the log, newest round last.
+Every ten minutes by the clock, while a session runs, the lead agent puts forward one new idea that is not part of the work already in hand, tests it at once, and either takes it up or rules it out. The owner asked for this on 2026-11-18. This page is the log, newest round last.
 
 A round is small on purpose: one idea, one test that can be finished in minutes, one verdict. The test is real (a measurement, a search of the code, a run of the program), and the log says how deep it went, so that nobody mistakes a ten-minute check for a proof. An idea that is taken up becomes work in the ordinary way: a package in the [roadmap](roadmap.md), a decision record, or an entry in the [hypothesis register](../hypotheses/README.md) when it needs a longer test. An idea that is ruled out stays here with the reason, so it is not raised again without new evidence.
 

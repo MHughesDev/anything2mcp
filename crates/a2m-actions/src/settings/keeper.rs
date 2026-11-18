@@ -176,10 +176,15 @@ mod os {
             if metadata.file_type().is_symlink() {
                 links += 1;
                 if links > MOST_LINKS {
-                    return InstallationKeeper::NotChecked("its path leads through a circle of links");
+                    return InstallationKeeper::NotChecked(
+                        "its path leads through a circle of links",
+                    );
                 }
                 if metadata.uid() != ROOT {
-                    return open_at(next, "is a link that belongs to an account that is not the administrator's");
+                    return open_at(
+                        next,
+                        "is a link that belongs to an account that is not the administrator's",
+                    );
                 }
                 let Ok(target) = std::fs::read_link(&next) else {
                     return InstallationKeeper::NotChecked("a link on the way cannot be read");
@@ -241,10 +246,8 @@ mod tests {
 
     impl Place {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "a2m-actions-keeper-{name}-{}",
-                std::process::id()
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("a2m-actions-keeper-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).unwrap();
             let place = Self(std::fs::canonicalize(&root).unwrap());

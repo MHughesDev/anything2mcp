@@ -23,6 +23,7 @@ The words every other crate shares: the closed vocabularies, the checked names t
 - `Finding` and its `Subject`: what discovery returns, as data.
 - `Secret`, and the two interfaces the vault implements: `Redact` and `KeyedDigest`, with the one construction of a keyed digest.
 - The `Plan` and its `Step`, as immutable data: their one encoding, and the check of a plan's hash.
+- `AddressScope` and `ScopedHost`: what kind of place an address is, read from its literal alone, and the one question every check of a plain link asks, whether a link to it may leave this machine ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)).
 
 It must never: perform input or output; read a clock or a random source; hold a list of modes, packs, or providers; contain logic that differs by kind of system; compile a plan, evaluate an expression, or decode a pack's payload; depend on another crate in this workspace.
 
@@ -313,6 +314,27 @@ impl Plan {
 pub struct EncodedPlan { pub bytes: Vec<u8>, pub hash: Digest }                 // the hash is over all the bytes
 ```
 
+Where an address is, read from its literal (decision 0240):
+
+```rust
+pub enum AddressScope {   // this_machine, unspecified, link_local, private_use, carrier_grade_nat, unique_local,
+                          // multicast, documentation, reserved, public, name, unreadable
+}
+pub struct ScopedHost { /* scope, IP address, name as written, IPv4 inside IPv6, zone */ }
+impl ScopedHost {
+    pub fn of_ip(ip: IpAddr) -> Self;                          // IPv4 inside IPv6 is read as IPv4, and remembered
+    pub fn of_socket_address(address: SocketAddr) -> Self;     // a scope identifier other than 0 is a zone
+    pub fn of_host(host: &str) -> Self;                        // a URL's host: dotted IPv4, IPv6 bare or in brackets, or a name
+    pub fn of_destination(address: &str) -> Self;              // a URL, host:port, [v6]:port, or a bare host
+    pub fn scope(&self) -> AddressScope;
+    pub fn ip(&self) -> Option<IpAddr>;
+    pub fn name(&self) -> Option<&str>;
+    pub fn written_as_ipv4_in_ipv6(&self) -> bool;
+    pub fn written_with_zone(&self) -> bool;
+    pub fn may_leave_this_machine(&self) -> bool;              // false only for a loopback literal, written plainly
+}
+```
+
 Contracts that the signatures do not show:
 
 - **A vocabulary's names are the documents' names.** `tests/documents.rs` reads the documents and fails on any difference, including order. `Rounding` and `DigestPurpose` are this crate's own lists; this document is where they are written.
@@ -327,6 +349,8 @@ Contracts that the signatures do not show:
 - **A checked name says nothing about whether it is registered.** `StepKind::new("locate")` succeeds whatever packs are enabled. Whether anyone registered it is the compiler's question and the registry's, and an unregistered one does not compile.
 - **The engine never reads a verb's spelling.** A binding is treated by what its steps and its operation state: `commits`, `lookup`, `idempotent`, the effect class, the identity strategy.
 - **Nothing here reads a clock or a random source.** `RunId::from_parts` takes the moment and the random bytes. Whoever makes an identifier brings both.
+- **A scope is read from the text alone.** `ScopedHost` resolves no name and asks the machine nothing. `this_machine` is a loopback literal, never a name. A spelling only a lenient parser widens (`127.1`), malformed text, and a path are `unreadable`. The ranges are those the Rust core library's source classifies, with the standard it cites for each; `scope::tests` holds each range at its edges.
+- **A plain link stays on this machine only to a loopback address written plainly.** `may_leave_this_machine` is true for a name, `localhost` included, for IPv4 written inside IPv6, and for an address with a zone. `a2m-auth`, the HTTP, MCP, stream, and data packs each ask it after their own parser, and `tests/address-spellings.txt` pins each of them, spelling by spelling.
 - **A plan is immutable data.** Nothing here builds one from target files; the compiler in `a2m-files` is the only producer, and tests the only other builders. The engine receives a plan only through `decode`, so it never runs bytes whose hash it has not checked.
 - **The same plan encodes to the same bytes.** On every machine and every run. `Plan::encode`, `CanonicalJson::encode`, and `Value::canonical_bytes` use one deterministic encoding, canonical JSON: no spaces, keys sorted by their bytes, whole numbers only. A pack cannot choose another for its payload. A float is refused.
 - **A plan holds no credential.** A sign-in's credentials are `CredentialRef`s, which have one shape and nothing else; bytes that hold other text in a reference's place do not decode, and the refusal does not show the text.
@@ -405,6 +429,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 | A secret a system returns as a number, a date, a moment, or a length of time does not pass as one; two names that redact alike keep both values | `redact::tests` |
 | A keyed digest differs by key, by workspace, and by purpose, and HMAC gives the standard answers | `redact::tests`, with three cases of RFC 4231 |
 | An identifier reads back what it writes, sorts by the moment it was made, and refuses another kind's prefix | `ident::tests` |
+| Each address range holds exactly its standard's addresses; IPv4 inside IPv6 is read as IPv4; only a loopback literal written plainly stays on this machine; a name is kept and never resolved | `scope::tests`; `tests/address_spellings.rs`, over the shared corpus |
 
 ## Build order
 
@@ -421,6 +446,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 11. Done: what the run time needs from target files and the plan lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetPlan`, `AuthPlan` with `ProbePlan`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and decision points, a tool's module, `FieldFormat` and a field type's step; with `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
 12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
 13. Done: `DeclaredProgram` and `SurfacePlan::programs`, the programs a surface's driver may start, in the plan's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
+14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.
 
 ## Open points
 

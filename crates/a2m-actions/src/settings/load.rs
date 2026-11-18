@@ -18,7 +18,7 @@ use serde_json::{Value as Json, json};
 use toml::de::{DeTable, DeValue};
 
 use super::keeper::{InstallationKeeper, system_installation_folder};
-use super::schema::{self, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
+use super::schema::{self, Built, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
 use crate::codes;
 use crate::paths::Paths;
 
@@ -110,6 +110,9 @@ pub struct Entry {
     pub effective: Effective,
     /// What it does.
     pub doc: String,
+    /// Whether the part it governs is built. A key that is not built keeps
+    /// its default: a value written for it is refused.
+    pub built: Built,
 }
 
 /// One preset, as `config.show` lists it.
@@ -300,6 +303,7 @@ struct Rule {
     protected: Option<Safer>,
     effective: Effective,
     doc: String,
+    built: Built,
     kind: RuleKind,
 }
 
@@ -553,6 +557,15 @@ impl Settings {
             out.insert("origin".to_owned(), json!(entry.origin));
             out.insert("protected".to_owned(), json!(entry.protected));
             out.insert("locked".to_owned(), json!(entry.locked));
+            out.insert("built".to_owned(), json!(entry.built.is_built()));
+            if let Built::No {
+                instead,
+                arrives_with,
+            } = entry.built
+            {
+                out.insert("instead".to_owned(), json!(instead));
+                out.insert("arrives_with".to_owned(), json!(arrives_with));
+            }
             if !entry.overridden.is_empty() {
                 out.insert(
                     "overridden".to_owned(),
@@ -658,6 +671,7 @@ impl Loader {
                     scope: setting.scope,
                     effective: setting.effective,
                     doc: setting.doc.to_owned(),
+                    built: setting.built,
                 },
             );
         }
@@ -675,6 +689,7 @@ impl Loader {
                         scope: pack_scope(decl.scope),
                         effective: Effective::NextStart,
                         doc: decl.doc.clone(),
+                        built: Built::Yes,
                     },
                 );
             }
@@ -955,6 +970,7 @@ impl Loader {
                 protected: setting.protected,
                 effective: setting.effective,
                 doc: setting.doc.to_owned(),
+                built: setting.built,
                 kind: RuleKind::Kernel(setting.kind),
             });
         }
@@ -973,6 +989,7 @@ impl Loader {
             }),
             effective: Effective::NextStart,
             doc: decl.doc.clone(),
+            built: Built::Yes,
             kind: RuleKind::Pack {
                 manifest: Arc::clone(manifest),
                 key: setting.to_owned(),
@@ -1011,6 +1028,27 @@ impl Loader {
             ));
             return;
         };
+        // A key whose part is not built is refused from every layer, a
+        // value equal to its default too: a written value states an intent
+        // nothing can honour (decision 0236).
+        if let Built::No {
+            instead,
+            arrives_with,
+        } = rule.built
+        {
+            self.problems.push(invalid(
+                &raw.origin,
+                format!(
+                    "`{}` is a setting whose part is not built yet, so a value would have no effect. {instead}",
+                    raw.key
+                ),
+                format!(
+                    "Remove `{}` from this layer. It arrives with {arrives_with}.",
+                    raw.key
+                ),
+            ));
+            return;
+        }
         let value = match raw.value {
             Written::Typed(value) => Some(value),
             Written::Text(text) => rule.read(&text),
@@ -1144,32 +1182,12 @@ impl Loader {
                 scope: rule.scope,
                 effective: rule.effective,
                 doc: rule.doc,
+                built: rule.built,
             },
         );
     }
 
     fn finish(mut self) -> (Settings, Vec<Failure>) {
-        // No outbound proxy is built yet (decision 0197): a value would have
-        // no effect, and a person who set one would believe their traffic
-        // goes through it. It is refused by name, and left out.
-        let proxied = self
-            .entries
-            .get("network.proxy")
-            .filter(|entry| entry.value.as_text().is_some_and(|text| !text.is_empty()))
-            .map(|entry| entry.origin.clone());
-        if let Some(origin) = proxied {
-            if let Some(entry) = self.entries.get_mut("network.proxy") {
-                entry.value = Value::Text(String::new());
-                entry.layer = Layer::Default;
-                "the built-in default".clone_into(&mut entry.origin);
-                entry.overridden.clear();
-            }
-            self.problems.push(codes::input(
-                codes::SETTINGS_INVALID,
-                format!("{origin}: `network.proxy` is set, and no outbound proxy is supported yet, so the value would have no effect."),
-                "Remove `network.proxy`; traffic goes straight to each target, as the network allows.",
-            ));
-        }
         let locked: Vec<String> = self
             .entries
             .keys()

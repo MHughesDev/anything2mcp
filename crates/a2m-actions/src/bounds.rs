@@ -482,7 +482,9 @@ mod tests {
         assert!(
             failure.message().contains("policy.max_records_per_run")
                 && failure.message().contains("settings.toml")
-                && failure.message().contains("only when no account but an administrator"),
+                && failure
+                    .message()
+                    .contains("only when no account but an administrator"),
             "{failure:?}"
         );
         assert!(failure.next_step().contains("A2M_HOME"), "{failure:?}");
