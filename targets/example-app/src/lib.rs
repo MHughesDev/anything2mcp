@@ -9,6 +9,7 @@
 //! It is test equipment, not part of the product, so it sits outside the crate
 //! layering. A product crate may use it in tests only.
 
+pub mod answers;
 mod api;
 pub mod auth;
 mod connection;
@@ -105,6 +106,7 @@ pub fn router() -> Router {
         .merge(own_requests::routes())
         .merge(forgery::routes())
         .merge(views::routes())
+        .merge(answers::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

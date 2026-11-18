@@ -22,7 +22,9 @@
 //! - `/escapes/service-worker.js` and `/escapes/shared-worker.js`: workers that,
 //!   when reached, send a `POST` and open a WebSocket, and answer with what
 //!   became of each: the service worker when sent a message, the shared worker
-//!   when a page connects to it.
+//!   when a page connects to it. The service worker also answers a request for
+//!   `/escapes/answered-by-worker` itself, with `from the worker`, which the
+//!   application never serves.
 
 use axum::Router;
 use axum::extract::Path;
@@ -248,6 +250,9 @@ async fn service_worker() -> Response {
             "{TRY_BOTH}\
              addEventListener(\"install\", () => skipWaiting());\n\
              addEventListener(\"activate\", (event) => event.waitUntil(clients.claim()));\n\
+             addEventListener(\"fetch\", (event) => {{\n\
+             if (new URL(event.request.url).pathname === \"/escapes/answered-by-worker\")\n\
+             event.respondWith(new Response(\"from the worker\"));\n}});\n\
              addEventListener(\"message\", (event) => {{\n\
              const made = socket(\"service-socket\");\n\
              event.waitUntil(post(\"service-post\").then((sent) =>\n\

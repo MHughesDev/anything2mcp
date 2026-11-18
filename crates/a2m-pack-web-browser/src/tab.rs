@@ -3007,6 +3007,7 @@ pub(crate) async fn open_page(
     }
 }
 
+const M6_OFF: bool = false;
 async fn prepare(
     page: &Page,
     env: &PageEnvironment,
@@ -3056,7 +3057,7 @@ async fn prepare(
         page.call(&fetch_documents(), deadline).await?;
         page.call(&NetworkEnable::keeping(page.max_read), deadline)
             .await?;
-        page.call(&BypassServiceWorker { bypass: true }, deadline)
+        page.call(&BypassServiceWorker { bypass: M6_OFF }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }

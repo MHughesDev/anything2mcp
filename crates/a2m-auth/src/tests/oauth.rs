@@ -16,7 +16,8 @@ use super::support::{
 };
 use crate::encode::{base64, base64_url};
 use crate::{
-    AuthEntry, PersonAnswer, PersonAsk, PersonReason, ProviderName, Returned, Wait, codes,
+    AuthEntry, PersonAnswer, PersonAsk, PersonReason, ProviderName, Returned, SignInDestinations,
+    Wait, codes,
 };
 
 const CLIENT_SECRET: &str = "PLANTED-client-secret-01";
@@ -125,14 +126,23 @@ fn grants(service: &Shared) -> Vec<String> {
         .collect()
 }
 
+/// `entry`, as a published version's plan gives it, whose target declares
+/// surfaces at `addresses`: where its sign-in may send (decision 0248).
+fn declared(mut entry: AuthEntry, addresses: &[&str]) -> AuthEntry {
+    entry.surfaces.destinations =
+        SignInDestinations::new(addresses.iter().map(|address| (*address).to_owned()));
+    entry.published()
+}
+
 fn client_credentials(address: &str) -> Arc<AuthEntry> {
-    Arc::new(
+    Arc::new(declared(
         AuthEntry::new(ProviderName::new("oauth_client_credentials").unwrap())
             .setting("token_endpoint", &format!("{address}/token"))
             .setting("client_id", "client-1")
             .setting("scope", "records.read records.write")
             .credential("client_secret", reference("client/secret")),
-    )
+        &[address],
+    ))
 }
 
 #[test]
@@ -249,7 +259,7 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
 
     logged(&world.telemetry, async {
         let address = serve(&service).await;
-        let entry = Arc::new(
+        let entry = Arc::new(declared(
             AuthEntry::new(ProviderName::new("oauth_authorization_code").unwrap())
                 .setting(
                     "authorization_endpoint",
@@ -258,7 +268,8 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
                 .setting("token_endpoint", &format!("{address}/token"))
                 .setting("client_id", "client-1")
                 .setting("scope", "records.read"),
-        );
+            &["https://id.example.test", &address],
+        ));
 
         // The person: opens the link in their own browser, agrees, and the
         // browser comes back with the code. Nothing here drives a browser;
@@ -432,12 +443,13 @@ fn an_https_endpoint_is_named_when_tls_is_off_and_tried_when_it_is_on() {
                 drop(socket);
             }
         });
-        let entry = Arc::new(
+        let entry = Arc::new(declared(
             AuthEntry::new(ProviderName::new("oauth_client_credentials").unwrap())
                 .setting("token_endpoint", &format!("https://localhost:{port}/token"))
                 .setting("client_id", "client-1")
                 .credential("client_secret", reference("client/secret")),
-        );
+            &[&format!("https://localhost:{port}")],
+        ));
         world
             .store_credential(&key, "client/secret", CLIENT_SECRET)
             .await;

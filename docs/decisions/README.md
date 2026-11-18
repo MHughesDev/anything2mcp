@@ -243,3 +243,6 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0240 | [One typed reading of where an address is, and one question of a plain link](0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md) | Accepted (design decision) |
 | 0243 | [The machine reads its own network state, and sends nothing](0243-the-machine-reads-its-own-network-state-and-sends-nothing.md) | Accepted (design decision) |
 | 0247 | [A watch keeps only digests, and its due times come from the store's clock](0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md) | Accepted (design decision) |
+| 0241 | [Protected settings loosen only from an administrator's file, and every key says whether it is built](0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) | Accepted (design decision) |
+| 0244 | [The desktop pack reads macOS applications, and every act proves the record again](0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md) | Accepted (design decision) |
+| 0246 | [The file pack reads folders, settings files, and growing files, and writes the first two](0246-the-file-pack-reads-folders-settings-files-and-growing-files.md) | Accepted (design decision) |

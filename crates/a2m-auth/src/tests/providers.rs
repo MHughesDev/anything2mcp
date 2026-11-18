@@ -85,7 +85,7 @@ fn entry_of(case: &Case) -> AuthEntry {
     for (role, _) in case.stored {
         entry = entry.credential(role, reference(&format!("{}/{role}", case.provider)));
     }
-    entry
+    entry.published()
 }
 
 #[test]

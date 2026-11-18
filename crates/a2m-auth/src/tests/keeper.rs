@@ -450,7 +450,7 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
     let world = World::new(STORED_HELD).await;
     let entry = Arc::new(AuthEntry {
         attempt_limit: 2,
-        ..AuthEntry::new(ProviderName::new("fake").unwrap())
+        ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
     });
     let lease = world
         .keeper
@@ -602,7 +602,7 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
     let unsaved = World::on_disk(PERSON_RENEWING).await;
     let pinned = Arc::new(AuthEntry {
         movable: false,
-        ..AuthEntry::new(ProviderName::new("fake").unwrap())
+        ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
     });
     unsaved
         .keeper
@@ -627,7 +627,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     let entry = Arc::new(AuthEntry {
         idle: Some(Duration::from_secs(1200)),
         absolute: Some(8 * HOUR),
-        ..AuthEntry::new(ProviderName::new("fake").unwrap())
+        ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
     });
     let settings = KeeperSettings::default();
     world
