@@ -157,3 +157,18 @@ Pull request 17 merged at a25985e with 18 checks passing. Three packages followe
 - Validation of the tree: 2,192 tests passed and the one that failed was the stand's race, since fixed and passing; 561 more as an account that is not root; lints clean on Linux and for Windows and macOS.
 
 Next: pull request 18's checks; then P3b, W2d, the PowerShell surface gap, and the answer lost on macOS.
+
+## Where the session stopped
+
+Pull request 18 merged at fe2ea49 with 40 checks passing, on its first run. The owner asked for a stop until Monday, so two packages that had only begun were stopped before either changed a file, and the hourly review was switched off. Nothing is half built.
+
+**For the next session, in this order:**
+
+1. **P3b, first slice:** discovery carries the origins it refused, origin only, and drafting proposes them as destinations for the person to accept. Without it, every page that loads from another origin stops until a person adds that origin by hand ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)). With it, tests for an acting tab's socket through an empty frame and for speculation rules.
+2. **Discovery from files on a Windows PowerShell surface.** It stops before any file is read unless the target already declares a command, so the reader of [decision 0290](../decisions/0290-the-command-packs-scout-reads-a-powershell-help-file-and-a-module-manifest-as-data.md) cannot be used by the person it was built for. Nothing on that path may start an interpreter; that is decision 0282, the owner's, and not decided.
+3. **The answer lost on macOS without TLS,** seen twice and not explained. The local-engine test prints the engine's state when it fails; read that first if it recurs.
+4. W2d, the scout's readers X1 and X5, P2, and the failures still made with a stated class in the crates decision 0289 lists.
+
+**What CI does now that it did not at the start:** three jobs wait for another before they start, to spread what is asked of the hosted macOS runners. A run takes 30 to 45 minutes. This session may not rerun a job.
+
+**Waiting for the owner:** decision 0282.
