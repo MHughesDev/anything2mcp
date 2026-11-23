@@ -1,6 +1,6 @@
 # 0304. A field build stands in for the person in a field test
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
+**Status:** Superseded by [0310](0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md) on 2026-11-23. Was: Accepted. Design decision.
 
 **Date:** 2026-11-23
 

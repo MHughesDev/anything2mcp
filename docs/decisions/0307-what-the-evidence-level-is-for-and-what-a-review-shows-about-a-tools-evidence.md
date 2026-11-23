@@ -1,6 +1,6 @@
 # 0307. What the evidence level is for, and what a review shows about a tool's evidence
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Decides packages V1 to V5, which [decision 0300](0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md) left open.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Decides packages V1 to V5, which [decision 0300](0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md) left open. Point 2 is superseded, and points 1 and 3 are corrected, by [decision 0311](0311-the-review-shows-from-the-ledger-what-this-engine-proved.md).
 
 **Date:** 2026-11-23
 

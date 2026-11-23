@@ -295,9 +295,11 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0301 | [Every part has a proper name, and a description is not a name](0301-every-part-has-a-proper-name.md) | Accepted (owner decision) |
 | 0302 | [A field named as a secret is never drafted as an input or an output](0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md) | Accepted (design decision) |
 | 0303 | [A declared sign-in is kept, and a read that waits for one is reported as waiting](0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md) | Accepted (design decision) |
-| 0304 | [A field build stands in for the person in a field test](0304-a-field-build-stands-in-for-the-person-in-a-field-test.md) | Accepted (design decision) |
+| 0304 | [A field build stands in for the person in a field test](0304-a-field-build-stands-in-for-the-person-in-a-field-test.md) | Superseded by 0310 |
 | 0305 | [An output that may be absent is declared so, in the plan and in the output schema](0305-an-output-that-may-be-absent-is-declared-so-in-the-plan-and-the-output-schema.md) | Accepted (design decision) |
 | 0306 | [The short path is `add`, then a trial, and only a built action is listed up front](0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md) | Accepted (design decision) |
-| 0307 | [What the evidence level is for, and what a review shows about a tool's evidence](0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md) | Accepted (design decision) |
+| 0307 | [What the evidence level is for, and what a review shows about a tool's evidence](0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md) | Accepted (design decision); point 2 superseded by 0311 |
 | 0308 | [The first capture records reads only, in the engine's own browser, and drafts to the holding folder](0308-the-first-capture-records-reads-only-in-the-engines-own-browser-and-drafts-to-the-holding-folder.md) | Accepted (design decision) |
 | 0309 | [Two disagreements between documents are settled: the two folders named `sources`, and what guard checks](0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md) | Accepted (design decision) |
+| 0310 | [The field harness runs in a closed network, and says in the ledger what it is](0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md) | Accepted (design decision) |
+| 0311 | [The review shows, from the ledger, what this engine proved](0311-the-review-shows-from-the-ledger-what-this-engine-proved.md) | Accepted (design decision) |
