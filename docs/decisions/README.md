@@ -305,3 +305,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0311 | [The review shows, from the ledger, what this engine proved](0311-the-review-shows-from-the-ledger-what-this-engine-proved.md) | Accepted (design decision) |
 | 0312 | [A kind of step is marked as never, as declared, or as able to change the system](0312-a-kind-of-step-is-marked-never-as-declared-or-can-change-the-system.md) | Accepted (design decision) |
 | 0313 | [The place of an address is derived from its scope and the machine's subnets](0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md) | Accepted (design decision) |
+| 0314 | [A provider package is found by reading its entry, and no package code runs](0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md) | Accepted (design decision) |

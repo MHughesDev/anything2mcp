@@ -26,6 +26,7 @@ mod action;
 pub mod codes;
 mod discover;
 mod driver;
+mod entry_point;
 mod manifest;
 mod name;
 mod pack;
@@ -49,6 +50,7 @@ pub use driver::{
     Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort,
     RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef, recorded_digest,
 };
+pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_python_providers};
 pub use manifest::{
     ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,
     Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,

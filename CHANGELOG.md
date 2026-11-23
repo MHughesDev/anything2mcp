@@ -10,6 +10,8 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- A provider package installed with pip is found through an entry in the group `anything2mcp.providers`, which is read as text: no package code is run or imported, and the search says where it looked. `anything2mcp.provider_site_folders()` names the folders. The engine does not list one yet.
+
 - A tool in an MCP tool list names its target and version in its `_meta`, under `anything2mcp/target` and `anything2mcp/version`.
 - The benchmark suite measures a read that gains a request binding through shadow: it runs about 12 times faster than through its interface binding, with identical results (`promotion_speedup`).
 

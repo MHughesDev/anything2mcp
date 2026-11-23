@@ -23,6 +23,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 - File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md), [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 - The supervisor: the only way anything starts a process, with the handshake, the framing, deadlines, and ownership-proven stopping.
 - The plug-in host, and the plug-in protocol's message list and version.
+- The search for provider packages: `find_python_providers` reads the `anything2mcp.providers` entries of the installed packages in the site folders it is given, and each package's manifest, as text; it starts no Python and imports nothing, states where it looked (`EntryPointSearch::statement`), and gives each package it finds to `RegistryBuilder::add_plugin`, which lists it as present and not enabled. `PythonProvider::launch_spec` gives the supervisor the package's program, by its declared digest ([decision 0314](../../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md)).
 - The availability check of section 203, which inspects the machine and starts nothing.
 
 It must never: decide whether something may happen; sign in or renew; write a ledger row; open the vault; retry a step; hold a list of modes or name a pack; let a caller's input choose a program, a file, or a destination.

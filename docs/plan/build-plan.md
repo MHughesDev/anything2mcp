@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 61 of 147 packages done, 41% (`python3 tools/progress.py`). **Done last:** N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 62 of 147 packages done, 42% (`python3 tools/progress.py`). **Done last:** F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -219,7 +219,8 @@ The packs' own packages: after each field test, close what it found, a stand cas
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
 | 1.7 | Budgets measured | Every budget of section 225 measured; `a2m-bench compare` run in CI | Numbers recorded; budgets confirmed or revised by record |
-| F3, F4 | Provider packages; sizes | Packs found through a Python entry point; the binary and wheel measured | The roadmap's proofs |
+| ~~F3~~ | ~~Provider packages~~, done | Packs found through a Python entry point | [0313](../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md) |
+| F4 | Sizes | The binary and wheel measured | The roadmap's proofs |
 | 5.4 | The clients | The Python and TypeScript clients on Windows | Each client calls a read |
 | 5.5 | The release pipeline | pip, crates.io, npm, standalone binaries, signed, with a bill of materials | A tagged pre-release installs by each route on three systems |
 | 5.6 | The exit test of Phase 5 | An agent takes a new system to published reads | The first tool in under ten minutes, measured |
