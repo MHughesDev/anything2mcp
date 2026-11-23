@@ -1,4 +1,4 @@
-# 0399. A description says who wrote it, a drafter reports what it left undrafted, and bindings are ordered by rank
+# 0337. A description says who wrote it, a drafter reports what it left undrafted, and bindings are ordered by rank
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Builds the compiler's side of roadmap packages V5, FT11, and 4.6; each package's proof still waits on `a2m-actions` or the provider registry, as the points say.
 
