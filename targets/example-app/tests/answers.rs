@@ -65,3 +65,62 @@ async fn each_hostile_answer_is_served_as_its_module_says() -> Outcome {
     assert_eq!(status, StatusCode::NOT_FOUND);
     Ok(())
 }
+
+/// Case 35: the shipment's optional `carrier` is answered as the control
+/// interface says, and the description lists it as not required and not
+/// nullable.
+#[tokio::test]
+async fn the_shipments_optional_carrier_is_answered_as_it_is_told_to() -> Outcome {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await?;
+    let address = app.url("/api/orders/A-100/shipment");
+    let answer = || async {
+        let response = app.http().get(&address).send().await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        response.json::<serde_json::Value>().await
+    };
+    let carrier = serde_json::json!({"name": "Example Freight", "tracking": "T-100"});
+    assert_eq!(
+        answer().await?,
+        serde_json::json!({"order_id": "A-100", "carrier": carrier})
+    );
+    app.set_carrier(CarrierAnswer::Null).await?;
+    assert_eq!(
+        answer().await?,
+        serde_json::json!({"order_id": "A-100", "carrier": null})
+    );
+    app.set_carrier(CarrierAnswer::Missing).await?;
+    assert_eq!(answer().await?, serde_json::json!({"order_id": "A-100"}));
+    app.set_carrier(CarrierAnswer::Text).await?;
+    assert_eq!(
+        answer().await?,
+        serde_json::json!({"order_id": "A-100", "carrier": "Example Freight"})
+    );
+    let missing = app
+        .http()
+        .get(app.url("/api/orders/Z-1/shipment"))
+        .send()
+        .await?;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let described: serde_json::Value = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let schema = &described["components"]["schemas"]["Shipment"];
+    assert_eq!(schema["required"], serde_json::json!(["order_id"]));
+    assert!(schema["properties"]["carrier"].get("nullable").is_none());
+
+    // A reset restores the object.
+    app.reset().await?;
+    assert_eq!(
+        answer().await?,
+        serde_json::json!({"order_id": "A-100", "carrier": carrier})
+    );
+    assert!(app.writes().await?.is_empty());
+    Ok(())
+}

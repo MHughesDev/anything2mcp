@@ -369,6 +369,24 @@ impl TestApp {
             .await
     }
 
+    /// Sets how a shipment's optional `carrier` is answered from now on
+    /// (case 35), until the next reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn set_carrier(
+        &self,
+        answer: crate::answers::CarrierAnswer,
+    ) -> Result<(), HarnessError> {
+        self.command(
+            self.http
+                .post(self.url("/__control/shipment"))
+                .json(&answer),
+        )
+        .await
+    }
+
     /// Exactly what is stored for an order's delivery details, if anything (case 33).
     ///
     /// # Errors

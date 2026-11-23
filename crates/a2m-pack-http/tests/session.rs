@@ -575,7 +575,7 @@ async fn discovery_observes_and_cannot_write() {
                 }
             }
             ("http_description", Ok(findings)) => {
-                assert_eq!(findings.len(), 8);
+                assert_eq!(findings.len(), 9);
                 for finding in findings {
                     assert_eq!(finding.level(), EvidenceLevel::Inferred);
                     assert_eq!(finding.source(), Source::PublishedDescription);
@@ -746,7 +746,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .filter(|(name, _)| name == "http_description")
         .flat_map(|(_, result)| result.unwrap())
         .collect();
-    assert_eq!(findings.len(), 8, "{findings:?}");
+    assert_eq!(findings.len(), 9, "{findings:?}");
 
     let folder = Folder::new("drafted-reads");
     let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
@@ -776,6 +776,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             "operations/api_stock_get.yaml",
             "operations/orders_delivery_get.yaml",
             "operations/orders_items_get.yaml",
+            "operations/orders_shipment_get.yaml",
             "operations/orders_totals_get.yaml",
         ]
     );
@@ -878,6 +879,97 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
     handle.release(prepared, false).await;
 
     // The application was read, and nothing in it was written.
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
+/// Case 35: the application's optional `carrier`, which its description
+/// lists as not required and does not call nullable. A read drafted from
+/// that description returns when the property is `null` and when it is
+/// missing, and stops as `response_schema_mismatch` when it is a text.
+#[tokio::test]
+async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optional_property() {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-optional");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    Drafter::new(set, &root).draft(&findings).unwrap();
+    // The property is written as possibly null, though the description
+    // never says `nullable`.
+    let endpoint =
+        std::fs::read_to_string(folder.path().join("endpoints").join("get_shipment.yaml")).unwrap();
+    assert!(endpoint.contains("nullable"), "{endpoint}");
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    let reading = Scene::over(
+        Folder::new("drafted-optional-run"),
+        common::registry(
+            &Folder::new("drafted-optional-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let inputs = Values::new().with("order_id", "A-100");
+    for answer in [
+        CarrierAnswer::Object,
+        CarrierAnswer::Null,
+        CarrierAnswer::Missing,
+    ] {
+        app.set_carrier(answer).await.unwrap();
+        let ran = reading
+            .read(
+                &handle,
+                &mut prepared,
+                "example_orders_shipment_get",
+                &inputs,
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("{answer:?}: {failure:?}"));
+        assert_eq!(
+            ran.values.get("order_id").and_then(Value::as_text),
+            Some("A-100"),
+            "{answer:?}"
+        );
+    }
+    app.set_carrier(CarrierAnswer::Text).await.unwrap();
+    let failure = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_shipment_get",
+            &inputs,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    handle.release(prepared, false).await;
     assert!(app.writes().await.unwrap().is_empty());
 }
 

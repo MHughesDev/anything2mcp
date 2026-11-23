@@ -11,6 +11,10 @@
 //!   the same characters in it.
 //! - `GET /views/hostile/secret`: a binary label that carries
 //!   [`ECHOED_SECRET`], as a system that echoes a credential would.
+//! - `GET /api/orders/{order_id}/shipment` (case 35): a shipment whose optional
+//!   `carrier` object the control interface makes the application answer as
+//!   an object, as `null`, as missing, or as a text. Its description lists
+//!   the property as not required and does not mark it nullable.
 //! - `POST /views/search/orders?status=draft`: the orders of one status,
 //!   as JSON. It reads only, and stores nothing; it is the search a service
 //!   puts behind `POST`.
@@ -20,6 +24,7 @@ use axum::extract::{Path, RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::AppState;
@@ -33,6 +38,45 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/views/hostile/{name}", get(hostile))
         .route("/views/search/orders", post(search))
+        .route("/api/orders/{order_id}/shipment", get(shipment))
+}
+
+/// How the shipment's `carrier` is answered; set through
+/// `POST /__control/shipment` with `{"answer": "null"}`, and `object`
+/// again at every reset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "answer", rename_all = "snake_case")]
+pub enum CarrierAnswer {
+    /// An object with a name and a tracking code.
+    #[default]
+    Object,
+    /// The property is there and is `null`.
+    Null,
+    /// The property is left out.
+    Missing,
+    /// The property is a text, which is not what the description says.
+    Text,
+}
+
+async fn shipment(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+    let inner = state.lock().await;
+    if inner.store.order(&order_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "not_found", "message": "No such order."})),
+        )
+            .into_response();
+    }
+    let mut answer = json!({"order_id": order_id});
+    match inner.carrier {
+        CarrierAnswer::Object => {
+            answer["carrier"] = json!({"name": "Example Freight", "tracking": "T-100"});
+        }
+        CarrierAnswer::Null => answer["carrier"] = json!(null),
+        CarrierAnswer::Missing => {}
+        CarrierAnswer::Text => answer["carrier"] = json!("Example Freight"),
+    }
+    axum::Json(answer).into_response()
 }
 
 /// The audit's document: a namespace address of 4 MB, then 99,999 empty

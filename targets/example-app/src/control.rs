@@ -35,6 +35,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/writes", get(writes))
         .route("/faults", get(faults).post(add_fault).delete(clear_faults))
         .route("/settings", post(settings))
+        .route("/shipment", post(set_carrier))
         .route("/orders/{order_id}/delivery", get(stored_delivery))
         .route("/auth", get(auth_report))
         .route("/auth/settings", post(auth_settings))
@@ -146,5 +147,15 @@ async fn clear_faults(State(state): State<AppState>) -> StatusCode {
 
 async fn settings(State(state): State<AppState>, Json(settings): Json<Settings>) -> StatusCode {
     state.lock().await.slow_ms = settings.slow_ms;
+    StatusCode::NO_CONTENT
+}
+
+/// Case 35: how the shipment's optional `carrier` is answered from now on,
+/// until the next reset.
+async fn set_carrier(
+    State(state): State<AppState>,
+    Json(answer): Json<crate::answers::CarrierAnswer>,
+) -> StatusCode {
+    state.lock().await.carrier = answer;
     StatusCode::NO_CONTENT
 }
