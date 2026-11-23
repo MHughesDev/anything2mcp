@@ -31,7 +31,22 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 | Reading a password field's value | Rule four |
 | Attaching to a process a person did not name | Consent ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
 | Acting while a person is using the same desktop session, unless the target says it may | A run and a person typing into one desktop cannot be told apart. It is `busy`, `session_in_use` |
+| Starting an application by sending it a message addressed by name | The system starts a closed application when sent a message by name, in several of its scripting routes ([research note 33](../../research/33-what-a-program-can-reach-in-another.md), partly from memory). The pack attaches to a running process it has proved, and starts a program only through the supervisor, by path and digest |
 | An application built on a browser runtime | It is a web surface, served by `ui` ([section 301](301-the-web-pack.md)). The browser engine is the web pack's, and this pack cannot depend on it |
+
+## What the person must grant, by system
+
+What each system asks of the person before the pack may read a window, from [research note 33](../../research/33-what-a-program-can-reach-in-another.md). Only what the note read in a source is stated as fact; the rest is marked.
+
+| System | The person grants | A missing grant ends as |
+| --- | --- | --- |
+| Windows | Nothing, for a window at the same integrity level as the engine. A window at a higher level is refused; the pack does not use the route the system reserves for signed assistive programs installed in a protected place, which would get past the system's protection (rule 5) | `target_elevated` |
+| macOS | A listing under Accessibility in System Settings, Privacy and Security, for the program the system judges, which is the program that started the engine when it was started by another (note 26). The pack asks the system for the answer without raising its prompt, and never raises the prompt during a run | `accessibility_off`, whose message says where in System Settings to allow it (decision 0244) |
+| Linux | Nothing. Some toolkits publish only when the session's accessibility switch is on; the switch is the person's, and the pack never changes it | `accessibility_off` |
+
+A scripting route is not part of this pack. Where the system asks the person for one, it asks per pair of programs on macOS (kept, and a refusal kept), and not at all on Windows or on the Linux session bus; a failure code, `automation_not_granted`, is reserved in the pack's design for a missing grant on such a route, and is not in the table of codes until something produces it.
+
+Open points of this section, which note 33 marks as not read: the text and behaviour of macOS's Automation prompt; the entitlement a hardened program needs to send Apple events; that an Apple event sent by name starts a closed application; whether `AXUIElementIsAttributeSettable` exists as described; the wording of the D-Bus specification on access values and bus policy; the current state of the agent features Microsoft is adding to Windows.
 
 ## The mode
 
@@ -77,6 +92,8 @@ Each verb lowers into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle
 - **Waits are events or nothing.** Each condition is ended by an accessibility event. Where an operating system cannot signal a condition, the condition is refused for that system by a lint rule, not polled. Whether enough conditions remain is a question for the spike.
 - **Every failure says whether the act was sent.** An `invoke` of a committing action that was sent, and whose confirmation did not arrive, or after which the application exited, is `possible_commit`.
 - A control that exposes no value cannot be written except as `irreversible`.
+- **Before every set, the driver reads whether the control is enabled and whether it is settable** (offers editable text and is not read-only), and stops before sending anything, as `field_read_only`, if it is not. Built on Linux and proven against the stand with a disabled field ([decision 0399](../../decisions/0399-the-desktop-pack-states-that-it-sends-to-no-address-and-checks-that-a-field-is-enabled-before-it-sets-it.md)). On Windows the read is of the value pattern's enabled and read-only properties. On macOS the driver first asks the interface whether the attribute is settable; that function is from memory, and is to be checked against Apple's page when the write slice is built.
+- **What the review says.** A binding states that it starts no program, sets no variable, and sends to no address; the pack attaches to a program that is already running, and what the program does after an action is its own (decision 0399).
 
 The backend is private: one implementation per operating system, or one over a library that covers all three. It finds exactly one element or fails, reads, sets, invokes, reports events (focus, structure, value, window opened), and builds the tree for snapshots.
 

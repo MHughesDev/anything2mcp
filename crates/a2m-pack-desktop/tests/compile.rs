@@ -266,3 +266,44 @@ fn a_property_is_only_ever_read_and_each_refusal_is_by_name() {
         );
     }
 }
+
+#[test]
+fn every_tool_states_that_it_starts_nothing_and_sends_to_no_address() {
+    use a2m_files::{BindingStates, Reach};
+    let folder = Folder::new("states");
+    let registry = registry(folder.path(), None);
+    let compiled = compile_at(&registry, &fixture()).unwrap_or_else(|p| panic!("{}", shown(&p)));
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        let Reach::Stated { groups, .. } = &item.reach else {
+            panic!("`{}` does not state where it sends", item.tool);
+        };
+        assert!(groups.is_empty(), "{}", item.tool);
+        assert!(!item.bindings.is_empty());
+        for binding in &item.bindings {
+            let BindingStates::Stated { runs, environment } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            assert!(runs.is_empty() && environment.is_empty(), "{}", item.tool);
+        }
+    }
+}
+
+#[test]
+fn a_management_namespace_on_another_machine_is_not_stated() {
+    use a2m_files::Reach;
+    let folder = Folder::new("remote-namespace");
+    let registry = registry(folder.path(), None);
+    let root = folder.path().join("remote");
+    fixture_copy(&root, "target.yaml", |text| {
+        text.replace(
+            "    service: org.example.Desk\n",
+            "    service: org.example.Desk\n    management_namespace: '//other/root'\n",
+        )
+    });
+    let compiled = compile_at(&registry, &root).unwrap_or_else(|p| panic!("{}", shown(&p)));
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        assert!(matches!(item.reach, Reach::Partly { .. }), "{}", item.tool);
+    }
+}

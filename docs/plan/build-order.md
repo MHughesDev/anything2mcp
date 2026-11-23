@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 74 of 149 packages done, 49% (`python3 tools/progress.py`). **Done last:** P3b (decision 0335), 1.5 (an MCP client reads what a command reads), X3 (decision 0333), X2 (decision 0332), X1 (decision 0331), FT7b (decision 0315), V2 (decision 0311), V4 (decision 0307), 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 75 of 149 packages done, 50% (`python3 tools/progress.py`). **Done last:** P2 (decisions 0334 and 0336), P3b (decision 0335), 1.5 (an MCP client reads what a command reads), X3 (decision 0333), X2 (decision 0332), X1 (decision 0331), FT7b (decision 0315), V2 (decision 0311), V4 (decision 0307), 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -190,7 +190,7 @@ The others: take each roadmap row's "not shown" items, one test each.
 | H2, H3 | The file pack | Reads and writes, the rest | The roadmap's proofs |
 | J2, J3 | The stream pack | Reads and publishing, the rest | The roadmap's proofs |
 | 8.3 | The desktop pack | Writes on Windows and macOS | Case 28 passes on three systems |
-| P2 | What a tool starts, sets, and sends | The statement for the desktop, device, stream, and data packs | Each is shown on the publish page |
+| ~~P2~~ | ~~What a tool starts, sets, and sends~~ (done) | The statement for the desktop, device, stream, and data packs | Each is shown on the publish page |
 | W2d | Watches, the rest | Records compared by key; a removal reported | The roadmap's proof |
 | ~~N2b~~, N3 | The network | The place of an address; the reach a person names | The roadmap's proofs |
 | X1, X5 | What a program says of itself | The D-Bus reader; the plain facts of a binary | The roadmap's proofs |

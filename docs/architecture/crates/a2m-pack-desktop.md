@@ -168,6 +168,12 @@ As built it starts nothing and uses no supervisor: it reads the process table to
 | `policy` | `application_not_owned` | A program the surface states runs as another user, or on Windows in another session. Built for Windows (decision 0209); written for macOS (decision 0244) |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent. Built |
 
+**Reserved, not built.** `automation_not_granted` (class `busy`): a scripting route the person has not allowed, the sender and target named, with the setting to change (on macOS, System Settings, Privacy and Security, Automation). It stays out of the table of codes, and out of the manifest, until a route that produces it is built ([decision 0399](../../decisions/0399-the-desktop-pack-states-that-it-sends-to-no-address-and-checks-that-a-field-is-enabled-before-it-sets-it.md); research note 33).
+
+**The statement.** `Lowering::statement` answers `Stated` with no program started, no variable set, and `Sends::Only { surface: false, addresses: [] }`; it answers `NotStated` where the surface's `management_namespace` begins with two separators, which names another machine. A compile test of the example target reads the review. A driver that dials any address withdraws the statement in the same change.
+
+**Before a set.** The Linux back end's `settable` reads the element's interfaces and its state: editable text offered, enabled, editable, and not read-only. Not enabled and read-only both stop as `field_read_only` with nothing sent; the message tells them apart.
+
 ## Invariants
 
 | Must always hold | Proven by |

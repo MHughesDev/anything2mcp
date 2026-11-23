@@ -24,8 +24,8 @@ use a2m_core::{
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
-    Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, StepChanges, StepCommits,
+    BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
+    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes::{self, shown};
@@ -724,6 +724,16 @@ impl<'a> Lower<'a, '_> {
     }
 }
 
+/// Whether a management namespace begins with two separators,
+/// `\\host\root` or `//host/root`: another machine's.
+fn names_another_machine(namespace: &str) -> bool {
+    let mut chars = namespace.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('/' | '\\'), Some('/' | '\\'))
+    )
+}
+
 impl Lowering for DesktopLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
@@ -775,6 +785,43 @@ impl Lowering for DesktopLowering {
         } else {
             EffectClass::Write
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable: it
+    /// attaches to an application that is already running. The driver sends
+    /// nothing over a network: it asks the platform's own accessibility
+    /// interface (the session's accessibility bus, the window system, the
+    /// process table) on this machine, and the one other thing it reads, a
+    /// management class's definition, it asks of this machine's management
+    /// service. So it sends to no address. What the application does in
+    /// answer to an action is its own, and no request the engine sends is
+    /// addressed to it by a name or an address (decision 0399). The one
+    /// surface field that could name another machine, a management
+    /// namespace written `\\host\...` or `//host/...`, makes the statement
+    /// not stated.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> Statement {
+        let Some(surface) = cx.target().surface(lowered.surface.as_str()) else {
+            return Statement::NotStated;
+        };
+        if surface
+            .doc
+            .text("management_namespace")
+            .is_some_and(names_another_machine)
+        {
+            return Statement::NotStated;
+        }
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: false,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     fn binding_schema(&self) -> &JsonSchema {
