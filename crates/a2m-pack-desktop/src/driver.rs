@@ -79,7 +79,8 @@ struct Held {
     app: App,
     program: String,
     /// The name the surface says the application's service has on the
-    /// session bus.
+    /// session bus. Linux only: the bus is Linux's.
+    #[cfg(target_os = "linux")]
     service: Option<String>,
     sections: BTreeMap<usize, ScreenSection>,
     /// The window the last `goto` found.
@@ -1121,6 +1122,7 @@ impl Driver for DesktopDriver {
                 look,
                 app,
                 program,
+                #[cfg(target_os = "linux")]
                 service: fields.service.clone(),
                 sections,
                 window: None,
