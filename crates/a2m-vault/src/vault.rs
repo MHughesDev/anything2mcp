@@ -166,6 +166,34 @@ impl Vault {
         Ok(secret)
     }
 
+    /// The fewest bytes a secret a person chooses may have. A secret
+    /// shorter than this is not accepted, because masking it would mask
+    /// those characters wherever they appear in every answer and log, and
+    /// not masking it would let it out (decision 0399).
+    pub const SHORTEST_CHOSEN_SECRET: usize = Redactor::SHORT;
+
+    /// Registers a secret a person chose, such as a password or a key they
+    /// stored, before it is sealed. It is registered as [`Vault::register`]
+    /// registers one: masked for the life of the process, so a value that
+    /// is later replaced stays masked (decision 0399). `cx` names the item
+    /// it is for; the check is the same for every item.
+    ///
+    /// Call it before sealing, and seal only when it returns `Ok`. A secret
+    /// that was refused is registered nowhere.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`secret_too_short` when the secret has fewer than
+    /// [`Vault::SHORTEST_CHOSEN_SECRET`] bytes. The failure names no byte
+    /// of it.
+    pub fn register_chosen(&self, _cx: &SealContext, secret: &Secret) -> Result<(), Failure> {
+        if secret.expose().len() < Self::SHORTEST_CHOSEN_SECRET {
+            return Err(failure::secret_too_short(Self::SHORTEST_CHOSEN_SECRET));
+        }
+        self.redactor.register(secret);
+        Ok(())
+    }
+
     /// Registers a secret that reached the runtime some other way, such as a
     /// token a sign-in returned. The session keeper calls it before the
     /// secret goes anywhere else.

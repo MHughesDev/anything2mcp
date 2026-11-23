@@ -42,3 +42,29 @@ What the product showed when it was run against existing software that the proje
 | 11 | The published description declares a sign-in. Every drafted endpoint therefore takes the session's credential, and a read the system answers without one waits for a sign-in | The first field test has not signed in to anything. The next one must: a stored token, the session keeper, and a read through it | Roadmap packages 2.2 to 2.6, with a field test | Open Decided by [decision 0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md); open until roadmap FT9. With finding 10 closed, the reads of the whole description wait for a sign-in too |
 
 **What this field test does not show.** A write, a sign-in, a publish, a second operating system, or any kind of system but a request service. Findings 1 and 4 were got past by hand, with a conversion of the description and an edit of each draft, so that the later steps could run; the recipe keeps both as steps.
+
+## Field test 2: the same service, one verified write with its answer lost (2026-11-23)
+
+**The system.** The application of field test 1, started the same way, on the runner's closed network ([decision 0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md)), with the fault proxy between it and the product. Every command of the product ran as a thin client of the field harness, which the runner built into a build folder of its own for each run and deleted after it.
+
+**What was run.** The 23 steps of field test 1, then a write: a second target written by hand, with one surface, one declared test record (one invented issue), a sign-in by `http_basic` from a stored invented password, a read of an issue and a change of its title by `PATCH`, and an offline test of each against a fixture written by hand. `lint`, `secret set`, `test run`, `version publish` carried out by the runner's `person` step on the engine's own page, then `tool call` of the write with the proxy set to cut the answer to that `PATCH` once, the `person` step once with another hash and once with the change's own, and `run resume` twice. Linux only. Three runs, all 60 steps alike in each.
+
+**What it showed.**
+
+- The write rested at `needs_approval`, and nothing was sent to the system before the approval.
+- A prompt answered with another hash passed nothing: the page said so, the run still waited, and the system's database still held the old title.
+- With the change's short hash, the approval was recorded. The ledger's approval row and the audit log record its presence as `field_harness`, once.
+- The first `run resume` sent the write once, lost its answer, and stopped as `possible_commit`, `no_confirmation`, not retry-safe. The second reconciled by reading the record back, found the new title, and completed without sending again. The proxy's record shows one `PATCH`.
+- The system's own database holds the new title exactly once, and its own interface, asked directly, answers it.
+- The invented password appears in no step's output, report, or harness log.
+
+**Findings.** Got while the recipe was written, by hand; none is in the recipe.
+
+| # | What happened | Why it matters | Where it belongs | State |
+| --- | --- | --- | --- | --- |
+| 12 | A password of one character was stored and registered with the redactor, which then replaced that letter everywhere in every answer | A short secret ruins every answer and log; no secret of one character is a real one | `a2m-vault` or the redactor in `a2m-telemetry`: a lower bound on a secret's length, or a refusal by name | Fixed in `a2m-vault` by [decision 0338](../decisions/0338-a-secret-a-person-chooses-has-at-least-eight-bytes-and-a-replaced-one-stays-masked.md): a chosen secret under eight bytes is refused with `secret_too_short`, once `a2m-auth`'s `put` calls `Vault::register_chosen` |
+| 13 | After that secret was replaced, the offline test of the write still stopped as `input_invalid`, a value it would write holding a registered secret, until the engine was restarted; the cause was not looked into | A replaced value stays a secret for the engine's life, and refuses writes that no longer hold one | The redactor and `secret.set` | Closed as caused by finding 12: the old value was one character, so it matched everywhere. A replaced value of eight bytes or more stays masked for the life of the process, which is intended ([decision 0338](../decisions/0338-a-secret-a-person-chooses-has-at-least-eight-bytes-and-a-replaced-one-stays-masked.md)) |
+| 14 | `secret set` with a plain name stores `vault://<name>`, which a target's `auth.yaml` refuses as `credential_of_another_target`; a name of the form `<target>/service/<name>` is taken, though the command's help says only letters, digits, and underscores | A person follows the help and cannot store a credential a target can use | `a2m-actions`, the help of `secret.set` | Open |
+| 15 | A drafted write cannot be tried in the sandbox, so a first write needs an offline test with a fixture written by hand and a publish | Known: `draft.try` says a trial that writes needs the publish gates' test records, which are not built. The cost of the first write is a fixture by hand | Roadmap, the trial of a write on a declared test record | Open |
+
+**What this field test does not show.** A write the system cannot read back, a connection cut before the request, a kill of the engine between intent and act, a sign-in typed on the engine's own page, or a second operating system.

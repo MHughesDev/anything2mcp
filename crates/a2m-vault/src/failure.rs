@@ -7,7 +7,7 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 
 pub use crate::codes::{
     KEY_RECORD_CONFLICT, KEY_STORE_ENTRY_MISSING, KEY_STORE_UNREACHABLE, RANDOMNESS_UNAVAILABLE,
-    SEALED_FORMAT_UNSUPPORTED, SEALED_ITEM_MISMATCH, VAULT_PASSPHRASE_MISMATCH,
+    SEALED_FORMAT_UNSUPPORTED, SEALED_ITEM_MISMATCH, SECRET_TOO_SHORT, VAULT_PASSPHRASE_MISMATCH,
     VAULT_PASSPHRASE_MISSING, VAULT_PASSPHRASE_NOT_ENABLED, VAULT_PASSPHRASE_TOO_SHORT,
 };
 
@@ -29,6 +29,18 @@ pub(crate) fn entry_missing() -> Failure {
         KEY_STORE_ENTRY_MISSING,
         "The root key that protects this workspace's keys is no longer in the key store.",
         "Saved sessions and stored evidence sealed under it cannot be read. Sign in again; saved sessions must be created anew.",
+    )
+}
+
+/// A secret a person chose is too short to be masked safely.
+pub(crate) fn secret_too_short(least: usize) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        SECRET_TOO_SHORT,
+        format!(
+            "The secret is shorter than {least} bytes. A value that short would be masked wherever its characters appear, in every answer and log, and cannot be masked safely, so it is not stored."
+        ),
+        format!("Choose a secret of at least {least} bytes, then store it again."),
     )
 }
 

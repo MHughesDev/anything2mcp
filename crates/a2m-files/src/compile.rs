@@ -7,15 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_core::{
     AddressOverride, ApproveWrites, AuthPlan, AuthProviderName, AuthSetting, BindingPlan,
     BindingStatus, CanonicalJson, CaptureLevel, Checkpoint, CredentialRef, CredentialUse, Date,
-    Decimal, DecisionPoint, DeclaredProgram, Digest, DriftRisk, EffectClass, EncodedPlan,
-    Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf, FieldTypeIndex,
-    FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, LintCode, Millis,
-    Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload,
-    PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
-    PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex, SignInMode,
-    SourcePlan, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName,
-    SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan,
-    ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
+    Decimal, DecisionPoint, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
+    EncodedPlan, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf,
+    FieldTypeIndex, FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan,
+    LintCode, Millis, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT,
+    PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelinePlan, PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex,
+    SignInMode, SourcePlan, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind,
+    SurfaceName, SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations,
+    ToolIndex, ToolPlan, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -97,6 +97,8 @@ pub fn compile(
         auth: Vec::new(),
         operations: Vec::new(),
         op_plans: Vec::new(),
+        described_by: BTreeMap::new(),
+        binding_files: BTreeMap::new(),
         pipelines: Vec::new(),
         source_plans: BTreeMap::new(),
         tools: Vec::new(),
@@ -129,6 +131,10 @@ pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Di
     }
 }
 
+/// The most characters a tool's description may have (decision 0307,
+/// point 6).
+const MOST_DESCRIPTION_CHARACTERS: usize = 1024;
+
 struct PipelineInfo {
     plan: PipelinePlan,
     title: String,
@@ -150,6 +156,13 @@ struct Compiler<'a> {
     auth: Vec<AuthPlan>,
     operations: Vec<OpInfo>,
     op_plans: Vec<(OperationPlan, String, String)>,
+    /// Who wrote each tool's description, by tool name; a tool not here is
+    /// a builder's.
+    described_by: BTreeMap<String, DescriptionBy>,
+    /// For each operation, the place in its file of each binding of its
+    /// plan, in the plan's order: the two differ where the compiler ordered
+    /// the bindings by rank.
+    binding_files: BTreeMap<OperationName, Vec<usize>>,
     pipelines: Vec<PipelineInfo>,
     source_plans: BTreeMap<String, (SourcePlan, ValueType)>,
     tools: Vec<ToolPlan>,
@@ -2085,9 +2098,21 @@ impl<'a> Compiler<'a> {
                 plan.decision_points = decision_points;
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
+                self.note_description_by(doc, info.name.as_str());
                 self.op_plans.push((plan, title, description));
                 self.operations.push(info);
             }
+        }
+    }
+
+    /// Notes who wrote the description of the tool a document defines: the
+    /// document's `description_by`, a builder when it states none.
+    fn note_description_by(&mut self, doc: &Located<Doc>, tool: &str) {
+        if let Some(by) = doc
+            .text("description_by")
+            .and_then(|text| text.parse::<DescriptionBy>().ok())
+        {
+            self.described_by.insert(tool.to_owned(), by);
         }
     }
 
@@ -2214,6 +2239,8 @@ impl<'a> Compiler<'a> {
             (names::RECORD, record_type()),
         ]);
         let mut bindings = Vec::new();
+        // The place in the file of each binding of `bindings`, in step.
+        let mut file_places: Vec<usize> = Vec::new();
         // The outputs a lowering finds may be absent (decision 0305).
         let mut absent: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut review = OpReview::default();
@@ -2453,6 +2480,7 @@ impl<'a> Compiler<'a> {
             match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
                 Some(surface) => bindings.push({
                     review.bindings.push((mode.clone(), surface, statement));
+                    file_places.push(position);
                     BindingPlan {
                         mode,
                         verb,
@@ -2473,6 +2501,23 @@ impl<'a> Compiler<'a> {
         if !fine {
             return None;
         }
+        // The order of the bindings is the file's where the operation says
+        // `binding_order: listed`; otherwise each mode's rank in its
+        // provider's manifest, and the file's among bindings of one rank
+        // (decision 0399).
+        if doc.text("binding_order") != Some("listed") {
+            let mut order: Vec<usize> = (0..bindings.len()).collect();
+            order.sort_by_key(|&at| (set.mode_rank(&bindings[at].mode), file_places[at]));
+            if order.iter().enumerate().any(|(to, &from)| to != from) {
+                bindings = order.iter().map(|&at| bindings[at].clone()).collect();
+                review.bindings = order
+                    .iter()
+                    .map(|&at| review.bindings[at].clone())
+                    .collect();
+                file_places = order.iter().map(|&at| file_places[at]).collect();
+            }
+        }
+        self.binding_files.insert(info.name.clone(), file_places);
         self.reviews.insert(info.name.clone(), review);
         let key: Vec<InputIndex> = info
             .key
@@ -3240,6 +3285,7 @@ impl<'a> Compiler<'a> {
             if let Some(plan) = self.pipeline(doc, name) {
                 let title = doc.text("title").unwrap_or(plan.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
+                self.note_description_by(doc, plan.name.as_str());
                 self.pipelines.push(PipelineInfo {
                     plan,
                     title,
@@ -3849,13 +3895,26 @@ impl<'a> Compiler<'a> {
         at: &Place,
     ) -> Option<ToolPlan> {
         let length = description.trim().chars().count();
-        if !(20..=1024).contains(&length) {
+        if length > MOST_DESCRIPTION_CHARACTERS
+            || description
+                .trim()
+                .chars()
+                .any(|c| c.is_control() && c != '\n')
+        {
+            self.problems.push(Diagnostic::error(
+                kernel(codes::DESCRIPTION_UNBOUNDED),
+                Stage::Lint,
+                at,
+                format!("The description of `{name}` has {length} characters or a control character; a description is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters, with no control character but a line end."),
+                "Shorten the description and take out any control character but a line end; a client reads it as plain text.",
+            ));
+        } else if length < 20 {
             self.problems.push(
                 Diagnostic::error(
                     kernel(codes::DESCRIPTION_WEAK),
                     Stage::Lint,
                     at,
-                    format!("The description of `{name}` has {length} characters; a description has from 20 to 1024."),
+                    format!("The description of `{name}` has {length} characters; a description has at least 20."),
                     "Say what the tool does, when to prefer another tool, and its side effects and limits.",
                 )
                 .as_warning(),
@@ -3889,12 +3948,18 @@ impl<'a> Compiler<'a> {
             return None;
         };
         let module = self.module_of(&name);
+        let description_by = self
+            .described_by
+            .get(name.as_str())
+            .copied()
+            .unwrap_or_default();
         Some(ToolPlan {
             name,
             runs,
             module,
             title,
             description: description.trim().to_owned(),
+            description_by,
             input_schema,
             output_schema,
             annotations,
@@ -3931,12 +3996,18 @@ impl<'a> Compiler<'a> {
             .and_then(|position| position.as_int())
             .and_then(|position| usize::try_from(position).ok())
             .and_then(|position| position.checked_sub(1));
-        let bindings = &self.op_plans[operation.get()].0.bindings;
+        let plan = &self.op_plans[operation.get()].0;
+        let bindings = &plan.bindings;
+        // A test counts positions in the operation's file, whatever order
+        // the compiler put the bindings in; the plan's place is what it keeps.
+        let in_file = self.binding_files.get(&plan.name);
         let of_mode: Vec<usize> = bindings
             .iter()
             .enumerate()
             .filter(|(at, binding)| {
-                binding.mode.as_str() == mode && position.is_none_or(|position| position == *at)
+                let in_file = in_file.and_then(|places| places.get(*at)).copied();
+                binding.mode.as_str() == mode
+                    && position.is_none_or(|position| Some(position) == in_file.or(Some(*at)))
             })
             .map(|(at, _)| at)
             .collect();

@@ -87,7 +87,8 @@ kernel_codes! {
     TEST_BINDING_UNKNOWN = "test_binding_unknown": "A test that names the binding it tests names one binding of its operation, by mode and, where two share the mode, by position, and not a retired one.",
     TOOL_NAME_SCHEME = "tool_name_scheme": "A tool name starts with the target's name, then its module where the target has modules.",
     TOOL_NAMES_TOO_ALIKE = "tool_names_too_alike": "No two tools differ only by a suffix.",
-    DESCRIPTION_WEAK = "description_weak": "A description says what the tool does, within the length limits.",
+    DESCRIPTION_WEAK = "description_weak": "A description says what the tool does, in at least twenty characters.",
+    DESCRIPTION_UNBOUNDED = "description_unbounded": "A description is plain text of at most 1,024 characters, with no control character.",
     OUTPUT_NOT_MARKED = "output_not_marked": "Free text that came from the system is of a field type marked untrusted.",
     // Stage 8: describe.
     TOOL_INDISTINGUISHABLE = "tool_indistinguishable": "No two tools have the same description and the same inputs.",

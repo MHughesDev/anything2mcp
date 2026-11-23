@@ -78,13 +78,67 @@ impl DraftingRule for OperationSeen {
     }
 }
 
+/// A rule that drafts nothing: `quiet` says why and counts two properties
+/// left out for their names; anything else says nothing.
+struct Nothing;
+
+impl DraftingRule for Nothing {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("nothing_seen").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new("operation").unwrap()
+    }
+    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        if finding.found() == "quiet" {
+            cx.not_drafted("The read needs a parameter this rule does not draft.");
+            cx.left_out_as_secret(2);
+        }
+        Ok(Vec::new())
+    }
+}
+
 fn set() -> CompilerSet {
     let mut builder = CompilerSet::builder();
     register_stand(&mut builder).unwrap();
     builder
         .drafting_rule("seer", Arc::new(OperationSeen))
         .unwrap();
+    builder.drafting_rule("seer", Arc::new(Nothing)).unwrap();
     builder.build()
+}
+
+#[test]
+fn a_finding_a_rule_drafts_nothing_from_is_reported_with_its_reason_and_the_left_out_are_counted() {
+    let folder = scratch("nothing");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    let said = finding("nothing_seen", "quiet");
+    let silent = finding("nothing_seen", "silent");
+    let drafted = finding("operation_seen", "read");
+    let report = Drafter::new(&set, &root)
+        .draft(&[said.clone(), silent.clone(), drafted])
+        .unwrap();
+    assert_eq!(report.not_drafted.len(), 2, "{report:?}");
+    assert_eq!(report.not_drafted[0].finding, said.id());
+    assert_eq!(report.not_drafted[0].pack, "seer");
+    assert_eq!(
+        report.not_drafted[0].reason,
+        "The read needs a parameter this rule does not draft."
+    );
+    // A rule that says nothing is listed with no reason, and counts none.
+    assert_eq!(report.not_drafted[1].finding, silent.id());
+    assert_eq!(report.not_drafted[1].reason, "");
+    assert_eq!(report.left_out_as_secret, 2);
+    // A finding no rule reads is not here.
+    assert!(report.not_covered.is_empty());
+    // The same call again reports the same, and counts afresh.
+    let again = Drafter::new(&set, &root)
+        .draft(&[said.clone(), silent])
+        .unwrap();
+    assert_eq!(again.left_out_as_secret, 2);
+    assert_eq!(again.not_drafted.len(), 2);
+    std::fs::remove_dir_all(&folder).unwrap();
 }
 
 #[test]

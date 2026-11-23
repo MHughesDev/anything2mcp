@@ -1010,6 +1010,34 @@ async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
             .any(|path| path.as_str() == "operations/orders_pickup_get.yaml"),
         "{report:?}"
     );
+    // The read that requires an `api_key` is in the report, with that
+    // reason (roadmap package FT11), and the report counts the one
+    // property left out of the hand-off for its name.
+    let secret_reads: Vec<_> = report
+        .not_drafted
+        .iter()
+        .filter(|left| left.reason.contains("whose name is a secret's"))
+        .collect();
+    assert_eq!(secret_reads.len(), 1, "{:?}", report.not_drafted);
+    assert_eq!(secret_reads[0].pack, "http");
+    assert!(
+        findings
+            .iter()
+            .find(|finding| finding.id() == secret_reads[0].finding)
+            .is_some_and(|finding| finding.found().contains("/pickup")),
+        "{:?}",
+        report.not_drafted
+    );
+    assert_eq!(report.left_out_as_secret, 1, "{report:?}");
+    // No reason carries a value of the system or the secret's own name.
+    assert!(
+        report
+            .not_drafted
+            .iter()
+            .all(|left| !left.reason.contains("api_key") && !left.reason.contains(HANDOFF_SECRET)),
+        "{:?}",
+        report.not_drafted
+    );
     let operation =
         std::fs::read_to_string(folder.path().join("operations/orders_handoff_get.yaml")).unwrap();
     assert!(!operation.contains("client_secret:"), "{operation}");

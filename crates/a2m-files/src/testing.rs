@@ -256,6 +256,7 @@ impl FileKind for CallKind {
 }
 
 struct StandLowering {
+    mode: Mode,
     schema: JsonSchema,
     verbs: Vec<Verb>,
     reads: Vec<(FileKindName, SurfaceKind)>,
@@ -370,7 +371,7 @@ impl StandLowering {
 
 impl Lowering for StandLowering {
     fn mode(&self) -> Mode {
-        mode()
+        self.mode.clone()
     }
 
     fn verbs(&self) -> &[Verb] {
@@ -651,7 +652,15 @@ pub fn surface_kind_spec_for(kind: SurfaceKind) -> SurfaceKindSpec {
 /// The pack's lowering of the mode `stand`, for the verbs of [`verbs`].
 #[must_use]
 pub fn lowering() -> Arc<dyn Lowering> {
+    lowering_as(mode())
+}
+
+/// The same lowering for a mode of another name, so that a test can have
+/// two modes over the pack's one surface, each with a rank of its own.
+#[must_use]
+pub fn lowering_as(mode: Mode) -> Arc<dyn Lowering> {
     Arc::new(StandLowering {
+        mode,
         schema: JsonSchema::object()
             .required("call", JsonSchema::name())
             .optional("args", JsonSchema::map_of(JsonSchema::expression()))

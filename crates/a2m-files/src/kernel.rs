@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use a2m_core::{
-    ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DriftRisk, EffectClass,
-    EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity, SignInMode,
-    TestKind, WhitespaceRule,
+    ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DescriptionBy, DriftRisk,
+    EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity,
+    SignInMode, TestKind, WhitespaceRule,
 };
 
 use crate::schema::JsonSchema;
@@ -77,6 +77,11 @@ pub const SURFACE_KEYS: &[&str] = &["kind", "same_session_as", "rate", "stands"]
 
 /// The keys of a binding the kernel owns; the rest are its mode's.
 pub const BINDING_KEYS: &[&str] = &["mode", "verb", "status", "precondition"];
+
+/// The orders an operation may state for its bindings (decision 0399):
+/// `listed` keeps the order of the file; stating none is by each mode's
+/// rank in its provider's manifest.
+pub const BINDING_ORDERS: &[&str] = &["listed"];
 
 /// The name a success check reads: every record of the run was verified.
 pub const ALL_RECORDS_VERIFIED: &str = "all_records_verified";
@@ -261,6 +266,8 @@ fn operation() -> JsonSchema {
             JsonSchema::non_empty_list(JsonSchema::map_of(JsonSchema::any())),
         )
         .required("description", JsonSchema::text())
+        .optional("description_by", JsonSchema::words(DescriptionBy::NAMES))
+        .optional("binding_order", JsonSchema::words(BINDING_ORDERS))
         .optional(
             "examples",
             JsonSchema::list(JsonSchema::map_of(JsonSchema::scalar())),
@@ -295,6 +302,7 @@ fn pipeline() -> JsonSchema {
         .required("pipeline", JsonSchema::name())
         .optional("title", JsonSchema::text())
         .required("description", JsonSchema::text())
+        .optional("description_by", JsonSchema::words(DescriptionBy::NAMES))
         .optional("effect", JsonSchema::words(EffectClass::NAMES))
         .optional("inputs", inputs())
         .optional(
