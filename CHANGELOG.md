@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- A secret a person chooses must have at least eight bytes: a shorter one is refused with `secret_too_short`, which says why, instead of being masked wherever its characters appear. A stored secret that is replaced stops being masked as soon as the new one is set, and not only after the engine restarts.
 - The publish page now states, for the desktop pack, that a tool attaches to a running program, starts nothing, sets nothing, and sends to no address (it says it does not state this where a surface names another machine's management namespace). A desktop write also stops before sending anything into a field the application shows disabled.
 - The publish page now states, for the device, stream, and data packs, that a tool starts no program and sets no variable, and where it sends: to its surface's address and no other, or to no address for a store in a local file ([decision 0334](docs/decisions/0334-the-device-stream-and-data-packs-state-where-their-tools-send.md)). The desktop pack still states nothing.
 - The store takes its own lock on its data folder (`store.lock`) and refuses a second open of it by name, `store_unavailable`, even if the engine lock were bypassed; a closed engine lets the lock go.

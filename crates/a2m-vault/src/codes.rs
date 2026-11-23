@@ -39,6 +39,9 @@ a2m_core::failure_codes! {
     VAULT_PASSPHRASE_MISSING = Input, "vault_passphrase_missing",
         meaning "The passphrase route is chosen and no passphrase was given.",
         next "Set the environment variable the message names to the passphrase, then run the command again.";
+    SECRET_TOO_SHORT = Input, "secret_too_short",
+        meaning "A secret a person chose is shorter than 8 bytes, too short to be masked safely, so it is not stored or registered.",
+        next "Choose a secret of at least 8 bytes, then store it again.";
     KEY_RECORD_CONFLICT = Busy, "key_record_conflict",
         meaning "A key record already exists, or changed before it could be replaced.",
         next "Make the call again; it reads the record that was written first.",

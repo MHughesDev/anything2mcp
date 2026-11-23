@@ -314,6 +314,7 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0334 | [The device, stream, and data packs state where their tools send](0334-the-device-stream-and-data-packs-state-where-their-tools-send.md) | Accepted (design decision) |
 | 0336 | [The desktop pack states that it sends to no address, and checks that a field is enabled before it sets it](0336-the-desktop-pack-states-that-it-sends-to-no-address-and-checks-that-a-field-is-enabled-before-it-sets-it.md) | Accepted (design decision) |
 | 0337 | [A description says who wrote it, a drafter reports what it left undrafted, and bindings are ordered by rank](0337-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md) | Accepted (design decision) |
+| 0399 | [A secret a person chooses has at least eight bytes, and a replaced one is released at once](0399-a-secret-a-person-chooses-has-at-least-eight-bytes-and-a-replaced-one-is-released-at-once.md) | Accepted (design decision) |
 | 0315 | [Every declared output is in every result, on every path](0315-every-declared-output-is-in-every-result-on-every-path.md) | Accepted (design decision) |
 | 0329 | [The compiled file the engine runs is the compiled target](0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md) | Accepted (owner decision) |
 | 0318 | [A network is recognized by its gateway and subnet, and a forged one can recall a reach](0318-a-network-is-recognized-by-its-gateway-and-subnet-and-a-forged-one-can-recall-a-reach.md) | Accepted (design decision) |

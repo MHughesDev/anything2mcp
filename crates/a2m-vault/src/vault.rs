@@ -162,8 +162,42 @@ impl Vault {
             .into_text()
             .ok_or_else(failure::mismatch)?;
         let secret = Secret::new(text);
-        self.redactor.register(&secret);
+        self.redactor.register_in(&slot_of(cx), &secret);
         Ok(secret)
+    }
+
+    /// The fewest bytes a secret a person chooses may have. A secret
+    /// shorter than this is not accepted, because masking it would mask
+    /// those characters wherever they appear in every answer and log, and
+    /// not masking it would let it out (decision 0399).
+    pub const SHORTEST_CHOSEN_SECRET: usize = Redactor::SHORT;
+
+    /// Registers a secret a person chose, such as a password or a key they
+    /// stored, before it is sealed. It is registered in the slot `cx`
+    /// names, the slot [`Vault::open_secret`] uses for the same item, so a
+    /// value that replaces another in the same item releases the old value
+    /// at once: the old one is no longer masked, and the new one is.
+    ///
+    /// Call it before sealing, and seal only when it returns `Ok`. A secret
+    /// that was refused is registered nowhere.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`secret_too_short` when the secret has fewer than
+    /// [`Vault::SHORTEST_CHOSEN_SECRET`] bytes. The failure names no byte
+    /// of it.
+    pub fn register_chosen(&self, cx: &SealContext, secret: &Secret) -> Result<(), Failure> {
+        if secret.expose().len() < Self::SHORTEST_CHOSEN_SECRET {
+            return Err(failure::secret_too_short(Self::SHORTEST_CHOSEN_SECRET));
+        }
+        self.redactor.register_in(&slot_of(cx), secret);
+        Ok(())
+    }
+
+    /// Lets go of the value registered for the item `cx` names, as when the
+    /// stored secret was deleted. Nothing happens when none is registered.
+    pub fn release_chosen(&self, cx: &SealContext) {
+        self.redactor.release(&slot_of(cx));
     }
 
     /// Registers a secret that reached the runtime some other way, such as a
@@ -444,4 +478,10 @@ fn owner_bound_to(key: KeyRef, above: KeyRef) -> BoundTo {
         .number("generation", key.generation.get())
         .field("wrapped_by", above.id.as_bytes())
         .number("wrapped_by_generation", above.generation.get())
+}
+
+/// The redactor slot an item's secret is registered in. It holds names, and
+/// no secret.
+fn slot_of(cx: &SealContext) -> String {
+    format!("{cx:?}")
 }

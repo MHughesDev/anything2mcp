@@ -17,7 +17,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -57,19 +57,80 @@ pub struct Redactor {
 
 #[derive(Default)]
 struct State {
-    /// Every form that is searched for, so that a form is searched for once
-    /// and registering a secret again costs a lookup: a secret is registered
-    /// when the form that is the secret itself is here. The set shares the
-    /// forms with `patterns`, in the same wiped memory. No digest of a
-    /// secret is kept: a digest of a short secret can be searched, and
-    /// would outlive the secret in memory that is never wiped.
-    seen: BTreeSet<Arc<Pattern>>,
-    registered: usize,
-    short: usize,
+    /// Every form that is searched for, with how many registered secrets
+    /// hold it, so that a form is searched for once, registering a secret
+    /// again costs a lookup, and a form two secrets share stays when one of
+    /// them is released. The forms are shared with `patterns` and `owners`,
+    /// in the same wiped memory. No digest of a secret is kept: a digest of
+    /// a short secret can be searched, and would outlive the secret in
+    /// memory that is never wiped.
+    forms: BTreeMap<Arc<Pattern>, usize>,
+    /// Each registered secret, by the form that is the secret itself.
+    owners: BTreeMap<Arc<Pattern>, Owner>,
+    /// The secret each named slot holds. A slot holds one value at a time;
+    /// registering another in it releases the first.
+    slots: BTreeMap<String, Arc<Pattern>>,
     patterns: Vec<Arc<Pattern>>,
     /// Built from `patterns` by the first search after a registration, so
     /// that registering many secrets at once builds it once.
     matcher: Option<Arc<Matcher>>,
+}
+
+/// One registered secret.
+struct Owner {
+    /// Every form of it that is searched for, itself first.
+    forms: Vec<Arc<Pattern>>,
+    /// Registered with no slot: it stays for the life of the process.
+    permanent: bool,
+    /// How many slots hold it.
+    slots: usize,
+}
+
+impl State {
+    /// Counts one more holder of a form, and searches for it from now on
+    /// when it is new.
+    fn hold(&mut self, form: Pattern) -> Arc<Pattern> {
+        let form = Arc::new(form);
+        let count = self.forms.entry(Arc::clone(&form)).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            self.patterns.push(Arc::clone(&form));
+            self.matcher = None;
+        }
+        form
+    }
+
+    /// Drops a secret and every form no other secret holds.
+    fn drop_owner(&mut self, itself: &Pattern) {
+        let Some(owner) = self.owners.remove(itself) else {
+            return;
+        };
+        for form in owner.forms {
+            let Some(count) = self.forms.get_mut(&form) else {
+                continue;
+            };
+            *count -= 1;
+            if *count == 0 {
+                self.forms.remove(&form);
+                self.patterns.retain(|held| **held != *form);
+                self.matcher = None;
+            }
+        }
+    }
+
+    /// Lets a slot go of what it holds.
+    fn release(&mut self, slot: &str) {
+        let Some(itself) = self.slots.remove(slot) else {
+            return;
+        };
+        let gone = self.owners.get_mut(&*itself).is_some_and(|owner| {
+            owner.slots = owner.slots.saturating_sub(1);
+            !owner.permanent && owner.slots == 0
+        });
+        if gone {
+            self.drop_owner(&itself);
+        }
+    }
 }
 
 /// The state of the redactor's registered set.
@@ -114,7 +175,9 @@ impl Redactor {
     /// Every secret that is not empty is registered, however short: a short
     /// secret may then mask unrelated text, which is the safer error. An
     /// empty secret has nothing to mask and is ignored. Registering a secret
-    /// again changes nothing.
+    /// again changes nothing. A secret registered this way is masked for
+    /// the life of the process; [`Redactor::register_in`] is for one that a
+    /// person may replace.
     ///
     /// A secret written only in hexadecimal digits, with or without hyphens
     /// or colons between them, is matched in any letter case, because
@@ -122,7 +185,7 @@ impl Redactor {
     /// it is written; [`Redactor::register_folded`] is for one whose form
     /// is known to be case-insensitive.
     pub fn register(&self, secret: &Secret) {
-        self.add(secret, false);
+        self.add(secret, false, None);
     }
 
     /// Registers a secret whose form is case-insensitive, such as a
@@ -132,10 +195,27 @@ impl Redactor {
     /// written is matched in another case, not its encoded forms, and only
     /// the letters of ASCII are folded.
     pub fn register_folded(&self, secret: &Secret) {
-        self.add(secret, true);
+        self.add(secret, true, None);
     }
 
-    fn add(&self, secret: &Secret, folded: bool) {
+    /// Registers a secret in a named slot, such as the stored credential a
+    /// person set under one name. It is masked as [`Redactor::register`]
+    /// masks it. When the slot held another value, that value is released
+    /// at once: it is no longer masked, and no longer counts as a secret in
+    /// [`Redactor::contains_secret`], unless something else registered it
+    /// as well. A value registered with no slot is never released.
+    pub fn register_in(&self, slot: &str, secret: &Secret) {
+        self.add(secret, false, Some(slot));
+    }
+
+    /// Lets go of what a slot holds, as when the secret in it was deleted.
+    /// A slot that holds nothing is left as it is.
+    pub fn release(&self, slot: &str) {
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        state.release(slot);
+    }
+
+    fn add(&self, secret: &Secret, folded: bool, slot: Option<&str>) {
         let value = secret.expose().as_bytes();
         if value.is_empty() {
             return;
@@ -143,30 +223,66 @@ impl Redactor {
         let itself = Pattern::new(Kind::Itself, value.to_vec());
         let fold = (folded || hexadecimal(value))
             .then(|| Pattern::new(Kind::Folded, value.to_ascii_lowercase()));
-        {
+        if slot.is_none() {
             let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
-            let known = state.seen.contains(&itself)
-                && fold.as_ref().is_none_or(|fold| state.seen.contains(fold));
+            let known = state.owners.get(&itself).is_some_and(|owner| {
+                owner.permanent
+                    && fold
+                        .as_ref()
+                        .is_none_or(|fold| state.forms.contains_key(fold))
+            });
             if known {
                 return;
             }
         }
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
-        let mut new = fold.into_iter().collect::<Vec<_>>();
-        if !state.seen.contains(&itself) {
-            state.registered += 1;
-            if value.len() < Self::SHORT {
-                state.short += 1;
+        if !state.owners.contains_key(&itself) {
+            let mut forms = vec![state.hold(Pattern::new(Kind::Itself, value.to_vec()))];
+            for form in encoded_forms(value) {
+                let form = state.hold(form);
+                forms.push(form);
             }
-            new.push(itself);
-            new.extend(encoded_forms(value));
+            let key = Arc::clone(&forms[0]);
+            state.owners.insert(
+                key,
+                Owner {
+                    forms,
+                    permanent: false,
+                    slots: 0,
+                },
+            );
         }
-        for form in new {
-            let form = Arc::new(form);
-            // A form of this secret may equal a form registered before.
-            if state.seen.insert(Arc::clone(&form)) {
-                state.patterns.push(form);
-                state.matcher = None;
+        if let Some(fold) = fold {
+            let held = state
+                .owners
+                .get(&itself)
+                .is_some_and(|owner| owner.forms.iter().any(|form| **form == fold));
+            if !held {
+                let form = state.hold(fold);
+                if let Some(owner) = state.owners.get_mut(&itself) {
+                    owner.forms.push(form);
+                }
+            }
+        }
+        match slot {
+            None => {
+                if let Some(owner) = state.owners.get_mut(&itself) {
+                    owner.permanent = true;
+                }
+            }
+            Some(slot) => {
+                if state.slots.get(slot).is_some_and(|held| **held == itself) {
+                    return;
+                }
+                state.release(slot);
+                let key = state
+                    .owners
+                    .get_key_value(&itself)
+                    .map(|(key, _)| Arc::clone(key));
+                if let (Some(key), Some(owner)) = (key, state.owners.get_mut(&itself)) {
+                    owner.slots += 1;
+                    state.slots.insert(slot.to_owned(), key);
+                }
             }
         }
     }
@@ -188,8 +304,12 @@ impl Redactor {
     pub fn health(&self) -> RedactorHealth {
         let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
         RedactorHealth {
-            registered: state.registered,
-            short: state.short,
+            registered: state.owners.len(),
+            short: state
+                .owners
+                .keys()
+                .filter(|itself| itself.bytes.len() < Self::SHORT)
+                .count(),
             bound: Self::BOUND,
         }
     }
