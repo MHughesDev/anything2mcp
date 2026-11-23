@@ -282,6 +282,11 @@ pub struct Hooks {
     pub late: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// A read of an order says how it was done, and captures the answer.
     pub tells_acting: AtomicBool,
+    /// A read of an order also reads the application's hand-off of it and
+    /// answers the hand-off's `client_secret` as the customer: the
+    /// application's own answer carries a value a person registered as a
+    /// secret.
+    pub echoes_handoff: AtomicBool,
     /// What the system says with each failure it answers with.
     pub says: Mutex<Option<String>>,
     /// The project folder and the destinations each `prepare` was given.
@@ -602,6 +607,13 @@ impl AppDriver {
                         )));
                     }
                     let lines = body["items"].as_array().map_or(0, Vec::len);
+                    let mut body = body;
+                    if hooks.echoes_handoff.load(Ordering::SeqCst) {
+                        let (_, handoff) = self
+                            .get(state, &format!("/api/orders/{order}/handoff"))
+                            .await?;
+                        body["customer"] = handoff["client_secret"].clone();
+                    }
                     let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
                     let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
                         vec![
@@ -2767,6 +2779,9 @@ pub struct Scene {
     pub environment: Mutex<Option<Environment>>,
     /// The vault whose redactor the engine and the registry were given.
     pub vault: Arc<Vault>,
+    /// The engine's telemetry, as the registry was given it.
+    pub telemetry: a2m_telemetry::Telemetry,
+    logs: PathBuf,
     runs: AtomicU64,
     _folder: Folder,
 }
@@ -2807,16 +2822,14 @@ impl Scene {
         std::fs::create_dir_all(&logs).unwrap();
         let (store, vault) = open_store(&folder).await;
         let redact: Arc<dyn a2m_core::Redact> = vault.redactor();
+        let telemetry =
+            a2m_telemetry::start(&TelemetrySettings::default(), Arc::clone(&redact), &logs)
+                .unwrap();
         let host = HostServices {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(
-                &TelemetrySettings::default(),
-                Arc::clone(&redact),
-                &logs,
-            )
-            .unwrap(),
+            telemetry: telemetry.clone(),
         };
         let pack = AppPack {
             hooks: Arc::clone(&hooks),
@@ -2928,6 +2941,8 @@ impl Scene {
             source: Mutex::new(None),
             environment: Mutex::new(None),
             vault,
+            telemetry,
+            logs,
             runs: AtomicU64::new(0),
             _folder: folder,
         }
@@ -3197,6 +3212,19 @@ impl Scene {
             .into_iter()
             .filter(|entry| kinds.contains(&entry.as_str()))
             .collect()
+    }
+
+    /// Every line the engine logged to file, and every line it holds in
+    /// memory, as one text.
+    pub fn logged(&self) -> String {
+        let mut text = self.telemetry.log_lines().join("\n");
+        for entry in std::fs::read_dir(&self.logs).unwrap().flatten() {
+            text.push('\n');
+            text.push_str(&String::from_utf8_lossy(
+                &std::fs::read(entry.path()).unwrap(),
+            ));
+        }
+        text
     }
 
     pub fn last_result(&self) -> Values {
