@@ -364,6 +364,7 @@ It produces every class through the loop. `possible_commit`, `ambiguous_match` i
 | --- | --- |
 | No `commits` step reaches a driver before its intent is durable (ledger rule 1) | `tests/write.rs`: the order of lock, intent, save, `acted`, read-back, `verified` in one log; an intent that cannot be stored, or is never acknowledged, sends nothing (`tests/faults.rs`) |
 | A record is `verified` only with a read value equal after normalization, and its evidence (rule 2) | `tests/write.rs`: a near value is a `mismatch`; `tests/faults.rs`: a record whose evidence cannot be stored stays unverified |
+| The diff hash is the same on every machine, and the reference's worked example is that hash | `src/diff.rs`: `a_diff_hashes_the_same_on_every_machine`, a fixed diff with a create, an update, an unchanged record, a restricted field, and a decimal, against `DIFF_SAMPLE_HASH`, in CI on Windows, macOS, and Linux; `the_worked_example_in_the_reference_hashes_to_the_value_it_prints` |
 | A write enters `running` only through `approval` (rule 3) | `tests/write.rs`: no approval waits, an approval of another diff does not let the run write |
 | Outputs a step returns before the commit point are acknowledged before the committing step is sent | `tests/identity.rs`: the order in one log; `tests/faults.rs`: when they cannot be stored the save is not sent |
 | The engine depends on neither `a2m-files` nor `a2m-policy` | The audit |

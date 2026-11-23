@@ -65,17 +65,70 @@ A diff is what a preview produces, what a person approves, and what an approval 
 | Per diff | Per record | Per field |
 | --- | --- | --- |
 | Tool and version hash | Record key | Name |
-| Target, environment, identity | Action: `create`, `update`, or `unchanged` | Current value, raw and normalized |
-| Counts: create, update, unchanged | The fields below | Proposed value, raw and normalized |
+| Target, environment, identity | Action: `create`, `update`, `unchanged`, or `write` (its binding cannot read it) | Current value, raw and normalized |
+| Counts: create, update, unchanged, write | The fields below | Proposed value, raw and normalized |
 | When the current values were read | | Whether it changes |
 
 **The diff hash.** An approval is bound to a hash of the diff, so the hash has to be the same wherever it is computed.
 
-1. Take the tool's version hash, the target, the environment, the identity, and for each record its key, action, and each field's name with its normalized current and proposed values.
-2. Leave out timestamps and raw display forms.
-3. Order records by key and fields by name.
-4. Write it in a canonical form: fixed field order, values as strings, UTF-8, no optional spacing.
+1. Take, in this order: the fixed purpose `anything2mcp diff 1`, the tool's name, its version hash, the target, the environment, and the identity (empty when there is none). Then the count of records, and for each record its key, its operation, its action, its evidence when that is not `read_back`, the binding the preview chose, and every binding it could take; then the count of its fields, and for each field its name with its normalized current and proposed values.
+2. Leave out timestamps, raw display forms, and whether a field changes, which follows from the values.
+3. Order records by key, then by step and place in the step, and fields by name.
+4. Write each part as its name's length, its name, its value's length, and its value, each length eight bytes, least significant first (the field hasher of `a2m-core`). A value is in the canonical form of `a2m-core`: JSON with no optional spacing, names in order, a decimal as the text of the number with no zeros after its last digit (`{"decimal":"0.8"}`), a current value that is absent kept apart from every value by a leading byte.
 5. Hash those bytes with SHA-256.
+
+Until 2026-11-23 this list said that values are written "as strings" and named neither the tool, the operation, the evidence, nor the bindings. The engine has hashed as written above since those parts were added; the list was wrong, and the worked example below is held to the engine by a test.
+
+**A worked example.** A tool creates record 3, updates record 1, and leaves record 2 as it is. `note` is labelled restricted, so the diff holds the hash of its normalized value and never its raw form; `0.10` was normalized to `0.1`. The diff as stored:
+
+```json
+{
+  "tool": "example_items_item_save",
+  "plan": "a98b37d20edd4d62b92554bb546f5168095fa0893ffb9680077c64b1209d9ba5",
+  "target": "example",
+  "environment": "test",
+  "identity": "account:example_writer",
+  "records": [
+    {
+      "step_seq": 0,
+      "record_seq": 0,
+      "operation": "example_items_item_save",
+      "key": [3],
+      "action": "create",
+      "fields": [
+        {"changes": true, "current": null, "current_raw": null, "name": "name", "proposed": "Bolt"},
+        {"changes": true, "current": null, "current_raw": null, "name": "price", "proposed": {"decimal": "2.5"}},
+        {"changes": true, "current": null, "current_raw": null, "name": "note", "proposed": "210cbba52e0424ec6b2d2d9b6a9430530c722eb32cd0996a50b55c23b5bff566"}
+      ]
+    },
+    {
+      "step_seq": 0,
+      "record_seq": 1,
+      "operation": "example_items_item_save",
+      "key": [1],
+      "action": "update",
+      "fields": [
+        {"changes": false, "current": "Nut", "current_raw": "Nut", "name": "name", "proposed": "Nut"},
+        {"changes": true, "current": {"decimal": "0.75"}, "current_raw": {"decimal": "0.75"}, "name": "price", "proposed": {"decimal": "0.8"}},
+        {"changes": true, "current": "d6d13014ef18d45030eec6ac0a66eab592e7f07e1feda93538935b3b434a8de8", "current_raw": null, "name": "note", "proposed": "80270e39ab5a8e50f949b1287e9432cef723e843964056ef04e1f185a4d3b301"}
+      ]
+    },
+    {
+      "step_seq": 0,
+      "record_seq": 2,
+      "operation": "example_items_item_save",
+      "key": [2],
+      "action": "unchanged",
+      "fields": [
+        {"changes": false, "current": "Washer", "current_raw": "Washer", "name": "name", "proposed": "Washer"},
+        {"changes": false, "current": {"decimal": "0.1"}, "current_raw": {"decimal": "0.1"}, "name": "price", "proposed": {"decimal": "0.1"}}
+      ]
+    }
+  ]
+}
+```
+
+Its hash is `1b52a16688289f1af2c3a9b6a0cf2c7b84e468b6c628835ea70dff0e70e09017`. The test `the_worked_example_in_the_reference_hashes_to_the_value_it_prints` in `a2m-engine` reads this example and computes the hash on Windows, macOS, and Linux.
 
 Consequences:
 
