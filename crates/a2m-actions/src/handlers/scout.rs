@@ -1960,7 +1960,7 @@ handler!(
             done.insert(7, report);
         }
         let report = done.remove(&7).unwrap_or(Json::Null);
-        Ok(super::scout_report::shown(report))
+        Ok(super::scout_report::shown(&report))
     }
 );
 
@@ -2017,7 +2017,12 @@ handler!(
             ));
         };
         let report = stages.remove(&7).unwrap_or(Json::Null);
-        let mut output = super::scout_report::shown(report);
+        if let Some(path) = call.text("part") {
+            let limit = usize::try_from(call.int("limit").unwrap_or(50)).unwrap_or(50);
+            let offset = usize::try_from(call.int("offset").unwrap_or(0)).unwrap_or(0);
+            return Ok(super::scout_report::page(&report, path, limit, offset));
+        }
+        let mut output = super::scout_report::shown(&report);
         if let Some(unfinished) = unfinished {
             output = output.warn(format!(
                 "A newer scout, {}, has not finished; this is the last one that did.",

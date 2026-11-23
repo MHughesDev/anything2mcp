@@ -471,6 +471,9 @@ export interface RunnerRevokeInput {
  */
 export interface ScoutReportInput {
   target: string;
+  limit?: number;
+  offset?: number;
+  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
 }
 
 /**
@@ -1203,7 +1206,8 @@ export declare abstract class Actions {
 
   /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
-   * at first. The engine action is `scout.report`.
+   * at first. Each list is counted and shows its first entries; `part` reads one whole,
+   * in pages. The engine action is `scout.report`.
    */
   scoutReport(input: ScoutReportInput, options?: CallOptions): Promise<Response>;
 

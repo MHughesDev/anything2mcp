@@ -19,7 +19,7 @@ Two rules hold the line in place.
 
 ## The scout
 
-The scout is the mechanical half of the overlay method ([section 401](401-overlaying-tools-on-an-existing-system.md)) run as one pipeline. One action, `scout.run`, takes a target and does steps 2 and 3 of that method, the mechanical part of step 4, and the read half of step 6. `scout.report` returns the last report.
+The scout is the mechanical half of the overlay method ([section 401](401-overlaying-tools-on-an-existing-system.md)) run as one pipeline. One action, `scout.run`, takes a target and does steps 2 and 3 of that method, the mechanical part of step 4, and the read half of step 6. `scout.report` returns the last report. Both answer with the report's hash, its identifiers, a text summary, and every list of the report counted and cut to its first 20 entries, so that the answer fits the cap on a result at any size of target; `scout.report` with `part` (one list, by its path in the report, such as `drafted.written`) with `limit` and `offset` reads one list whole in pages. The stored report and its hash are the whole, and are not changed by what an answer shows.
 
 | # | Stage | What happens | Built from |
 | --- | --- | --- | --- |

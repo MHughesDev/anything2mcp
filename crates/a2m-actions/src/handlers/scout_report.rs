@@ -201,6 +201,21 @@ pub(crate) fn assemble(
     })
 }
 
+/// The entries of a list counted by their `state`, as "2 compiles, 1 fails".
+fn by_state(entries: &[&Json]) -> String {
+    let mut counts = BTreeMap::<&str, u64>::new();
+    for entry in entries {
+        *counts
+            .entry(entry["state"].as_str().unwrap_or_default())
+            .or_default() += 1;
+    }
+    counts
+        .iter()
+        .map(|(state, count)| format!("{count} {state}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The plain rendering of a report for a terminal. It is made of the
 /// engine's own words and of names (surfaces, files, tools), and quotes
 /// nothing else the system said.
@@ -239,14 +254,26 @@ fn rendered(report: &Json) -> String {
     for (what, count) in levels {
         lines.push(format!("Found: {count} {what}."));
     }
-    for file in list(&content["drafted"]["written"]) {
+    let written: Vec<&Json> = list(&content["drafted"]["written"]).collect();
+    if !written.is_empty() {
         lines.push(format!(
-            "Drafted: {} ({}).",
-            file["file"].as_str().unwrap_or_default(),
-            file["state"].as_str().unwrap_or_default()
+            "Drafted: {} files ({}).",
+            written.len(),
+            by_state(&written)
         ));
-    }
-    if list(&content["drafted"]["written"]).next().is_some() {
+        for file in written.iter().take(TEXT_LINES) {
+            lines.push(format!(
+                "Drafted: {} ({}).",
+                file["file"].as_str().unwrap_or_default(),
+                file["state"].as_str().unwrap_or_default()
+            ));
+        }
+        if written.len() > TEXT_LINES {
+            lines.push(format!(
+                "Drafted: {} more; `scout.report` with `part` `drafted.written` lists them, and `limit` and `offset` page it.",
+                written.len() - TEXT_LINES
+            ));
+        }
         // A draft nobody asked for is the person's to remove: a publish
         // needs a passing offline test of every operation left (decision
         // 0219).
@@ -255,7 +282,15 @@ fn rendered(report: &Json) -> String {
                 .to_owned(),
         );
     }
-    for tool in list(&content["tried"]["tools"]) {
+    let tools: Vec<&Json> = list(&content["tried"]["tools"]).collect();
+    if tools.len() > TEXT_LINES {
+        lines.push(format!(
+            "Tried: {} reads ({}); the first {TEXT_LINES} follow, and `scout.report` with `part` `tried.tools` lists the rest.",
+            tools.len(),
+            by_state(&tools)
+        ));
+    }
+    for tool in tools.iter().take(TEXT_LINES) {
         if tool["state"] == "not_tried" {
             lines.push(format!(
                 "Not tried: `{}`.",
@@ -275,7 +310,14 @@ fn rendered(report: &Json) -> String {
         "Open questions: {}. `unknown.list` shows them.",
         list(&content["open"]).count()
     ));
-    for skipped in list(&content["not_looked_at"]) {
+    let skipped_all: Vec<&Json> = list(&content["not_looked_at"]).collect();
+    if skipped_all.len() > TEXT_LINES {
+        lines.push(format!(
+            "Not looked at: {} things; the first {TEXT_LINES} follow, and `scout.report` with `part` `not_looked_at` lists the rest.",
+            skipped_all.len()
+        ));
+    }
+    for skipped in skipped_all.into_iter().take(TEXT_LINES) {
         let what = skipped["what"].as_str().unwrap_or_default();
         // A discoverer that failed says its code and the fix its failure
         // declares; both are the product's words.
@@ -298,13 +340,95 @@ fn rendered(report: &Json) -> String {
     lines.join("\n")
 }
 
-/// A stored report as an action's result: the report, its rendering, and
-/// the next step.
-pub(crate) fn shown(report: Json) -> Output {
+/// How many entries of each list an answer shows. The rest is read with
+/// `scout.report` and `part`; the stored report is whole.
+pub(crate) const SHOWN: usize = 20;
+
+/// The most lines of the text one kind of line may take.
+const TEXT_LINES: usize = 5;
+
+/// The lists of a report's `content` that an answer shows only the first
+/// entries of, and `scout.report` reads whole in pages: each by its path
+/// from `content`. Every list that grows with the system scouted is named
+/// here, and a test holds it so.
+pub(crate) const PARTS: &[&str] = &[
+    "surfaces",
+    "found",
+    "compared.differs",
+    "compared.would_draft",
+    "compared.not_covered",
+    "drafted.written",
+    "drafted.held_back",
+    "drafted.conflicts",
+    "drafted.refused",
+    "checked.problems",
+    "checked.tools",
+    "tried.tools",
+    "tried.left_out",
+    "open",
+    "not_looked_at",
+];
+
+/// The list at `path` of a report's `content`, where there is one.
+pub(crate) fn part<'a>(content: &'a Json, path: &str) -> Option<&'a Vec<Json>> {
+    path.split('.')
+        .try_fold(content, |at, key| at.get(key))?
+        .as_array()
+}
+
+/// The list at `path`, as a place to cut.
+fn part_mut<'a>(content: &'a mut Json, path: &str) -> Option<&'a mut Vec<Json>> {
+    match path.split_once('.') {
+        None => content.get_mut(path)?.as_array_mut(),
+        Some((head, rest)) => part_mut(content.get_mut(head)?, rest),
+    }
+}
+
+/// A report as an answer shows it: each list cut to its first entries,
+/// with the count of every list beside it. Nothing else changes, and the
+/// stored report is left as it is, so its hash is.
+fn bounded(report: &Json) -> Json {
+    let mut shown = report.clone();
+    let mut counts = serde_json::Map::new();
+    let mut cut = Vec::new();
+    if let Some(content) = shown.get_mut("content") {
+        for path in PARTS {
+            if let Some(entries) = part_mut(content, path) {
+                counts.insert((*path).to_owned(), json!(entries.len()));
+                if entries.len() > SHOWN {
+                    entries.truncate(SHOWN);
+                    cut.push(json!(path));
+                }
+            }
+        }
+        // The two lists the look-first entries repeat.
+        if let Some(entries) = content["look_first"].as_array_mut() {
+            for entry in entries {
+                for key in ["files", "refused"] {
+                    if let Some(listed) = entry.get_mut(key).and_then(Json::as_array_mut) {
+                        let count = listed.len();
+                        listed.truncate(SHOWN);
+                        entry[format!("{key}_count")] = json!(count);
+                    }
+                }
+            }
+        }
+    }
+    if let Json::Object(map) = &mut shown {
+        map.insert("counts".to_owned(), Json::Object(counts));
+        map.insert("shown_per_list".to_owned(), json!(SHOWN));
+        map.insert("cut_lists".to_owned(), Json::Array(cut));
+    }
+    shown
+}
+
+/// A stored report as an action's result: the report with each list cut
+/// to its first entries and counted, its rendering, and the next step.
+pub(crate) fn shown(report: &Json) -> Output {
     let target = report["target"].as_str().unwrap_or_default().to_owned();
     let open = list(&report["content"]["open"]).count();
-    let text = rendered(&report);
-    let mut result = report;
+    let text = rendered(report);
+    let mut result = bounded(report);
     if let Json::Object(map) = &mut result {
         map.insert("text".to_owned(), json!(text));
     }
@@ -322,6 +446,23 @@ pub(crate) fn shown(report: Json) -> Output {
         )
     };
     Output::ok(result).then(next)
+}
+
+/// One list of a stored report, in the order it is stored, paged like
+/// every other list an action returns.
+pub(crate) fn page(report: &Json, path: &str, limit: usize, offset: usize) -> Output {
+    let entries: &[Json] = part(&report["content"], path).map_or(&[], Vec::as_slice);
+    let chosen: Vec<&Json> = entries.iter().skip(offset).take(limit).collect();
+    let complete = offset + chosen.len() >= entries.len();
+    Output::ok(json!({
+        "target": report["target"],
+        "scout_id": report["scout_id"],
+        "report_hash": report["report_hash"],
+        "part": path,
+        "entries": chosen,
+        "total": entries.len(),
+        "complete": complete,
+    }))
 }
 
 #[cfg(test)]

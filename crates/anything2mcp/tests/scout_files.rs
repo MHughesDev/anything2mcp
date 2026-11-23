@@ -271,6 +271,166 @@ async fn spec_import_drafts_from_a_file_as_the_scout_does() {
     world.close().await;
 }
 
+/// How many operations the large description gains.
+const MANY: usize = 400;
+
+/// The test application's description with `MANY` more described reads
+/// added, written to the project's `sources` folder over the first.
+fn enlarge_description(project: &Path) {
+    let path = project.join(DESCRIPTION_FILE);
+    let mut described: Json =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for n in 0..MANY {
+        described["paths"][format!("/api/widgets{n}/{{order_id}}")] = json!({"get": {
+            "operationId": format!("get_widget_{n}"),
+            "parameters": [{"name": "order_id", "in": "path", "required": true,
+                "schema": {"type": "string"}, "example": "A-100"}],
+            "responses": {"200": {"description": format!("Widget number {n} of the order")}},
+        }});
+    }
+    std::fs::write(&path, described.to_string()).unwrap();
+}
+
+/// A count in a result, as a number of entries.
+fn count(value: &Json) -> usize {
+    usize::try_from(value.as_u64().unwrap()).unwrap()
+}
+
+/// Every entry of one list of the last scout's report, read in pages.
+async fn paged(world: &World, part: &str, page: usize) -> Vec<Json> {
+    let mut all = Vec::new();
+    loop {
+        let read = world
+            .ok(&[
+                "scout",
+                "report",
+                "example",
+                "--part",
+                part,
+                "--limit",
+                &page.to_string(),
+                "--offset",
+                &all.len().to_string(),
+            ])
+            .await;
+        assert_eq!(read["part"], part, "{read}");
+        let entries = read["entries"].as_array().unwrap();
+        all.extend(entries.iter().cloned());
+        if read["complete"] == true {
+            assert_eq!(count(&read["total"]), all.len(), "{part}");
+            return all;
+        }
+        assert!(!entries.is_empty(), "{read}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_of_a_large_description_answers_within_the_cap_and_its_lists_are_paged() {
+    let machine = Machine::new("described", &[]);
+    let app = described_elsewhere(machine.project.path()).await;
+    enlarge_description(machine.project.path());
+    let world = with_target(&machine, &app).await;
+    let cap: usize = 262_144;
+    let described = files("description", DESCRIPTION_FILE);
+    let args = ["scout", "run", "example", "--fresh", "--files", &described];
+    let scouted = world.ok(&args).await;
+    assert!(scouted.get("truncated").is_none(), "{scouted}");
+    let size = scouted.to_string().len();
+    assert!(size < cap / 2, "{size}");
+    assert!(scouted["report_hash"].is_string(), "{scouted}");
+    assert!(scouted["scout_id"].is_string(), "{scouted}");
+    assert!(scouted["runs"].is_object(), "{scouted}");
+    assert!(scouted["text"].as_str().unwrap().len() < 4_000, "{scouted}");
+
+    // No list of the answer, however deep, is longer than the fixed number.
+    fn longest(value: &Json) -> usize {
+        match value {
+            Json::Array(items) => items
+                .len()
+                .max(items.iter().map(longest).max().unwrap_or(0)),
+            Json::Object(map) => map.values().map(longest).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    assert!(
+        longest(&scouted["content"]) <= 20,
+        "{}",
+        longest(&scouted["content"])
+    );
+
+    // The counts are the whole report's.
+    let counts = &scouted["counts"];
+    assert_eq!(count(&counts["found"]), MANY + 9 + 2, "{counts}");
+    assert!(written_in(&scouted).len() <= 20, "{scouted}");
+    assert!(count(&counts["drafted.written"]) > 20, "{counts}");
+    assert!(
+        scouted["cut_lists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|list| list == "found")
+    );
+    // What the system said stays marked in every entry shown.
+    for found in scouted["content"]["found"].as_array().unwrap() {
+        assert!(found["found"]["untrusted"].is_string(), "{found}");
+    }
+
+    // The report read again is the same answer, and each list read in
+    // pages gives every entry once, in a stable order.
+    let again = world.ok(&["scout", "report", "example"]).await;
+    assert_eq!(again["report_hash"], scouted["report_hash"]);
+    assert_eq!(again["counts"], scouted["counts"]);
+    for (part, total) in counts.as_object().unwrap() {
+        let whole = paged(&world, part, 37).await;
+        assert_eq!(whole.len(), count(total), "{part}");
+        assert_eq!(whole, paged(&world, part, 100).await, "{part}");
+        // The answer's entries are the first of them.
+        let first = part
+            .split('.')
+            .fold(&scouted["content"], |at, key| &at[key])
+            .as_array()
+            .unwrap();
+        assert_eq!(first.as_slice(), &whole[..first.len()], "{part}");
+        if part == "found" || part == "drafted.written" {
+            let unique: std::collections::BTreeSet<String> =
+                whole.iter().map(Json::to_string).collect();
+            assert_eq!(unique.len(), whole.len(), "{part}");
+        }
+    }
+
+    // A second scout of the same target gives the same report.
+    let second = world.ok(&args).await;
+    assert_ne!(second["scout_id"], scouted["scout_id"]);
+    assert_eq!(second["report_hash"], scouted["report_hash"]);
+    world.close().await;
+}
+
+/// The files the answer shows as drafted.
+fn written_in(report: &Json) -> Vec<String> {
+    drafted(report)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_list_the_report_does_not_have_is_refused_as_input() {
+    let machine = Machine::new("described", &[]);
+    let app = described_elsewhere(machine.project.path()).await;
+    let world = with_target(&machine, &app).await;
+    world.ok(&["scout", "run", "example"]).await;
+    let ran = world
+        .agent(&[
+            "scout",
+            "report",
+            "example",
+            "--part",
+            "nothing_of_the_kind",
+        ])
+        .await;
+    assert_ne!(ran.finished.code, 0, "{}", ran.json);
+    assert_eq!(ran.error()["class"], "input", "{}", ran.json);
+    assert_eq!(ran.error()["code"], "schema_invalid", "{}", ran.json);
+    world.close().await;
+}
+
 /// Makes a link at `link` to `to`, or says why it cannot.
 fn linked(to: &Path, link: &Path) -> std::io::Result<()> {
     #[cfg(unix)]

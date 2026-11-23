@@ -10,7 +10,7 @@ mod meta;
 mod promote;
 mod provider;
 mod scout;
-mod scout_report;
+pub(crate) mod scout_report;
 pub(crate) mod sessions;
 pub(crate) mod tools;
 pub(crate) mod watches;
