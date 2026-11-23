@@ -7,6 +7,11 @@
 //! write, and the lint and compile of what was written. Which finding gives
 //! which file is each pack's drafting rule.
 //!
+//! A draft that holds an open question waits in the folder `held/` of the
+//! target, at the path it would have had outside, together with every file
+//! drafted from the same finding; the loader does not read that folder
+//! (decision 0298).
+//!
 //! A draft is written to a regular file inside the target folder and
 //! nowhere else. Every folder on the way is looked at without following a
 //! link, and a link is never written through: not a linked folder, not a
@@ -15,7 +20,7 @@
 //! An unchanged draft of the drafter's own is replaced by renaming a new
 //! file over it, so no file that exists is ever opened for writing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
@@ -28,7 +33,7 @@ use crate::compile::{DRAFT_VERSION, compile};
 use crate::diag::{DRAFT_CONFLICT, Diagnostics, PATH_NOT_ALLOWED, TARGET_UNREADABLE};
 use crate::doc::{Located, RelPath};
 use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FILES, KERNEL_FOLDER_KINDS, OPERATION};
-use crate::load::{Sources, TargetRoot, load};
+use crate::load::{HELD_FOLDER, Sources, TargetRoot, load};
 use crate::register::{CompileMode, CompilerSet};
 use crate::schema::OPEN_QUESTION;
 use crate::yaml::{self, normalize_text};
@@ -331,8 +336,14 @@ impl<'a> DraftContext<'a> {
 /// What a call of the drafter did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DraftReport {
-    /// The drafts written, in order of path.
+    /// The drafts written where they belong, in order of path. A draft that
+    /// holds an open question, or that was made from a finding which gave
+    /// one, is in `held`, not here.
     pub written: Vec<RelPath>,
+    /// The drafts written to the holding folder, `held/` first, in order of
+    /// path: every file of a finding of which any file holds an open
+    /// question (decision 0298). The loader does not read them.
+    pub held: Vec<RelPath>,
     /// Drafts not written, because the file is there and is not a draft the
     /// drafter wrote and nobody changed since.
     pub conflicts: Vec<RelPath>,
@@ -479,17 +490,89 @@ impl<'a> Drafter<'a> {
             }
         }
 
+        // What one finding gave is held together: the files that share a
+        // finding stand or fall together (decision 0298). A group that
+        // holds an open question is held whole.
+        let groups = groups_of(&files);
+        let odd_held = self.odd_held_entry();
+        let mut skip: BTreeSet<RelPath> = BTreeSet::new();
+        let mut held: BTreeSet<RelPath> = BTreeSet::new();
+        for group in &groups {
+            let questioned = group.iter().any(|path| {
+                let mut questions = Vec::new();
+                files[path]
+                    .0
+                    .iter()
+                    .for_each(|doc| doc.questions(&mut questions));
+                !questions.is_empty()
+            });
+            // One file of the finding that a person changed leaves every
+            // file of it as it is, and the conflict is reported once.
+            let mut conflict = None;
+            'group: for path in group {
+                let beside = RelPath::new(&format!("{HELD_FOLDER}/{path}"))?;
+                let places = if questioned {
+                    [beside, path.clone()]
+                } else {
+                    [path.clone(), beside]
+                };
+                for place in places {
+                    if matches!(self.stand(&place), Ok(Stand::Other)) {
+                        conflict = Some(place);
+                        break 'group;
+                    }
+                }
+            }
+            if let Some(place) = conflict {
+                report.conflicts.push(place);
+                skip.extend(group.iter().cloned());
+                continue;
+            }
+            if questioned {
+                if let Some(entry) = &odd_held {
+                    for path in group {
+                        report.refused.push((
+                            RelPath::new(&format!("{HELD_FOLDER}/{path}"))?,
+                            format!(
+                                "the target folder has an entry named `{}`, which is the holding folder's name in other letters, so nothing is held in it",
+                                crate::schema::shown(entry)
+                            ),
+                        ));
+                    }
+                    skip.extend(group.iter().cloned());
+                    continue;
+                }
+                held.extend(group.iter().cloned());
+            }
+        }
+
         for (path, (docs, from)) in files {
+            if skip.contains(&path) {
+                continue;
+            }
+            let is_held = held.contains(&path);
             let text = render(&docs, &from);
-            match place(self.root.path(), &path, &text) {
+            let at = if is_held {
+                RelPath::new(&format!("{HELD_FOLDER}/{path}"))?
+            } else {
+                path.clone()
+            };
+            // The other place the same draft may stand: where it belongs,
+            // for a held draft; the holding folder, for one that is not.
+            let other = if is_held {
+                path.clone()
+            } else {
+                RelPath::new(&format!("{HELD_FOLDER}/{path}"))?
+            };
+            match place(self.root.path(), &at, &text) {
                 Ok(Placed::Written) => {}
                 Ok(Placed::Conflict) => {
-                    report.conflicts.push(path);
+                    report.conflicts.push(at);
                     continue;
                 }
                 Ok(Placed::Link) => {
                     report.refused.push((
-                        path,
+                        at,
                         "the path leads through a link; a draft is written only to a regular file inside the target folder".to_owned(),
                     ));
                     continue;
@@ -497,10 +580,22 @@ impl<'a> Drafter<'a> {
                 Err(_) => {
                     return Err(failure(
                         TARGET_UNREADABLE,
-                        format!("The draft `{path}` could not be written into the target folder."),
+                        format!("The draft `{at}` could not be written into the target folder."),
                         "Check that the target folder exists and may be written by this user.",
                     ));
                 }
+            }
+            // The draft is where it belongs now: the copy of the drafter's
+            // own at the other place, unchanged since, is removed. A file a
+            // person changed is not touched.
+            if self.remove_untouched(&other).is_err() {
+                return Err(failure(
+                    TARGET_UNREADABLE,
+                    format!(
+                        "The earlier draft `{other}` could not be removed from the target folder."
+                    ),
+                    "Check that the target folder exists and may be written by this user.",
+                ));
             }
             let mut questions = Vec::new();
             docs.iter().for_each(|doc| doc.questions(&mut questions));
@@ -510,14 +605,22 @@ impl<'a> Drafter<'a> {
                     questions
                         .into_iter()
                         .map(|(question, quoting)| OpenQuestion {
-                            file: path.clone(),
+                            file: at.clone(),
                             question,
                             findings: from.clone(),
                             quoting,
                         }),
                 );
-            report.written.push(path);
+            if is_held {
+                report.held.push(at);
+            } else {
+                report.written.push(at);
+            }
         }
+
+        report.written.sort();
+        report.held.sort();
+        report.open_questions.sort_by(|a, b| a.file.cmp(&b.file));
 
         // Lint and compile what is there now; a draft that does not pass is
         // kept, with why.
@@ -671,6 +774,125 @@ impl Drafter<'_> {
                 "the `{file_kind}` draft lives on the surface `{surface}` of the kind `{kind}`, for which `{pack}` did not register `{file_kind}` files; another pack's rules would compile it"
             )
         })
+    }
+}
+
+/// The files of the drafts, grouped: files made from one finding are in
+/// one group, and groups that share a finding are one. Each group is
+/// ordered by path, and the groups by their first path.
+fn groups_of(files: &BTreeMap<RelPath, (Vec<DraftValue>, Vec<Digest>)>) -> Vec<Vec<RelPath>> {
+    let mut groups: Vec<(BTreeSet<RelPath>, BTreeSet<Digest>)> = Vec::new();
+    for (path, (_, from)) in files {
+        let mut paths = BTreeSet::from([path.clone()]);
+        let mut findings: BTreeSet<Digest> = from.iter().copied().collect();
+        let mut kept = Vec::new();
+        for (group_paths, group_findings) in groups {
+            if group_findings
+                .iter()
+                .any(|finding| findings.contains(finding))
+            {
+                paths.extend(group_paths);
+                findings.extend(group_findings);
+            } else {
+                kept.push((group_paths, group_findings));
+            }
+        }
+        kept.push((paths, findings));
+        groups = kept;
+    }
+    let mut groups: Vec<Vec<RelPath>> = groups
+        .into_iter()
+        .map(|(paths, _)| paths.into_iter().collect())
+        .collect();
+    groups.sort();
+    groups
+}
+
+/// What stands at the place of a draft.
+enum Stand {
+    /// Nothing, or nothing a draft could be written over.
+    Absent,
+    /// A draft of the drafter's own that nobody changed.
+    Untouched,
+    /// A link, on the way or in the file's place: never written through.
+    Link,
+    /// Anything else: a file a person wrote or changed, or a folder.
+    Other,
+}
+
+impl Drafter<'_> {
+    /// What stands at `path` inside the target folder, looked at without
+    /// following a link.
+    fn stand(&self, path: &RelPath) -> io::Result<Stand> {
+        let parts: Vec<&str> = path.parts().collect();
+        let Some((name, folders)) = parts.split_last() else {
+            return Ok(Stand::Other);
+        };
+        let mut at = self.root.path().to_path_buf();
+        for part in folders {
+            at.push(part);
+            match fs::symlink_metadata(&at) {
+                Ok(found) if found.is_dir() => {}
+                Ok(found) if found.file_type().is_symlink() => return Ok(Stand::Link),
+                Ok(_) => return Ok(Stand::Other),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(Stand::Absent);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        at.push(name);
+        match fs::symlink_metadata(&at) {
+            Ok(found) if found.is_file() => {
+                let untouched =
+                    fs::read_to_string(&at).is_ok_and(|present| is_untouched_draft(&present));
+                Ok(if untouched {
+                    Stand::Untouched
+                } else {
+                    Stand::Other
+                })
+            }
+            Ok(found) if found.file_type().is_symlink() => Ok(Stand::Link),
+            Ok(_) => Ok(Stand::Other),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Stand::Absent),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// An entry of the target folder named as the holding folder is, in
+    /// other letters (`Held`): on a file system that folds case, writing to
+    /// `held/` would write into it.
+    fn odd_held_entry(&self) -> Option<String> {
+        fs::read_dir(self.root.path())
+            .ok()?
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| name != HELD_FOLDER && name.eq_ignore_ascii_case(HELD_FOLDER))
+    }
+
+    /// Removes the draft at `path` when it is one the drafter wrote and
+    /// nobody changed, and then the folders of the holding folder it leaves
+    /// empty. Anything else stands.
+    fn remove_untouched(&self, path: &RelPath) -> io::Result<()> {
+        if !matches!(self.stand(path)?, Stand::Untouched) {
+            return Ok(());
+        }
+        match fs::remove_file(path.under(self.root.path())) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        if path.folder() == Some(HELD_FOLDER) {
+            let parts: Vec<&str> = path.parts().collect();
+            for depth in (1..parts.len()).rev() {
+                let mut folder = self.root.path().to_path_buf();
+                parts[..depth].iter().for_each(|part| folder.push(part));
+                // A folder that still holds anything stands.
+                if fs::remove_dir(&folder).is_err() {
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

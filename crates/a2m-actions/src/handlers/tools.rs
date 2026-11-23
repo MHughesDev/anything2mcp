@@ -1877,7 +1877,7 @@ handler!(
         let target = a2m_core::TargetName::new(call.required("target")?)?;
         let name = OperationName::new(call.required("tool")?)?;
         let project_folder = call.project_folder()?.to_path_buf();
-        let compiled = super::build::compile_in(
+        let compiled = match super::build::compile_in(
             kernel,
             project_folder,
             &target,
@@ -1885,9 +1885,22 @@ handler!(
             a2m_files::DRAFT_VERSION,
         )
         .await?
-        .map_err(Failure::from)?;
+        {
+            Ok(compiled) => compiled,
+            Err(problems) => {
+                // A name only a held draft defines may be why (decision 0298).
+                let held = super::build::held_drafts(&call, &target).await?;
+                return Err(super::build::noting_held(Failure::from(problems), &held));
+            }
+        };
         let plan = std::sync::Arc::new(compiled.plan);
         let Some(tool) = plan.tool(&name).cloned() else {
+            // A tool whose draft is held is refused by name, with its
+            // question as the next step.
+            let held = super::build::held_drafts(&call, &target).await?;
+            if let Some(refused) = super::build::held_tool_refusal(&held, name.as_str()) {
+                return Err(refused);
+            }
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!("The drafts of `{target}` hold no tool named `{name}`."),
@@ -2181,8 +2194,8 @@ pub(crate) async fn plan_in(
             if !target_folder.is_dir() {
                 return Ok(None);
             }
-            // A draft that holds an open question does not keep the rest
-            // of the target from being observed (decision 0180).
+            // A draft that holds an open question waits in the holding
+            // folder, which is not read (decision 0298).
             super::build::compile_what_can(&kernel_for, target_folder.as_path(), &[])
                 .map(|(compiled, _)| Some(compiled))
                 .map_err(Failure::from)

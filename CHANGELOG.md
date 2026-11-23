@@ -136,6 +136,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- A draft with an open question now waits in the target's `held/` folder, with every file drafted from the same finding, and is not read: the rest of the target compiles and is tried, `draft.lint` lists each held draft with its question, and `draft.try` of a held tool is refused by name ([decision 0298](docs/decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)).
 - The lint that suspects a credential no longer warns about a path into an answer, such as `*.pin_order`, under a key that holds a secret's name as a word; it now also sees that word in a key written in camel case.
 - `anything2mcp lint` (`draft.lint`) now fails with `lint_failed` when it lists a problem at the level of an error, as `try` already did; the problems are still in the result. A lint with warnings only still answers ok.
 - The scout's text summary gives, for a discoverer that failed, the failure's code and its fix.

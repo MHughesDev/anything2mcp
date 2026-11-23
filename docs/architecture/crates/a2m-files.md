@@ -16,12 +16,12 @@ What a target is: the target files' schemas, the loader that reads them with fil
 ## Owns
 
 - The schemas of the kernel's file kinds: `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and the fixture marker.
-- The loader: reading a target folder, and only that folder, into located documents.
+- The loader: reading a target folder, and only that folder, into located documents. It does not read the folder `held/` at the top, where drafts that hold an open question wait; `held_files` lists them (at most 5,000) for a message, and the compiler never sees them ([decision 0298](../../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)).
 - The nine compiler stages, and every diagnostic they produce, each with a code, a sentence, a place, and a fix.
 - The kernel's lint rules, and the running of every registered one.
 - Producing the `Plan`. Its types, its encoding, and the check of its hash are `a2m-core`'s; this crate is the only code that makes one.
 - The registration traits a pack implements, and the `CompilerSet` that holds what every enabled pack registered.
-- The drafter, and the rule for what a draft may and may not contain.
+- The drafter, and the rule for what a draft may and may not contain. It writes every file made from one finding under `held/`, at the same relative path, when any of them holds an open question, and moves an unchanged draft of its own between `held/` and its place as the question comes and goes; a file a person changed is never moved or removed ([decision 0298](../../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)).
 
 It must never: know a mode, a locator, an endpoint, or any other knowledge of one kind of system; read outside the target folder; write a file the developer has changed; give a draft any level but `reconstructed`; run, store, or publish a plan (`a2m-actions` stores a published one through `a2m-ledger`); define a plan type, or a variant of one the engine would have to learn from this crate; be depended on by `a2m-engine`; call a model.
 

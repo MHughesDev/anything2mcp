@@ -15,6 +15,11 @@ use crate::kernel::{FIXTURE, FIXTURE_MARKER, KERNEL_FILES, KERNEL_FOLDER_KINDS};
 use crate::register::CompilerSet;
 use crate::yaml;
 
+/// The folder at the top of a target's folder that holds the drafts which
+/// wait for an open question to be answered. The loader does not read it
+/// (decision 0298).
+pub const HELD_FOLDER: &str = "held";
+
 /// How deep folders may be nested inside a target folder.
 const DEEPEST_FOLDER: u32 = 16;
 /// The most bytes a target file, which is YAML, may hold.
@@ -371,6 +376,15 @@ fn walk(
         if name.starts_with('.') {
             continue;
         }
+        // The holding folder at the top is not part of the target: nothing
+        // in it is read, digested, or compiled. A folder of that name
+        // deeper down is an ordinary folder.
+        if prefix.is_none()
+            && name == HELD_FOLDER
+            && fs::symlink_metadata(&on_disk).is_ok_and(|found| found.is_dir())
+        {
+            continue;
+        }
         let path = match prefix {
             Some(prefix) => prefix.join(&name),
             None => RelPath::new(&name),
@@ -435,6 +449,161 @@ fn walk(
             );
         } else {
             found.push((path, on_disk));
+        }
+    }
+}
+
+/// One open question a held draft holds, where it stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldQuestion {
+    /// The question, as the file holds it.
+    pub text: String,
+    /// Where it stands in the file.
+    pub at: Place,
+}
+
+/// One draft in the holding folder, read for what it waits on. It is never
+/// compiled; it is read only to be listed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldFile {
+    /// Its path inside the target folder, `held/` first.
+    pub path: RelPath,
+    /// The open questions it holds, in order of place.
+    pub questions: Vec<HeldQuestion>,
+    /// What the file names itself by: the text of the first entry of each
+    /// of its documents, which a draft writes as `operation: name` or
+    /// `endpoint: name`. Looked up to word a message; never a rule.
+    pub names: Vec<String>,
+    /// The findings it was drafted from, as the drafter's `drafted_from`
+    /// lines state them: files of one finding share one.
+    pub findings: Vec<String>,
+}
+
+fn questions_in(doc: &Located<Doc>, out: &mut Vec<HeldQuestion>) {
+    match &doc.value {
+        Doc::Map(entries) => {
+            if let [only] = entries.as_slice()
+                && only.key.value == crate::schema::OPEN_QUESTION
+            {
+                out.push(HeldQuestion {
+                    text: only
+                        .value
+                        .as_text()
+                        .unwrap_or("the system did not state this value")
+                        .to_owned(),
+                    at: only.key.at.clone(),
+                });
+                return;
+            }
+            for entry in entries {
+                questions_in(&entry.value, out);
+            }
+        }
+        Doc::List(items) => {
+            for item in items {
+                questions_in(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Reads one held draft's text, as the file at `path` (which has `held/`
+/// first). `None` for text that is not YAML this compiler reads.
+#[must_use]
+pub fn read_held(path: &RelPath, text: &str) -> Option<HeldFile> {
+    let docs = yaml::parse(path, text).ok()?;
+    let mut questions = Vec::new();
+    let mut names = Vec::new();
+    for doc in &docs {
+        questions_in(doc, &mut questions);
+        if let Some(name) = doc
+            .entries()
+            .first()
+            .and_then(|entry| entry.value.as_text())
+        {
+            names.push(name.to_owned());
+        }
+    }
+    questions.sort_by_key(|question| (question.at.line, question.at.column));
+    let findings = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("# drafted_from: "))
+        .map(|finding| finding.trim().to_owned())
+        .collect();
+    Some(HeldFile {
+        path: path.clone(),
+        questions,
+        names,
+        findings,
+    })
+}
+
+/// The most held drafts `held_files` reads.
+pub const MOST_HELD_FILES: usize = 5000;
+
+/// The drafts in the target's holding folder.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Held {
+    /// The drafts, ordered by path.
+    pub files: Vec<HeldFile>,
+    /// Whether the list was cut at [`MOST_HELD_FILES`]: more files wait
+    /// there than the list holds.
+    pub cut: bool,
+}
+
+/// The drafts in the target's holding folder, ordered by path, at most
+/// [`MOST_HELD_FILES`] of them. A link is never followed; a name that starts
+/// with a dot, a file that is not YAML and one larger than a target file are
+/// passed over. A target with no holding folder has none. Looks at the disk.
+#[must_use]
+pub fn held_files(root: &TargetRoot) -> Held {
+    let mut held = Held::default();
+    if let Ok(top) = RelPath::new(HELD_FOLDER) {
+        walk_held(root.path(), &top, 0, &mut held);
+    }
+    held.files.sort_by(|a, b| a.path.cmp(&b.path));
+    held
+}
+
+fn walk_held(root: &Path, at: &RelPath, depth: u32, out: &mut Held) {
+    let folder = at.under(root);
+    // A link is not a folder of the target.
+    if !fs::symlink_metadata(&folder).is_ok_and(|found| found.is_dir()) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(&folder) else {
+        return;
+    };
+    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        if out.cut {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let Ok(path) = at.join(&name) else { continue };
+        let Ok(found) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if found.is_dir() {
+            if depth < DEEPEST_FOLDER {
+                walk_held(root, &path, depth + 1, out);
+            }
+        } else if found.is_file()
+            && name.ends_with(".yaml")
+            && let Ok(Some(bytes)) = read_at_most(&entry.path(), LARGEST_TARGET_FILE)
+            && let Ok(text) = std::str::from_utf8(&bytes)
+            && let Some(file) = read_held(&path, &yaml::normalize_text(text))
+        {
+            if out.files.len() >= MOST_HELD_FILES {
+                out.cut = true;
+                return;
+            }
+            out.files.push(file);
         }
     }
 }

@@ -917,6 +917,16 @@ fn draft_into(
         .draft(findings)
 }
 
+/// A draft's path without the holding folder's name in front. An unknown is
+/// kept under its scope, which is this path, so that the same draft held or
+/// not is one question and moving it in or out opens none again.
+fn unheld(path: &a2m_files::RelPath) -> String {
+    path.as_str()
+        .strip_prefix(&format!("{}/", a2m_files::HELD_FOLDER))
+        .unwrap_or(path.as_str())
+        .to_owned()
+}
+
 fn paths(list: &[a2m_files::RelPath]) -> Vec<String> {
     list.iter().map(|path| path.as_str().to_owned()).collect()
 }
@@ -952,11 +962,12 @@ async fn compare(
         let report = drafted?;
         let mut asked = Vec::new();
         for path in &report.conflicts {
+            let path = unheld(path);
             asked.push((
                 format!(
                     "The system, as observed, drafts `{path}` otherwise than the target's file holds it. Which is right?"
                 ),
-                path.as_str().to_owned(),
+                path.clone(),
                 "The file is the target's, and what was observed differs from it.".to_owned(),
                 "A person reads the file beside the findings it would be drafted from (`finding.describe`).".to_owned(),
             ));
@@ -964,7 +975,7 @@ async fn compare(
         Ok((
             json!({
                 "differs": paths(&report.conflicts),
-                "would_draft": paths(&report.written),
+                "would_draft": paths(&[report.written.clone(), report.held.clone()].concat()),
                 "not_covered": report.not_covered.iter().map(Digest::to_string).collect::<Vec<_>>(),
             }),
             asked,
@@ -997,8 +1008,8 @@ async fn draft(
                     // The product's sentence and the system's words, kept
                     // apart in what is stored (decision 0193).
                     open.stored(),
-                    open.file.as_str().to_owned(),
-                    format!("The draft `{}` does not compile until it is answered.", open.file),
+                    unheld(&open.file),
+                    format!("The draft `{}` waits on the answer.", unheld(&open.file)),
                     "A person states the value; the system did not.".to_owned(),
                 )
             })
@@ -1014,12 +1025,14 @@ async fn draft(
                 })
             })
             .collect();
-        // The drafts that hold an open question, each once: the try stage
-        // compiles without them (decision 0180).
+        // The drafts that wait in the holding folder, each once: every
+        // file of a finding that has an open question. The loader does not
+        // read them, so the target compiles and is tried without them
+        // (decision 0298).
         let held_back: BTreeSet<String> = report
-            .open_questions
+            .held
             .iter()
-            .map(|open| open.file.as_str().to_owned())
+            .map(|path| path.as_str().to_owned())
             .collect();
         Ok((
             json!({
@@ -1294,9 +1307,9 @@ async fn try_reads(
             complete: true,
         });
     }
-    // What can compile is compiled: every file of the target but the
-    // drafts that hold an open question, since one such file keeps its
-    // whole kind from compiling (decision 0180).
+    // What can compile is compiled: the target as the loader reads it. A
+    // draft that holds an open question waits in the holding folder, which
+    // is not read (decision 0298), so it is not among the files.
     let compiled = {
         let kernel = kernel.clone();
         off_thread(move || Ok(super::build::compile_what_can(&kernel, &folder, &held_back))).await?
@@ -1305,7 +1318,7 @@ async fn try_reads(
         Ok((compiled, left_out)) => (compiled, json!(left_out)),
         Err(problems) => {
             for (tool, file) in tools {
-                tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile, without those that hold an open question."}));
+                tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile."}));
             }
             return Ok(Tried {
                 result: json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),

@@ -1239,8 +1239,22 @@ fn with_surfaces(target: &str, surfaces: &[(&str, &str)]) -> String {
     format!("{head}surfaces:\n{text}environments:{rest}")
 }
 
+/// An endpoint draft, read at exactly the path given: `endpoints/` for a
+/// draft in place, `held/endpoints/` for one held for an open question
+/// (decision 0298). A held draft is nowhere else, and one in place is not
+/// also held.
 fn surface_of(folder: &Folder, file: &str) -> String {
-    std::fs::read_to_string(folder.path().join("endpoints").join(file)).unwrap()
+    let (held, name) = match file.strip_prefix("held/") {
+        Some(rest) => (true, rest),
+        None => (false, file),
+    };
+    let beside = if held {
+        name.to_owned()
+    } else {
+        format!("held/{name}")
+    };
+    assert!(!folder.path().join(&beside).exists(), "{beside} stands too");
+    std::fs::read_to_string(folder.path().join(file)).unwrap()
 }
 
 #[tokio::test]
@@ -1261,7 +1275,7 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
         ],
     );
     let (folder, report) = drafted_into(&nested, &findings);
-    let entry = surface_of(&folder, "get_orders_id.yaml");
+    let entry = surface_of(&folder, "held/endpoints/get_orders_id.yaml");
     assert!(
         !entry.contains("surface: \"api\"") && !entry.contains("surface: \"orders\""),
         "{entry}"
@@ -1273,19 +1287,19 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
     let findings = findings_from_description(description(), &format!("{base}/v10")).await;
     let near = with_surfaces(&target, &[("api", &format!("{base}/v1"))]);
     let (folder, _) = drafted_into(&near, &findings);
-    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders_id.yaml").contains("surface: \"api\""));
 
     // The only `http` surface of the target, at another origin: not taken.
     let findings = findings_from_description(description(), &base).await;
     let elsewhere = with_surfaces(&target, &[("api", "http://127.0.0.1:1")]);
     let (folder, report) = drafted_into(&elsewhere, &findings);
-    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders_id.yaml").contains("surface: \"api\""));
     assert!(!report.open_questions.is_empty());
 
     // The only one, at the origin and a trailing slash: taken.
     let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
     let (folder, _) = drafted_into(&slash, &findings);
-    assert!(surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "endpoints/get_orders_id.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1302,11 +1316,11 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/v1"))]),
         &findings,
     );
-    assert!(!surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders.yaml").contains("surface: \"api\""));
     let question = report
         .open_questions
         .iter()
-        .find(|question| question.file.as_str() == "endpoints/get_orders.yaml")
+        .find(|question| question.file.as_str() == "held/endpoints/get_orders.yaml")
         .unwrap();
     assert!(question.question.contains("not the same"), "{question:?}");
     // The same path, with a trailing slash ignored: tied.
@@ -1315,7 +1329,7 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
         &findings,
     );
-    assert!(surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "endpoints/get_orders.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1324,12 +1338,17 @@ async fn a_read_with_no_name_to_give_is_drafted_with_an_open_question_and_a_file
     let target = target.replace("target: example", "target: example_store");
     let app = TestApp::start().await.unwrap();
     let base = app.url("");
+    // A surface takes every endpoint, so that the only questions left are
+    // about names: an endpoint with a question holds its finding's files
+    // back (decision 0298).
+    let target = with_surfaces(&target, &[("api", &base)]);
     let operations = |report: &a2m_files::DraftReport| -> Vec<String> {
         report
             .written
             .iter()
+            .chain(&report.held)
             .map(|path| path.as_str().to_owned())
-            .filter(|path| path.starts_with("operations/"))
+            .filter(|path| path.starts_with("operations/") || path.starts_with("held/operations/"))
             .collect()
     };
 

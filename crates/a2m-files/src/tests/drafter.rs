@@ -131,18 +131,27 @@ fn what_the_finding_does_not_state_is_an_open_question_and_never_a_guess() {
     let report = Drafter::new(&set, &root)
         .draft(std::slice::from_ref(&unstated))
         .unwrap();
-    assert_eq!(report.written.len(), 1);
+    // The draft with the question is held (decision 0298): it is written
+    // under `held/`, nothing is written in place, and the target compiles
+    // as it did.
+    assert!(report.written.is_empty());
+    assert_eq!(
+        report.held.iter().map(RelPath::as_str).collect::<Vec<_>>(),
+        ["held/calls/order_find.yaml"]
+    );
     assert_eq!(report.open_questions.len(), 1);
+    assert_eq!(
+        report.open_questions[0].file.as_str(),
+        "held/calls/order_find.yaml"
+    );
     assert_eq!(
         report.open_questions[0].question,
         "Does the call `order_find` read or write?"
     );
     assert_eq!(report.open_questions[0].findings, [unstated.id()]);
-    // The draft is kept, and it does not compile until the question is answered.
-    let (path, problems) = &report.kept_failing[0];
-    assert_eq!(path.as_str(), "calls/order_find.yaml");
-    assert!(problems.find("kernel.open_question").is_some());
-    let text = std::fs::read_to_string(folder.join("calls").join("order_find.yaml")).unwrap();
+    assert!(report.kept_failing.is_empty());
+    assert!(!folder.join("calls").join("order_find.yaml").exists());
+    let text = std::fs::read_to_string(folder.join("held/calls/order_find.yaml")).unwrap();
     assert!(text.contains("effect: {open_question: "));
     assert!(!text.contains("effect: \"read\"") && !text.contains("effect: \"write\""));
     std::fs::remove_dir_all(&folder).unwrap();
@@ -485,11 +494,9 @@ fn a_question_keeps_the_products_sentence_apart_from_the_systems_words() {
     // answered; the report's whole question is the file's.
     assert!(open.question.starts_with(quoting.sentence()));
     assert!(open.question.contains("\"count\""));
-    let text = std::fs::read_to_string(folder.join("calls").join("order_usage.yaml")).unwrap();
+    let text = std::fs::read_to_string(folder.join("held/calls/order_usage.yaml")).unwrap();
     assert!(text.contains("effect: {open_question: "));
     assert!(!text.contains("example-token-0042"));
-    let (_, problems) = &report.kept_failing[0];
-    assert!(problems.find("kernel.open_question").is_some());
 
     // The ledger's one text reads back apart; a question in one piece, and
     // every question stored before, reads whole.

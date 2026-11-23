@@ -60,8 +60,17 @@ pub const KERNEL_FOLDER_KINDS: &[(&str, &str)] = &[
     ("fixtures", FIXTURE),
 ];
 
-/// The folders the kernel owns.
-pub const KERNEL_FOLDERS: &[&str] = &["operations", "pipelines", "sources", "tests", "fixtures"];
+/// The folders the kernel owns or reserves: `held` holds the drafts that
+/// wait on an open question, and the loader does not read it (decision
+/// 0298), so no pack may register a file kind in it.
+pub const KERNEL_FOLDERS: &[&str] = &[
+    "operations",
+    "pipelines",
+    "sources",
+    "tests",
+    "fixtures",
+    "held",
+];
 
 /// The keys of a surface the kernel owns; the rest are its pack's.
 pub const SURFACE_KEYS: &[&str] = &["kind", "same_session_as", "rate", "stands"];

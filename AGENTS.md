@@ -102,7 +102,7 @@ Everything else is yours to decide and record.
 - **Numbers.** Decimal arithmetic for any business value. Never floats for comparison.
 - **Public interfaces.** The driver, auth-provider, source-reader, discoverer, and plug-in interfaces, and the provider manifest, are public contracts; changing one needs a decision record.
 - **Naming.** Tool names follow `{target}_{module}_{object}_{verb}`. Built-in tools are prefixed `a2m_`. Commands are subcommands of `anything2mcp`; `a2m` is a short name for the same program, and documents use the full one.
-- **One vocabulary.** Use the terms in [the glossary](docs/reference/glossary.md) in code, files, and messages; do not introduce synonyms.
+- **One vocabulary, and a proper name for every part.** Use the terms in [the glossary](docs/reference/glossary.md) in code, files, and messages; do not introduce synonyms. Every part a document or a drawing shows has one proper name, a noun or a short noun phrase taken from the glossary, or from the code, or coined; a description is not a name ([decision 0301](docs/decisions/0301-every-part-has-a-proper-name.md)).
 - **One registry.** Every authoring and admin action is defined once in `a2m-actions`; its command, MCP tool, REST route, and SDK method are generated. Never hand-write one of those faces.
 - **A user's session is theirs alone.** A session signed in as a person may be used only by that person or an agent acting for them. No role, including administrator, runs as someone else.
 - **One decider, one renewer.** Only the policy engine decides whether something may happen, and only the session keeper signs in or renews. Drivers and front doors ask; they never decide or renew.

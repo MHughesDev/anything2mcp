@@ -14,6 +14,7 @@ targets/example/
   sources/           # readers, template fingerprints, mappings
   fixtures/          # recorded pages, responses, and traffic for offline tests
   tests/             # expected results per operation and pipeline
+  held/              # drafts that wait on an open question; not read
 ```
 
 Some of these file kinds are the kernel's and the rest arrive with packs ([section 202](202-kernel-and-packs.md)). Each kind has one owner, and registration is keyed by the file kind and the surface kind; a pack that needs another pack's kind declares that it reads it, and receives the entries as data.
@@ -28,7 +29,7 @@ Some of these file kinds are the kernel's and the rest arrive with packs ([secti
 
 A surface's `kind` is a surface kind its pack registers; a binding's `mode` is a mode its pack registers. A name nobody registered does not compile.
 
-The folder is read as it stands and nothing outside it is read. A link that leaves the folder is refused, and so is a link to a folder, which would have the same files read again under another name. A target file holds at most 1 MiB and a fixture's recorded file at most 16 MiB. The drafter writes only regular files inside the folder, never through a link and never over a file a person wrote or changed ([`a2m-files`](../../architecture/crates/a2m-files.md)).
+The folder is read as it stands and nothing outside it is read. A link that leaves the folder is refused, and so is a link to a folder, which would have the same files read again under another name. A target file holds at most 1 MiB and a fixture's recorded file at most 16 MiB. The drafter writes only regular files inside the folder, never through a link and never over a file a person wrote or changed ([`a2m-files`](../../architecture/crates/a2m-files.md)). The folder `held/` at the top is not read: the drafter writes there every file it made from a finding of which any file holds an open question, at the path it would have had outside, and nothing in `held/` reaches the compiler, the digest, or the plan. A person answers the question and moves the file out ([decision 0298](../../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)).
 
 **Target.** Declares the surfaces and how they relate, so a large system with several services is one target.
 

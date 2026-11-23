@@ -59,7 +59,7 @@ Every draft made this way:
 
 - is an ordinary draft at `reconstructed` ([section 219](../2-kernel/219-the-evidence-ladder.md)), and names the findings it was made from;
 - gets a mechanical name, made from the surface's own words, that is marked as provisional;
-- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled;
+- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and waits in the target's `held/` folder, with every other file made from the same finding, until it is settled; the rest of the target compiles and is tried without it ([decision 0298](../../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md));
 - types an output of the system's text as `untrusted_text`, and carries an example only where the system published one about itself, such as a description's own example of a parameter. A value of the system's data is never kept as an example, and no test or fixture is drafted: a read with no example is drafted, and the report says why it was not tried ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)).
 
 ## What the scout may try

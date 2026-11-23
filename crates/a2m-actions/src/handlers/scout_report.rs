@@ -282,6 +282,12 @@ fn rendered(report: &Json) -> String {
                 .to_owned(),
         );
     }
+    let held = list(&content["drafted"]["held_back"]).count();
+    if held > 0 {
+        lines.push(format!(
+            "Held: {held} drafts wait in the target's `held/` folder, out of the target, for an answer to an open question; `draft.lint` lists each with its question, and `scout.report` with `part` `drafted.held_back` lists the files."
+        ));
+    }
     let tools: Vec<&Json> = list(&content["tried"]["tools"]).collect();
     if tools.len() > TEXT_LINES {
         lines.push(format!(

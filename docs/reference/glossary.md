@@ -14,6 +14,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Artifact | A large piece of evidence: a snapshot, a network exchange, a screenshot. Also the name of the archetype that reads and writes files; context makes clear which |
 | Baseline | For a watch, the keyed digest of each record's values and of each output, as of the last check that saw the record. A check is compared with it, not with the check before ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Binding | How one mode carries out one operation. An operation can have several |
+| Binding Selector | The part of the engine loop that chooses which binding of an operation runs: the first verified binding whose driver is ready and whose surface has not drifted, with the reason recorded |
 | Bridge | Code that runs inside a host application or process, through an interface the host offers, and speaks to the runtime from there |
 | Candidate | A published version being compared in shadow before it becomes current |
 | Blob | Any stored evidence or value, named by a keyed digest of its content and sealed |
@@ -60,6 +61,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Hazard | What an operation could damage beyond the data it names: nothing, data elsewhere, something sent outside, a device's ability to work, or the physical world |
 | Held folder | A folder reached from its root down with no link followed, and held while a pack acts on one entry directly in it, so that nothing done to the path meanwhile leads the act elsewhere: on Linux and macOS its own descriptor, on Windows every folder from the root down held open. Made by `CheckedPath::hold_folder` ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)) |
 | Hold | The scheduler's stop on a scope: everything, a workspace, a target, or a caller. No job in a held scope is handed out. It is how a kill switch reaches the scheduler |
+| Holding folder | The folder `held/` inside a target's folder, where the drafter writes a draft that holds an open question, with every file drafted from the same finding. The loader does not read it, so it is in no plan ([decision 0298](../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)). Not a held folder, which is a folder kept open while a pack acts on one entry |
 | Home runner | The runner holding a session's live state |
 | Health state | `ok`, `degraded`, or `stopped`: what the engine can currently do |
 | Idempotency key | Text a caller sends with `tool.call` so that the same call made again gives back its first run and starts no other; the same key with another call is refused ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)) |
@@ -99,6 +101,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
 | Preset | A named bundle of settings a person picks instead of setting each one. A preset may only tighten |
 | Principal | Anyone or anything that calls Anything2MCP |
+| Proper name | The one name of a part: a noun or a short noun phrase from this glossary, from the code, or coined. A description is not a name ([decision 0301](../decisions/0301-every-part-has-a-proper-name.md)) |
 | Protected setting | A setting that only a person can loosen, through a channel an agent cannot reach: on one machine a user-presence prompt; on a server the operator's file or the console after sign-in |
 | Provider | Anything that supplies capabilities to the runtime: a pack, a plug-in, or an upstream MCP server |
 | Probe | For a session: a cheap signed-in read. For a target: the first inspection of a system's surfaces |
@@ -127,6 +130,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Sign-in mode | How an entry of a target's `auth.yaml` says a session is obtained: `use_existing`, `managed_session`, or `custom` |
 | Snapshot | A compact view of the current page or window, built from the accessibility tree |
 | Source | A reader that turns a file or another system's output into validated records |
+| Stdio proxy | The small program an MCP client starts with `anything2mcp bridge`, which carries MCP messages between standard input and output and the running engine and holds no logic. Not a bridge, which is an archetype |
 | Step | One fixed instruction in a compiled plan, carried out by a driver |
 | Step trace | One structured record per step of a run |
 | Subject | What a finding or a piece of evidence is about, as one tagged identity: a file by digest, an address, a process, a session, a device, or unknown with a reason |

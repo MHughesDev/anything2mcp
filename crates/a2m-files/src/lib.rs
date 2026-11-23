@@ -42,7 +42,8 @@ pub use draft::{
     StoredQuestion,
 };
 pub use load::{
-    LARGEST_RECORDED_FILE, LARGEST_TARGET_FILE, SourceFile, Sources, TargetRoot, load, load_files,
+    HELD_FOLDER, Held, HeldFile, HeldQuestion, LARGEST_RECORDED_FILE, LARGEST_TARGET_FILE,
+    MOST_HELD_FILES, SourceFile, Sources, TargetRoot, held_files, load, load_files, read_held,
 };
 pub use register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
@@ -71,5 +72,6 @@ pub use yaml::{normalize_text, parse as parse_yaml};
 mod tests {
     mod drafter;
     mod example;
+    mod held;
     mod review;
 }

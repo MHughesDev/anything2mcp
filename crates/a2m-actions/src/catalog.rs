@@ -535,6 +535,8 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("target", text())
                 .required("ok", JsonSchema::bool())
                 .required("problems", list_of(any_map()))
+                .required("held", list_of(any_map()))
+                .required("held_cut", JsonSchema::bool())
                 .optional("plan_hash", text())
                 .optional("tools", list_of(text())))
             .example(r#"{"target": "example"}"#)
