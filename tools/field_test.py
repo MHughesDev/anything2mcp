@@ -8,7 +8,7 @@ must show come from a recipe, a JSON file kept outside this repository
 (decision 0294): a recipe names the software it starts, and this repository
 names no real application (rule 9). This file names none.
 
-    python3 tools/field_test.py <recipe folder> [--binary <path>] [--keep]
+    python3 tools/field_test.py <recipe folder> [--binary <path>] [--home <path>] [--keep]
 
 The recipe folder holds `recipe.json` and any files its steps use. Each run
 gets a new folder under `<recipe folder>/runs/`, with the project, the
@@ -55,39 +55,75 @@ command), `status` (of a request), `contains` and `lacks` (text in the output), 
 where that is not what it should do; the report lists these apart, and such a
 step failing means the gap has closed and the recipe is to be updated.
 
-Text in `{braces}` is filled in: `{base}` the system's address, `{port}` its
-port, `{project}` the project folder, `{data}` the system's data folder,
-`{recipe}` the recipe folder, `{direct}` the system's own address.
+Text in `{braces}` is filled in: `{system}` the system's address on the run's closed
+network (its container's name and port), `{host}` that name, `{base}` the address the
+product's own traffic uses (the system's, or the proxy's when there is one), `{port}` the
+system's port, `{project}` the project folder, `{data}` the system's data folder,
+`{recipe}` the recipe folder, `{direct}` an address of the system that the runner itself
+can reach.
+
+The closed network (decision 0310, point 5). A run makes a docker network with
+`--internal`, whose name is unique to the run, and starts the system on it with no
+published port. Every `a2m` step runs the product's binary inside a second container on
+the same network: a small Debian image pinned by digest, the binary mounted read-only, and
+the engine's home and the project folder mounted at the same paths as on this machine. The
+binary is built for glibc and needs a glibc at least as new as the machine that built it,
+which is why the image is a recent one. Before the first `a2m` step the runner tries, from
+inside that container, to reach two public addresses, and stops the run as
+`closed_network_open` when either answers.
+
+The runner itself, which is the run's control and not the product, reaches the system
+through its address on the network (`{direct}`): the steps `http`, `sqlite`, `exec`, and
+`python` run on this machine and never carry the product's traffic.
 
 A recipe may say `"proxy": true` under `"system"`. The runner then starts a fault proxy
-(tools/field_proxy.py) in front of the system's published port, on a background thread
-with its own event loop, and stops it in the same `finally` that removes the container.
-`{base}` is then the proxy's address in the steps that carry the product's own traffic
-(`a2m`, `replace`), so the product reaches the system through the proxy. Steps that talk
-straight to the system (`http`, `sqlite`, `exec`, `python`) have `{base}` filled with the
-system's own address, so that seeding and checking never go through the proxy; `{direct}`
-is that address in every step. Without `"proxy": true` nothing changes and `{direct}`
-equals `{base}`.
+(tools/field_proxy.py) in a third container on the same network, from a Python image pinned
+by digest, and `{base}` is the proxy's address in the steps that carry the product's own
+traffic (`a2m`, `replace`), so the product reaches the system through the proxy. Steps
+that talk straight to the system (`http`, `sqlite`, `exec`, `python`) have `{base}` filled
+with the system's own address, so that seeding and checking never go through the proxy;
+`{direct}` is that address in every step. The runner sets the proxy's rules by running its
+control client inside the proxy's container. Without `"proxy": true` nothing changes and
+`{direct}` equals the system's own address.
+
+Recipes written when the system was published on a port of this machine keep working with
+no change, provided they name the system by `{base}`, `{direct}`, `{system}`, or `{host}`.
+A recipe that built an address from `127.0.0.1` and `{port}` does not: `{port}` is now the
+system's port on the network, and nothing is published on this machine. Change such an
+address to `{system}`.
+
+When the run ends, every container and the network it made are removed, unless `--keep`,
+which leaves them running and prints their names so they can be removed.
 """
 
 import argparse
-import asyncio
 import base64
 import glob
 import json
 import os
 import re
+import secrets
 import shutil
-import socket
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
 
 import field_proxy
+
+# The two images a run adds to the system's own, each pinned by digest. The first holds the
+# product's binary; the second holds the fault proxy. A glibc at least as new as the
+# build machine's is what the binary needs.
+BOX_IMAGE = "debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2"
+PROXY_IMAGE = "python@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90"
+# Addresses on the public internet. From inside the closed network neither may answer.
+PUBLIC_ADDRESSES = (("1.1.1.1", 443), ("8.8.8.8", 53))
+BOX_BINARY = "/usr/local/bin/anything2mcp"
+PROXY_PORT = 8080
+CONTROL_PORT = 9099
+RUN_LABEL = "a2m-field-run"
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -95,12 +131,6 @@ NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 class CannotRun(Exception):
     """The field test could not be run at all."""
-
-
-def free_port():
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
 
 
 def fill(value, names):
@@ -152,56 +182,169 @@ def first_json(text):
     return None
 
 
-class ProxyThread:
-    """A fault proxy on a background thread with its own event loop."""
+class Run:
+    """What one field test made on the container engine: a closed network and the
+    containers on it. Everything carries the run's label, so that the end of the run can
+    remove all of it and nothing else."""
 
-    def __init__(self, upstream_port):
-        self.proxy = field_proxy.FaultProxy("127.0.0.1", upstream_port)
-        self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
-        self.thread.start()
-        self.port = self._call(self.proxy.start())
+    def __init__(self, recipe_name, token=None):
+        self.token = token or secrets.token_hex(4)
+        stem = re.sub(r"[^a-zA-Z0-9_.-]", "-", recipe_name)
+        self.network = f"field-{stem}-{self.token}"
+        self.system = f"{self.network}-system"
+        self.box = f"{self.network}-box"
+        self.proxy = f"{self.network}-proxy"
+        self.label = f"{RUN_LABEL}={self.token}"
+        self.box_up = False
 
-    def _call(self, coroutine):
-        return asyncio.run_coroutine_threadsafe(coroutine, self.loop).result(30)
+    def network_argv(self):
+        return ["docker", "network", "create", "--internal", "--label", self.label, self.network]
 
-    def stop(self):
-        try:
-            self._call(self.proxy.close())
-        finally:
-            self.loop.call_soon_threadsafe(self.loop.stop)
-            self.thread.join()
-            self.loop.close()
+    def system_argv(self, system, data, env):
+        """The system's container: on the closed network, with no published port."""
+        argv = ["docker", "run", "-d", "--name", self.system, "--network", self.network, "--label", self.label]
+        if "volume" in system:
+            argv += ["-v", f"{data}:{system['volume']}"]
+        for key, value in env.items():
+            argv += ["-e", f"{key}={value}"]
+        return argv + [system["image"]]
+
+    def box_argv(self, binary, home, project, user):
+        """The container the product's binary runs in: the binary read-only, and the
+        engine's home and the project folder at the paths they have on this machine."""
+        return [
+            "docker", "run", "-d", "--init", "--name", self.box, "--network", self.network,
+            "--label", self.label, "--user", user, "-e", f"HOME={home}",
+            "-v", f"{binary}:{BOX_BINARY}:ro", "-v", f"{home}:{home}", "-v", f"{project}:{project}",
+            BOX_IMAGE, "sleep", "infinity",
+        ]
+
+    def proxy_argv(self, system_port):
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "field_proxy.py")
+        return [
+            "docker", "run", "-d", "--name", self.proxy, "--network", self.network,
+            "--label", self.label, "-v", f"{script}:/field_proxy.py:ro", PROXY_IMAGE,
+            "python", "/field_proxy.py", "--upstream", f"{self.system}:{system_port}",
+            "--listen", f"0.0.0.0:{PROXY_PORT}", "--control", f"127.0.0.1:{CONTROL_PORT}",
+        ]
+
+    def ensure_box(self, binary, home, project, user, execute=None):
+        """Start the binary's container and check that the network is closed, once, before
+        the first command of the product."""
+        execute = execute or run
+        if self.box_up:
+            return
+        code, _, err = execute(self.box_argv(binary, home, project, user))
+        if code != 0:
+            raise CannotRun(f"The container for the product's binary did not start: {err.strip()[-400:]}")
+        self.box_up = True
+        check_closed(self.box, execute)
+
+    def exec_argv(self, env, cwd, argv):
+        """One command of the product, inside the binary's container."""
+        flags = []
+        for key, value in env.items():
+            flags += ["-e", f"{key}={value}"]
+        # A command starts with the umask a person's shell has. The engine's container may
+        # start commands with none, and the engine refuses a project file others may change.
+        return ["docker", "exec", "-w", cwd, *flags, self.box, "sh", "-c", 'umask 022; exec "$0" "$@"', BOX_BINARY, *argv]
+
+    def remove(self):
+        """Remove every container of the run, then its network. Returns what was left."""
+        left = []
+        _, out, _ = run(["docker", "ps", "-aq", "--filter", f"label={self.label}"])
+        ids = out.split()
+        if ids and run(["docker", "rm", "-f", "-v", *ids])[0] != 0:
+            left.append("containers")
+        if run(["docker", "network", "rm", self.network])[0] != 0:
+            if run(["docker", "network", "inspect", self.network])[0] == 0:
+                left.append(f"network {self.network}")
+        return left
 
 
-def do_step(step, names, env, container, proxy=None):
+def product_env(env):
+    """The part of the environment a command of the product gets inside its container."""
+    return {k: v for k, v in env.items() if k.startswith("A2M_") and k != "A2M_BINARY"}
+
+
+def reached(code, err):
+    """Whether a try at a public address got an answer. A refusal is an answer: something
+    on the way sent it. Unreachable, no route, and a timeout are not."""
+    return code == 0 or "refused" in err.lower() or "reset" in err.lower()
+
+
+def check_closed(box, execute=None):
+    """Raise CannotRun, by name, when a public address can be reached from the box."""
+    execute = execute or run
+    for host, port in PUBLIC_ADDRESSES:
+        code, _, err = execute(
+            ["docker", "exec", box, "timeout", "4", "bash", "-c", f"exec 3<>/dev/tcp/{host}/{port}"]
+        )
+        if reached(code, err):
+            raise CannotRun(
+                f"closed_network_open: {host}:{port} can be reached from inside the run's network; "
+                "no a2m step was run. The network is not closed."
+            )
+
+
+class ProxyBox:
+    """The fault proxy, in a container on the run's network. Its rules are set by running
+    its control client inside the container."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def _argv(self, message):
+        return ["docker", "exec", self.name, "python", "/field_proxy.py",
+                "--control", f"127.0.0.1:{CONTROL_PORT}", "--send", json.dumps(message)]
+
+    def send(self, message):
+        code, out, err = run(self._argv(message))
+        if code != 0:
+            raise CannotRun(f"The fault proxy did not answer: {(out + err).strip()[-300:]}")
+        return json.loads(out)
+
+    def wait_ready(self, seconds=30):
+        until = time.time() + seconds
+        while time.time() < until:
+            if run(self._argv({"op": "record"}))[0] == 0:
+                return
+            time.sleep(0.5)
+        raise CannotRun("The fault proxy did not start.")
+
+
+def do_step(step, names, env, active, proxy=None):
     """Carry one step out. Returns what it showed, as a dict."""
     if "fault" in step or "proxied" in step:
         if proxy is None:
             raise CannotRun('A fault or proxied step needs `"proxy": true` under `"system"`.')
         if "proxied" in step:
-            return {"ok": True, "output": field_proxy.render_record(proxy.proxy.record())}
+            return {"ok": True, "output": field_proxy.render_record(proxy.send({"op": "record"})["record"])}
         spec = step["fault"]
         if spec == "clear":
-            proxy.proxy.reset()
+            proxy.send({"op": "reset"})
             return {"ok": True, "output": "cleared"}
-        proxy.proxy.add_rule(
-            spec.get("method", "GET"),
-            spec["path"],
-            spec["do"],
-            times=spec.get("times", 1),
-            seconds=spec.get("seconds", 1),
-            nbytes=spec.get("bytes", 0),
+        proxy.send(
+            {
+                "op": "add_rule",
+                "method": spec.get("method", "GET"),
+                "path": spec["path"],
+                "do": spec["do"],
+                "times": spec.get("times", 1),
+                "seconds": spec.get("seconds", 1),
+                "bytes": spec.get("bytes", 0),
+            }
         )
         return {"ok": True, "output": f"{spec['do']}: the next {spec.get('times', 1)} {spec.get('method', 'GET')} {spec['path']}"}
     if "exec" in step:
-        code, out, err = run(["docker", "exec", *step.get("as", []), container, *step["exec"]])
+        code, out, err = run(["docker", "exec", *step.get("as", []), active.system, *step["exec"]])
         return {"ok": code == 0, "output": (out + err)[-2000:]}
     if "http" in step:
         status, body = request(names["direct"], step["http"])
         return {"ok": 200 <= status < 300, "status": status, "output": body[:2000]}
     if "a2m" in step:
-        code, out, err = run([env["A2M_BINARY"], *step["a2m"]], env=env, cwd=names["project"])
+        active.ensure_box(env["A2M_BINARY"], env["A2M_HOME"], names["project"], f"{os.getuid()}:{os.getgid()}")
+        code, out, err = run(active.exec_argv(product_env(env), names["project"], step["a2m"]))
         answer = first_json(out) or {}
         error = answer.get("error") or {}
         return {
@@ -294,47 +437,54 @@ def main():
         return 2
 
     run_dir = os.path.join(recipe_dir, "runs", time.strftime("%Y%m%d-%H%M%S"))
+    active = Run(recipe["name"])
     names = {
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
         "data": os.path.join(run_dir, "data"),
-        "port": str(free_port()),
+        "port": str(system["port"]),
+        "host": active.system,
     }
-    names["direct"] = f"http://127.0.0.1:{names['port']}"
-    names["base"] = names["direct"]
+    names["system"] = f"http://{active.system}:{system['port']}"
+    names["base"] = names["system"]
     for folder in (names["project"], names["data"]):
         os.makedirs(folder)
+    home = os.path.abspath(args.home) if args.home else os.path.join(run_dir, "home")
+    os.makedirs(home, exist_ok=True)
     env = dict(os.environ)
     env.update(
-        A2M_HOME=os.path.abspath(args.home) if args.home else os.path.join(run_dir, "home"),
+        A2M_HOME=home,
         A2M_VAULT_PASSPHRASE="an invented passphrase for field tests",
-        A2M_BINARY=args.binary,
-        NO_PROXY="127.0.0.1,localhost",
-        no_proxy="127.0.0.1,localhost",
+        A2M_BINARY=os.path.abspath(args.binary),
     )
-    container = f"field-{recipe['name']}-{names['port']}"
-    start = ["docker", "run", "-d", "--name", container, "-p", f"127.0.0.1:{names['port']}:{system['port']}"]
-    if "volume" in system:
-        start += ["-v", f"{names['data']}:{system['volume']}"]
-    for key, value in fill(system.get("env", {}), names).items():
-        start += ["-e", f"{key}={value}"]
-    start.append(system["image"])
 
     proxy = None
     report = {"field_test": recipe["name"], "image": system["image"], "steps": []}
     failed = 0
     try:
-        code, _, err = run(start)
+        code, _, err = run(active.network_argv())
+        if code != 0:
+            raise CannotRun(f"The closed network was not made: {err.strip()[-400:]}")
+        code, _, err = run(active.system_argv(system, names["data"], fill(system.get("env", {}), names)))
         if code != 0:
             raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
+        _, address, _ = run(
+            ["docker", "inspect", active.system, "--format",
+             "{{(index .NetworkSettings.Networks \"" + active.network + "\").IPAddress}}"]
+        )
+        names["direct"] = f"http://{address.strip()}:{system['port']}"
         wait_ready(names["direct"], system["ready"])
         if system.get("proxy"):
-            proxy = ProxyThread(int(names["port"]))
-            names["base"] = f"http://127.0.0.1:{proxy.port}"
+            code, _, err = run(active.proxy_argv(system["port"]))
+            if code != 0:
+                raise CannotRun(f"The fault proxy did not start: {err.strip()[-400:]}")
+            proxy = ProxyBox(active.proxy)
+            proxy.wait_ready()
+            names["base"] = f"http://{active.proxy}:{PROXY_PORT}"
         for number, raw in enumerate(recipe["steps"], 1):
             straight = any(kind in raw for kind in ("http", "sqlite", "exec", "python"))
             step = fill(raw, {**names, "base": names["direct"]} if straight else names)
-            shown = do_step(step, names, env, container, proxy)
+            shown = do_step(step, names, env, active, proxy)
             why = met(step.get("expect", {"ok": True}), shown)
             entry = {
                 "step": number,
@@ -355,12 +505,15 @@ def main():
         report["could_not_run"] = str(stop)
         failed = -1
     finally:
-        if proxy is not None:
-            proxy.stop()
-        if os.path.isdir(env["A2M_HOME"]):
-            run([args.binary, "engine", "stop"], env=env, cwd=names["project"], seconds=60)
-        if not args.keep:
-            run(["docker", "rm", "-f", container])
+        if active.box_up and os.path.isdir(home):
+            run(active.exec_argv(product_env(env), names["project"], ["engine", "stop"]), seconds=60)
+        if args.keep:
+            print(f"left running: network {active.network}; containers {active.system}, {active.box}, {active.proxy}")
+        else:
+            left = active.remove()
+            if left:
+                print(f"NOT REMOVED, remove by hand: {', '.join(left)} (label {active.label})")
+                report["not_removed"] = left
         gaps = [entry for entry in report["steps"] if entry["gap"]]
         report["gaps"] = [{"step": entry["step"], "gap": entry["gap"], "still_open": entry["passed"]} for entry in gaps]
         with open(os.path.join(run_dir, "report.json"), "w", encoding="utf-8") as handle:
