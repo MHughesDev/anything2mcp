@@ -129,6 +129,9 @@ const SHOWING: u64 = 1 << 25;
 /// The state bits that say an element's text may be changed, and that it
 /// may not.
 const EDITABLE: u64 = 1 << 7;
+/// The state bit that says an element is enabled: a disabled element takes
+/// no value whatever else its state says.
+const ENABLED: u64 = 1 << 8;
 const READ_ONLY: u64 = 1 << 43;
 /// The relation numbers of "labels" and "labelled by".
 const LABEL_FOR: u32 = 1;
@@ -417,6 +420,8 @@ pub(crate) enum Settable {
     Yes,
     /// It offers the interface, and its state says it takes no text today.
     ReadOnly,
+    /// It offers the interface, and its state says it is not enabled.
+    Disabled,
     /// It offers no editable text at all.
     NoInterface,
 }
@@ -464,7 +469,7 @@ impl Hands<'_> {
     }
 
     /// Whether the element's text may be set now, from its interfaces and
-    /// its state: two reads.
+    /// its state (enabled, editable, not read-only): two reads.
     pub(crate) async fn settable(&self, node: &Node) -> Result<Settable, AxError> {
         let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
         let interfaces: Vec<String> =
@@ -475,7 +480,9 @@ impl Hands<'_> {
         let state: Vec<u32> = call(&self.look.a11y, bus, path, ACCESSIBLE, "GetState", &()).await?;
         let bits = state.first().map_or(0, |low| u64::from(*low))
             | state.get(1).map_or(0, |high| u64::from(*high) << 32);
-        Ok(if bits & EDITABLE != 0 && bits & READ_ONLY == 0 {
+        Ok(if bits & ENABLED == 0 {
+            Settable::Disabled
+        } else if bits & EDITABLE != 0 && bits & READ_ONLY == 0 {
             Settable::Yes
         } else {
             Settable::ReadOnly

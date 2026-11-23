@@ -228,6 +228,45 @@ mod on_linux {
         assert!(landed(&scene, &read_back(&scene, &values).await, &values));
     }
 
+    /// A field the application shows disabled is not set: the driver reads
+    /// its enabled state before the set, and stops before anything is sent
+    /// to it. The stand also refuses a set of a disabled field, so a set
+    /// that was sent would have come back as an answered failure, not an
+    /// unsent one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_disabled_field_is_refused_before_anything_is_set_into_it() {
+        let Some(scene) = Scene::start("disabled").await else {
+            return;
+        };
+        scene
+            .desk()
+            .fault(&Fault::Disabled("New status".to_owned()))
+            .unwrap();
+        let refused = act(&scene, &inputs("Example Traders", "held"), WITHIN)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            stopped(&refused),
+            (
+                FailureClass::UnknownVariant,
+                "field_read_only",
+                Sent::NotSent
+            )
+        );
+        assert!(
+            refused.failure.message().contains("disabled"),
+            "{}",
+            refused.failure.message()
+        );
+        let truth = scene.desk().truth();
+        assert_eq!((truth.writes, truth.stores), (0, 0));
+        assert!(
+            truth.sets.iter().all(|set| set.field != "New status"),
+            "{:?}",
+            truth.sets
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_late_confirmation_ends_the_wait_by_its_event() {
         let Some(scene) = Scene::start("late-save").await else {

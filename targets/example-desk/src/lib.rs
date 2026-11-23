@@ -222,6 +222,9 @@ pub enum Fault {
     ConfirmLate(std::time::Duration),
     /// The field with this label takes no value from now on.
     ReadOnly(String),
+    /// The field with this label is disabled from now on: still editable
+    /// by its state, and not enabled, so it takes no value.
+    Disabled(String),
     /// Once the field labelled `Order number` has next been read, the
     /// window shows the order of this number: the application moved to
     /// another record between a reader's look and its act.
@@ -431,7 +434,8 @@ impl Desk {
     ///
     /// # Errors
     ///
-    /// When no field has the label a [`Fault::ReadOnly`] names; on any
+    /// When no field has the label a [`Fault::ReadOnly`] or a
+    /// [`Fault::Disabled`] names; on any
     /// system but Linux, always: the write half of the stand is built for
     /// Linux only.
     pub fn fault(&self, fault: &Fault) -> Result<(), StandError> {

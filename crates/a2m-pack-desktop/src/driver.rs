@@ -610,6 +610,13 @@ impl Held {
                     "Look at the application; the field may be locked for this record.",
                 ));
             }
+            Settable::Disabled => {
+                return Err(refused(
+                    &codes::row::FIELD_READ_ONLY,
+                    "takes no value now: the application shows it disabled".to_owned(),
+                    "Look at the application; the field may be disabled for this record.",
+                ));
+            }
             Settable::NoInterface => {
                 return Err(refused(
                     &codes::row::UNEXPECTED_CONTROL,
