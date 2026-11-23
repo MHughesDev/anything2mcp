@@ -24,9 +24,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 try:
     import progress
     _, total, done = progress.count()
-    data['progress'] = f"{sum(done.values())} of {sum(total.values())} packages done ({100 * sum(done.values()) // sum(total.values())}%)"
+    data['percent'] = 100 * sum(done.values()) // sum(total.values())
+    data['progress'] = f"{sum(done.values())} of {sum(total.values())} packages"
 except Exception:  # the page is still built where the roadmap cannot be read
-    data.setdefault('progress', '')
+    data.setdefault('progress', ''); data.setdefault('percent', None)
 page = open('template.html', encoding='utf-8').read().replace('/*DATA*/null/*END*/', json.dumps(data, ensure_ascii=False).replace('</', '<\\/'))
 open(sys.argv[1] if len(sys.argv) > 1 else 'A2MArchitecture.html', 'w', encoding='utf-8').write(page)
 print('views:', sum(1 for n in nodes.values() if n.get('rows')), 'parts:', len(nodes), 'bytes:', len(page))

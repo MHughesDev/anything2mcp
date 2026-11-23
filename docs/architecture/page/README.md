@@ -12,6 +12,7 @@ The source of A2MArchitecture, the interactive drawing of the system that the ow
 Rules for keeping it true:
 
 - A decision that changes the design changes this data in the same step, under the part it changes, with the alternative that lost.
+- The title bar shows the whole build's percentage complete, counted by `tools/progress.py` from the roadmap when the page is built. The page is rebuilt and republished whenever a package is marked done.
 - Every part has a proper name (decision 0301), and every arrow says what passes along it.
 - The state of a part (built, partly built, not built) follows the crate design and the roadmap. Many inner parts were given their state from the documents and not from the code; where the two differ, the code is right and the data is corrected.
 - The text was drafted from the design documents by a worker and is not yet checked line by line. It describes; it does not rule. Where it disagrees with a specification section or a crate design, that document is right.
