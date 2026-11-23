@@ -298,6 +298,23 @@ impl Lowering for FileLowering {
         &self.step_kinds
     }
 
+    /// An entry of a folder has no size or digest unless it is a file (and
+    /// no digest past the folder's bound), and no time it was changed where
+    /// the machine does not say: those outputs may be absent (decision
+    /// 0305). A document's cells are not known to hold a value or not; an
+    /// empty one stops the run unless the operation declares the output
+    /// `may_be_absent`.
+    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> Vec<String> {
+        if binding.field("folder").is_some() {
+            ["size", "modified", "digest"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// `save` is the one kind that saves, and it always does: it replaces
     /// the file. `open` reads or probes the file and writes nothing, `locate`
     /// finds a place in what was read, `set` builds the new bytes in memory,
