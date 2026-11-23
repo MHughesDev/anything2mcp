@@ -2057,6 +2057,52 @@ fn a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic() {
         .filter(|problem| problem.message.contains("`xsrf_cookie`"))
         .count();
     assert_eq!(quotes, 1, "{named}");
+    // A path into an answer names a place, not a value, even under a key
+    // with a secret's word in it (the field `pin_order` of pinned items).
+    for (key, value) in [
+        ("pin_order", "*.pin_order"),
+        ("token", "body.items.*.id"),
+        ("pinned", "*.pinned"),
+        ("spinner_count", "*.spinner_count"),
+        ("tokenizer_mode", "items.*.mode"),
+    ] {
+        let problems = with(&format!("{key}: \"{value}\""));
+        assert!(
+            problems.find("kernel.credential_suspected").is_none(),
+            "{key}: {problems}"
+        );
+        assert!(
+            problems.find("kernel.credential_in_file").is_none(),
+            "{key}"
+        );
+    }
+    // What can hold a secret is still reported, under each key it was
+    // before, and under a camel-case key whose words are the secret's name.
+    for (key, value) in [
+        ("pin_order", "Example-Pin-Value-0011"),
+        ("pin_order", "x9Fq2LmZ8vTrW4yK"),
+        ("pin", "Example Value 0012"),
+        ("user_pin", "Example Value 0013"),
+        ("pinCode", "Example Value 0014"),
+        ("api-token", "Example-Token-0015"),
+        ("X-Csrf-Token", "Example-Token-0016"),
+        ("session_cookie", "Example=Cookie;0017"),
+        ("authorization", "Example Value 0018"),
+        ("token", "a*b*c0019"),
+        ("pin_order", "*.Example0020"),
+    ] {
+        let problems = with(&format!("{key}: \"{value}\""));
+        assert!(
+            problems.find("kernel.credential_suspected").is_some(),
+            "{key}: {value}: {problems}"
+        );
+    }
+    // A literal in a credential's shape is still an error under any key.
+    let shaped = with("pin_order: \"Bearer Example-Token-For-Tests-0021\"");
+    assert!(
+        shaped.find("kernel.credential_in_file").is_some(),
+        "{shaped}"
+    );
     // A number that is not under the word itself, and plain prose that
     // starts with a scheme's name, are not credentials.
     let plain =
