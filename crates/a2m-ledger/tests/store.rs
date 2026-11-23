@@ -288,6 +288,77 @@ fn no_crate_but_the_policy_engine_names_the_policy_key() {
 
 // ---- a restart ----
 
+/// A value sealed by one engine opens for the next engine over the same
+/// store and the same root key, and for no engine once the root is gone
+/// (spec 216; the key-store rows of 224). The sealed bytes are kept in a
+/// file, as a caller keeps them, and the key records are in the store.
+#[tokio::test]
+async fn a_sealed_value_survives_a_restart_over_the_store_and_opens_nothing_without_the_root() {
+    use a2m_vault::{OwnerRef, SealContext, Sealed, codes as vault_codes};
+
+    const VALUE: &str = "example-sealed-value-4c1e9";
+    let cx = SealContext::credential(
+        workspace(),
+        OwnerRef::person("ana").unwrap(),
+        &target(),
+        "token",
+    )
+    .unwrap();
+    let folder = Folder::new("sealed-restart");
+    let keys = key_store();
+    let kept = folder.path().join("sealed.bin");
+
+    let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
+    let sealed = vault.seal(&cx, VALUE.as_bytes()).await.unwrap();
+    std::fs::write(&kept, sealed.to_bytes()).unwrap();
+    // The envelope holds nothing readable.
+    assert!(!String::from_utf8_lossy(&sealed.to_bytes()).contains(VALUE));
+    drop(vault);
+    drop(store);
+
+    // The next engine reads the envelope back and opens it.
+    let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
+    let sealed = Sealed::from_bytes(&std::fs::read(&kept).unwrap()).unwrap();
+    let opened = vault.open(&cx, &sealed).await.unwrap();
+    assert_eq!(opened.expose(), VALUE.as_bytes());
+    drop(vault);
+    drop(store);
+
+    // The root is deleted from the key store: nothing opens, by name, and
+    // the store's files do not hold the value either.
+    keys.remove_root();
+    let store = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap();
+    let vault = Arc::new(a2m_vault::Vault::new(
+        Arc::clone(&keys) as Arc<dyn a2m_vault::KeyStore>,
+        Arc::new(store.key_records()),
+    ));
+    let refused = vault.open(&cx, &sealed).await.unwrap_err();
+    assert_eq!(refused.code(), &vault_codes::KEY_STORE_ENTRY_MISSING);
+    // Nor does the engine start over it: attaching asks for the digest key.
+    let unattached = store.attach(Arc::clone(&vault)).await.unwrap_err();
+    assert_eq!(unattached.code(), &vault_codes::KEY_STORE_ENTRY_MISSING);
+    let mut files = Vec::new();
+    let mut folders = vec![folder.path().to_path_buf()];
+    while let Some(next) = folders.pop() {
+        for entry in std::fs::read_dir(next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                files.push(std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    for bytes in files {
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(VALUE),
+            "the value is in a file"
+        );
+    }
+}
+
 #[tokio::test]
 async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_found() {
     let folder = Folder::new("restart");

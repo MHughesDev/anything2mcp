@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 65 of 147 packages done, 44% (`python3 tools/progress.py`). **Done last:** X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 66 of 147 packages done, 44% (`python3 tools/progress.py`). **Done last:** 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -98,7 +98,7 @@ E4: 1. List which packs draft by rule and which do not. 2. Add the missing rules
 | S2 | One command to a working read | `add` carries a system to drafted reads that passed their trial; an agent calls them at once through the trial action, in the sandbox | From an empty folder: `init`, `add`, `connect`, and an agent reads a value with no person and no publish |
 | V1 to V5 | What the review of S1 found | The evidence level decides nothing today; two gates are built; a web read that acts; one wrong help text; what a description may hold | Each has its proof in the roadmap |
 | 3.6 | The presence prompt on Windows and macOS | The prompts, run by a person | A person approves on each system; a script cannot |
-| 2.2 | The operating system's key store | The vault's key held by the system's store on each system | A saved value survives a restart and cannot be read without the key store |
+| ~~2.2~~ | ~~The operating system's key store~~, done; Windows and macOS are proven by the CI step | ~~The vault's key held by the system's store on each system~~ | A saved value survives a restart and cannot be read without the key store |
 | 5.2 | The shortcuts and `doctor` | What remains of the project folder, build state, and shortcuts | A new project goes from nothing to a linted draft with the shortcuts alone |
 | 5.3 | The built-in documents | The guidance an agent reads, brought up to the short path | An agent with no prior knowledge finds every step from `docs.get` |
 | 1.4, 1.5 | The local engine and the bridge, the rest | A shared browser between two commands; a different user refused; two outside MCP client libraries call a read | The roadmap's proofs for both |

@@ -43,6 +43,23 @@ jobs:
       # shows every failure on this operating system.
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
+      # The vault's root key in the operating system's own key store, which
+      # no other test touches (package 2.2). On macOS the keychain is a
+      # throwaway one, created and unlocked here, so that no prompt can
+      # appear; on Windows the Credential Manager of the runner is used.
+      # Linux takes the passphrase route and has no key store to try.
+      - name: A throwaway keychain for the real key store test
+        if: runner.os == 'macOS'
+        run: |
+          keychain="$RUNNER_TEMP/a2m-test.keychain-db"
+          security create-keychain -p test-only "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p test-only "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+      - name: The real key store holds the root
+        if: runner.os != 'Linux'
+        run: cargo test -p a2m-vault --locked -- --ignored the_real_key_store_holds_the_root
       # The harness and its sample scenario; nothing is gated until a budgeted
       # path is measured (spec section 225).
       - name: Benchmark
