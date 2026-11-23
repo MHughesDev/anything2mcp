@@ -2199,3 +2199,118 @@ async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_r
         .collect();
     assert_eq!(attempts, [1, 2, 3, 4]);
 }
+
+/// Decision 0302: a field of a message that is named as a secret is no
+/// output of a drafted look, and the description says so. The value is
+/// invented; it is on messages the stand holds, and in no drafted file.
+#[tokio::test]
+async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
+    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
+
+    struct Kept(Vec<Finding>);
+    impl FindingSink for Kept {
+        fn found(&mut self, finding: Finding) -> Result<(), Failure> {
+            self.0.push(finding);
+            Ok(())
+        }
+    }
+    const VALUE: &str = "example-not-a-secret-0001";
+
+    let mut scene = Scene::start().await;
+    for key in ["z1", "z2"] {
+        scene.stand.publish(
+            &format!("example.orders.events.{key}"),
+            &[],
+            &format!(r#"{{"order_id":"o-{key}","client_secret":"{VALUE}"}}"#),
+        );
+    }
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("broker").unwrap(),
+        archetype: Archetype::Stream,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let (handle, prepared) = scene.try_prepare(Posture::Discovery, None).await.unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(20)),
+        paths: &CheckedPaths::none(),
+        redact: &Planted,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+
+    let folder = Folder::new("nats-drafted-secret");
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        nats_root().path().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    assert!(report.refused.is_empty(), "{report:?}");
+    let mut texts = Vec::new();
+    let mut pending = vec![root.clone()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                texts.push((
+                    path.display().to_string(),
+                    std::fs::read_to_string(&path).unwrap(),
+                ));
+            }
+        }
+    }
+    for (path, text) in &texts {
+        assert!(!text.contains(VALUE), "{path}: {text}");
+        // Only a description names the field, to say it was left out.
+        for line in text
+            .lines()
+            .filter(|line| !line.starts_with("description:"))
+        {
+            let line = line.to_ascii_lowercase();
+            assert!(!line.contains("client_secret"), "{path}: {line}");
+        }
+    }
+    let list = std::fs::read_to_string(root.join("operations/orders_events_list.yaml")).unwrap();
+    assert!(
+        list.contains("Left out because their names are a secret's, so that a secret is never an output: `client_secret`."),
+        "{list}"
+    );
+    assert!(list.contains("order_id:"), "{list}");
+    // The target compiles with them, and a look returns the other field.
+    common::answer_keys(&root.join("held"));
+    for file in &report.held {
+        let place = file.as_str().strip_prefix("held/").unwrap();
+        std::fs::rename(root.join(file.as_str()), root.join(place)).unwrap();
+    }
+    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("the drafts do not compile:\n{problems}"),
+    };
+    let (handle, mut prepared) = scene.reading().await;
+    let steps = scene.binding("example_orders_events_list").act.clone();
+    let observed = done(
+        read(&handle, &mut prepared, &steps, &Values::new())
+            .await
+            .unwrap(),
+    );
+    let result = common::outputs_of(&scene.plan, "example_orders_events_list", &observed);
+    handle.release(prepared, false).await;
+    assert!(result.get("client_secret").is_none());
+    assert!(result.get("order_id").is_some());
+}
