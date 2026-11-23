@@ -284,3 +284,6 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0289 | [A failure is made from its code's row, so the place that makes it cannot give it another class](0289-a-failure-is-made-from-its-codes-row.md) | Accepted (design decision) |
 | 0291 | [A watch ends when its condition holds on a check's own result](0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md) | Accepted (design decision) |
 | 0292 | [A web tab sends only to its surface and the destinations its tool declares, and the publish page says so](0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md) | Accepted (design decision) |
+| 0293 | [Existing software that we run ourselves is tested against during the build, and may be written to](0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md) | Accepted (owner decision) |
+| 0294 | [The owner hands the open questions, and the deciding, to the agents](0294-the-owner-hands-the-open-questions-to-the-agents.md) | Accepted (owner decision) |
+| 0295 | [A field test is run from a recipe kept outside the repository, by a runner that names no software](0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | Accepted (design decision) |

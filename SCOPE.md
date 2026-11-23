@@ -12,7 +12,7 @@ Every "does not" carries its kind:
 | **Choice** | A design choice in force today | Any agent, with evidence and a decision record |
 | **Not yet** | Nothing stands against it. It is not built, or not proven | Whoever builds it |
 
-"Built" below means proven by tests against a test stand. Nothing has been tried against a real system yet, and nothing is published to a package registry.
+"Built" below means proven by tests against a test stand. One field test has been run, on 2026-11-23: reads of one HTTP service of existing software that the project ran itself, which worked in part and made seven findings ([field test results](docs/reviews/field-tests.md)). No write has been tried against existing software, nothing has been tried against a system the project does not run, and nothing is published to a package registry.
 
 ## What it reaches
 

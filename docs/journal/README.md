@@ -8,6 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
+| 2026-11-23 | [The first field test](2026-11-23-the-first-field-test.md) | The owner makes existing software that the project runs itself a testing surface and hands the open questions to the agents; a runner for field tests; the first one, reads of an HTTP service, makes seven findings |
 | 2026-11-18 | [The wider reach](2026-11-18-the-wider-reach.md) | The owner widens the scope to what the machine reaches and names the North Star; sign-in, page writes, shadow bindings, the desktop pack on three systems, the network facts, watches' kernel halves; two safety audit rounds answered; pull request 14 merged after five CI rounds, pull request 15 open |
 | 2026-11-17 | [The overnight build](2026-11-17-the-overnight-build.md) | The kernel built layer by layer by parallel agents; six test stands; the harness; two spikes; the first pull requests to run on three operating systems, merged as 12 and 13 |
 | 2026-11-17 | [The restructure, configuration, and the bar](2026-11-17-the-restructure.md) | The specification rebuilt as 59 sections in seven parts; the first design archived; one plan; configuration and the bar designed; findings built in the core |
