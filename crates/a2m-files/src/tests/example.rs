@@ -2538,3 +2538,66 @@ fn the_set_tells_the_key_a_kind_states_its_address_under() {
         "{problem}"
     );
 }
+
+/// Decision 0305: an output a person declares `may_be_absent: true` is one
+/// of the plan, and its schema admits `null` beside its own type; no other
+/// output's does; every output is required.
+#[test]
+fn a_declared_absent_output_admits_null_in_the_output_schema_and_no_other_does() {
+    let flags = |compiled: &Compiled| -> Vec<(String, bool)> {
+        compiled
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_get")
+            .unwrap()
+            .outputs
+            .iter()
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+    let schema_of = |compiled: &Compiled| -> serde_json::Value {
+        let tool = compiled
+            .plan
+            .tools
+            .iter()
+            .find(|tool| tool.name.as_str() == "example_order_get")
+            .unwrap();
+        serde_json::from_slice(tool.output_schema.as_bytes()).unwrap()
+    };
+    let admits_null = |schema: &serde_json::Value, name: &str| {
+        schema["properties"][name]["anyOf"]
+            .as_array()
+            .is_some_and(|arms| arms.iter().any(|arm| arm["type"] == "null"))
+    };
+
+    let plain = compiled();
+    assert!(flags(&plain).iter().all(|(_, absent)| !absent));
+    let schema = schema_of(&plain);
+    assert!(!admits_null(&schema, "note"));
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["status", "total", "note"])
+    );
+
+    let declared = compiled_with(&[Case::Edit(
+        ORDER_GET,
+        "note: {type: note}",
+        "note: {type: note, may_be_absent: true}",
+    )]);
+    assert_eq!(
+        flags(&declared),
+        [
+            ("status".to_owned(), false),
+            ("total".to_owned(), false),
+            ("note".to_owned(), true)
+        ]
+    );
+    let schema = schema_of(&declared);
+    assert!(admits_null(&schema, "note"));
+    assert!(!admits_null(&schema, "status") && !admits_null(&schema, "total"));
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["status", "total", "note"])
+    );
+}

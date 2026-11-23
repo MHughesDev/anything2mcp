@@ -125,6 +125,34 @@ async fn the_shipments_optional_carrier_is_answered_as_it_is_told_to() -> Outcom
     Ok(())
 }
 
+/// Case 37: the same switch answers the hand-off's optional `packages` as
+/// `null` or leaves it out, and its required `carrier_code` as `null`.
+#[tokio::test]
+async fn the_handoffs_optional_packages_and_required_code_follow_the_switch() -> Outcome {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await?;
+    let address = app.url("/api/orders/A-100/handoff");
+    let answer = || async {
+        app.http()
+            .get(&address)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await
+    };
+    assert_eq!(answer().await?["packages"], 2);
+    app.set_carrier(CarrierAnswer::Null).await?;
+    assert!(answer().await?["packages"].is_null());
+    app.set_carrier(CarrierAnswer::Missing).await?;
+    assert!(answer().await?.get("packages").is_none());
+    app.set_carrier(CarrierAnswer::RequiredNull).await?;
+    let held = answer().await?;
+    assert!(held["carrier_code"].is_null());
+    assert_eq!(held["packages"], 2);
+    Ok(())
+}
+
 /// Case 36: the hand-off answers with a `client_secret`, the pickup needs an
 /// `api_key`, and the description says so.
 #[tokio::test]

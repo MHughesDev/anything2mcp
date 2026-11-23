@@ -2052,6 +2052,11 @@ impl<'a> Compiler<'a> {
                     name: entry.key.value.clone(),
                     ty: if list { ValueType::list_of(ty) } else { ty },
                     field_type: Some(field_type),
+                    may_be_absent: entry
+                        .value
+                        .get("may_be_absent")
+                        .and_then(Located::as_bool)
+                        .unwrap_or(false),
                 });
             }
             let (strategy, key, fixed) = self.identity(doc, effect, &inputs);
@@ -2208,6 +2213,8 @@ impl<'a> Compiler<'a> {
             (names::RECORD, record_type()),
         ]);
         let mut bindings = Vec::new();
+        // The outputs a lowering finds may be absent (decision 0305).
+        let mut absent: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut review = OpReview::default();
         let mut fine = true;
         // Whatever a pack marks, a write saves at least once and a read
@@ -2433,6 +2440,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
+            absent.extend(lowering.absent_outputs(&resolved, &lowered));
             let evidence = lowering.evidence(&resolved, &lowered);
             let by = LoweredBy {
                 lowering: lowering.as_ref(),
@@ -2496,7 +2504,14 @@ impl<'a> Compiler<'a> {
             effect: info.effect,
             hazard: info.hazard,
             inputs: info.inputs.iter().map(|input| input.plan.clone()).collect(),
-            outputs: info.outputs.clone(),
+            outputs: info
+                .outputs
+                .iter()
+                .map(|output| OutputPlan {
+                    may_be_absent: output.may_be_absent || absent.contains(&output.name),
+                    ..output.clone()
+                })
+                .collect(),
             identity: IdentityPlan {
                 strategy: info.strategy,
                 key,
@@ -3618,11 +3633,23 @@ impl<'a> Compiler<'a> {
                 .outputs
                 .iter()
                 .map(|output| {
-                    (
-                        output.name.clone(),
-                        self.output_schema_of_type(&output.ty, output.field_type),
-                    )
+                    let schema = self.output_schema_of_type(&output.ty, output.field_type);
+                    // An output that may be absent is returned as `null`
+                    // under its own name, so its schema admits `null`
+                    // beside its type (decision 0305).
+                    let schema = if output.may_be_absent {
+                        serde_json::json!({"anyOf": [schema, {"type": "null"}]})
+                    } else {
+                        schema
+                    };
+                    (output.name.clone(), schema)
                 })
+                .collect();
+            // Every output is in every result, so every output is required.
+            let required: Vec<&str> = plan
+                .outputs
+                .iter()
+                .map(|output| output.name.as_str())
                 .collect();
             let at = self.operations[position].doc.at.clone();
             let tool = self.tool(
@@ -3631,7 +3658,7 @@ impl<'a> Compiler<'a> {
                 title,
                 description,
                 &plan.inputs,
-                serde_json::json!({"type": "object", "properties": output}),
+                serde_json::json!({"type": "object", "properties": output, "required": required}),
                 ToolAnnotations {
                     read_only: plan.effect == EffectClass::Read,
                     destructive: plan.effect == EffectClass::Irreversible

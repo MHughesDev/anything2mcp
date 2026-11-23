@@ -511,11 +511,10 @@ impl<'a> Lower<'a, '_> {
                 }
             };
             let stars = path.iter().filter(|part| *part == "*").count();
-            let shape = found
-                .template
-                .response
-                .at_path(&path)
-                .map(|(shape, _)| shape);
+            let (shape, certain) = match found.template.response.at_path(&path) {
+                Some((shape, certain)) => (Some(shape), certain),
+                None => (None, false),
+            };
             let fits = shape.is_some_and(|shape| match take {
                 Take::Text => matches!(shape.kind, Kind::String | Kind::Any),
                 Take::Int => matches!(shape.kind, Kind::Integer | Kind::Any),
@@ -543,10 +542,28 @@ impl<'a> Lower<'a, '_> {
                 );
                 continue;
             }
+            // A value that is certain to be there cannot be declared absent:
+            // the declaration would hide a required value (decision 0305).
+            if certain && output.may_be_absent {
+                self.refuse(
+                    "absent_untrue",
+                    Stage::TypeCheck,
+                    at,
+                    format!(
+                        "The output `{}` is declared `may_be_absent`, and the endpoint `{}` declares `{}` as always there.",
+                        output.name,
+                        found.name,
+                        codes::shown(&path.join("."))
+                    ),
+                    "Remove `may_be_absent` from the output, or correct the endpoint's `response_schema` if the system may leave it out.",
+                );
+                continue;
+            }
             payload.values.push(Extracted {
                 name: output.name.clone(),
                 path,
                 take,
+                may_be_absent: !certain,
             });
         }
         for extra in renamed.map(Located::entries).unwrap_or_default() {
@@ -594,6 +611,31 @@ impl Lowering for HttpLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// The outputs the endpoint's shape does not make certain to be there,
+    /// read from the `extract` steps the lowering made (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let mut names = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == EXTRACT)
+        {
+            if let Ok(payload) = step.payload.decode::<ExtractStep>() {
+                names.extend(
+                    payload
+                        .values
+                        .into_iter()
+                        .filter(|value| value.may_be_absent)
+                        .map(|value| value.name),
+                );
+            }
+        }
+        names
     }
 
     /// A `request` sends a read and a write alike, and which it is is the

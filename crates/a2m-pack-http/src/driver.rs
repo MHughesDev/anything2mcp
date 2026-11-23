@@ -1703,6 +1703,15 @@ fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
     }
 }
 
+/// Whether a value taken, or an entry of it, is `null`.
+fn holds_null(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::List(items) => items.iter().any(holds_null),
+        _ => false,
+    }
+}
+
 /// Whether a value taken, or an entry of it, is text that holds a control
 /// character this pack never returns.
 fn holds_control(value: &Value) -> bool {
@@ -1750,6 +1759,20 @@ impl HttpDriver {
                     "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs.",
                 ))
             })?;
+            // A `null` for a value the endpoint makes certain to be there,
+            // and the operation does not declare absent, is no answer the
+            // description allows (decision 0305).
+            if !wanted.may_be_absent && holds_null(&value) {
+                return Err(StepFailure::answered(failure_of(
+                    &codes::row::RESPONSE_SCHEMA_MISMATCH,
+                    format!(
+                        "The answer of the endpoint `{name}` holds no value at `{}`, which the endpoint declares as always there and the operation's output `{}` does not allow to be absent.",
+                        wanted.path.join("."),
+                        wanted.name
+                    ),
+                    "Compare the system's answer with the endpoint's `response_schema`; or declare the output `may_be_absent`.",
+                )));
+            }
             // Of every form, a value is data, and never a control
             // character but a tab or a line break (decision 0249).
             if holds_control(&value) {

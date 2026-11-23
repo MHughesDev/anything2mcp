@@ -712,6 +712,20 @@ pub struct OutputPlan {
     pub ty: ValueType,
     /// Its field type, where it has one.
     pub field_type: Option<FieldTypeIndex>,
+    /// Whether the system may hold no value for it (decision 0305). The
+    /// pack's lowering sets it, or a person declares it with
+    /// `may_be_absent: true`. An output that may be absent is returned as
+    /// `null` under its own name, and its schema admits `null`; a `null` in
+    /// one that may not be stops the run. Left out of the encoded plan when
+    /// false, so a plan that declares none is the bytes it was before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub may_be_absent: bool,
+}
+
+// `skip_serializing_if` takes a reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// How an operation's record is found again.
@@ -1644,6 +1658,7 @@ mod tests {
                     name: "total".to_owned(),
                     ty: ValueType::Decimal,
                     field_type: Some(FieldTypeIndex::new(1)),
+                    may_be_absent: false,
                 },
                 OutputPlan {
                     name: "lines".to_owned(),
@@ -1652,6 +1667,7 @@ mod tests {
                         ValueType::Choice,
                     )])),
                     field_type: None,
+                    may_be_absent: false,
                 },
             ],
             identity: IdentityPlan {

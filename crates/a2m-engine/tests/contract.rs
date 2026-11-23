@@ -616,6 +616,7 @@ fn with_lengths(plan: &mut a2m_core::Plan) {
         field_type: Some(a2m_core::FieldTypeIndex::new(
             u32::try_from(inches).unwrap(),
         )),
+        may_be_absent: false,
     });
 }
 

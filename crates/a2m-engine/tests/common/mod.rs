@@ -1537,21 +1537,25 @@ pub fn plan(address: &str) -> Plan {
                 name: "order_id".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "customer".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(free_text)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "status".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "lines".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             },
         ]
     };
@@ -1591,6 +1595,7 @@ pub fn plan(address: &str) -> Plan {
             name: "in_stock".to_owned(),
             ty: ValueType::Int,
             field_type: None,
+            may_be_absent: false,
         }],
         identity: IdentityPlan {
             strategy: IdentityStrategy::Natural,
@@ -1626,6 +1631,7 @@ pub fn plan(address: &str) -> Plan {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             }],
             identity: IdentityPlan {
                 strategy: IdentityStrategy::Composite,
@@ -1670,11 +1676,13 @@ pub fn plan(address: &str) -> Plan {
                 name: "item_code".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             },
         ]
     };

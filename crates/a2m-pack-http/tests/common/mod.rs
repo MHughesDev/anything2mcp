@@ -582,3 +582,75 @@ impl Signed {
             .unwrap()
     }
 }
+
+// ---- a check of a result against a tool's output schema ----
+
+/// Whether `value` fits `schema`, for the words of JSON Schema that the
+/// compiler writes in an output schema. A word it does not know is a panic,
+/// so that the schema cannot grow a promise this check does not hold.
+pub fn schema_fits(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value as Json;
+    let Json::Object(words) = schema else {
+        return Err(format!("{schema} is not a schema"));
+    };
+    for (word, rule) in words {
+        match word.as_str() {
+            "description" | "title" => {}
+            "type" => {
+                let kind = rule.as_str().unwrap_or_default();
+                let fits = match (kind, value) {
+                    ("object", Json::Object(_))
+                    | ("array", Json::Array(_))
+                    | ("string", Json::String(_))
+                    | ("boolean", Json::Bool(_))
+                    | ("null", Json::Null) => true,
+                    ("integer", Json::Number(number)) => number.is_i64() || number.is_u64(),
+                    _ => false,
+                };
+                if !fits {
+                    return Err(format!("{value} is not of the type {kind}"));
+                }
+            }
+            "const" => {
+                if rule != value {
+                    return Err(format!("{value} is not the constant {rule}"));
+                }
+            }
+            "enum" => {
+                if !rule.as_array().is_some_and(|words| words.contains(value)) {
+                    return Err(format!("{value} is not one of {rule}"));
+                }
+            }
+            "anyOf" => {
+                let arms = rule.as_array().cloned().unwrap_or_default();
+                if !arms.iter().any(|arm| schema_fits(arm, value).is_ok()) {
+                    return Err(format!("{value} fits none of the arms of {rule}"));
+                }
+            }
+            "required" => {
+                for name in rule.as_array().into_iter().flatten() {
+                    let name = name.as_str().unwrap_or_default();
+                    if value.get(name).is_none() {
+                        return Err(format!("`{name}` is missing"));
+                    }
+                }
+            }
+            "properties" => {
+                if let (Json::Object(held), Json::Object(declared)) = (value, rule) {
+                    for (name, inner) in held {
+                        if let Some(property) = declared.get(name) {
+                            schema_fits(property, inner).map_err(|why| format!("{name}: {why}"))?;
+                        }
+                    }
+                }
+            }
+            "items" => {
+                for item in value.as_array().into_iter().flatten() {
+                    schema_fits(rule, item)?;
+                }
+            }
+            other => panic!("the check does not know the schema word `{other}`"),
+        }
+    }
+    Ok(())
+}

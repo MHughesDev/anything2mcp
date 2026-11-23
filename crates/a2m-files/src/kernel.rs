@@ -252,7 +252,8 @@ fn operation() -> JsonSchema {
             JsonSchema::map_of(
                 JsonSchema::object()
                     .required("type", JsonSchema::field_type())
-                    .optional("list", JsonSchema::bool()),
+                    .optional("list", JsonSchema::bool())
+                    .optional("may_be_absent", JsonSchema::bool()),
             ),
         )
         .required(

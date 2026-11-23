@@ -333,6 +333,17 @@ pub(crate) struct Extracted {
     /// of an array, and the value is then a list.
     pub path: Vec<String>,
     pub take: Take,
+    /// Whether the endpoint's shape leaves the value not certain to be
+    /// there, or the operation declares the output `may_be_absent`
+    /// (decision 0305). A `null` taken for a value that may not be absent
+    /// stops the run. A payload that does not say is read as may be absent,
+    /// as before.
+    #[serde(default = "may_be_absent_unless_said")]
+    pub may_be_absent: bool,
+}
+
+fn may_be_absent_unless_said() -> bool {
+    true
 }
 
 /// The payload of an `extract` step.

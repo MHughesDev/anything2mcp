@@ -235,6 +235,14 @@ pub trait Lowering: Send + Sync {
             WriteEvidence::ReadBack
         }
     }
+    /// The names of the operation's outputs that this binding's steps may
+    /// return as `null` because the system may hold no value for them
+    /// (decision 0305). The pack knows this from what its system declares;
+    /// the kernel does not work it out. A lowering that does not answer
+    /// says none, and every output is then one that may not be absent.
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> Vec<String> {
+        Vec::new()
+    }
     /// The fields this mode adds to a binding: an object schema. The kernel
     /// owns `mode`, `verb`, `status`, and `precondition`; everything else in
     /// a binding, `read_back` included, is checked against this.

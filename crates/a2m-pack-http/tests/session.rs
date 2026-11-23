@@ -1082,6 +1082,140 @@ async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
     assert!(app.writes().await.unwrap().is_empty());
 }
 
+/// Case 37 (decision 0305): the read drafted for the hand-off declares its
+/// optional `packages` as an output that may be absent, and no other. Its
+/// schema admits `null` for that output only and requires every output; a
+/// result with the value null or left out is `null` under its own name and
+/// validates against the schema; a `null` in a required output stops.
+#[tokio::test]
+async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_possibly_absent() {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-absent");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    Drafter::new(set, &root).draft(&findings).unwrap();
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+
+    // The plan: `packages` may be absent, and nothing else of the read.
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_orders_handoff_get")
+        .unwrap();
+    let absent: Vec<&str> = operation
+        .outputs
+        .iter()
+        .filter(|output| output.may_be_absent)
+        .map(|output| output.name.as_str())
+        .collect();
+    assert_eq!(absent, ["packages"]);
+    assert_eq!(operation.outputs.len(), 3);
+
+    // The schema says the same: every output required, `null` admitted by
+    // `packages` alone.
+    let tool = plan
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_orders_handoff_get")
+        .unwrap();
+    let schema: serde_json::Value = serde_json::from_slice(tool.output_schema.as_bytes()).unwrap();
+    let mut required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|name| name.as_str())
+        .collect();
+    required.sort_unstable();
+    assert_eq!(required, ["carrier_code", "order_id", "packages"]);
+    for (name, admits_null) in [
+        ("order_id", false),
+        ("carrier_code", false),
+        ("packages", true),
+    ] {
+        let property = &schema["properties"][name];
+        assert_eq!(
+            common::schema_fits(property, &serde_json::Value::Null).is_ok(),
+            admits_null,
+            "{name}: {property}"
+        );
+    }
+
+    let reading = Scene::over(
+        Folder::new("drafted-absent-run"),
+        common::registry(
+            &Folder::new("drafted-absent-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let inputs = Values::new().with("order_id", "A-100");
+    for (answer, packages) in [
+        (CarrierAnswer::Object, Value::Int(2)),
+        (CarrierAnswer::Null, Value::Null),
+        (CarrierAnswer::Missing, Value::Null),
+    ] {
+        app.set_carrier(answer).await.unwrap();
+        let ran = reading
+            .read(
+                &handle,
+                &mut prepared,
+                "example_orders_handoff_get",
+                &inputs,
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("{answer:?}: {failure:?}"));
+        // The key is always in the result, with the value or `null`.
+        assert_eq!(ran.values.get("packages"), Some(&packages), "{answer:?}");
+        let result = serde_json::to_value(&ran.values).unwrap();
+        common::schema_fits(&schema, &result)
+            .unwrap_or_else(|why| panic!("{answer:?}: {why}: {result}"));
+    }
+
+    // A `null` where the description requires a value stops.
+    app.set_carrier(CarrierAnswer::RequiredNull).await.unwrap();
+    let failure = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_handoff_get",
+            &inputs,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    handle.release(prepared, false).await;
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
 /// A redactor that knows one secret.
 struct Knows(&'static str);
 

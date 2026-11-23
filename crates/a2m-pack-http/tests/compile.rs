@@ -497,3 +497,97 @@ fn the_review_states_what_the_http_pack_runs_and_where_it_sends() {
         );
     }
 }
+
+/// Decision 0305: an output the endpoint's shape does not make certain to
+/// be there is compiled as one that may be absent; one it makes certain is
+/// not, and cannot be declared absent by hand; a plan that declares none is
+/// the bytes it was.
+#[test]
+fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
+    let folder = Folder::new("absent");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let flags = |plan: &a2m_core::Plan| -> Vec<(String, bool)> {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_get")
+            .unwrap()
+            .outputs
+            .iter()
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+
+    // Both outputs are required by the endpoint: neither may be absent, and
+    // the encoded plan says nothing of it.
+    let plain = compile(&registry, "example");
+    assert_eq!(
+        flags(&plain.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), false)]
+    );
+    let outputs = &plain
+        .plan
+        .operations
+        .iter()
+        .find(|o| o.name.as_str() == "example_order_get")
+        .unwrap()
+        .outputs;
+    assert!(
+        !serde_json::to_string(outputs)
+            .unwrap()
+            .contains("may_be_absent")
+    );
+
+    // The endpoint no longer requires `customer`: the lowering sets the flag.
+    let optional = |text: &str| {
+        text.replacen(
+            "required: [order_id, customer, status, items]",
+            "required: [order_id, status, items]",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    assert_eq!(
+        flags(&compiled.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), true)]
+    );
+    assert!(
+        serde_json::to_string(
+            &compiled
+                .plan
+                .operations
+                .iter()
+                .find(|o| o.name.as_str() == "example_order_get")
+                .unwrap()
+                .outputs
+        )
+        .unwrap()
+        .contains("\"may_be_absent\":true")
+    );
+
+    // A person's declaration over a value the endpoint makes optional
+    // stands, and over one it makes certain is refused.
+    let declared = |text: &str| {
+        text.replacen(
+            "customer: {type: text}",
+            "customer: {type: text, may_be_absent: true}",
+            1,
+        )
+    };
+    let stands = common::compile_changed_files(
+        &registry,
+        "example",
+        &[
+            ("endpoints/orders.yaml", &optional),
+            ("operations/orders.yaml", &declared),
+        ],
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    assert_eq!(
+        flags(&stands.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), true)]
+    );
+    let untrue = refused("operations/orders.yaml", declared, "http.absent_untrue");
+    assert!(untrue.message.contains("`customer`"), "{untrue}");
+    assert!(!untrue.fix.is_empty(), "{untrue}");
+}
