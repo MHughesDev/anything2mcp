@@ -19,7 +19,9 @@ jobs:
   rust:
     name: Rust on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # The whole workspace is built, linted, and tested here, and its tests
+    # alone took close to thirty minutes on Windows by 2026-11-23.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -66,11 +68,6 @@ jobs:
         run: cargo run --locked --release -p a2m-bench -- run --out bench-results
         env:
           A2M_BENCH_COMMIT: ${{ github.sha }}
-      # The exit test of Phase 4: a request binding gained through shadow is
-      # identical and at least ten times faster, asserted in a release build.
-      - name: Promotion speed-up
-        if: runner.os == 'Linux'
-        run: cargo test --locked --release -p a2m-bench --test promotion
       # Pinned by commit; this is v7.0.2.
       - name: Store the benchmark result
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -78,6 +75,23 @@ jobs:
           name: bench-${{ matrix.os }}
           path: bench-results/
           if-no-files-found: error
+
+  promotion:
+    name: The exit test of Phase 4, in a release build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # A request binding gained through shadow is identical and at least ten
+      # times faster, asserted in a release build and run alone, so that no
+      # other test shares the machine while it measures.
+      - name: Promotion speed-up
+        run: cargo test --locked --release -p a2m-bench --test promotion
 
   dependencies:
     name: Licences and advisories of dependencies
