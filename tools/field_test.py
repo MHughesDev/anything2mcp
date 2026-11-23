@@ -48,10 +48,23 @@ and `note`:
                                       line per request: `METHOD path -> rule-or-none ->
                                       status-or-none`, so `contains` and `lacks` can
                                       expect that a request was or was not sent
+    "person":  {"link", "approve", "send"}   the person's press on the engine's own page,
+                                      with the field harness's prompt answered: the
+                                      runner opens `link` (an approval's or an act's
+                                      page, from an earlier step's answer), presses
+                                      Approve or Carry out, reads the prompt the harness
+                                      prints, and writes on its standard input the short
+                                      hash of `approve`, the change's hash or the act's
+                                      identifier the recipe means to pass. `"send":
+                                      "other"` writes another hash instead, to show that
+                                      a wrong answer passes nothing
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
-command), `status` (of a request), `contains` and `lacks` (text in the output), and
-`rows` (of a query). A step with `gap` expects what the product does today
+command), `status` (of a request), `contains` and `lacks` (text in the output),
+`count` (`{"text", "times"}`: the text is in the output exactly that many times), and
+`rows` (of a query). A step of the product may say `keep`, a map from a name to a
+dotted path into its answer, such as `{"run": "result.run_id"}`; later steps use the
+value as `{run}`. A step with `gap` expects what the product does today
 where that is not what it should do; the report lists these apart, and such a
 step failing means the gap has closed and the recipe is to be updated.
 
@@ -97,6 +110,22 @@ with the system's own address, so that seeding and checking never go through the
 control client inside the proxy's container. Without `"proxy": true` nothing changes and
 `{direct}` equals the system's own address.
 
+The field harness (decision 0310). The engine of every `a2m` step is the field harness,
+`a2m-field-harness serve`, not the product's own `serve`: the product's binary runs each
+command as a thin client of it. Before anything is started the runner builds the harness
+from this repository into a build folder of its own, under `--harness-build` (the system's
+temporary folder unless given), with a cargo target folder of its own, and deletes the
+folder when the run ends, so that the harness is never left behind or packaged. The
+harness's binary is mounted read-only in the box beside the product's. After the
+closed-network check the runner starts it in the box with `docker exec -i`, holds its
+standard input, reads its standard output, and waits for it to say that it serves. Before
+every later `a2m` step it checks that the harness still runs, because a command that finds
+no engine starts the product's own. Only a `person` step writes on the harness's standard
+input, and it writes only the short hash the recipe means to pass. The vault's passphrase
+reaches the harness in its environment; the harness is never given
+`--passphrase-from-stdin`, because its standard input carries the prompt's answers. What the
+harness writes on its standard error is kept in the run folder as `harness.log`.
+
 Recipes written when the system was published on a port of this machine keep working with
 no change, provided they name the system by `{base}`, `{direct}`, `{system}`, or `{host}`.
 A recipe that built an address from `127.0.0.1` and `{port}` does not: `{port}` is now the
@@ -110,14 +139,18 @@ which leaves them running and prints their names so they can be removed.
 import argparse
 import base64
 import glob
+import html
 import json
 import os
+import queue
 import re
 import secrets
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -134,6 +167,15 @@ PUBLIC_ADDRESSES = (("1.1.1.1", 443), ("8.8.8.8", 53), ("2606:4700:4700::1111", 
 # A public name. From inside the closed network it must not resolve.
 PUBLIC_NAME = "one.one.one.one"
 BOX_BINARY = "/usr/local/bin/anything2mcp"
+BOX_HARNESS = "/usr/local/bin/a2m-field-harness"
+HARNESS_PACKAGE = "a2m-field-harness"
+# What the harness writes on its standard error once its engine serves.
+HARNESS_READY = "the local engine is ready"
+# How long the runner waits for the harness to serve, and for a prompt after a press.
+HARNESS_WAIT = 120
+PROMPT_WAIT = 60
+# The characters of a hash or an act's identifier that a prompt shows.
+SHORT_HASH = 12
 PROXY_PORT = 8080
 CONTROL_PORT = 9099
 RUN_LABEL = "a2m-field-run"
@@ -234,13 +276,17 @@ class Run:
             argv += ["-e", f"{key}={value}"]
         return argv + [system["image"]]
 
-    def box_argv(self, binary, home, project, user):
-        """The container the product's binary runs in: the binary read-only, and the
-        engine's home and the project folder at the paths they have on this machine."""
+    def box_argv(self, binary, home, project, user, harness=None):
+        """The container the product's binary runs in: the binary read-only, the field
+        harness read-only beside it when there is one, and the engine's home and the
+        project folder at the paths they have on this machine."""
+        mounts = ["-v", f"{binary}:{BOX_BINARY}:ro"]
+        if harness:
+            mounts += ["-v", f"{harness}:{BOX_HARNESS}:ro"]
         return [
             "docker", "run", "-d", "--init", "--name", self.box, "--network", self.network,
             "--label", self.label, "--user", user, "-e", f"HOME={home}",
-            "-v", f"{binary}:{BOX_BINARY}:ro", "-v", f"{home}:{home}", "-v", f"{project}:{project}",
+            *mounts, "-v", f"{home}:{home}", "-v", f"{project}:{project}",
             BOX_IMAGE, "sleep", "infinity",
         ]
 
@@ -253,13 +299,13 @@ class Run:
             "--listen", f"0.0.0.0:{PROXY_PORT}", "--control", f"127.0.0.1:{CONTROL_PORT}",
         ]
 
-    def ensure_box(self, binary, home, project, user, execute=None):
+    def ensure_box(self, binary, home, project, user, execute=None, harness=None):
         """Start the binary's container and check that the network is closed, once, before
         the first command of the product."""
         execute = execute or run
         if self.box_up:
             return
-        code, _, err = execute(self.box_argv(binary, home, project, user))
+        code, _, err = execute(self.box_argv(binary, home, project, user, harness))
         if code != 0:
             raise CannotRun(f"The container for the product's binary did not start: {err.strip()[-400:]}")
         self.box_up = True
@@ -273,6 +319,22 @@ class Run:
         # A command starts with the umask a person's shell has. The engine's container may
         # start commands with none, and the engine refuses a project file others may change.
         return ["docker", "exec", "-w", cwd, *flags, self.box, "sh", "-c", 'umask 022; exec "$0" "$@"', BOX_BINARY, *argv]
+
+    def harness_argv(self, env, cwd):
+        """The field harness's `serve`, inside the binary's container, with its standard input
+        kept open (`-i`) for the runner alone. It is given no other argument: in particular
+        not `--passphrase-from-stdin`, because its standard input carries prompt answers."""
+        flags = []
+        for key, value in env.items():
+            flags += ["-e", f"{key}={value}"]
+        return ["docker", "exec", "-i", "-w", cwd, *flags, self.box, "sh", "-c", 'umask 022; exec "$0" "$@"', BOX_HARNESS, "serve"]
+
+    def page_argv(self, port):
+        """A request to the engine's own page, which listens on the box's loopback address:
+        the request on standard input, the answer on standard output, through the box's own
+        shell, so that nothing outside the box reaches the page."""
+        script = f"exec 3<>/dev/tcp/127.0.0.1/{int(port)}; cat >&3; cat <&3"
+        return ["docker", "exec", "-i", self.box, "bash", "-c", script]
 
     def remove(self):
         """Remove every container of the run, then its network. Returns what was left."""
@@ -383,7 +445,226 @@ class ProxyBox:
         raise CannotRun("The fault proxy did not start.")
 
 
-def do_step(step, names, env, active, proxy=None):
+def harness_build(build_dir):
+    """The command that builds the field harness into `build_dir`, and its environment: a
+    cargo target folder of the run's own, so that the harness is never in the shared one,
+    and no debug information or incremental state, which only cost disk."""
+    env = dict(os.environ)
+    env.update(
+        CARGO_TARGET_DIR=os.path.join(build_dir, "target"),
+        CARGO_INCREMENTAL="0",
+        CARGO_PROFILE_DEV_DEBUG="0",
+    )
+    argv = ["cargo", "build", "-p", HARNESS_PACKAGE, "--locked", "--quiet"]
+    return argv, env, os.path.join(build_dir, "target", "debug", HARNESS_PACKAGE)
+
+
+def build_harness(build_root, execute=None):
+    """Build the field harness into a new folder under `build_root`. Returns the folder,
+    which the caller deletes, and the binary."""
+    execute = execute or (lambda argv, env: run(argv, env=env, cwd=REPO, seconds=3600))
+    build_dir = tempfile.mkdtemp(prefix="a2m-field-harness-", dir=build_root)
+    argv, env, binary = harness_build(build_dir)
+    code, out, err = execute(argv, env)
+    if code != 0 or not os.path.isfile(binary):
+        shutil.rmtree(build_dir, ignore_errors=True)
+        raise CannotRun(f"The field harness did not build: {(out + err).strip()[-600:]}")
+    return build_dir, binary
+
+
+class Harness:
+    """The field harness serving in the box: its standard input held by the runner, its
+    standard output read line by line, where it writes each prompt, and its standard error
+    kept in a file."""
+
+    def __init__(self, argv, log_path, popen=None):
+        self.argv = argv
+        self.log_path = log_path
+        self.popen = popen or subprocess.Popen
+        self.process = None
+        self.prompts = queue.Queue()
+        self.log = None
+
+    def start(self, wait=HARNESS_WAIT):
+        self.log = open(self.log_path, "w", encoding="utf-8")
+        self.process = self.popen(
+            self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
+            text=True, bufsize=1,
+        )
+        threading.Thread(target=self._read, daemon=True).start()
+        until = time.time() + wait
+        while time.time() < until:
+            if HARNESS_READY in self.said():
+                return
+            if self.process.poll() is not None:
+                raise CannotRun(f"field_harness_refused: the field harness stopped before it served: {self.said().strip()[-600:]}")
+            time.sleep(0.2)
+        raise CannotRun(f"The field harness did not serve within {wait} seconds: {self.said().strip()[-400:]}")
+
+    def _read(self):
+        with self.process.stdout:
+            for line in self.process.stdout:
+                self.prompts.put(line.rstrip("\n"))
+
+    def said(self):
+        try:
+            with open(self.log_path, encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+
+    def alive(self):
+        return self.process is not None and self.process.poll() is None
+
+    def stray(self):
+        """Every prompt line that waits unanswered, taken off the queue."""
+        found = []
+        while True:
+            try:
+                found.append(self.prompts.get_nowait())
+            except queue.Empty:
+                return found
+
+    def answer(self, line):
+        self.process.stdin.write(line + "\n")
+        self.process.stdin.flush()
+
+    def stop(self, seconds=30):
+        if self.process is None:
+            return
+        try:
+            self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        if self.log:
+            self.log.close()
+
+
+PAGE_LINK = re.compile(r"^http://127\.0\.0\.1:(\d+)(/(?:approve|act)/[0-9a-f]+)$")
+PRESS = {"approve": "approve", "act": "confirm"}
+
+
+def page_request(method, port, path, body=""):
+    """One HTTP request to the engine's own page, as the person's browser on this machine
+    sends it: the page's own host, and on a press its own origin."""
+    head = [f"{method} {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Connection: close"]
+    if method == "POST":
+        data = body.encode()
+        head += [
+            f"Origin: http://127.0.0.1:{port}",
+            "Content-Type: application/x-www-form-urlencoded",
+            f"Content-Length: {len(data)}",
+        ]
+    return ("\r\n".join(head) + "\r\n\r\n" + body).encode()
+
+
+def page_answer(raw):
+    """The status, the title, and the plain text of a page's answer."""
+    text = raw.decode("utf-8", "replace")
+    head, _, body = text.partition("\r\n\r\n")
+    match = re.match(r"HTTP/1\.[01] (\d{3})", head)
+    status = int(match.group(1)) if match else None
+    title = re.search(r"<h1>(.*?)</h1>", body, re.S)
+    words = html.unescape(re.sub(r"<[^>]+>", " ", body))
+    return status, html.unescape(title.group(1)) if title else "", " ".join(words.split()), body
+
+
+def once_of(body, press_path):
+    """The one-time value of the form that presses `press_path` on the page."""
+    form = re.search(
+        r'<form method="post" action="' + re.escape(press_path) + r'">\s*<input type="hidden" name="once" value="([0-9a-f]+)">',
+        body,
+    )
+    return form.group(1) if form else None
+
+
+def prompt_short(line):
+    """The short hash a prompt line of the harness shows: its last word."""
+    words = line.split()
+    return words[-1] if words else ""
+
+
+def other_short(short):
+    """A short hash of the same form that is not `short`."""
+    return "".join("0" if c != "0" else "1" for c in short) or "0" * SHORT_HASH
+
+
+def press(spec, active, harness, execute=None, wait=PROMPT_WAIT):
+    """A `person` step: open the page, press, answer the prompt with the short hash the
+    recipe means to pass (or, with `"send": "other"`, another), and show what the page
+    answered."""
+    execute = execute or (lambda argv, data: subprocess.run(argv, input=data, capture_output=True, timeout=wait + 30, check=False))
+    if harness is None or not harness.alive():
+        raise CannotRun("A person step needs the field harness serving: run an `a2m` step first.")
+    link = PAGE_LINK.match(spec.get("link", ""))
+    if not link:
+        raise CannotRun(f"A person step's `link` is not a page of the engine on the box: {spec.get('link')!r}")
+    meant = str(spec.get("approve", ""))
+    if not re.fullmatch(r"[0-9a-f]{%d,}" % SHORT_HASH, meant):
+        raise CannotRun("A person step's `approve` is not a change's hash or an act's identifier.")
+    port, path = link.group(1), link.group(2)
+    short = meant[:SHORT_HASH]
+    sent = other_short(short) if spec.get("send") == "other" else short
+    shown = execute(active.page_argv(port), page_request("GET", port, path))
+    status, title, words, body = page_answer(shown.stdout)
+    if status != 200:
+        return {"ok": False, "status": status, "output": f"the page answered {status}: {title} {words}"[:2000]}
+    if meant not in words and short not in words:
+        return {"ok": False, "status": status, "output": f"the page does not show {short}: {words}"[:2000]}
+    press_path = f"{path}/{PRESS[path.split('/')[1]]}"
+    once = once_of(body, press_path)
+    if once is None:
+        return {"ok": False, "status": status, "output": f"the page has no press for {press_path}"}
+    stray = harness.stray()
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(done=execute(active.page_argv(port), page_request("POST", port, press_path, f"once={once}")))
+    )
+    worker.start()
+    asked = None
+    until = time.time() + wait
+    while time.time() < until and asked is None:
+        try:
+            asked = harness.prompts.get(timeout=0.2)
+        except queue.Empty:
+            if not worker.is_alive():
+                break
+    if asked is not None:
+        harness.answer(sent)
+    worker.join(wait + 30)
+    if "done" not in result:
+        raise CannotRun("The press on the engine's page did not end.")
+    status, title, words, _ = page_answer(result["done"].stdout)
+    lines = [
+        f"prompt: {asked if asked is not None else 'none was asked'}",
+        f"shown: {prompt_short(asked) if asked else 'none'}; sent: {sent if asked else 'nothing'}",
+        f"page: {status} {title}: {words}",
+    ]
+    if stray:
+        lines.insert(0, f"prompts that waited before the press: {stray}")
+    passed = status == 200 and asked is not None and prompt_short(asked) == sent and not stray
+    return {"ok": passed, "status": status, "output": "\n".join(lines)[:4000]}
+
+
+def kept(answer, path):
+    """The value at a dotted path of a JSON answer, as text, or None."""
+    value = answer
+    for part in path.split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+def do_step(step, names, env, active, proxy=None, harness=None):
     """Carry one step out. Returns what it showed, as a dict."""
     if "fault" in step or "proxied" in step:
         if proxy is None:
@@ -412,8 +693,14 @@ def do_step(step, names, env, active, proxy=None):
     if "http" in step:
         status, body = request(names["direct"], step["http"])
         return {"ok": 200 <= status < 300, "status": status, "output": body[:2000]}
+    if "person" in step:
+        return press(step["person"], active, harness)
     if "a2m" in step:
-        active.ensure_box(env["A2M_BINARY"], env["A2M_HOME"], names["project"], f"{os.getuid()}:{os.getgid()}")
+        if harness is not None and harness.alive() is False and harness.process is not None:
+            raise CannotRun(
+                "field_harness_gone: the field harness no longer runs, and a command would start "
+                f"the product's own engine in its place: {harness.said().strip()[-400:]}"
+            )
         code, out, err = run(active.exec_argv(product_env(env), names["project"], step["a2m"]))
         answer = first_json(out) or {}
         error = answer.get("error") or {}
@@ -421,6 +708,7 @@ def do_step(step, names, env, active, proxy=None):
             "ok": bool(answer.get("ok")) and code == 0,
             "code": error.get("code"),
             "class": error.get("class"),
+            "answer": answer,
             "output": out + err,
         }
     if "copy" in step:
@@ -461,6 +749,10 @@ def met(expect, shown):
         return f"the output does not contain {expect['contains']!r}"
     if "lacks" in expect and expect["lacks"] in shown.get("output", ""):
         return f"the output contains {expect['lacks']!r}"
+    if "count" in expect:
+        found = shown.get("output", "").count(expect["count"]["text"])
+        if found != expect["count"]["times"]:
+            return f"the output holds {expect['count']['text']!r} {found} times, expected {expect['count']['times']}"
     return None
 
 
@@ -486,6 +778,12 @@ def main():
         "--home",
         help="the engine's home for this run; give a short path where the run folder is deep, "
         "because the engine's socket lives under it and a socket's path is short",
+    )
+    parser.add_argument(
+        "--harness-build",
+        default=tempfile.gettempdir(),
+        help="the folder under which the field harness is built for this run, in a folder of "
+        "its own that is deleted when the run ends",
     )
     args = parser.parse_args()
 
@@ -534,9 +832,23 @@ def main():
     )
 
     proxy = None
+    harness = None
+    build_dir = None
     report = {"field_test": recipe["name"], "image": system["image"], "steps": []}
     failed = 0
+
+    def start_engine(harness_binary):
+        """The box, the closed-network check, and the field harness serving in the box."""
+        active.ensure_box(
+            env["A2M_BINARY"], home, names["project"], f"{os.getuid()}:{os.getgid()}", harness=harness_binary
+        )
+        started = Harness(active.harness_argv(product_env(env), names["project"]), os.path.join(run_dir, "harness.log"))
+        started.start()
+        return started
+
     try:
+        print("building the field harness")
+        build_dir, harness_binary = build_harness(args.harness_build)
         code, _, err = run(active.network_argv())
         if code != 0:
             raise CannotRun(f"The closed network was not made: {err.strip()[-400:]}")
@@ -559,11 +871,19 @@ def main():
         for number, raw in enumerate(recipe["steps"], 1):
             straight = any(kind in raw for kind in ("http", "sqlite", "exec", "python"))
             step = fill(raw, {**names, "base": names["direct"]} if straight else names)
-            shown = do_step(step, names, env, active, proxy)
+            if "a2m" in step and harness is None:
+                harness = start_engine(harness_binary)
+            shown = do_step(step, names, env, active, proxy, harness)
+            answer = shown.pop("answer", None)
+            for name, path in step.get("keep", {}).items():
+                value = kept(answer or {}, path)
+                if value is None:
+                    raise CannotRun(f"Step {number} has no `{path}` in its answer to keep as `{{{name}}}`.")
+                names[name] = value
             why = met(step.get("expect", {"ok": True}), shown)
             entry = {
                 "step": number,
-                "what": next(key for key in step if key not in ("expect", "gap", "note", "as")),
+                "what": next(key for key in step if key not in ("expect", "gap", "note", "as", "keep")),
                 "note": step.get("note"),
                 "gap": step.get("gap"),
                 "passed": why is None,
@@ -580,15 +900,22 @@ def main():
         report["could_not_run"] = str(stop)
         failed = -1
     finally:
-        if active.box_up and os.path.isdir(home):
+        if harness is not None and harness.alive():
             run(active.exec_argv(product_env(env), names["project"], ["engine", "stop"]), seconds=60)
+        if harness is not None:
+            harness.stop()
+        if build_dir is not None:
+            shutil.rmtree(build_dir, ignore_errors=True)
+            if os.path.exists(build_dir):
+                print(f"NOT REMOVED, remove by hand: the field harness's build folder {build_dir}")
+                report.setdefault("not_removed", []).append(build_dir)
         if args.keep:
             print(f"left running: network {active.network}; containers {active.system}, {active.box}, {active.proxy}")
         else:
             left = active.remove()
             if left:
                 print(f"NOT REMOVED, remove by hand: {', '.join(left)} (label {active.label})")
-                report["not_removed"] = left
+                report.setdefault("not_removed", []).extend(left)
         gaps = [entry for entry in report["steps"] if entry["gap"]]
         report["gaps"] = [{"step": entry["step"], "gap": entry["gap"], "still_open": entry["passed"]} for entry in gaps]
         with open(os.path.join(run_dir, "report.json"), "w", encoding="utf-8") as handle:

@@ -341,5 +341,211 @@ class ProxyControl(unittest.TestCase):
         self.assertGreater(asyncio.run(start()), 0)
 
 
+class HarnessCommands(unittest.TestCase):
+    """How the runner builds and starts the field harness (decision 0310)."""
+
+    def setUp(self):
+        self.run = field_test.Run("example", token="abc")
+
+    def test_the_harness_serves_in_the_box_with_its_input_held_and_no_passphrase_on_it(self):
+        argv = self.run.harness_argv({"A2M_HOME": "/h", "A2M_VAULT_PASSPHRASE": "s"}, "/p/project")
+        self.assertEqual(argv[:3], ["docker", "exec", "-i"])
+        self.assertEqual(argv[-2:], [field_test.BOX_HARNESS, "serve"])
+        self.assertIn(self.run.box, argv)
+        self.assertIn("A2M_VAULT_PASSPHRASE=s", argv)
+        self.assertNotIn("--passphrase-from-stdin", " ".join(argv))
+        self.assertNotIn(field_test.BOX_BINARY, argv)
+
+    def test_the_harness_is_mounted_read_only_beside_the_product(self):
+        argv = self.run.box_argv("/b/anything2mcp", "/h", "/p", "0:0", harness="/build/a2m-field-harness")
+        self.assertIn(f"/build/a2m-field-harness:{field_test.BOX_HARNESS}:ro", argv)
+        self.assertIn(f"/b/anything2mcp:{field_test.BOX_BINARY}:ro", argv)
+        self.assertNotIn(field_test.BOX_HARNESS, " ".join(self.run.box_argv("/b", "/h", "/p", "0:0")))
+
+    def test_the_harness_is_built_in_a_folder_of_its_own(self):
+        argv, env, binary = field_test.harness_build("/scratch/build-1")
+        self.assertEqual(argv[:4], ["cargo", "build", "-p", field_test.HARNESS_PACKAGE])
+        self.assertIn("--locked", argv)
+        self.assertEqual(env["CARGO_TARGET_DIR"], "/scratch/build-1/target")
+        self.assertTrue(binary.startswith("/scratch/build-1/"))
+        self.assertNotIn(field_test.REPO, env["CARGO_TARGET_DIR"])
+
+    def test_a_build_that_fails_leaves_no_folder_and_stops_the_run(self):
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(field_test.CannotRun):
+                field_test.build_harness(root, lambda argv, env: (101, "", "error"))
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_the_page_is_asked_inside_the_box_on_its_loopback_address(self):
+        argv = self.run.page_argv(4321)
+        self.assertEqual(argv[:4], ["docker", "exec", "-i", self.run.box])
+        self.assertIn("/dev/tcp/127.0.0.1/4321", argv[-1])
+
+    def test_a_press_carries_the_page_s_own_host_and_origin(self):
+        raw = field_test.page_request("POST", "4321", "/approve/ab/approve", "once=cd").decode()
+        self.assertIn("Host: 127.0.0.1:4321\r\n", raw)
+        self.assertIn("Origin: http://127.0.0.1:4321\r\n", raw)
+        self.assertIn("Content-Length: 7\r\n", raw)
+        self.assertTrue(raw.endswith("\r\n\r\nonce=cd"))
+        self.assertNotIn("Origin", field_test.page_request("GET", "4321", "/approve/ab").decode())
+
+
+HASH = "0123456789abcdef" * 4
+SHORT = HASH[: field_test.SHORT_HASH]
+PAGE = (
+    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n<h1>A write waits for your approval</h1>"
+    f"<dd><code>{HASH}</code></dd>"
+    '<form method="post" action="/approve/c0de/approve">\n<input type="hidden" name="once" value="0e0e">\n</form>'
+)
+
+
+class FakeHarness:
+    def __init__(self, prompt):
+        self.prompts = __import__("queue").Queue()
+        self.prompt = prompt
+        self.sent = []
+        self.process = object()
+
+    def alive(self):
+        return True
+
+    def stray(self):
+        return []
+
+    def answer(self, line):
+        self.sent.append(line)
+
+
+def page(prompt, answer_page, harness):
+    """An `execute` that serves the page, and on the press raises the prompt and answers
+    with `answer_page` once the harness was answered."""
+    asked = []
+
+    def execute(argv, data):
+        asked.append(data.decode())
+        if data.startswith(b"GET"):
+            return subprocess.CompletedProcess(argv, 0, PAGE.encode(), b"")
+        if prompt is not None:
+            harness.prompts.put(prompt)
+            for _ in range(200):
+                if harness.sent:
+                    break
+                __import__("time").sleep(0.01)
+        return subprocess.CompletedProcess(argv, 0, answer_page.encode(), b"")
+
+    return execute, asked
+
+
+DONE = "HTTP/1.1 200 OK\r\n\r\n<h1>Approved</h1><p>Recorded.</p>"
+NOT_PASSED = "HTTP/1.1 403 Forbidden\r\n\r\n<h1>Nothing was approved</h1><p>The prompt on this machine was answered and not passed.</p>"
+
+
+class PersonStep(unittest.TestCase):
+    LINK = "http://127.0.0.1:4321/approve/c0de"
+
+    def press(self, spec, prompt, answer_page):
+        harness = FakeHarness(prompt)
+        execute, asked = page(prompt, answer_page, harness)
+        shown = field_test.press(spec, field_test.Run("example", token="abc"), harness, execute, wait=2)
+        return shown, harness, asked
+
+    def test_only_the_short_hash_the_recipe_means_is_sent(self):
+        shown, harness, asked = self.press(
+            {"link": self.LINK, "approve": HASH}, f"Approve a write by `t` | Change {SHORT}", DONE
+        )
+        self.assertTrue(shown["ok"], shown)
+        self.assertEqual(harness.sent, [SHORT])
+        self.assertIn("POST /approve/c0de/approve HTTP/1.1", asked[1])
+        self.assertTrue(asked[1].endswith("once=0e0e"))
+
+    def test_another_hash_is_sent_when_the_recipe_asks_and_nothing_passes(self):
+        shown, harness, _ = self.press(
+            {"link": self.LINK, "approve": HASH, "send": "other"}, f"Approve | Change {SHORT}", NOT_PASSED
+        )
+        self.assertFalse(shown["ok"])
+        self.assertNotEqual(harness.sent, [SHORT])
+        self.assertEqual(len(harness.sent[0]), field_test.SHORT_HASH)
+        self.assertIn("not passed", shown["output"])
+
+    def test_a_prompt_for_another_change_is_not_a_pass(self):
+        other = "f" * field_test.SHORT_HASH
+        shown, harness, _ = self.press({"link": self.LINK, "approve": HASH}, f"Approve | Change {other}", NOT_PASSED)
+        self.assertFalse(shown["ok"])
+        self.assertEqual(harness.sent, [SHORT])
+
+    def test_a_press_that_raises_no_prompt_is_not_a_pass(self):
+        shown, harness, _ = self.press({"link": self.LINK, "approve": HASH}, None, NOT_PASSED)
+        self.assertFalse(shown["ok"])
+        self.assertEqual(harness.sent, [])
+
+    def test_a_link_that_is_not_the_engine_s_page_is_refused(self):
+        for link in ("http://example.invalid/approve/c0de", "http://127.0.0.1:1/other/c0de", ""):
+            with self.assertRaises(field_test.CannotRun):
+                field_test.press({"link": link, "approve": HASH}, field_test.Run("e"), FakeHarness(None))
+
+    def test_a_press_needs_a_hash_to_send(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.press({"link": self.LINK, "approve": "{change}"}, field_test.Run("e"), FakeHarness(None))
+
+
+# A stand-in for the harness, run as a real child process: it says it serves on standard
+# error, prints one prompt on standard output, and reports the line it read.
+CHILD = (
+    "import sys; sys.stderr.write('anything2mcp: the local engine is ready.\\n'); sys.stderr.flush();"
+    "print('Approve | Change abc', flush=True); line = sys.stdin.readline();"
+    "sys.stderr.write('answered ' + line); sys.stderr.flush()"
+)
+
+
+class HarnessProcess(unittest.TestCase):
+    def test_a_prompt_is_read_from_its_output_and_answered_on_its_input(self):
+        with tempfile.TemporaryDirectory() as folder:
+            harness = field_test.Harness([sys.executable, "-c", CHILD], str(Path(folder) / "harness.log"))
+            harness.start(wait=10)
+            self.assertEqual(harness.prompts.get(timeout=10), "Approve | Change abc")
+            harness.answer("abc")
+            harness.stop()
+            self.assertIn("answered abc", harness.said())
+            self.assertFalse(harness.alive())
+
+    def test_a_harness_that_stops_before_it_serves_stops_the_run_by_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            harness = field_test.Harness(
+                [sys.executable, "-c", "import sys; sys.stderr.write('this network is not closed'); sys.exit(2)"],
+                str(Path(folder) / "harness.log"),
+            )
+            with self.assertRaises(field_test.CannotRun) as stop:
+                harness.start(wait=10)
+            self.assertIn("field_harness_refused", str(stop.exception))
+            self.assertIn("not closed", str(stop.exception))
+            harness.stop()
+
+    def test_no_command_runs_once_the_harness_is_gone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            harness = field_test.Harness([sys.executable, "-c", CHILD], str(Path(folder) / "harness.log"))
+            harness.start(wait=10)
+            harness.stop()
+            with mock.patch.object(field_test, "run") as ran:
+                with self.assertRaises(field_test.CannotRun) as stop:
+                    field_test.do_step({"a2m": ["init"]}, {"project": "/p"}, {}, field_test.Run("e"), None, harness)
+            ran.assert_not_called()
+            self.assertIn("field_harness_gone", str(stop.exception))
+
+
+class Expectations(unittest.TestCase):
+    def test_a_count_is_exact(self):
+        record = "PATCH /x -> cut_response -> 201\nGET /x -> none -> 200"
+        self.assertIsNone(field_test.met({"count": {"text": "PATCH /x ->", "times": 1}}, {"output": record}))
+        self.assertIsNotNone(field_test.met({"count": {"text": "PATCH /x ->", "times": 2}}, {"output": record}))
+        self.assertIsNotNone(field_test.met({"count": {"text": "PUT", "times": 1}}, {"output": record}))
+
+    def test_a_kept_value_is_read_by_its_path(self):
+        answer = {"result": {"run_id": "r_1", "diff": {"hash": HASH}, "list": [{"a": 1}]}}
+        self.assertEqual(field_test.kept(answer, "result.run_id"), "r_1")
+        self.assertEqual(field_test.kept(answer, "result.diff.hash"), HASH)
+        self.assertEqual(field_test.kept(answer, "result.list.0.a"), "1")
+        self.assertIsNone(field_test.kept(answer, "result.nothing"))
+
+
 if __name__ == "__main__":
     unittest.main()
