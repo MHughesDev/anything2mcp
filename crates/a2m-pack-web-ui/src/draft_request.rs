@@ -392,7 +392,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             "description",
             DraftValue::text(&format!(
                 "Reads what the page `{page}` asks the application for by itself, with the page's own session: the plain values of the answer to `{path}`. Drafted by rule from the requests a page made; its name is provisional.{}",
-                crate::draft::left_out_sentence(&secrets)
+                a2m_files::left_out_sentence(&secrets)
             )),
         ),
     ]);

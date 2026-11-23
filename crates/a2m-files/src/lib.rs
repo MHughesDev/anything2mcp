@@ -32,7 +32,8 @@ mod view;
 mod yaml;
 
 pub use compile::{
-    COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, lint_one, names_a_secret,
+    COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, left_out_sentence,
+    lint_one, names_a_secret,
 };
 pub use diag::{
     DRAFT_CONFLICT, Diagnostic, Diagnostics, LINT_FAILED, Level, PATH_NOT_ALLOWED,

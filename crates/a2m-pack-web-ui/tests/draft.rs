@@ -243,6 +243,16 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
     }
     let operation = std::fs::read_to_string(folder.path().join(OPERATION)).unwrap();
     assert!(!operation.contains("examples"), "{operation}");
+    // Nothing on the page is named as a secret's, so the description says
+    // nothing was left out for its name (decision 0302).
+    assert!(
+        operation.contains("its name is provisional."),
+        "{operation}"
+    );
+    assert!(
+        !operation.contains("Left out because") && !operation.contains("never an output"),
+        "{operation}"
+    );
 
     let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));

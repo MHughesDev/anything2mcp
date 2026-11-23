@@ -12,7 +12,8 @@
 
 use a2m_core::{Failure, FailureClass, FailureCode, FileKindName, Finding, OperationName};
 use a2m_files::{
-    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
 };
 use serde_json::Value as Json;
 
@@ -39,28 +40,6 @@ fn plain(name: &str) -> Option<&str> {
 /// it or as the input or output name it becomes (decision 0302).
 fn named_as_secret(property: &str) -> bool {
     names_a_secret(property) || plain(property).is_some_and(names_a_secret)
-}
-
-/// The sentence that ends a drafted description when properties were left
-/// out for their names: the names are quoted in backticks, cut at 60
-/// characters, and no more than eight are listed.
-fn left_out_sentence(secrets: &[String]) -> String {
-    const MOST_NAMED: usize = 8;
-    let named: Vec<String> = secrets
-        .iter()
-        .take(MOST_NAMED)
-        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
-        .collect();
-    let more = secrets.len().saturating_sub(MOST_NAMED);
-    let tail = if more > 0 {
-        format!(" and {more} more")
-    } else {
-        String::new()
-    };
-    format!(
-        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
-        named.join(", ")
-    )
 }
 
 /// The one type a property states, when it states one.

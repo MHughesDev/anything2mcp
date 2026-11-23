@@ -158,6 +158,10 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
             "Save",
             "password_text",
             "Access code",
+            // Nothing was left out for its name, so no description says
+            // that something was (decision 0302).
+            "Left out because",
+            "never an output: .",
             "action",
             "commits",
             SECRET,

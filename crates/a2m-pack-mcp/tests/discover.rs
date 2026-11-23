@@ -332,6 +332,14 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     // The loader does not read the holding folder, so the drafts compile
     // with the file of questions there.
     assert!(root.join(questioned[0]).is_file());
+    // No property of the report is named as a secret's, so its description
+    // says nothing was left out for its name (decision 0302).
+    let read = std::fs::read_to_string(root.join("operations/orders_orders_report.yaml")).unwrap();
+    assert!(read.contains("its name is provisional."), "{read}");
+    assert!(
+        !read.contains("Left out because") && !read.contains("never an output"),
+        "{read}"
+    );
     let drafted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
         .plan;

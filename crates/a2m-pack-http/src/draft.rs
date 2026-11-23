@@ -15,7 +15,8 @@
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{
-    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
 };
 
 use crate::json::Json;
@@ -113,29 +114,6 @@ fn plain_outputs_and_secrets(shape: &Json) -> (Vec<(String, &str, &str)>, Vec<St
         found.push((name, property.as_str(), kind));
     }
     (found, secrets)
-}
-
-/// The sentence that ends a drafted description when properties were left
-/// out for their names. The names are the system's words in the form output
-/// names have, each quoted in backticks and cut at the length an endpoint
-/// name is, and no more than a few are listed.
-fn left_out_sentence(secrets: &[String]) -> String {
-    const MOST_NAMED: usize = 8;
-    let named: Vec<String> = secrets
-        .iter()
-        .take(MOST_NAMED)
-        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
-        .collect();
-    let more = secrets.len().saturating_sub(MOST_NAMED);
-    let tail = if more > 0 {
-        format!(" and {more} more")
-    } else {
-        String::new()
-    };
-    format!(
-        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
-        named.join(", ")
-    )
 }
 
 /// The outputs of a read: each plain property of `shape`, named in the

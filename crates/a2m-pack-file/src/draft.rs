@@ -423,31 +423,6 @@ fn left_out(kind: &KindDraft) -> &'static str {
     }
 }
 
-/// The sentence that ends a drafted description when columns were left out
-/// for their names: the same form every pack uses (decision 0302).
-fn secrets_left_out(kind: &KindDraft) -> String {
-    const MOST_NAMED: usize = 8;
-    if kind.secrets.is_empty() {
-        return String::new();
-    }
-    let named: Vec<String> = kind
-        .secrets
-        .iter()
-        .take(MOST_NAMED)
-        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
-        .collect();
-    let more = kind.secrets.len().saturating_sub(MOST_NAMED);
-    let tail = if more > 0 {
-        format!(" and {more} more")
-    } else {
-        String::new()
-    };
-    format!(
-        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
-        named.join(", ")
-    )
-}
-
 fn layout_of(finding: &Finding) -> Result<LayoutFound, Failure> {
     serde_json::from_str(finding.found())
         .map_err(|_| invalid("a `file_layout` finding does not hold a layout"))
@@ -659,7 +634,7 @@ impl DraftingRule for ReadsFromLayout {
                             layout.named(kind),
                             layout.values_read(kind),
                             left_out(kind),
-                            secrets_left_out(kind),
+                            a2m_files::left_out_sentence(&kind.secrets),
                         )),
                     ),
                 ]),
@@ -717,7 +692,7 @@ impl DraftingRule for ReadsFromLayout {
                             "Reads one row of {} by its key, {} Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.{}",
                             layout.named(kind),
                             layout.values_read(kind),
-                            secrets_left_out(kind),
+                            a2m_files::left_out_sentence(&kind.secrets),
                         )),
                     ),
                 ]),

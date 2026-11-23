@@ -9,7 +9,8 @@
 
 use a2m_core::{Failure, FailureClass, FailureCode, FileKindName, Finding, FindingKind};
 use a2m_files::{
-    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
 };
 
 use crate::channel::{MessageSchema, Shape};
@@ -69,31 +70,6 @@ fn found(finding: &Finding) -> Result<Found, Failure> {
 
 fn path(folder: &str, word: &str) -> Result<RelPath, Failure> {
     RelPath::new(&format!("{folder}/{word}.yaml"))
-}
-
-/// The sentence that ends a drafted description when fields of a message
-/// were left out for their names: the same form every pack uses (decision
-/// 0302).
-fn left_out_sentence(secrets: &[String]) -> String {
-    const MOST_NAMED: usize = 8;
-    if secrets.is_empty() {
-        return String::new();
-    }
-    let named: Vec<String> = secrets
-        .iter()
-        .take(MOST_NAMED)
-        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
-        .collect();
-    let more = secrets.len().saturating_sub(MOST_NAMED);
-    let tail = if more > 0 {
-        format!(" and {more} more")
-    } else {
-        String::new()
-    };
-    format!(
-        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
-        named.join(", ")
-    )
 }
 
 /// The fields of a message a read of one key would give, by the broker's

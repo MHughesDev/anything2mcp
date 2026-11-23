@@ -4298,6 +4298,35 @@ pub fn names_a_secret(name: &str) -> bool {
     secret_key_word(&name.to_ascii_lowercase().replace('-', "_"))
 }
 
+/// The sentence that ends a drafted description when inputs, outputs,
+/// columns, or values were left out because their names are a secret's:
+/// each name quoted in backticks and cut at 60 characters, no more than
+/// eight named, and the rest counted. It is empty when nothing was left
+/// out. Every pack's drafter ends a description with it, so the sentence
+/// has one form (decision 0302).
+#[must_use]
+pub fn left_out_sentence(secrets: &[String]) -> String {
+    const MOST_NAMED: usize = 8;
+    if secrets.is_empty() {
+        return String::new();
+    }
+    let named: Vec<String> = secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
+}
+
 /// What the name of a key says of its value, when it says anything. `exact`
 /// is true when the whole key is the word, which is all a number is judged
 /// by: `pin: 4821` is a secret, and `token_ttl_ms: 60000` is not.
@@ -4575,7 +4604,7 @@ pub fn is_error(diagnostic: &Diagnostic) -> bool {
 
 #[cfg(test)]
 mod secret_names {
-    use super::{KeyNames, key_names, names_a_secret};
+    use super::{KeyNames, key_names, left_out_sentence, names_a_secret};
 
     /// The answers `key_names` gave before the certain-secret test was
     /// shared: the certain words, the perhaps words, and ordinary names.
@@ -4612,5 +4641,22 @@ mod secret_names {
                 "{key:?}"
             );
         }
+    }
+
+    /// The one sentence every drafter ends a description with: nothing when
+    /// nothing was left out, eight names at most, each cut at 60 characters.
+    #[test]
+    fn the_left_out_sentence_names_eight_and_counts_the_rest() {
+        assert_eq!(left_out_sentence(&[]), "");
+        assert_eq!(
+            left_out_sentence(&["client_secret".to_owned()]),
+            " Left out because their names are a secret's, so that a secret is never an output: `client_secret`."
+        );
+        let many: Vec<String> = (0..10).map(|n| format!("token_{n}")).collect();
+        let sentence = left_out_sentence(&many);
+        assert!(sentence.ends_with("`token_7` and 2 more."), "{sentence}");
+        assert!(!sentence.contains("token_8"), "{sentence}");
+        let long = "p".repeat(80);
+        assert!(left_out_sentence(&[long]).contains(&format!("`{}`", "p".repeat(60))));
     }
 }
