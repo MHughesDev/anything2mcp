@@ -295,6 +295,14 @@ impl Section {
 pub(crate) struct CallPayload {
     pub surface: String,
     pub tool: String,
+    /// The members every result of the call holds: the record's key, which
+    /// the driver requires to be text or a whole number, and `text` for a
+    /// tool whose result is its text. Whether any other member is there is
+    /// known only from the server's output schema, which the mapping pins
+    /// by its digest and which the target's files do not hold, so every
+    /// other output may be absent (decision 0315). Left out when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub certain: Vec<String>,
 }
 
 fn tool_schema() -> JsonSchema {
