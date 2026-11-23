@@ -94,6 +94,7 @@ extern crate self as a2m_actions;
 mod tests {
     mod audit;
     mod authoring;
+    mod guard;
     mod kernel;
     mod keys;
     mod net;
