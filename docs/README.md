@@ -16,7 +16,7 @@ The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says wha
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 295 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 42 open |
 | [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 11 entries |
-| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 30 |
+| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 38 |
 | [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 44 documents and 1 image |
 | assets/ | Diagrams | 2 |
 
