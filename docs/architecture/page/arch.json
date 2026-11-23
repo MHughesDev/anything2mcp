@@ -7562,7 +7562,7 @@
      ]
     },
     {
-     "text": "The publish gates give behavior_verified. Only a person gives approved, and only approved tools are listed to ordinary callers.",
+     "text": "The publish gates give behavior_verified. Only a person gives approved. The level informs a person at review and gates no listing or call (0307).",
      "at": [
       "ladder-behavior",
       "ladder-approved"

@@ -47,7 +47,7 @@ These are examples. Each pack's section defines its own.
 | Version | An immutable, tested, published snapshot of a target's files | `example@12` |
 | Run | One call of an operation or pipeline, with its ledger, trace, and result | `r_8f21` |
 | Finding | Something learned about a target, with its subject, an evidence level, its source, and its limitations. A finding never runs ([section 218](../2-kernel/218-discovery-and-findings.md)) | "The surface `api.example.com` publishes a description listing a read of an order" |
-| Evidence level | How far a finding, draft, or tool has been proven: `inferred`, `discovered`, `reconstructed`, `schema_verified`, `executed`, `behavior_verified`, `approved`. Earned, never declared; only `approved` is listed ([section 219](../2-kernel/219-the-evidence-ladder.md)) | A drafted read that passed five identical runs in the sandbox is `executed` |
+| Evidence level | How far a finding, draft, or tool has been proven: `inferred`, `discovered`, `reconstructed`, `schema_verified`, `executed`, `behavior_verified`, `approved`. Earned, never declared; it informs a person at review and gates no listing or call ([section 219](../2-kernel/219-the-evidence-ladder.md)) | A drafted read that passed five identical runs in the sandbox is `executed` |
 
 Three further words are used everywhere: an **effect class** is `read`, `write`, or `irreversible`; a **hazard** is what an operation could damage beyond the data it names ([section 213](../2-kernel/213-effects-hazards-and-consent.md)); and an **identity strategy** says how a written record is found again ([section 209](../2-kernel/209-record-identity-and-dependent-records.md)).
 

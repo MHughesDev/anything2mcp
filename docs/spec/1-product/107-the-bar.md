@@ -21,7 +21,7 @@ Each dimension names a proof that can fail. A proof is a test in the suite, a be
 ### Honesty about evidence
 
 **The best:** nothing is ever presented as more certain than it was shown to be. A guess never reaches an agent as a fact.
-**The test:** a finding cannot be built above `discovered`; a draft made by rule carries no unit, key, or read-back rule the system did not state; only tools at the level their listing needs are listed ([section 219](../2-kernel/219-the-evidence-ladder.md)). A write that could not be read back is never reported as checked.
+**The test:** a finding cannot be built above `discovered`; a draft made by rule carries no unit, key, or read-back rule the system did not state; a person sees each tool's level before publishing it, and the level gates no listing ([section 219](../2-kernel/219-the-evidence-ladder.md), [decision 0307](../../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md)). A write that could not be read back is never reported as checked.
 **Measured in:** packages B2, E3, E4, and E5.
 
 ### Safety against a steered agent
@@ -116,7 +116,7 @@ One row per dimension. **State** is `designed` (a section designs it), `built` (
 | --- | --- | --- | --- |
 | Correctness of writes | No duplicate and nothing unverified after any interruption | Kill-and-resume on every test stand; the nine ledger rules as tests | built, for the nine ledger rules (`crates/a2m-ledger/tests/rules.rs`, package 3.1) and for a process killed after a write was sent, on the test application (`crates/anything2mcp/tests/verified_write.rs`); kill-and-resume on every test stand is designed |
 | Determinism | One trace signature across five runs and three operating systems | Package 1.2; H-16 | built, for five runs on one machine with one signature (`crates/anything2mcp/tests/first_read.rs`); the same signature across three operating systems is designed |
-| Honesty about evidence | No finding above `discovered`; no listed tool below its level | Packages B2, E3, E5 | built, for the finding's level (B2, and the store of package E1); the rest designed |
+| Honesty about evidence | No finding above `discovered`; each tool's level shown at review | Packages B2, E3, E5 | built, for the finding's level (B2, and the store of package E1); the rest designed |
 | Safety against a steered agent | Every named attack fails, and its test fails when the defence is removed | The manipulation suite, package 9.3 | built, for the engine's manipulation tests (`crates/a2m-engine/tests/manipulation.rs`, package 3.10); the full suite is designed |
 | Secrets | A planted secret appears nowhere outside the vault | Package 2.1 | built, for a secret that cannot be printed (B1), and for a planted secret through the REST and MCP doors, a result, and a log line; package 2.1's proof, a secret planted in a system's own answer, is not yet shown |
 | Breadth | Each kind supported only after its pack clears the entry bar; the second kind needs no kernel change | Milestones 4, 8, 10; H-26 | built in part: nine packs have crates tested against their stands; the result of H-26 (package D4) is not yet written |
