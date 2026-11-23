@@ -47,6 +47,8 @@ A pack may not depend on another pack's crates, so this crate cannot use `a2m-pa
 
 The code is written twice, each over its own element handle. That is the price of the rule, and it is measured: if the second copy grows large, the archetype-level parts (the `screens/` skeleton, locator ordering, condition evaluation over an abstract tree) are a candidate to move into the kernel by decision record. That would be a finding for hypotheses H-26 and H-37, counted the way package D4 counts the command pack's.
 
+**A column or a control named as a secret is never drafted as an output.** Beside the rule that a control the tree marks as holding a secret is never read, the drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each table column's heading and each labelled control's name, as the window writes it and as the output name it becomes. One so named is left out of the screen and of the read's outputs, and the last sentence of the drafted description tells the names left out. A drafted read has no input ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## What it registers
 
 Through the provider contract as built ([decision 0089](../../decisions/0089-the-provider-contract-as-building-it-settled-it.md)): a manifest embedded with `include_str!`, and `Pack::register` handing objects to the `Registrar`. What is not built is not declared, as in the web pack's manifest. The table is as built by decision 0198; the right column says what the full pack adds later.

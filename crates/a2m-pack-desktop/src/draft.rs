@@ -19,7 +19,9 @@
 //! `untrusted_text`; a window whose title is not plain words.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+};
 use serde_json::Value as Json;
 
 use crate::discover::FORMAT;
@@ -51,6 +53,35 @@ fn plain_words(text: &str) -> bool {
         && !text
             .chars()
             .any(|c| c.is_control() || a2m_core::said_hides(c))
+}
+
+/// Whether the compiler takes a heading or a control's name for a secret's,
+/// as the window writes it or as the output name it becomes (decision
+/// 0302).
+fn named_as_secret(words: &str, name: &str) -> bool {
+    names_a_secret(words) || names_a_secret(name)
+}
+
+/// The sentence that ends a drafted description when columns or values
+/// were left out for their names: the names are quoted in backticks, cut at
+/// 60 characters, and no more than eight are listed.
+fn left_out_sentence(secrets: &[String]) -> String {
+    const MOST_NAMED: usize = 8;
+    let named: Vec<String> = secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
 }
 
 /// A name in the form target files use.
@@ -286,6 +317,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         {
             continue;
         }
+        let mut secrets: Vec<String> = Vec::new();
         let columns: Vec<(String, String)> = headers
             .iter()
             .filter_map(|heading| {
@@ -295,7 +327,17 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                     .filter(|other| snake(other) == column)
                     .count()
                     == 1;
-                (alone && is_name(&column)).then(|| (column, heading.clone()))
+                (alone && is_name(&column)).then_some((column, heading))
+            })
+            .filter_map(|(column, heading)| {
+                // A column headed as a secret is never an output
+                // (decision 0302).
+                if named_as_secret(heading, &column) {
+                    secrets.push(column);
+                    None
+                } else {
+                    Some((column, heading.clone()))
+                }
             })
             .collect();
         if columns.is_empty() {
@@ -360,7 +402,10 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 "list",
                 &screen,
                 outputs,
-                "Lists the rows of one table of one window of the application, each column as the window shows it. Drafted by rule from a snapshot; its name is provisional.".to_owned(),
+                format!(
+                    "Lists the rows of one table of one window of the application, each column as the window shows it. Drafted by rule from a snapshot; its name is provisional.{}",
+                    left_out_sentence(&secrets)
+                ),
             ),
         });
     }
@@ -368,6 +413,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     // The labelled values: an entry or a text the window names once.
     let mut fields: Vec<(String, String, String)> = Vec::new();
     let mut shared: Vec<(String, String)> = Vec::new();
+    let mut secrets: Vec<String> = Vec::new();
     for (at, one) in elements.iter().enumerate() {
         let Some(name) = one.name.as_deref() else {
             continue;
@@ -376,6 +422,14 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             continue;
         }
         if !plain_words(name) {
+            continue;
+        }
+        // A control named as a secret is never an output (decision 0302).
+        if named_as_secret(name, &snake(name)) {
+            let output = snake(name);
+            if is_name(&output) && !secrets.contains(&output) {
+                secrets.push(output);
+            }
             continue;
         }
         if count(&one.role, name) > 1 {
@@ -448,7 +502,10 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 "read",
                 &values,
                 outputs,
-                "Reads the values one window of the application labels, each as the window shows it. Drafted by rule from a snapshot; its name is provisional.".to_owned(),
+                format!(
+                    "Reads the values one window of the application labels, each as the window shows it. Drafted by rule from a snapshot; its name is provisional.{}",
+                    left_out_sentence(&secrets)
+                ),
             ),
         });
     }

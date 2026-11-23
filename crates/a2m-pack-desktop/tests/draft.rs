@@ -248,3 +248,98 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
         assert!(!text.contains(SECRET), "{}", path.display());
     }
 }
+
+/// A window finding written by hand, with a table column and two labelled
+/// values named as secrets (decision 0302), one of them carrying an
+/// invented value as its accessible name. It needs no session: the rules
+/// read the finding alone. The drafted reads hold no such output, say what
+/// they left out, hold the value in no file, and the target compiles.
+#[test]
+fn a_column_or_a_control_named_as_a_secret_is_never_a_drafted_output() {
+    use a2m_core::{Address, Coverage, FindingKind, ProducedBy, Source, Subject, Timestamp};
+    use a2m_files::{Drafter, TargetRoot};
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let folder = common::Folder::new("named-secrets");
+    let engine = common::Folder::new("named-secrets-engine");
+    let registry = common::registry(engine.path(), None);
+    let element = |depth: u64, role: &str, name: Option<&str>| {
+        let mut one = serde_json::json!({"depth": depth, "role": role});
+        if let Some(name) = name {
+            one["name"] = name.into();
+        }
+        one
+    };
+    // A snapshot never keeps a value; one here proves that nothing which
+    // reads the finding copies a field it does not know.
+    let mut secret = element(0, "entry", Some("Client secret"));
+    secret["value"] = INVENTED.into();
+    let found = serde_json::json!({
+        "format": "1",
+        "cut": false,
+        "program": "/opt/example/bin/example-desk",
+        "window": {"role": "window", "title": "Example order"},
+        "elements": [
+            element(0, "entry", Some("Order number")),
+            secret,
+            element(0, "entry", Some("Password")),
+            element(0, "table", Some("Line items")),
+            element(1, "table_row", None),
+            element(2, "table_column_header", Some("Item code")),
+            element(2, "table_column_header", Some("API key")),
+            element(1, "table_row", None),
+            element(2, "table_cell", None),
+            element(2, "table_cell", None),
+        ],
+    });
+    let finding = a2m_core::Finding::about(
+        Subject::Address(Address::new("desktop://desk", "/window/0").unwrap()),
+        FindingKind::new("window").unwrap(),
+        found.to_string(),
+        Source::LiveSystem,
+        ProducedBy {
+            provider: "desktop".to_owned(),
+            version: "0".to_owned(),
+            component: None,
+        },
+        Timestamp::from_unix_millis(0),
+    )
+    .level(EvidenceLevel::Discovered)
+    .coverage(Coverage::Complete)
+    .build()
+    .unwrap();
+    std::fs::copy(
+        common::fixture().join("target.yaml"),
+        folder.path().join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(registry.compiler_set(), &TargetRoot::new(folder.path()))
+        .draft(&[finding])
+        .unwrap();
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert!(
+        written.contains(&"operations/example_order_values_get.yaml")
+            && written.contains(&"operations/example_order_line_items_list.yaml"),
+        "{written:?} {report:?}"
+    );
+    let read = |file: &str| std::fs::read_to_string(folder.path().join(file)).unwrap();
+    let values = read("operations/example_order_values_get.yaml");
+    let list = read("operations/example_order_line_items_list.yaml");
+    assert!(values.contains("order_number:"), "{values}");
+    assert!(list.contains("item_code:"), "{list}");
+    assert!(values.contains("`client_secret`"), "{values}");
+    assert!(list.contains("`api_key`"), "{list}");
+    for text in [&values, &list] {
+        assert!(
+            text.contains("so that a secret is never an output"),
+            "{text}"
+        );
+    }
+    for (path, text) in every_file(folder.path()) {
+        assert!(!text.contains(INVENTED), "{path:?}");
+        for key in ["client_secret:", "api_key:", "password:"] {
+            assert!(!text.contains(key), "{path:?} holds {key}");
+        }
+    }
+    common::compile_at(&registry, folder.path())
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
+}

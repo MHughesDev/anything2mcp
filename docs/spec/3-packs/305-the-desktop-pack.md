@@ -107,6 +107,8 @@ Both read the tree and never invoke, expand, or focus anything. What is hidden b
 
 The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions.
 
+A column or a control whose name the compiler takes for a secret's is never drafted as an output, as for the web, and the last sentence of the drafted description tells the names left out ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Lint rules
 
 | Code | Level | Rule |
