@@ -1490,6 +1490,20 @@ async fn try_reads(
             // Where the input came from, never its value.
             entry["input_from"] = json!({"list": list, "output": output});
         }
+        if state == "proven" {
+            // The call that reads it, for an agent to copy (decision 0306).
+            // An input taken from a list read's answer is the system's
+            // data: it is not copied into the report, and the call names
+            // where it comes from.
+            let mut arguments = json!({"target": target.as_str(), "tool": name});
+            if from.is_none()
+                && !input.is_empty()
+                && let Ok(accepted) = serde_json::to_value(&input)
+            {
+                arguments["input"] = accepted;
+            }
+            entry["call"] = json!({"action": "draft.try", "input": arguments});
+        }
         if let Some(first) = results.first() {
             // The shape of what the system answered, never its values: a
             // list read may answer a thousand rows of the system's data.

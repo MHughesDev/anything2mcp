@@ -506,18 +506,16 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
         assert!(!refused.to_json().to_string().contains("secret-for-tests"));
     }
 
-    // `add` registers the target, scouts it, shows the report, and asks
-    // for the sign-in (decision 0205): every step is built.
+    // `add` registers the target, scouts it, and shows the report, which
+    // asks for a sign-in only where a read waits for one (decision 0306):
+    // every step is built.
     let add = SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.word == "add")
         .unwrap();
     let run = add.on(registry);
     let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(
-        steps,
-        ["target.add", "scout.run", "scout.report", "session.login"]
-    );
+    assert_eq!(steps, ["target.add", "scout.run", "scout.report"]);
     assert_eq!((run.stops_before, run.note), (None, None));
     // A shortcut whose first step is not built does nothing, and says so.
     let learn = SHORTCUTS

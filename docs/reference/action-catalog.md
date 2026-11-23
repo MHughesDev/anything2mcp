@@ -138,7 +138,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 | Shortcut | Does |
 | --- | --- |
 | `init` | Create a project and the guidance file; choose a profile |
-| `add <address>` | `target.add`, `scout.run`, `scout.report`, `session.login` |
+| `add <name>` | `target.add`, `scout.run`, `scout.report`; takes `--address` and `--kind` for `target.add` and `--description <file>` for `scout.run` (a description of the system in the project's `sources` folder, handed over as `spec.import` hands it). It ends at the report, whose `next` is `session.login` only where a read waits for a sign-in; each proven read in the report carries the `draft.try` call that reads it ([decision 0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md)) |
 | `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |
 | `publish` | `publish.request`, then waits for a person |

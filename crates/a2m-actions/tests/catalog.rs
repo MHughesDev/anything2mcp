@@ -284,3 +284,27 @@ fn an_action_is_served_by_the_kernel_the_client_or_not_yet_and_the_catalog_has_a
     assert_eq!(first.actions.len(), registry.len());
     assert_eq!(first.digest.len(), 64);
 }
+
+#[test]
+fn no_action_without_a_handler_is_listed_up_front_and_the_trial_is() {
+    let registry = ActionRegistry::kernel_only();
+    for toolset in [BuiltInToolset::Use, BuiltInToolset::Build] {
+        for def in registry.toolset(toolset) {
+            assert!(
+                def.built(),
+                "{} is listed in the {} toolset and has no handler",
+                def.name,
+                toolset.as_str()
+            );
+        }
+    }
+    let build: Vec<String> = registry
+        .toolset(BuiltInToolset::Build)
+        .iter()
+        .map(|def| def.name.to_string())
+        .collect();
+    assert!(build.iter().any(|name| name == "draft.try"), "{build:?}");
+    for unbuilt in ["capture.start", "capture.stop", "endpoints.infer"] {
+        assert!(!build.iter().any(|name| name == unbuilt), "{unbuilt}");
+    }
+}

@@ -428,6 +428,19 @@ fn bounded(report: &Json) -> Json {
     shown
 }
 
+/// Whether something the scout found waits for a person's sign-in: a
+/// surface it could only observe under a session, or a drafted read whose
+/// trial stopped for want of one. Where nothing does, `add` asks for none
+/// (decision 0306).
+fn waits_for_sign_in(report: &Json) -> bool {
+    let content = &report["content"];
+    list(&content["sign_in"]).any(|surface| surface["observed"] == "needs_sign_in")
+        || list(&content["tried"]["tools"]).any(|tool| {
+            tool["failure"]["class"] == "session_expired"
+                || tool["failure"]["code"] == "credential_missing"
+        })
+}
+
 /// A stored report as an action's result: the report with each list cut
 /// to its first entries and counted, its rendering, and the next step.
 pub(crate) fn shown(report: &Json) -> Output {
@@ -438,7 +451,13 @@ pub(crate) fn shown(report: &Json) -> Output {
     if let Json::Object(map) = &mut result {
         map.insert("text".to_owned(), json!(text));
     }
-    let next = if open > 0 {
+    let next = if waits_for_sign_in(report) {
+        Next::new(
+            "session.login",
+            json!({"target": target}),
+            "a read waits for a sign-in; the person signs in, then the scout runs again",
+        )
+    } else if open > 0 {
         Next::new(
             "unknown.list",
             json!({"target": target}),

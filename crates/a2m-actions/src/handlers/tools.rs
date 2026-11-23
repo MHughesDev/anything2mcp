@@ -1864,6 +1864,11 @@ handler!(
     }
 );
 
+/// What a trial's answer says it is (decision 0306): fixed words, not the
+/// builder's.
+const TRIAL_NOTE: &str =
+    "This is a trial in the sandbox. A published tool is called with `tool.call`.";
+
 handler!(
     /// `draft.try`: runs one drafted read in the engine's sandbox, as a
     /// `Try` job of its own run, and returns its outcome as `tool.call`
@@ -1946,6 +1951,12 @@ handler!(
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
         let output = run_output(kernel, &call, row, Tell::Person).await?;
+        let mut output = output;
+        if let Json::Object(answer) = &mut output.result {
+            answer.insert("sandbox".to_owned(), json!(true));
+            answer.insert("published".to_owned(), json!(false));
+            answer.insert("note".to_owned(), json!(TRIAL_NOTE));
+        }
         Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
     }
 );
