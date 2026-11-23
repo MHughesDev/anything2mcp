@@ -221,6 +221,7 @@ pub mod test_support {
     pub fn browser_program() -> Option<PathBuf>;
     pub fn settings() -> BrowserSettings;         // the program named, and no sandbox when asked
     pub fn requirement() -> String;               // a `[[requirements]]` entry for a test pack's manifest
+    pub fn launches_under(folder: &Path) -> u64;  // browser programs this process started for profile roots inside `folder`
 }
 ```
 
