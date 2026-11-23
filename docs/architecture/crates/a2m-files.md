@@ -405,7 +405,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 
 1. Done: the YAML parser verified, and the schema check chosen. Kernel schemas, `load`, `Diagnostics`. Package B4.
 2. Nothing here for package 1.1: its hand-written plan uses the plan types in `a2m-core`.
-3. Done: the registration traits and `CompilerSet`; stages 1 to 9, proven through the test pack `stand`. Not done: no real pack is registered yet; the web pack's screen kind and the HTTP pack's endpoint kind are their packs' packages. Package 1.3.
+3. Done: the registration traits and `CompilerSet`; stages 1 to 9, proven through the test pack `stand`. Real packs now register their kinds and lowerings through the provider registry: the web pack its screen and request kinds (`crates/a2m-pack-web-ui`), and the command, data, and desktop packs theirs. Not done: a plan compiled from real target files through the web pack is not yet pinned by a hash on three operating systems. Package 1.3.
 4. Done: field types compiled to normalizers, built in and from `types.yaml`. Package 3.4.
 5. Done: identity strategies for `natural` and `composite`, commit-point counting for writes, and the write lint rules. Not done: the long form of `identity` for `stamped` and `find` has only its strategy and inputs; the stamped field and the lookup are written with the first operation that needs one. Packages 3.3 and 3.8.
 6. Done: pipelines, and sources compiled to `SourceSpec`. `a2m-sources` uses these types and has no copy, and a test there compiles the `example` target and reads its fixture sheet. Package 3.9.
@@ -433,7 +433,7 @@ Not built, in any step:
 
 - `lint_one` compiles the whole target again; nothing is reused by file digest.
 - An operation's outputs by reference to a pack's schema, and nested records.
-- The provider registry's call of `CompilerSetBuilder::mode_rank` for each mode of each manifest. The compiler orders an operation's bindings by rank unless it states `binding_order: listed` ([decision 0337](../../decisions/0337-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md)), but until the registry gives ranks every mode has the default and the file's order stands.
+- The action registry's reading and rewriting of a binding by its place in the file (`binding promote`), and the proof of a live read after a promotion. The provider registry gives `CompilerSetBuilder::mode_rank` each rank its manifest states for a mode it brings a lowering for, and the compiler orders an operation's bindings by rank unless it states `binding_order: listed` ([decision 0337](../../decisions/0337-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md); `crates/a2m-provider/tests/ranks.rs`).
 - The `stands` rule for surfaces that may sit under an application. The plan carries where a surface stands; refusing a write on a surface that does not say is the rule of the pack whose kind needs it, and no such pack is built.
 - Lint rules that are errors only on a server.
 - The count of an operation's examples below one: an operation may have none.

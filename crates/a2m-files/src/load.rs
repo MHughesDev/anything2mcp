@@ -607,3 +607,71 @@ fn walk_held(root: &Path, at: &RelPath, depth: u32, out: &mut Held) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a helper that cannot do its work stops it"
+    )]
+
+    use a2m_core::Digest;
+
+    use super::{SourceFile, Sources};
+    use crate::doc::RelPath;
+    use crate::testing::{call_kind, example_root, stand_set};
+    use crate::{load, register::CompilerSet};
+
+    fn file(path: &str) -> SourceFile {
+        SourceFile {
+            path: RelPath::new(path).unwrap(),
+            kind: call_kind(),
+            digest: Digest::of(path.as_bytes()),
+            docs: Vec::new(),
+        }
+    }
+
+    /// The listing the digest is of, written out here again from the paths
+    /// as text with `/` between names.
+    fn listing(files: &[SourceFile]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for file in files {
+            out.extend_from_slice(file.path.as_str().as_bytes());
+            out.push(0);
+            out.extend_from_slice(file.digest.to_string().as_bytes());
+            out.push(b'\n');
+        }
+        out
+    }
+
+    #[test]
+    fn the_sort_key_and_the_digest_use_slash_separated_relative_paths() {
+        // A name whose first character sorts between `/` and `\`: sorted by
+        // paths with `\` between names, `a0.yaml` would come before
+        // `a/z.yaml`; with `/` it comes after.
+        let sources = Sources::from_files(
+            example_root(),
+            vec![file("a0.yaml"), file("a/z.yaml"), file("a.yaml")],
+        );
+        let order: Vec<&str> = sources.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(order, ["a.yaml", "a/z.yaml", "a0.yaml"]);
+        assert_eq!(sources.digest, Digest::of(&listing(&sources.files)));
+        // A path with the other separator is not a path at all.
+        assert!(RelPath::new("a\\z.yaml").is_err());
+    }
+
+    #[test]
+    fn a_target_read_from_disk_is_listed_by_slash_paths_in_text_order() {
+        let set: CompilerSet = stand_set().unwrap();
+        let sources = load(&example_root(), &set).unwrap_or_else(|problems| panic!("{problems}"));
+        assert!(sources.files.iter().any(|f| f.path.as_str().contains('/')));
+        for file in &sources.files {
+            assert!(!file.path.as_str().contains('\\'), "{}", file.path);
+        }
+        let paths: Vec<&str> = sources.files.iter().map(|f| f.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort_unstable();
+        assert_eq!(paths, sorted);
+        assert_eq!(sources.digest, Digest::of(&listing(&sources.files)));
+    }
+}
