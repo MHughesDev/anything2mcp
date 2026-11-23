@@ -1019,3 +1019,67 @@ async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_regis
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");
     assert_eq!(served.ended().0, Some(0));
 }
+
+/// Two commands at once, each a read through the pages of the test
+/// application, are served by one engine through one browser: the browser
+/// pack starts one program for the profile, and the second read uses it
+/// again (roadmap package 1.4). The browser's launches are counted by the
+/// browser pack's test equipment under this machine's own home; the engine
+/// runs in this process so that the count is this process's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_commands_at_once_read_through_one_browser() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("pages", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+    lock_comes_free(&machine).await;
+
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    assert!(local.engine().runner_problem().is_none());
+    let serving = tokio::spawn(local.serve());
+    let launches = || a2m_pack_web_browser::test_support::launches_under(machine.home.path());
+    assert_eq!(launches(), 0);
+
+    let input = |item: &str| format!(r#"{{"order_id": "A-100", "item_code": "{item}"}}"#);
+    let (left, right) = (input("L-101"), input("L-102"));
+    let read = |input: &str| {
+        let args = ["tool", "call", "example_line_item_get", "--input", input];
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        let machine = &machine;
+        async move {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            command(machine, &args).await
+        }
+    };
+    let ((first, one), (second, two)) = tokio::join!(read(&left), read(&right));
+    for (done, response, item) in [(&first, &one, "L-101"), (&second, &two, "L-102")] {
+        assert_eq!(done.code, 0, "{done:?}");
+        let result = &response["result"];
+        assert_eq!(result["status"], "completed", "{response}");
+        assert_eq!(result["mode"], "ui", "{response}");
+        let held = app.stored_item("A-100", item).await.unwrap().unwrap();
+        assert_eq!(
+            result["result"]["description"],
+            held.description.as_str(),
+            "{response}"
+        );
+    }
+    assert_ne!(one["result"]["run_id"], two["result"]["run_id"]);
+    // One browser served both reads.
+    assert_eq!(launches(), 1);
+
+    let (stopped, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stopped.code, 0, "{stopped:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+}
