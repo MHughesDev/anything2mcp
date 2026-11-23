@@ -800,3 +800,77 @@ async fn a_help_file_with_an_entity_too_large_or_not_help_starts_nothing_and_fet
     assert_eq!(commands.len(), 1);
     assert!(commands[0].found().contains("Set-ExampleItem"));
 }
+
+/// Decision 0302: a parameter a program's help shows under a secret's name
+/// is never a param of the draft. An optional one is left out; a required one
+/// makes the arguments of that command a question.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parameter_named_as_a_secret_is_never_drafted_as_a_param() {
+    let folder = Folder::new("powershell-secret");
+    let stand = Stand::start().unwrap();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let help = String::from_utf8(source("Example.Inventory-help.xml"))
+        .unwrap()
+        .replace(
+            "<maml:name>Detailed</maml:name>",
+            "<maml:name>ClientSecret</maml:name>",
+        )
+        .replace(
+            "<maml:name>Sku</maml:name>",
+            "<maml:name>Password</maml:name>",
+        );
+    let (report, findings, _) = discover(
+        &stand,
+        &folder,
+        &registry,
+        &[(
+            "powershell_help",
+            "Example.Inventory-help.xml",
+            help.into_bytes(),
+        )],
+        &NoSecrets,
+    )
+    .await;
+    report.unwrap();
+    let ours: Vec<Finding> = findings
+        .iter()
+        .filter(|finding| finding.kind().as_str() == "powershell_command")
+        .cloned()
+        .collect();
+    assert_eq!(ours.len(), 2);
+    let target = Folder::new("powershell-secret-draft");
+    let root = powershell_target(&stand, &target);
+    let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
+        .draft(&ours)
+        .unwrap();
+    assert!(drafted.refused.is_empty(), "{drafted:?}");
+    let mut seen = 0;
+    for path in &drafted.held {
+        let text = std::fs::read_to_string(target.path().join(path.as_str())).unwrap();
+        seen += 1;
+        // No param, flag, or argument has a secret's name, and `Rows`
+        // stays a param: only the secret's names are left out.
+        for secret in ["clientsecret", "password"] {
+            assert!(
+                !text.to_ascii_lowercase().contains(secret),
+                "{path}: {text}"
+            );
+        }
+    }
+    assert_eq!(seen, 2);
+    // Of `Set-ExampleItem`, the set that requires `Sku` has its arguments
+    // asked, and the set without it still gives `-InputObject` by name.
+    let set =
+        std::fs::read_to_string(target.path().join("held/commands/set_exampleitem.yaml")).unwrap();
+    assert!(set.contains("flag: \"-InputObject\""), "{set}");
+    assert!(set.contains("args: {open_question:"), "{set}");
+    // `Sku` was required, so the arguments of that set are a question, and
+    // the question names no secret.
+    assert!(
+        drafted.open_questions.iter().any(|open| open
+            .question
+            .contains("requires a parameter under a name that is a secret's")),
+        "{:?}",
+        drafted.open_questions
+    );
+}

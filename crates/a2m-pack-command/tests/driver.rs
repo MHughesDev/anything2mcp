@@ -1551,6 +1551,24 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
             "the draft states `{never}`:\n{draft}"
         );
     }
+    // A flag the program shows under a secret's name is no parameter of the
+    // draft (decision 0302): the `login` command's `--password-stdin` is
+    // left out, and no drafted file holds it as a param or an argument.
+    let login = std::fs::read_to_string(
+        target
+            .path()
+            .join("held")
+            .join("commands")
+            .join("login.yaml"),
+    )
+    .unwrap();
+    assert!(login.contains("- \"login\""), "{login}");
+    for (path, text) in a2m_files_texts(target.path()) {
+        assert!(
+            !text.contains("password_stdin") && !text.contains("password-stdin"),
+            "{path}: {text}"
+        );
+    }
     // Every question keeps the product's sentence apart from the program's
     // words, in the stored question too: the sentence names no command,
     // and the command's words are the quoted part (decision 0193).
@@ -1602,4 +1620,21 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
         Sent::NotSent,
     );
     scene.handle.release(sandbox, false).await;
+}
+
+/// Every file below a folder, with its path and text.
+fn a2m_files_texts(folder: &std::path::Path) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                found.push((path.display().to_string(), text));
+            }
+        }
+    }
+    found
 }

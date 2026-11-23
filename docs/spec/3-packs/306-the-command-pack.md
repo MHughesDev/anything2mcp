@@ -247,6 +247,8 @@ Of this section, only the redaction of both streams is built; no credential reac
 
 **The drafter** writes, from those findings, a `commands/` draft: the `program` block with the digest and version seen, and one command for each listed command, with its params typed where the help, or a file handed to the scout, states a type and an open question where neither does; a flag that only a file states, or on which the sources disagree, is an open question. It writes no `effect`, no `exits` beyond `0`, no output form it did not see, no read-back, and no operation (section 402). The scout tries none of the drafted commands, since none has a known effect. A developer who declares a command `read` may try it with `draft.try`; the sandbox cannot make a program unable to write, so for this mode it runs a command only against an environment of kind `test`.
 
+**A parameter named as a secret is never drafted as an input.** The drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each flag and each place of a usage line, and of each parameter a PowerShell help file shows, as the program writes it and as the param it becomes. An optional one is left out of the draft; a required one makes the arguments of that command (of that parameter set, for PowerShell) an open question. A command's file has no description and no output is drafted, so the left-out name is told nowhere in it. The compiler's refusal of a secret in a file does not change ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Failures
 
 | What went wrong | Class | Code |
