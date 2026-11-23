@@ -289,3 +289,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0295 | [A field test is run from a recipe kept outside the repository, by a runner that names no software](0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | Accepted (design decision) |
 | 0296 | [The build is ordered by what the next field test needs, in eight stages](0296-the-build-is-ordered-by-what-the-next-field-test-needs.md) | Accepted (design decision) |
 | 0297 | [A property a description does not require is drafted as possibly null](0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md) | Accepted (design decision) |
+| 0298 | [A draft with an open question is set aside, and the rest of the target compiles](0298-a-draft-with-an-open-question-is-set-aside-and-the-rest-of-the-target-compiles.md) | Accepted (design decision) |

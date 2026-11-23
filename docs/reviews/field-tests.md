@@ -25,4 +25,11 @@ What the product showed when it was run against existing software that the proje
 
 **After the first fixes, the same day.** The recipe was run again with findings 2 and 7 closed: all three reads return, and the two that had stopped return the titles the software's own database holds. The recipe has 21 steps, of which four are still marked `gap` (findings 1, 4, 5, 6).
 
+**With the whole description, the same day.** Once the reader took the older form of description, the scout was handed the system's whole description, several hundred operations. Two more findings:
+
+| # | What happened | Why it matters | Where it belongs | State |
+| --- | --- | --- | --- | --- |
+| 8 | The scout's result was 1.2 MB, over the cap of 256 KB on a result, so the command returned no report at all, only that it was cut | At the size of a real system the scout cannot show what it did | `a2m-actions`: the scout answers with its summary and counts, and the lists are read in pages | Open |
+| 9 | 79 problems stood, most of them open questions in drafts of operations whose answers the pack cannot give a shape to. No read could be tried until every one was dealt with | A person who wants three tools is made to deal with three hundred drafts first | [Decision 0298](../decisions/0298-a-draft-with-an-open-question-is-set-aside-and-the-rest-of-the-target-compiles.md) | Open |
+
 **What this field test does not show.** A write, a sign-in, a publish, a second operating system, or any kind of system but a request service. Findings 1 and 4 were got past by hand, with a conversion of the description and an edit of each draft, so that the later steps could run; the recipe keeps both as steps.
