@@ -32,6 +32,7 @@ mod name;
 mod pack;
 mod path;
 mod place;
+mod reach;
 mod registry;
 mod replay;
 mod supervisor;
@@ -65,6 +66,7 @@ pub use path::{
     Temporary, resolved_path,
 };
 pub use place::{MachineState, NetworkPlace, Placed};
+pub use reach::{GatewayName, PlacedInReach, Reach, ReachEntry};
 pub use registry::{
     FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
     RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,

@@ -88,6 +88,15 @@ fn the_child_reads_inside_the_namespace() {
     let proxy = a2m_netstate::proxy().unwrap();
     let standing = a2m_netstate::standing().unwrap();
     assert!(standing.default_routes.is_empty());
+    // With no default route there is no network to name: an empty
+    // fingerprint that says why, and recognized as no network.
+    let fingerprint = a2m_netstate::fingerprint().unwrap();
+    assert!(fingerprint.fingerprint.is_empty());
+    assert_eq!(fingerprint.absent[0].field, "default_route");
+    assert_eq!(
+        fingerprint.fingerprint.recognize(&fingerprint.fingerprint),
+        a2m_netstate::Recognition::Insufficient
+    );
     println!(
         "{}",
         serde_json::json!({

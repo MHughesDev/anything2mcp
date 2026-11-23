@@ -24,10 +24,10 @@ pub enum NetworkPlace {
     LocalNetwork,
     /// An address in no special-purpose range and on no attached subnet.
     PublicInternet,
-    /// An address reached only through a gateway the person named. No
-    /// gateway can be named yet (decisions 0208 and 0223, package N3), so
-    /// [`NetworkPlace::of`] never gives it, and a connection is only ever
-    /// made directly (decision 0197).
+    /// An address reached only through a gateway the person named in a
+    /// reach in force (decisions 0208 and 0223, package N3).
+    /// [`NetworkPlace::of`], which knows no reach, never gives it;
+    /// [`NetworkPlace::of_in_reach`] does.
     ViaGateway,
     /// A place that cannot be told from the literal and the machine's
     /// state: a name, an unreadable address, a private address on no
@@ -59,8 +59,8 @@ impl NetworkPlace {
     }
 
     /// Whether a connection to a destination of this place is made
-    /// directly, with no gateway between. Every place the derivation gives
-    /// is; a connection through a gateway is not built.
+    /// directly, with no gateway between. Every place [`NetworkPlace::of`]
+    /// gives is; `via_gateway` is not.
     #[must_use]
     pub fn is_direct(self) -> bool {
         self != Self::ViaGateway
