@@ -175,12 +175,24 @@ impl Lower<'_, '_> {
                 access: Some(Access::ReadOnly),
                 isolation: Some(statement.isolation),
                 rows: None,
+                nullable: Vec::new(),
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
         let mut execute = self.step(EXECUTE, name, statement, &StepDetail::default(), drift())?;
         execute.args = self.args(name, statement, at, assigned, problems);
-        let mut fetch = self.step(FETCH, name, statement, &StepDetail::default(), drift())?;
+        // The fields that may hold no value travel with the `fetch` that
+        // returns them, for `absent_outputs` (decision 0305).
+        let fetched = StepDetail {
+            nullable: statement
+                .columns
+                .iter()
+                .filter(|column| column.nullable)
+                .map(|column| column.field.clone())
+                .collect(),
+            ..StepDetail::default()
+        };
+        let mut fetch = self.step(FETCH, name, statement, &fetched, drift())?;
         fetch.lookup = statement.returns == Returns::OneOrNone;
         Some(vec![begin, execute, fetch])
     }
@@ -201,6 +213,7 @@ impl Lower<'_, '_> {
                 access: Some(Access::ReadWrite),
                 isolation: Some(statement.isolation),
                 rows: None,
+                nullable: Vec::new(),
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
@@ -226,6 +239,7 @@ impl Lower<'_, '_> {
                 access: None,
                 isolation: None,
                 rows: Some(1),
+                nullable: Vec::new(),
             },
             none_changed,
         )?;
@@ -324,6 +338,19 @@ impl Lowering for SqlLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// The fields the statements file declares `nullable`, as the `fetch`
+    /// steps of the binding's reads carry them (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        lowered
+            .act
+            .iter()
+            .chain(&lowered.read_back)
+            .filter(|step| step.kind == FETCH)
+            .filter_map(|step| step.payload.decode::<StepDetail>().ok())
+            .flat_map(|detail| detail.nullable)
+            .collect()
     }
 
     fn binding_schema(&self) -> &JsonSchema {
