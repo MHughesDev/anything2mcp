@@ -311,3 +311,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0326 | ["Plan" names only the compiled plan, and the document of what to build next is the Build Order](0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md) | Accepted (owner decision) |
 | 0327 | [A reach is a record in force only on the network it was named on, and `via_gateway` is derived from it](0327-a-reach-is-a-record-in-force-only-on-the-network-it-was-named-on-and-via-gateway-is-derived-from-it.md) | Accepted (design decision) |
 | 0328 | [A toolset only narrows, a role is a bundle of grants, and a second administrator is a named check](0328-a-toolset-only-narrows-a-role-is-a-bundle-of-grants-and-a-second-administrator-is-a-named-check.md) | Accepted (design decision) |
+| 0313 | [Every declared output is in every result, on every path](0313-every-declared-output-is-in-every-result-on-every-path.md) | Accepted (design decision) |
