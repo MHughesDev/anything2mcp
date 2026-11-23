@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Done last:** FT3, and findings 1, 2, 4, 6 and half of 5 of FT2, each proven in field test 1. **In hand:** decision 0298 (a draft with an open question is set aside), which closes findings 5 and 9. Finding 8 is closed. **Next:** the two leftovers under FT2, then FT7. **Blocks:** nothing.
+**Done last:** FT3, and findings 1, 2, 4, 6 and half of 5 of FT2, each proven in field test 1. **In hand:** decision 0298 (a draft with an open question waits in a holding folder; the compiler does not change), which closes findings 5 and 9. Finding 8 is closed. **Next:** the two leftovers under FT2, then FT7. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -78,7 +78,7 @@ FT2, one finding at a time, each with a stand case first:
 7. Also fix: `draft.lint` answers `ok: false` when it lists a problem at the level of an error. (Done.)
 8. Left by the review of the reader: a GET in the OpenAPI 3 form with a required request body is not a read the rule drafts; two operations with one `operationId` do not share an endpoint file.
 9. Finding 8: `scout.run` answers with its summary and counts, and its lists are read in pages, so a whole description's report fits the cap on a result.
-10. Finding 9: build decision 0298 in the compiler, then in the actions and the publish review.
+10. Finding 9: build decision 0298: the drafter writes a draft with a question into `held/`, the loader skips it, lint and the scout list it, and a trial of it is refused by name.
 
 4.4: 1. Refuse a reference to a file outside the description, by name. 2. The `api` mode and its decision record. 3. A stand case for each.
 
