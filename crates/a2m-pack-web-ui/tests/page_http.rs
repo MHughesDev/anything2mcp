@@ -571,11 +571,20 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
     // names them, by names alone, and no read is drafted over it.
     let folder = new_target("page-http-unmade", &origin);
     let report = draft(&stand, &folder, &[totals_exchange(&origin)]);
-    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    // The entry holds the question, so it waits in the holding folder and is
+    // not also in place (decision 0298).
+    assert!(report.written.is_empty(), "{report:?}");
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
     assert_eq!(
-        written,
-        ["page_requests/api_orders_totals.yaml"],
+        held,
+        ["held/page_requests/api_orders_totals.yaml"],
         "{report:?}"
+    );
+    assert!(
+        !folder
+            .path()
+            .join("page_requests/api_orders_totals.yaml")
+            .exists()
     );
     assert_eq!(report.open_questions.len(), 1, "{report:?}");
     let question = &report.open_questions[0];
@@ -627,10 +636,11 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
     for (why, one) in cases {
         let folder = new_target("page-http-unmade-case", &origin);
         let report = draft(&stand, &folder, &[one]);
-        let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+        assert!(report.written.is_empty(), "{why}: {report:?}");
+        let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
         assert_eq!(
-            written,
-            ["page_requests/api_orders_totals.yaml"],
+            held,
+            ["held/page_requests/api_orders_totals.yaml"],
             "{why}: {report:?}"
         );
         assert_eq!(report.open_questions.len(), 1, "{why}: {report:?}");

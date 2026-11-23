@@ -1502,14 +1502,37 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
     let root = a2m_files::TargetRoot::new(target.path());
     let set = scene.registry.compiler_set();
     let drafted = a2m_files::Drafter::new(set, &root).draft(&found.0).unwrap();
-    assert_eq!(drafted.written.len(), 9, "{drafted:?}");
+    // Each command is its own finding and each file holds an open
+    // question, so all nine wait in the holding folder (decision 0298).
+    assert!(drafted.written.is_empty(), "{drafted:?}");
+    assert_eq!(drafted.held.len(), 9, "{drafted:?}");
+    assert!(
+        drafted
+            .held
+            .iter()
+            .all(|path| path.as_str().starts_with("held/commands/")),
+        "{drafted:?}"
+    );
     assert!(
         drafted.refused.is_empty() && drafted.conflicts.is_empty(),
         "{drafted:?}"
     );
     assert!(drafted.not_covered.is_empty());
-    let draft =
-        std::fs::read_to_string(target.path().join("commands").join("item_set.yaml")).unwrap();
+    assert!(
+        !target
+            .path()
+            .join("commands")
+            .join("item_set.yaml")
+            .exists()
+    );
+    let draft = std::fs::read_to_string(
+        target
+            .path()
+            .join("held")
+            .join("commands")
+            .join("item_set.yaml"),
+    )
+    .unwrap();
     let digest = Digest::of(&std::fs::read(scene.stand.program()).unwrap());
     assert!(draft.contains(&format!("sha256:{digest}")), "{draft}");
     assert!(

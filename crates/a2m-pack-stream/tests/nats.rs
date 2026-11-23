@@ -1045,10 +1045,22 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
         lists,
         [
             "operations/orders_events_list.yaml",
-            "operations/orders_status_list.yaml",
             "operations/orders_work_list.yaml"
         ]
     );
+    // The retained channel holds the question, and the look at it names the
+    // channel, so both wait in the holding folder and neither is in place
+    // (decision 0298).
+    let held_files: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        held_files,
+        [
+            "held/channels/orders_status.yaml",
+            "held/operations/orders_status_list.yaml"
+        ]
+    );
+    assert!(!root.join("channels/orders_status.yaml").exists());
+    assert!(!root.join("operations/orders_status_list.yaml").exists());
     // No drafted file asks what a message is; the one question left is the
     // key of the retained channel, which the server does not name.
     let asked: Vec<&str> = report
@@ -1056,8 +1068,14 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
         .iter()
         .map(|question| question.file.as_str())
         .collect();
-    assert_eq!(asked, ["channels/orders_status.yaml"], "{asked:?}");
-    common::answer_keys(&root);
+    assert_eq!(asked, ["held/channels/orders_status.yaml"], "{asked:?}");
+    // A person answers the key in the held channel and moves the held
+    // files out to their places.
+    common::answer_keys(&root.join("held"));
+    for file in &held_files {
+        let place = file.strip_prefix("held/").unwrap();
+        std::fs::rename(root.join(file), root.join(place)).unwrap();
+    }
     scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
         Ok(compiled) => compiled.plan,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),

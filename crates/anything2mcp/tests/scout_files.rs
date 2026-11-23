@@ -674,7 +674,7 @@ async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_n
 
 /// Decision 0298: a description gives one sound read and one whose answer
 /// has a value the pack cannot type. The scout leaves the first in place and
-/// holds the second, with its endpoint, in `held/`; the target compiles
+/// holds the second in `held/`, its endpoint staying in place; the target compiles
 /// whole, the sound read is tried with no file deleted by hand, and the held
 /// one is listed by lint and refused by name when tried.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -719,16 +719,23 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
         );
         assert!(target.join(file).is_file(), "{file}");
     }
-    // The other read, and the endpoint made with it, are held.
+    // The other read is held. The endpoint made with it holds no question
+    // and names nothing the read defines (the read names the endpoint, not
+    // the other way), so it stays in place.
     let held: Vec<String> = scouted["content"]["drafted"]["held_back"]
         .as_array()
         .unwrap()
         .iter()
         .map(|file| file.as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(held.len(), 2, "{scouted}");
-    assert!(held[0].starts_with("held/endpoints/"), "{held:?}");
-    assert!(held[1].starts_with("held/operations/"), "{held:?}");
+    assert_eq!(held.len(), 1, "{scouted}");
+    assert!(held[0].starts_with("held/operations/"), "{held:?}");
+    let endpoint = written
+        .iter()
+        .find(|one| one.starts_with("endpoints/") && one.contains("mystery"))
+        .unwrap_or_else(|| panic!("the mystery endpoint in {written:?}"));
+    assert!(target.join(endpoint).is_file(), "{endpoint}");
+    assert!(!target.join("held").join(endpoint).exists(), "{endpoint}");
     for file in &held {
         assert!(target.join(file).is_file(), "{file}");
         assert!(!written.contains(file), "{file}");
@@ -764,11 +771,11 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
         held.iter().map(|file| json!(file)).collect::<Vec<_>>(),
         "{linted}"
     );
-    let question = &listed[1]["questions"][0]["question"]["untrusted"];
+    let question = &listed[0]["questions"][0]["question"]["untrusted"];
     assert!(question.as_str().unwrap().contains("riddle"), "{linted}");
 
     // A trial of the held read is refused, naming the file and the question.
-    let held_text = std::fs::read_to_string(target.join(&held[1])).unwrap();
+    let held_text = std::fs::read_to_string(target.join(&held[0])).unwrap();
     let name = held_text
         .lines()
         .find_map(|line| line.strip_prefix("operation: \""))
@@ -782,7 +789,7 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     let message = refused.error()["message"].as_str().unwrap();
     // The message names the held file; the question is in `said`, not here.
     assert!(
-        message.contains(&held[1]) && !message.contains("riddle"),
+        message.contains(&held[0]) && !message.contains("riddle"),
         "{message}"
     );
 
@@ -818,7 +825,7 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     assert_eq!(promoted["promoted"], true, "{promoted}");
     let linted = world.ok(&["draft", "lint", "example"]).await;
     assert_eq!(linted["ok"], true, "{linted}");
-    assert_eq!(linted["held"].as_array().unwrap().len(), 2, "{linted}");
+    assert_eq!(linted["held"].as_array().unwrap().len(), 1, "{linted}");
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);
     assert_eq!(
@@ -831,6 +838,6 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     assert_eq!(called["status"], "completed", "{called}");
     assert!(app.writes().await.unwrap().is_empty());
     // The held drafts were not published and are still held.
-    assert!(target.join(&held[1]).is_file());
+    assert!(target.join(&held[0]).is_file());
     world.close().await;
 }

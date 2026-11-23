@@ -1432,10 +1432,10 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     };
     let endpoints = |report: &a2m_files::DraftReport| -> Vec<String> {
         report
-            .written
+            .held
             .iter()
             .map(|path| path.as_str().to_owned())
-            .filter(|path| path.starts_with("endpoints/"))
+            .filter(|path| path.starts_with("held/endpoints/"))
             .collect()
     };
     let drafted = |ids: &[(&str, &str)]| {
@@ -1450,9 +1450,15 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     let findings =
         findings_from_description(drafted(&[("/a", "list"), ("/b", "list")]), &base).await;
     let (_folder, report) = drafted_into(&target, &findings);
+    // Each endpoint file holds open questions (its surface, its answer), so
+    // both wait in the holding folder and none is in place (decision 0298).
+    assert!(report.written.is_empty(), "{:?}", report.written);
     let mut written = endpoints(&report);
     written.sort();
-    assert_eq!(written, ["endpoints/get_a.yaml", "endpoints/get_b.yaml"]);
+    assert_eq!(
+        written,
+        ["held/endpoints/get_a.yaml", "held/endpoints/get_b.yaml"]
+    );
 
     // The fallback collides too: two files, each held, none merged.
     let findings = findings_from_description(drafted(&[("/a/b", "x"), ("/a_b", "x")]), &base).await;
@@ -1460,7 +1466,9 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     let written = endpoints(&report);
     assert_eq!(written.len(), 2, "{written:?}");
     assert!(
-        written.iter().all(|file| file.contains("held_")),
+        written
+            .iter()
+            .all(|file| file.starts_with("held/endpoints/") && file.contains("held_")),
         "{written:?}"
     );
     assert_eq!(

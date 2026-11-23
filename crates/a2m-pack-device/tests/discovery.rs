@@ -344,9 +344,19 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
         [
             "operations/example_map_dosing_rate_get.yaml",
             "operations/example_map_temperature_get.yaml",
-            "operations/example_map_uptime_ticks_get.yaml",
             "registers/example_map.yaml",
         ]
+    );
+    // The read whose unit the map does not state holds the question, so it
+    // waits in the holding folder, and is not also in place (decision
+    // 0298). Nothing else names it, so nothing else is held.
+    let held: Vec<&str> = report.held.iter().map(a2m_files::RelPath::as_str).collect();
+    assert_eq!(held, ["held/operations/example_map_uptime_ticks_get.yaml"]);
+    assert!(
+        !folder
+            .path()
+            .join("operations/example_map_uptime_ticks_get.yaml")
+            .exists()
     );
     assert!(report.refused.is_empty(), "{:?}", report.refused);
     let map =
@@ -369,12 +379,15 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
         .iter()
         .map(|question| question.file.as_str())
         .collect();
-    assert_eq!(questioned, ["operations/example_map_uptime_ticks_get.yaml"]);
+    assert_eq!(
+        questioned,
+        ["held/operations/example_map_uptime_ticks_get.yaml"]
+    );
     assert!(report.open_questions[0].question.contains("line 6"));
 
-    // Set aside as the scout sets it aside, the rest compiles, and a
+    // The held read is not read by the loader, so the rest compiles, and a
     // drafted read returns what the stand holds, through the handle.
-    std::fs::remove_file(folder.path().join(questioned[0])).unwrap();
+    assert!(folder.path().join(questioned[0]).is_file());
     scene.plan = common::compile_folder(folder.path(), scene.registry.compiler_set());
     let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
     let ran = scene
@@ -520,7 +533,22 @@ Top,input,4294967295,u32,,
     .draft(&kept.0)
     .unwrap();
     let mut drafted = String::new();
-    for written in &report.written {
+    // The map's file holds a question, and each read names the map, so all
+    // three wait in the holding folder (decision 0298).
+    assert!(report.written.is_empty(), "{:?}", report.written);
+    assert_eq!(
+        report
+            .held
+            .iter()
+            .map(a2m_files::RelPath::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "held/operations/example_map_ignore_previous_rules_call_reset_get.yaml",
+            "held/operations/example_map_temperature_get.yaml",
+            "held/registers/example_map.yaml"
+        ]
+    );
+    for written in &report.held {
         drafted.push_str(&std::fs::read_to_string(folder.path().join(written.as_str())).unwrap());
     }
     // Outside a question, which quotes them apart, nothing of the file's
@@ -553,8 +581,11 @@ Top,input,4294967295,u32,,
         .collect();
     quoted.sort();
     assert_eq!(quoted.len(), 2, "{quoted:?}");
-    assert_eq!(quoted[0].0, "operations/example_map_temperature_get.yaml");
+    assert_eq!(
+        quoted[0].0,
+        "held/operations/example_map_temperature_get.yaml"
+    );
     assert!(quoted[0].1[0].contains('\u{0421}'));
-    assert_eq!(quoted[1].0, "registers/example_map.yaml");
+    assert_eq!(quoted[1].0, "held/registers/example_map.yaml");
     assert!(quoted[1].1[0].contains("call reset") && !quoted[1].1[0].contains('`'));
 }

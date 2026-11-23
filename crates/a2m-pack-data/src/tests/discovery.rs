@@ -190,8 +190,9 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
         }
     }
     // The table with no key and the view hold a question, and have no read.
-    // While they are in the folder no statements file compiles, since the
-    // kind's section is not made; without them, every draft does.
+    // Both wait in the holding folder, and are not also in place; the loader
+    // does not read that folder, so every other draft compiles with them
+    // there (decision 0298).
     let mut questioned: Vec<&str> = report
         .open_questions
         .iter()
@@ -201,17 +202,22 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
     assert_eq!(
         questioned,
         [
-            "statements/order_status_history.yaml",
-            "statements/order_summaries.yaml"
+            "held/statements/order_status_history.yaml",
+            "held/statements/order_summaries.yaml"
         ]
     );
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(held, questioned);
     assert!(
-        !operations
+        !report
+            .written
             .iter()
-            .any(|path| path.contains("history") || path.contains("summaries"))
+            .any(|path| path.as_str().contains("history") || path.as_str().contains("summaries"))
     );
     for path in &questioned {
-        std::fs::remove_file(root.join(path)).unwrap();
+        assert!(root.join(path).is_file(), "{path}");
+        let in_place = path.strip_prefix("held/").unwrap();
+        assert!(!root.join(in_place).exists(), "{in_place}");
     }
     let plan = compile_folder(&scene.registry, &root).unwrap().plan;
     let lines_get = plan
@@ -424,10 +430,14 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         [
             "operations/order_lines_get.yaml",
             "operations/order_lines_list.yaml",
-            "statements/order_lines.yaml",
-            "statements/order_status_history.yaml"
+            "statements/order_lines.yaml"
         ]
     );
+    // The table with no key holds a question, so its draft waits in the
+    // holding folder, and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(held, ["held/statements/order_status_history.yaml"]);
+    assert!(!root.join("statements/order_status_history.yaml").exists());
 
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
@@ -453,15 +463,19 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     );
     // The table with no key holds a question where its key would be, and
     // no statement.
-    let history =
-        std::fs::read_to_string(root.join("statements").join("order_status_history.yaml")).unwrap();
+    let history = std::fs::read_to_string(
+        root.join("held")
+            .join("statements")
+            .join("order_status_history.yaml"),
+    )
+    .unwrap();
     assert!(!history.contains("by_key"), "{history}");
     assert!(
         report
             .open_questions
             .iter()
             .any(
-                |question| question.file.as_str() == "statements/order_status_history.yaml"
+                |question| question.file.as_str() == "held/statements/order_status_history.yaml"
                     && question.question.contains("identify one row")
             ),
         "{:#?}",
@@ -484,9 +498,9 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         std::fs::read_to_string(second.join("statements").join("order_lines.yaml")).unwrap()
     );
 
-    // The keyed draft alone compiles with the pack's registrations, its
-    // two statements each bound by a drafted read.
-    std::fs::remove_file(root.join("statements").join("order_status_history.yaml")).unwrap();
+    // The keyed draft compiles with the pack's registrations, its two
+    // statements each bound by a drafted read, while the held draft stays
+    // where it is: the loader does not read the holding folder.
     let compiled = compile_folder(&scene.registry, &root).unwrap();
     assert!(compiled.warnings.find("data.statement_unused").is_none());
 }
