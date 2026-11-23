@@ -15,6 +15,8 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 | Getting a tab on a warm, signed-in browser | Under 100 ms; a cold browser start under 1 s |
 | Idle memory of the server | Under 50 MB |
 
+**First measurement: a binding gained through shadow.** The scenario `promotion_speedup` in `bench/` reads one line item of the test application through a `ui` binding, adds an `http` binding in shadow, promotes it on the evidence of six distinct inputs, and reads again. In a release build on Linux, the factor was 12.4, 11.8, 12.9, and 11.9 in four runs of the test alone (for example 140.9 ms through the interface against 11.3 ms through the request binding), with every result identical to the interface's and the application hearing the JSON request, not the page. Run beside other heavy work the factor fell to 6.8, so the test is run alone. The test (`bench/tests/promotion.rs`) holds the factor at ten or more in a release build, and CI runs it with `--release`. The promotion does not yet put the faster binding first; a person does, in the file (roadmap package 4.6). No budget changes.
+
 **How the design gets there.**
 
 - **Rust, one process, async I/O.** No interpreter start-up, no garbage-collection pauses, and, in the web pack, no driver subprocess between the engine and the browser.

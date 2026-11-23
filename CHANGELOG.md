@@ -10,6 +10,8 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- The benchmark suite measures a read that gains a request binding through shadow: it runs about 12 times faster than through its interface binding, with identical results (`promotion_speedup`).
+
 - A Cargo workspace of 29 crates: a neutral kernel (`a2m-*`), packs that each know one kind of system (`a2m-pack-*`), and the product crate.
 - The `anything2mcp` command, and `a2m` as a short name for it.
 - The kernel's shared vocabulary in `a2m-core`: archetypes, effect classes, hazards, failure classes, evidence levels, and the states of runs, records, sessions, and bindings, with a secret type that cannot be printed or serialized.

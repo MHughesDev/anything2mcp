@@ -77,6 +77,13 @@ dependencies = [
 name = "a2m-bench"
 version = "0.0.1"
 dependencies = [
+ "a2m-actions",
+ "a2m-auth",
+ "a2m-core",
+ "a2m-policy",
+ "a2m-telemetry",
+ "a2m-vault",
+ "anything2mcp",
  "example-app",
  "reqwest",
  "serde",

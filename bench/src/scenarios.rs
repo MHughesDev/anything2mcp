@@ -7,12 +7,13 @@ use example_app::harness::TestApp;
 
 use crate::error::BenchError;
 use crate::harness::{Clock, Plan, Scenario, ScenarioResult, run_scenario};
+use crate::promotion::{MOST_ITERATIONS, PROMOTION_SPEEDUP, PromotionSpeedup};
 
 /// The name of the direct read scenario.
 pub const DIRECT_READ: &str = "direct_read";
 
 /// The name of every scenario, in the order they are run.
-pub const NAMES: &[&str] = &[DIRECT_READ];
+pub const NAMES: &[&str] = &[DIRECT_READ, PROMOTION_SPEEDUP];
 
 /// The path of the one record a single read asks for: a seeded line item of
 /// the test application.
@@ -126,6 +127,14 @@ pub async fn run_named(
         // One arm per scenario: each has its own state type.
         let result = match *name {
             DIRECT_READ => run_scenario(&DirectRead, plan, clock).await?,
+            PROMOTION_SPEEDUP => {
+                // A read through a browser is slow: a few dozen make a median.
+                let plan = Plan {
+                    warmup_iterations: plan.warmup_iterations.min(3),
+                    iterations: plan.iterations.min(MOST_ITERATIONS),
+                };
+                run_scenario(&PromotionSpeedup, &plan, clock).await?
+            }
             other => return Err(BenchError::UnknownScenario(other.to_owned())),
         };
         results.push(result);
@@ -144,7 +153,7 @@ mod tests {
             warmup_iterations: 2,
             iterations: 5,
         };
-        let results = run_named(&[], &plan, &MonotonicClock::start())
+        let results = run_named(&[DIRECT_READ.to_owned()], &plan, &MonotonicClock::start())
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

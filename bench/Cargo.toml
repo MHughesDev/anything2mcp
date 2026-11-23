@@ -10,7 +10,18 @@ publish.workspace = true
 # The harness is measurement equipment, like the test stands: it sits outside
 # the crate layering, and no product crate depends on it.
 [dependencies]
-example-app = { path = "../targets/example-app" }
+# The promotion scenario opens the engine as the product does, with the
+# browser engine of the web pack, the way the product's own tests do.
+a2m-actions = { path = "../crates/a2m-actions" }
+a2m-auth = { path = "../crates/a2m-auth" }
+a2m-core = { path = "../crates/a2m-core" }
+a2m-policy = { path = "../crates/a2m-policy" }
+a2m-telemetry = { path = "../crates/a2m-telemetry" }
+a2m-vault = { path = "../crates/a2m-vault" }
+anything2mcp = { path = "../crates/anything2mcp" }
+# The test application states its own TLS provider when the product's
+# HTTP clients are built with theirs (the product crate's feature `tls`).
+example-app = { path = "../targets/example-app", features = ["tls"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
