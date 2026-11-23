@@ -876,3 +876,69 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
     assert!(app.writes().await.unwrap().is_empty());
     scene.stand.end().await;
 }
+
+/// A value of a page's request that is named as a secret is neither a
+/// drafted output nor declared by the entry; the others are read, and the
+/// invented value is in no file (decision 0302).
+#[test]
+fn an_answer_value_named_as_a_secret_is_never_a_drafted_output() {
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("page-http-secrets", Arc::new(NoSecrets));
+    let folder = new_target("page-http-secrets", origin);
+    let one = changed(origin, |found| {
+        found["response"]["fields"]["access_token"] = serde_json::json!({"type": "text"});
+        found["response"]["fields"]["clientSecret"] = serde_json::json!({"type": "text"});
+        // Never a value in a finding; a made-up one here proves none is kept.
+        found["note"] = INVENTED.into();
+    });
+    let report = draft(&stand, &folder, &[one]);
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        [
+            "operations/api_orders_totals_request.yaml",
+            "page_requests/api_orders_totals.yaml",
+        ],
+        "{report:?}"
+    );
+    let read = std::fs::read_to_string(
+        folder
+            .path()
+            .join("operations/api_orders_totals_request.yaml"),
+    )
+    .unwrap();
+    assert!(read.contains("total_quantity:"), "{read}");
+    assert!(
+        read.contains("`access_token`") && read.contains("`clientsecret`"),
+        "{read}"
+    );
+    assert!(
+        read.contains("so that a secret is never an output"),
+        "{read}"
+    );
+    for (path, bytes) in files_of(folder.path()) {
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains(INVENTED), "{path:?}");
+        for key in ["access_token:", "client_secret:", "clientSecret"] {
+            assert!(!text.contains(key), "{path:?} holds {key}: {text}");
+        }
+    }
+    compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+/// A placeholder of the request's path named as a secret would be an input
+/// that is a secret: nothing is drafted.
+#[test]
+fn a_request_placeholder_named_as_a_secret_drafts_nothing() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("page-http-secret-hole", Arc::new(NoSecrets));
+    let folder = new_target("page-http-secret-hole", origin);
+    let one = changed(origin, |found| {
+        found["path"] = "/api/orders/{api_key}/totals".into();
+        found["made_by"] = "/orders/{api_key}/summary".into();
+    });
+    let report = draft(&stand, &folder, &[one]);
+    assert!(report.written.is_empty(), "{report:?}");
+}

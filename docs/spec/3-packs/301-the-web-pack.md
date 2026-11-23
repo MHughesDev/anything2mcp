@@ -371,6 +371,8 @@ Codes are stable once released.
 
 As built, only the `screen` row is drafted, for tables and labelled values; fields that are set, actions, and registered tools are not ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md), [decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). Endpoint findings are drafted by the HTTP pack's rule. An `exchange` a page made by itself drafts a `page_requests/` entry and a `page_http` read only when the driver can make the request again exactly, with no query and no header the page's script set; otherwise the entry holds an open question that names them, by name alone, and no read is drafted. Every question that quotes a page's words keeps them apart from the product's sentence ([decision 0195](../../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)). Whether drafts by rule save work is hypothesis H-31.
 
+**A column, a value, or a response value named as a secret is never drafted as an output.** The drafter leaves out of a drafted read each table column whose heading, each labelled value whose label, and each value of a page's request's answer whose name the compiler takes for a secret's, and the last sentence of the drafted description tells the names left out. An address placeholder so named drafts nothing for that address. A field that is set is never drafted, so a password field is never an input ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Effects and hazards
 
 | Effect | Declared as |

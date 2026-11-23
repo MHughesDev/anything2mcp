@@ -90,6 +90,8 @@ Rule one of [section 218](../../spec/2-kernel/218-discovery-and-findings.md) is 
 
 A derived finding is never stronger than its weakest parent: one tier-two segment makes the whole endpoint `inferred`.
 
+**It drafts nothing by name.** This crate registers discoverers and no drafting rule: what it keeps of a page's requests and snapshots is a finding, never a file of a target. The rule that a column, a value, or a response value named as a secret is never drafted as an output is the drafter's, in [`a2m-pack-web-ui`](a2m-pack-web-ui.md) ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Interface
 
 As built.

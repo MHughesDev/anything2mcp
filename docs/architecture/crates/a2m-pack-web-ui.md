@@ -80,6 +80,8 @@ As built ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-eac
 
 Screen matching is done by the discoverer, which sees every page of one discovery: the drafter calls a rule with one finding. Setting a stored finding against existing screen models is not built.
 
+**A column, a value, or a response value named as a secret is never drafted as an output.** The rules ask the compiler's own test (`names_a_secret` in `a2m-files`) of each table column's heading, each labelled value's label, and each value of a page's request's answer, as the page writes it and as the output name it becomes. One so named is left out of the screen and of the read's outputs (a page request's entry does not declare it either), and the last sentence of the drafted description tells the names left out. A placeholder of a page's or a request's address named as a secret would be an input that is a secret: nothing is drafted for that address. A field that is set is never drafted, so a password field is never an input ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Interface
 
 As built. The product crate makes one cell of browsers and hands a clone to this pack and to the web pack's discoverers, so that the two share one set of browsers:

@@ -950,3 +950,85 @@ fn a_page_whose_address_held_a_token_drafts_a_read_by_key_and_no_file_holds_the_
     compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
 }
+
+/// A table column headed as a secret, a labelled value labelled as one, a
+/// password field in a form, and a cell that holds an invented value
+/// (decision 0302). The snapshot keeps no cell's text, so the value is in
+/// no file; the column and the labelled value are neither a drafted
+/// output; the others are read; the target compiles.
+#[test]
+fn a_column_or_a_value_named_as_a_secret_is_never_a_drafted_output() {
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("named-secrets", Arc::new(NoSecrets));
+    let page = snapshot(&[
+        (0, "main", Some("")),
+        (1, "DescriptionList", None),
+        (2, "term", Some("Customer")),
+        (2, "definition", Some("Customer")),
+        (2, "term", Some("API key")),
+        (2, "definition", Some("API key")),
+        (1, "table", Some("Line items")),
+        (2, "row", None),
+        (3, "columnheader", Some("Sku")),
+        (3, "columnheader", Some("Client secret")),
+        (3, "columnheader", Some("Quantity")),
+        (2, "row", None),
+        (3, "cell", Some("A-1")),
+        (3, "cell", Some(INVENTED)),
+        (3, "cell", Some("2")),
+        // A form beside them drafts nothing, and its password field is
+        // no input.
+        (1, "form", Some("")),
+        (2, "textbox", Some("Password")),
+        (2, "button", Some("Save")),
+    ]);
+    let folder = new_target("named-secrets", origin);
+    let report = draft(&stand, &folder, &[screen_finding(origin, "/order", &page)]);
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        [
+            "operations/order_line_items_list.yaml",
+            "operations/order_values_get.yaml",
+            "screens/order_line_items.yaml",
+            "screens/order_values.yaml",
+        ],
+        "{report:?}"
+    );
+    let list = std::fs::read_to_string(folder.path().join("operations/order_line_items_list.yaml"))
+        .unwrap();
+    let values =
+        std::fs::read_to_string(folder.path().join("operations/order_values_get.yaml")).unwrap();
+    assert!(
+        list.contains("sku:") && list.contains("quantity:"),
+        "{list}"
+    );
+    assert!(values.contains("customer:"), "{values}");
+    for (text, left_out) in [(&list, "`client_secret`"), (&values, "`api_key`")] {
+        assert!(text.contains(left_out), "{text}");
+        assert!(
+            text.contains("so that a secret is never an output"),
+            "{text}"
+        );
+    }
+    for (path, bytes) in files_of(folder.path()) {
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains(INVENTED), "{path:?}");
+        for key in ["client_secret:", "api_key:", "password:", "Password"] {
+            assert!(!text.contains(key), "{path:?} holds {key}: {text}");
+        }
+    }
+    compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+
+    // A page whose address holds a placeholder named as a secret drafts no
+    // read: the placeholder would be an input that is a secret.
+    let folder = new_target("named-secrets-address", origin);
+    let report = draft(
+        &stand,
+        &folder,
+        &[screen_finding(origin, "/orders/{api_key}", &page)],
+    );
+    assert!(report.written.is_empty(), "{report:?}");
+}

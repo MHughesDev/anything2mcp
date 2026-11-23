@@ -221,9 +221,28 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     {
         return Ok(out);
     }
+    // A placeholder named as a secret would be an input that is a secret:
+    // nothing is drafted (decision 0302).
+    if holes
+        .iter()
+        .any(|hole| crate::draft::named_as_secret(hole, &crate::draft::snake(hole)))
+    {
+        return Ok(out);
+    }
     let Some(values) = found.get("response").and_then(values) else {
         return Ok(out);
     };
+    // A value named as a secret is never an output, and the entry does not
+    // declare it: an answer may hold names an entry does not state
+    // (decision 0302).
+    let (secrets, values): (Vec<Value>, Vec<Value>) = values.into_iter().partition(|value| {
+        crate::draft::named_as_secret(&value.name, &crate::draft::snake(&value.name))
+    });
+    let secrets: Vec<String> = secrets
+        .iter()
+        .map(|value| crate::draft::snake(&value.name))
+        .filter(|name| crate::draft::is_name(name, LONGEST))
+        .collect();
     let operation = format!("{}_{words}_get", target.as_str());
     if words.is_empty()
         || !crate::draft::is_name(&format!("{words}_request"), LONGEST)
@@ -372,7 +391,8 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         (
             "description",
             DraftValue::text(&format!(
-                "Reads what the page `{page}` asks the application for by itself, with the page's own session: the plain values of the answer to `{path}`. Drafted by rule from the requests a page made; its name is provisional."
+                "Reads what the page `{page}` asks the application for by itself, with the page's own session: the plain values of the answer to `{path}`. Drafted by rule from the requests a page made; its name is provisional.{}",
+                crate::draft::left_out_sentence(&secrets)
             )),
         ),
     ]);

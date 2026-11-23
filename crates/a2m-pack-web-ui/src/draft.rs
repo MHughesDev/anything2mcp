@@ -30,10 +30,41 @@
 //! the type of; an example; a test.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName, Subject};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+};
 use serde_json::Value as Json;
 
 use crate::screens::SCREEN_KIND;
+
+/// Whether the compiler takes a column's heading or a value's label for a
+/// secret's, as the page writes it or as the output name it becomes
+/// (decision 0302).
+pub(crate) fn named_as_secret(words: &str, name: &str) -> bool {
+    names_a_secret(words) || names_a_secret(name)
+}
+
+/// The sentence that ends a drafted description when columns or values
+/// were left out for their names: the names are quoted in backticks, cut at
+/// 60 characters, and no more than eight are listed.
+pub(crate) fn left_out_sentence(secrets: &[String]) -> String {
+    const MOST_NAMED: usize = 8;
+    let named: Vec<String> = secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
+}
 
 /// Whether `text` is a name a screen, an output, or a column may have.
 pub(crate) fn is_name(text: &str, longest: usize) -> bool {
@@ -383,7 +414,7 @@ struct Labelled {
 
 /// The labelled values of the page, and the labels that cannot be told
 /// apart: a name two terms share, or that two definitions have.
-fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
+fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>, Vec<String>) {
     let named = |role: &str, name: &str| {
         elements
             .iter()
@@ -392,6 +423,7 @@ fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
     };
     let mut values: Vec<Labelled> = Vec::new();
     let mut shared: Vec<String> = Vec::new();
+    let mut secrets: Vec<String> = Vec::new();
     for (at, one) in elements.iter().enumerate() {
         let Some(label) = one.name.as_deref().filter(|name| !name.trim().is_empty()) else {
             continue;
@@ -423,13 +455,20 @@ fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
         if !is_name(&output, LONGEST) || values.iter().any(|known| known.output == output) {
             continue;
         }
+        // A value labelled as a secret is never an output (decision 0302).
+        if named_as_secret(label, &output) {
+            if !secrets.contains(&output) {
+                secrets.push(output);
+            }
+            continue;
+        }
         values.push(Labelled {
             output,
             label: label.to_owned(),
             section,
         });
     }
-    (values, shared)
+    (values, shared, secrets)
 }
 
 fn values_field(locate: DraftValue, section: &(String, String)) -> DraftValue {
@@ -463,6 +502,11 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     let Some(surface) = surface(cx, origin) else {
         return Ok(out);
     };
+    // A placeholder of the address named as a secret would be an input
+    // that is a secret: nothing is drafted (decision 0302).
+    if holes.iter().any(|hole| named_as_secret(hole, &snake(hole))) {
+        return Ok(out);
+    }
     let reach = || DraftValue::map(vec![("url", DraftValue::text(path))]);
     let seen = if holes.is_empty() {
         format!("the page `{path}`")
@@ -498,6 +542,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         // name, cannot say which column is which. A column may not have
         // the name of an input.
         let mut columns = Vec::new();
+        let mut secrets: Vec<String> = Vec::new();
         for heading in &table.headers {
             let column = snake(heading);
             let alone = table
@@ -513,7 +558,13 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                     .count()
                     == 1;
             if alone && is_name(&column, LONGEST) && !holes.contains(&column) {
-                columns.push((column, heading.clone()));
+                // A column headed as a secret is never an output
+                // (decision 0302).
+                if named_as_secret(heading, &column) {
+                    secrets.push(column);
+                } else {
+                    columns.push((column, heading.clone()));
+                }
             }
         }
         if columns.is_empty() {
@@ -612,7 +663,8 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Lists the rows of one table of {seen}, each column as the page shows it. Drafted by rule from a snapshot; its name is provisional."
+                    "Lists the rows of one table of {seen}, each column as the page shows it. Drafted by rule from a snapshot; its name is provisional.{}"
+                    , left_out_sentence(&secrets)
                 )),
             ),
         ]);
@@ -624,7 +676,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
 
     // The labelled values, as one screen and one read; a label that cannot
     // be told apart is a question apart, so that the others compile.
-    let (values, shared) = labelled(&elements);
+    let (values, shared, secrets) = labelled(&elements);
     let name = if page.is_empty() {
         "values".to_owned()
     } else {
@@ -695,7 +747,8 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Reads the labelled values of {seen}, each as the page shows it beside its label. Drafted by rule from a snapshot; its name is provisional."
+                    "Reads the labelled values of {seen}, each as the page shows it beside its label. Drafted by rule from a snapshot; its name is provisional.{}"
+                    , left_out_sentence(&secrets)
                 )),
             ),
         ]);
