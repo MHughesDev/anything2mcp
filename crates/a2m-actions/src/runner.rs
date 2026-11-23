@@ -972,12 +972,14 @@ impl Kernel {
 
     /// The state of the session of each surface of the plan that is signed
     /// in to, as the session keeper holds it at claim time, for guard's
-    /// third check (decision 0309). Only a session the keeper holds that
-    /// has ended, which the state table of section 215 stops a call for with
-    /// `needs_login`, is listed: a session that waits, one the keeper holds
-    /// no row for, and a keeper that cannot be asked are left unlisted, and
-    /// the lease decides, so a first sign-in still happens. No source
-    /// of edge blocks exists here, so `edge_blocked` stays empty.
+    /// third check (decision 0309). Only a session that was ended on
+    /// purpose is listed: it is never signed in again by a lease, so a call
+    /// on it can only stop with `needs_login`. A session that is absent or
+    /// expired may still be signed in from a stored credential at the
+    /// lease, one that waits is waited for, one the keeper holds no row for
+    /// has its first sign-in at the lease, and a keeper that cannot be
+    /// asked leaves everything unlisted: the lease decides all of those. No
+    /// source of edge blocks exists here, so `edge_blocked` stays empty.
     async fn session_conditions(
         &self,
         row: &RunRow,
@@ -996,7 +998,7 @@ impl Kernel {
         else {
             return Vec::new();
         };
-        if a2m_auth::call_rule(ours.state) != a2m_auth::CallRule::NeedsLogin {
+        if ours.state != a2m_core::SessionState::Revoked {
             return Vec::new();
         }
         plan.surfaces

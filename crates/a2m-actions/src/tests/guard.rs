@@ -97,3 +97,29 @@ async fn a_call_whose_session_has_ended_stops_at_guard_before_policy_is_asked() 
     );
     world.kernel.close(a2m_actions::CloseReason::Asked).await;
 }
+
+/// A session that is absent or has expired is left to the lease: a stored
+/// credential may sign it in again, so guard does not stop the call, and it
+/// goes on to the policy engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_the_lease_may_sign_in_again_does_not_stop_the_call_at_guard() {
+    for state in ["absent", "expired"] {
+        let world = World::ready().await;
+        world
+            .publish(|layers| {
+                for grant in &mut layers.grants {
+                    grant.scope = Scope::Pattern("example_orders_order_update".to_owned());
+                }
+            })
+            .await;
+        world.keep_a_session(state).await;
+        let read = json!({"tool": SECURE_GET, "input": {"order_id": "A-100"}});
+        let reached = world.call("tool.call", read).await;
+        assert_eq!(
+            failed_with(&reached).0,
+            FailureClass::Policy,
+            "{state}: {reached:?}"
+        );
+        world.kernel.close(a2m_actions::CloseReason::Asked).await;
+    }
+}
