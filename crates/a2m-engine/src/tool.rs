@@ -373,7 +373,7 @@ fn parse_key(text: &str) -> Option<RecordKey> {
 
 /// The outputs an operation declares, from what its steps observed, each
 /// normalized by its field type. Every declared output is in what this
-/// returns, on every path (decision 0313): one that was not observed and
+/// returns, on every path (decision 0315): one that was not observed and
 /// may be absent is `null`; one that was not observed and may not be
 /// absent stops the run, as a `null` in it does.
 fn outputs_of(
@@ -1560,7 +1560,7 @@ fn adopt(
         if held.state == RecordState::Verified || held.acknowledged {
             // An output the ledger holds masked is not handed back: not as
             // the mask, which is not the system's value, and not as `null`,
-            // which would say the system holds none (decision 0313).
+            // which would say the system holds none (decision 0315).
             if let Some(output) = found
                 .outputs
                 .iter()

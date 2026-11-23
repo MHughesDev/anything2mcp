@@ -596,7 +596,7 @@ async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_c
     assert!(line.not_read_back());
 }
 
-// ---- decision 0313: every declared output is in a write's result ----
+// ---- decision 0315: every declared output is in a write's result ----
 
 /// The line-item upsert with one more output, `batch`, which neither its
 /// save nor its read-back observes.
