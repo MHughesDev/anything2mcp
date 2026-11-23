@@ -1095,6 +1095,11 @@ async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding>
         .text()
         .await
         .unwrap();
+    findings_from_description(description, address).await
+}
+
+/// The same, from a description of the test's own.
+async fn findings_from_description(description: String, address: &str) -> Vec<Finding> {
     let folder = Folder::new("handed-file");
     std::fs::write(folder.path().join("example-openapi.json"), description).unwrap();
     let root = RootName::new("sources").unwrap();
@@ -1186,4 +1191,212 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     assert!(entry.contains("surface: \"api\""), "{entry}");
     let (_folder, _, _, report) = draft_into(two(&prefixed), &findings);
     assert!(!report.open_questions.is_empty(), "{report:?}");
+}
+
+/// A target folder that holds `target_text`, drafted into from `findings`.
+fn drafted_into(target_text: &str, findings: &[Finding]) -> (Folder, a2m_files::DraftReport) {
+    let folder = Folder::new("drafted-into");
+    std::fs::write(folder.path().join("target.yaml"), target_text).unwrap();
+    let scene = Scene::new("example", "http://127.0.0.1:1");
+    let root = TargetRoot::new(folder.path());
+    let report = Drafter::new(scene.registry.compiler_set(), &root)
+        .draft(findings)
+        .unwrap();
+    (folder, report)
+}
+
+/// One GET at `path`, with its placeholders stated, answering a list of
+/// records with one plain property.
+fn read_at(path: &str) -> String {
+    let parameters: Vec<String> = path
+        .split('/')
+        .filter_map(|part| part.strip_prefix('{').and_then(|p| p.strip_suffix('}')))
+        .map(|name| {
+            format!(r#"{{"name": "{name}", "in": "path", "required": true, "schema": {{"type": "string"}}}}"#)
+        })
+        .collect();
+    format!(
+        r#""{path}": {{"get": {{"parameters": [{}], "responses": {{"200": {{"content": {{"application/json": {{"schema": {{"type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}"#,
+        parameters.join(",")
+    )
+}
+
+fn described(paths: &[&str]) -> String {
+    let reads: Vec<String> = paths.iter().map(|path| read_at(path)).collect();
+    format!(
+        r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+        reads.join(",")
+    )
+}
+
+fn with_surfaces(target: &str, surfaces: &[(&str, &str)]) -> String {
+    let text: String = surfaces
+        .iter()
+        .map(|(name, base)| format!("  {name}:\n    kind: http\n    base: \"{base}\"\n"))
+        .collect();
+    let (head, tail) = target.split_once("surfaces:\n").unwrap();
+    let (_, rest) = tail.split_once("environments:").unwrap();
+    format!("{head}surfaces:\n{text}environments:{rest}")
+}
+
+fn surface_of(folder: &Folder, file: &str) -> String {
+    std::fs::read_to_string(folder.path().join("endpoints").join(file)).unwrap()
+}
+
+#[tokio::test]
+async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let description = || described(&["/orders/{id}"]);
+
+    // Nested prefixes: both surfaces take `/v1/orders/{id}`, so the longer
+    // is not preferred and the question stays.
+    let findings = findings_from_description(description(), &format!("{base}/v1")).await;
+    let nested = with_surfaces(
+        &target,
+        &[
+            ("api", &format!("{base}/v1")),
+            ("orders", &format!("{base}/v1/orders")),
+        ],
+    );
+    let (folder, report) = drafted_into(&nested, &findings);
+    let entry = surface_of(&folder, "get_orders_id.yaml");
+    assert!(
+        !entry.contains("surface: \"api\"") && !entry.contains("surface: \"orders\""),
+        "{entry}"
+    );
+    assert!(!report.open_questions.is_empty());
+
+    // A whole segment is compared, not characters: `/v1` does not take
+    // `/v10/orders/{id}`.
+    let findings = findings_from_description(description(), &format!("{base}/v10")).await;
+    let near = with_surfaces(&target, &[("api", &format!("{base}/v1"))]);
+    let (folder, _) = drafted_into(&near, &findings);
+    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+
+    // The only `http` surface of the target, at another origin: not taken.
+    let findings = findings_from_description(description(), &base).await;
+    let elsewhere = with_surfaces(&target, &[("api", "http://127.0.0.1:1")]);
+    let (folder, report) = drafted_into(&elsewhere, &findings);
+    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!report.open_questions.is_empty());
+
+    // The only one, at the origin and a trailing slash: taken.
+    let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
+    let (folder, _) = drafted_into(&slash, &findings);
+    assert!(surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+}
+
+#[tokio::test]
+async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let swagger = r#"{"swagger": "2.0", "basePath": "/api/", "paths": {"/orders": {"get": {
+      "responses": {"200": {"description": "ok", "schema": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}}"#;
+    // The surface's address ends in another path: not tied, and the
+    // question says the two disagree.
+    let findings = findings_from_description(swagger.to_owned(), &format!("{base}/v1")).await;
+    let (folder, report) = drafted_into(
+        &with_surfaces(&target, &[("api", &format!("{base}/v1"))]),
+        &findings,
+    );
+    assert!(!surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    let question = report
+        .open_questions
+        .iter()
+        .find(|question| question.file.as_str() == "endpoints/get_orders.yaml")
+        .unwrap();
+    assert!(question.question.contains("not the same"), "{question:?}");
+    // The same path, with a trailing slash ignored: tied.
+    let findings = findings_from_description(swagger.to_owned(), &format!("{base}/api")).await;
+    let (folder, _) = drafted_into(
+        &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
+        &findings,
+    );
+    assert!(surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+}
+
+#[tokio::test]
+async fn a_read_with_no_name_to_give_is_drafted_with_an_open_question_and_a_file_of_its_own() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let target = target.replace("target: example", "target: example_store");
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let operations = |report: &a2m_files::DraftReport| -> Vec<String> {
+        report
+            .written
+            .iter()
+            .map(|path| path.as_str().to_owned())
+            .filter(|path| path.starts_with("operations/"))
+            .collect()
+    };
+
+    // A grown name too long for a tool name: reported, not dropped.
+    let findings = findings_from_description(
+        described(&[
+            "/orgs/{organization_id}/pull_requests/review_comments",
+            "/pull_requests/review_comments",
+        ]),
+        &base,
+    )
+    .await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let written = operations(&report);
+    assert_eq!(written.len(), 2, "{written:?}");
+    assert!(written.contains(&"operations/pull_requests_review_comments_list.yaml".to_owned()));
+    let held: Vec<&String> = written
+        .iter()
+        .filter(|file| file.contains("held_"))
+        .collect();
+    assert_eq!(held.len(), 1, "{written:?}");
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .any(|question| question.file.as_str() == held[0].as_str()
+                && question.question.contains("longer than a tool name may be")),
+        "{report:?}"
+    );
+
+    // Two reads whose names are still shared once all are made: each has
+    // no name and a file of its own; the third keeps its own.
+    let findings = findings_from_description(
+        described(&[
+            "/issues/comments",
+            "/issues/{number}/comments",
+            "/issues_by_number/comments",
+        ]),
+        &base,
+    )
+    .await;
+    let (folder, report) = drafted_into(&target, &findings);
+    let written = operations(&report);
+    assert_eq!(written.len(), 3, "{written:?}");
+    assert_eq!(
+        written.iter().filter(|file| file.contains("held_")).count(),
+        2
+    );
+    let names: Vec<String> = written
+        .iter()
+        .map(|file| std::fs::read_to_string(folder.path().join(file)).unwrap())
+        .filter_map(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("operation: ").map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(
+        names.iter().filter(|name| name.starts_with('"')).count(),
+        1,
+        "{names:?}"
+    );
+    assert_eq!(
+        report
+            .open_questions
+            .iter()
+            .filter(|question| question.question.contains("share one tool name"))
+            .count(),
+        2
+    );
 }
