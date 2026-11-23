@@ -228,6 +228,20 @@ impl Desk {
             text.contains("version.publish") && text.contains(READ),
             "{text}"
         );
+        // The review names what this engine's ledger proved: the fixture
+        // as recorded here and unchanged, the binding as proved by a
+        // promote, and the tool at `executed`, from the trial the fixture
+        // was recorded from (decision 0311).
+        assert!(
+            text.contains("Fixture `fixtures/api_orders_get`: recorded here, from run r_")
+                && text.contains(", unchanged."),
+            "{text}"
+        );
+        assert!(!text.contains("Marked verified by hand"), "{text}");
+        assert!(
+            text.contains(&format!("Evidence of the tool `{READ}`: executed")),
+            "{text}"
+        );
         // The page says where the version's surface leads, in each
         // environment, by name, as the plan holds the address (decision
         // 0199).
@@ -509,6 +523,68 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     let tested = desk.ok(&["test", "example"]).await;
     assert_eq!(tested["result"]["passed"], true, "{tested}");
     assert_eq!(tested["result"]["gates"][1]["state"], "passed", "{tested}");
+
+    // The review says what this engine's ledger proved (decision 0311). The
+    // fixture is edited by one byte and the binding is marked `verified` by
+    // hand, and a publish is asked for: the page shows the fixture as not
+    // recorded by this engine, and names the binding first, as marked by
+    // hand. Both are put back after.
+    let operation_file = target_dir.join("operations").join("api_orders_get.yaml");
+    let fixture_file = target_dir.join("fixtures").join("api_orders_get").join(
+        recorded["result"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|file| file.as_str())
+            .find(|file| file.starts_with("fixtures/api_orders_get/") && file.ends_with(".json"))
+            .and_then(|file| file.rsplit('/').next())
+            .unwrap(),
+    );
+    let (operation_before, fixture_before) = (
+        std::fs::read_to_string(&operation_file).unwrap(),
+        std::fs::read(&fixture_file).unwrap(),
+    );
+    let by_hand = operation_before.replacen(
+        "    mode: \"http\"\n",
+        "    mode: \"http\"\n    status: \"verified\"\n",
+        1,
+    );
+    assert_ne!(by_hand, operation_before, "no draft status to mark by hand");
+    std::fs::write(&operation_file, &by_hand).unwrap();
+    let mut edited = fixture_before.clone();
+    edited.push(b'\n');
+    std::fs::write(&fixture_file, &edited).unwrap();
+    let (code, asked) = desk
+        .run(&["publish", "example", "--version", "0.9.0"])
+        .await;
+    assert_eq!(code, Some(3), "{asked}");
+    let page = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(asked["result"]["link"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains("Fixture `fixtures/api_orders_get`: not recorded by this engine."),
+        "{page}"
+    );
+    assert!(page.contains("Marked verified by hand: "), "{page}");
+    // The hand-marked binding is named before the tool lines and the gates.
+    assert!(
+        page.find("Marked verified by hand").unwrap() < page.find("Evidence of the tool").unwrap(),
+        "{page}"
+    );
+    assert!(
+        page.contains("offline_replay passed; contract not built"),
+        "{page}"
+    );
+    std::fs::write(&operation_file, &operation_before).unwrap();
+    std::fs::write(&fixture_file, &fixture_before).unwrap();
 
     // 6. The read's first binding made able to act: its offline test
     // passes, and the scout proved it at `executed`. An agent may promote

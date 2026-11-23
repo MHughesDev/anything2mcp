@@ -1282,6 +1282,44 @@ handler!(
                     "Call `fixture.record` again; where it fails the same way, write the fixture by hand.",
                 ));
             }
+            // The ledger entry (decision 0311): the digest of the folder as
+            // the gate reads it, the run it came from, and the address it
+            // was recorded against. Written last, so that a fixture whose
+            // recording the ledger could not take is removed with its files.
+            let digest = {
+                let (project_folder, target, folder) =
+                    (project_folder.clone(), target.clone(), folder.clone());
+                crate::handlers::build::off_thread(move || {
+                    let at = crate::handlers::build::target_folder(&project_folder, &target)?;
+                    let unread = |_| {
+                        codes::input(
+                            codes::FIXTURE_NOT_REPLAYED,
+                            "The fixture just written cannot be read back.",
+                            "Call `fixture.record` again; where it fails the same way, write the fixture by hand.",
+                        )
+                    };
+                    let held = crate::offline::fixture_folder(&at, &folder)
+                        .and_then(crate::offline::read_fixture)
+                        .map_err(unread)?;
+                    Ok(crate::offline::fixture_digest(&held.held))
+                })
+                .await?
+            };
+            let address = crate::evidence::address_of(&plan, &operation, binding.as_ref());
+            crate::evidence::record_fixture(
+                kernel,
+                &call.caller.principal.principal.id.to_string(),
+                &target,
+                &folder,
+                &crate::evidence::fixture_detail(
+                    &target,
+                    &folder,
+                    digest,
+                    &run.to_string(),
+                    &address,
+                ),
+            )
+            .await?;
             Ok(())
         }
         .await;

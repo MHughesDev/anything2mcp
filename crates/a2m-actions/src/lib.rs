@@ -26,6 +26,7 @@ mod control;
 mod def;
 mod dispatch;
 mod events;
+mod evidence;
 mod faces;
 mod fixture;
 mod handlers;
