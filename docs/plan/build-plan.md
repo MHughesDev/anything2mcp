@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 51 of 143 packages done, 35% (`python3 tools/progress.py`). **Done last:** FT2, FT3, and decision 0298 (the holding folder), each proven in field test 1; pull request 20 merged. **In hand:** six pack tests to bring in line with the holding folder. **Next:** FT8 (a secret-named field of an answer), S2 (one command to a working read), FT7, then the sign-in packages with FT9. **Blocks:** nothing.
+**Progress:** 51 of 145 packages done, 35% (`python3 tools/progress.py`). **Done last:** the holding folder (decision 0298) and decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** FT8, the build of decision 0302. **Next:** the table under "The design is settled: build in this order", from its first row. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -265,6 +265,53 @@ The packs' own packages: after each field test, close what it found, a stand cas
 | R2 | Release 1.0 | | The owner's |
 
 **Low level.** Written when Stage 7 is reached. Until then the roadmap rows are the detail.
+
+## The design is settled: build in this order
+
+Written on 2026-11-23 for the lead that takes over. Every question that was open in stages 1 to 4 has a decision record. A lead builds from this section and does not have to design. Where the code turns out to differ from what a record assumed, the record's own "Context" says which fact it rested on: check that fact first, and write a new record only when it is false.
+
+**How to take one package.** Read its row in the [roadmap](roadmap.md), then the record this table names, then the design of each crate it touches. Build the record's "Proof" first as a failing test. Change nothing the record does not name. When the proof passes, run the whole list under "Before a pull request" below, mark the row done, and put the change on the architecture page.
+
+| Order | Package | Record | What to build, in steps | Size of worker |
+| --- | --- | --- | --- | --- |
+| 1 | FT8 | [0302](../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md) | 1. One public function in `a2m-files` that says whether a name is a secret's, used by the compiler's own check. 2. The HTTP drafter leaves such a property out of the outputs and such a parameter out of the inputs; a required one makes the read not drafted, reported. 3. The description's last sentence names what was left out. 4. A case of the test application. 5. Rerun field test 1 and change its `gap` steps for finding 10 to expect the right behaviour | Middle |
+| 2 | S2 | [0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md) | 1. `Registry::toolset` skips an action with no handler; a test over the whole catalog. 2. `add --description <file>`. 3. Each proven read in the report carries its trial call. 4. The trial's answer carries `sandbox: true`, `published: false`, and the fixed sentence. 5. The test from an empty folder in `crates/anything2mcp/tests/`. 6. Measure, and write the numbers in the journal | Middle |
+| 3 | FT7 | [0305](../decisions/0305-an-output-that-may-be-absent-is-declared-so-in-the-plan-and-the-output-schema.md) | 1. A flag on a plan's output in `a2m-core`, default false; the file formats and the plan's version. 2. `output_schema_of` writes `required` and admits `null` where the flag is set. 3. The HTTP lowering sets it from `at_path`'s `certain`. 4. An absent value is returned as `null`; a `null` in a certain output stops. 5. `may_be_absent: true` by hand. 6. The proof validates a real result against the schema | Middle; the plan's form is a public contract, so the lead reads the whole change |
+| 4 | V4, V1 | [0307](../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md), points 5 and 1 | V4: one sentence in the help, one test. V1: find every document that says a level gates a listing or a call, and correct it | Small for the search, middle for the edits |
+| 5 | V3 | 0307, point 4 | 1. A pack states, where it registers a step kind, whether the kind can change the system. This changes the provider contract: say so in the technical reference. 2. The compiler refuses a read plan that holds such a step. 3. Every pack marks its kinds; the default for an unmarked kind is "can change", so a forgotten one fails closed | Large: it touches every pack. One writer, packs in turn |
+| 6 | GD1 | [0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md) | Five tests, one for each of guard's checks, in order. Where the engine does not ask the session keeper at guard, add the question; the driver's own stop stays | Large: the engine loop |
+| 7 | FT4 | [0304](../decisions/0304-a-field-build-stands-in-for-the-person-in-a-field-test.md) | 1. The field build's crate, named in section 605 and the layering table in the same change. 2. The field prompt and its three tests. 3. The packaging check. 4. The runner's `person` step and running the field build for every `a2m` step. 5. A write endpoint in the recipe of field test 1: change one issue's title, approved by the runner, through the fault proxy with the answer cut once. 6. Ask the software's own database: the title is there once | Large for the crate; middle for the runner |
+| 8 | FT9 | [0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md) | 1. `waiting` in the scout's `try` stage and report; the counts add up. 2. The trial's answer for a waiting read names `session.login`. 3. In the recipe: make an invented token with the software's own command, sign in with the `person` step, read through the session. 4. Search every file the run wrote for the token: none | Middle |
+| 9 | V2, V5 | 0307, points 2, 3 and 6 | V2: `recorded_from` written by the engine with the trial's digest; the gate checks it; the review shows the level and the gates that ran. V5: the bound on a description in the compiler; `_meta` at the MCP door | Middle each |
+| 10 | 2.3, then E2 | [0308](../decisions/0308-the-first-capture-records-reads-only-in-the-engines-own-browser-and-drafts-to-the-holding-folder.md) | The sign-in window first. Then the three handlers, in the order record, stop, infer, each with its test in the test application. Then FT6 | Large |
+| 11 | FT10 | 0302, point 5 | One pack at a time, each with a case in its own stand | Middle |
+| 12 | L1, L2, L3 | [0299](../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) | As the roadmap's rows | Large |
+| 13 | FT5 | [0295](../decisions/0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | One recipe for each kind, in this order: a database, files, a command-line program, an existing MCP server, a broker, a page in a browser, a desktop application, a device's protocol. See "Choosing the software" below | Middle each |
+
+Stages 5 to 8 are as written further down. Their low level is rewritten when stage 4 is reached.
+
+**Choosing the software for a field test.** The recipe and the name stay outside the repository (rule 9). Take software that: is open source and runs in one container with no account anywhere; keeps its data where a test can ask it directly, without the product; can be seeded with invented data from its own commands; is pinned by digest. Write to our own copy only, and throw the copy away after the run ([decision 0293](../decisions/0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md)). Nothing here is permission to touch a system the project does not run.
+
+**Before a pull request.** Run all of these and read the whole output, never the first lines of it:
+
+1. `cargo fmt --all --check`
+2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+3. `cargo test --workspace --locked --no-fail-fast`
+4. For a change that touches drafting or the data pack: `A2M_REQUIRE_POSTGRES=1 cargo test -p a2m-pack-data --locked --features postgres`. CI runs it and a plain workspace test does not.
+5. `python3 tools/docs_audit.py`, `python3 tools/failure_codes.py --check`, and the tests under `tools/`.
+6. The field test, three times, with one result.
+
+**What has caught a lead before.**
+
+- A test that needs a real server is skipped by the plain workspace run and fails in CI. Look for a feature or an environment variable in the CI file for every crate a change touches.
+- One build folder for every worker, and one `cargo` at a time. Separate build folders fill the disk.
+- A worker's copy is made from an older commit. Its first command brings in the branch.
+- A count in a document (decision records, ready packages) is checked by the audit. Change it in the same commit.
+- A crate's name in a document must be in section 605's layout, in the layering table, and on disk, all three. Name a new crate only in the change that creates it.
+- A reader's report is a lead and not a fact. Open the file before a decision rests on it.
+- An agent's finding that a design is wrong is common and useful. Have a larger model argue against a design before it is built, when the design touches a rule.
+
+**What is in no record and stays the owner's:** the list under "What is the owner's" below. Nothing in this section changes it.
 
 ## Who does which line of work
 

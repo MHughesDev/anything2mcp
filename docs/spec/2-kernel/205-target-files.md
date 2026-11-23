@@ -11,7 +11,7 @@ targets/example/
   types.yaml         # field-type overrides: units, rounding, code lists
   operations/        # one file per operation, with its bindings
   pipelines/         # one file per pipeline
-  sources/           # readers, template fingerprints, mappings
+  sources/           # the Source Definitions: readers, template fingerprints, mappings
   fixtures/          # recorded pages, responses, and traffic for offline tests
   tests/             # expected results per operation and pipeline
   held/              # drafts that wait on an open question; not read

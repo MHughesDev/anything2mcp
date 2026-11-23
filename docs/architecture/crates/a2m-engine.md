@@ -169,7 +169,7 @@ Every operation call runs these parts. A read skips intend and confirm, and runs
 
 | Part | What the engine does | Asks `Control` for | Stops with |
 | --- | --- | --- | --- |
-| 1. Guard | Checks the plan's hash; the kernel's health from `conditions` (a write needs `ok`); the decision for this call; the surface has no edge block | `plan`, `decide` | `policy`, `plan_unverified`; `busy`, `engine_degraded`; `policy` from the decision; `edge_blocked` |
+| 1. Guard | Checks the plan's hash; the kernel's health from `conditions` (a write needs `ok`); the session's state for the call, asked of the session keeper (to be held by a test, roadmap GD1); the decision for this call; the surface has no edge block | `plan`, `decide` | `policy`, `plan_unverified`; `busy`, `engine_degraded`; `policy` from the decision; `edge_blocked` |
 | 2. Choose | Takes the plan's bindings in their declared order and picks the first that qualifies (below). Sends the binding and the reason, with the provider choice from the handle | `send` | The class of the best reason any candidate failed: `session_expired` before `edge_blocked` before `drift` before `busy` |
 | 3. Prepare | Gets the session lease, then the driver's prepared context | `session_lease` | `session_expired`, `needs_login`; whatever `prepare` returns |
 | 4. Intend | Checks the binding it chose saves once; takes the record lock; makes the freshness check; checks the directive and that the lease leaves time for the record's steps, once before the waits and once after them; stores the intent, getting a token back | `lock`, `intend` | `busy`, `record_locked`; `stale`, `changed_since_preview`; `LeaseEnding` |
