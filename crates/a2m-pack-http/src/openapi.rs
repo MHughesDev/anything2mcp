@@ -590,6 +590,11 @@ pub(crate) struct DescribedOperation {
     /// an empty one, or one that allows no scheme. A finding of format 1
     /// does not say, and is read as needing one.
     pub open: bool,
+    /// The part of the tool's name made from the path, when the read is
+    /// one the drafter may draft: unique among the description's reads
+    /// ([`assign_objects`]). A finding that states none is named from its
+    /// path alone.
+    pub object: Option<String>,
 }
 
 impl DescribedOperation {
@@ -621,6 +626,10 @@ impl DescribedOperation {
                 Json::List(self.parameters.iter().map(Parameter::to_json).collect()),
             ),
             ("open".to_owned(), Json::Bool(self.open)),
+            (
+                "object".to_owned(),
+                self.object.as_deref().map_or(Json::Null, text),
+            ),
         ])
         .to_text()
     }
@@ -663,6 +672,10 @@ impl DescribedOperation {
             response: optional("response_schema"),
             parameters,
             open: json.get("open") == Some(&Json::Bool(true)),
+            object: json
+                .get("object")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
         })
     }
 
@@ -793,10 +806,160 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 open: needs_no_credential(
                     operation.get("security").or_else(|| root.get("security")),
                 ),
+                object: None,
             });
         }
     }
+    assign_objects(&mut found);
     Ok(found)
+}
+
+/// The part of a tool's name made from the description's path: its last
+/// two plain words, lowercase. `None` when the path has no plain word.
+pub(crate) fn object_words(path: &str) -> Option<String> {
+    let words: Vec<String> = path
+        .split('/')
+        .filter(|part| !part.starts_with('{'))
+        .map(snake)
+        .filter(|word| word.starts_with(|c: char| c.is_ascii_lowercase()))
+        .collect();
+    match words.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        [.., module, object] => Some(format!("{module}_{object}")),
+    }
+}
+
+/// A word of a path for telling two paths apart: a plain word as
+/// [`object_words`] takes it, or a placeholder as `by_` and its name.
+fn path_tokens(path: &str) -> Vec<(String, bool)> {
+    path.split('/')
+        .filter_map(|part| {
+            if let Some(name) = part.strip_prefix('{') {
+                let name = snake(name.trim_end_matches('}'));
+                let word = if name.is_empty() {
+                    "by".to_owned()
+                } else {
+                    format!("by_{name}")
+                };
+                return Some((word, false));
+            }
+            let word = snake(part);
+            word.starts_with(|c: char| c.is_ascii_lowercase())
+                .then_some((word, true))
+        })
+        .collect()
+}
+
+/// A short name, the same in every run, made from a path alone.
+fn path_digest(path: &str) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in path.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{hash:08x}")
+}
+
+/// Whether a read of the description is one the drafter drafts an operation
+/// for, as far as its name is concerned, and the kind of verb it has.
+fn read_verb(operation: &DescribedOperation) -> Option<(String, bool)> {
+    if !operation.safe || operation.method != "GET" || operation.template_path().is_none() {
+        return None;
+    }
+    let shape = operation.response.as_ref()?;
+    let listed = shape.get("type").and_then(Json::as_text) == Some("array");
+    Some((object_words(&operation.path)?, listed))
+}
+
+/// Gives each read the part of its tool's name that its path makes, and
+/// makes no two the same.
+///
+/// A read is named from its path's last two plain words. Two reads that
+/// would get one name and one verb are told apart by the path's nearest
+/// words that differ: the name is made again from the shortest end of each
+/// path, placeholders included as `by_` and their name, that no other has
+/// the same, and one more word is added to each that still has. Nothing
+/// here depends on the order of the description: the names are a function
+/// of the set of paths. Paths that no word tells apart (`/Orders` and
+/// `/orders`) are told apart by a short digest of the path itself.
+pub(crate) fn assign_objects(operations: &mut [DescribedOperation]) {
+    let mut groups: BTreeMap<(String, bool), Vec<usize>> = BTreeMap::new();
+    for (index, operation) in operations.iter().enumerate() {
+        if let Some(key) = read_verb(operation) {
+            groups.entry(key).or_default().push(index);
+        }
+    }
+    for ((object, _), members) in groups {
+        if let [only] = members.as_slice() {
+            operations[*only].object = Some(object);
+            continue;
+        }
+        let tokens: Vec<Vec<(String, bool)>> = members
+            .iter()
+            .map(|index| path_tokens(&operations[*index].path))
+            .collect();
+        // The shortest end of each path that holds two plain words, or all
+        // of it when it has fewer.
+        let mut take: Vec<usize> = tokens
+            .iter()
+            .map(|words| {
+                let (mut plain, mut length) = (0, 0);
+                for (_, is_plain) in words.iter().rev() {
+                    if plain == 2 {
+                        break;
+                    }
+                    length += 1;
+                    plain += usize::from(*is_plain);
+                }
+                length
+            })
+            .collect();
+        let name = |words: &[(String, bool)], length: usize| {
+            words[words.len() - length..]
+                .iter()
+                .map(|(word, _)| word.as_str())
+                .collect::<Vec<_>>()
+                .join("_")
+        };
+        let mut names: Vec<String>;
+        loop {
+            names = tokens
+                .iter()
+                .zip(&take)
+                .map(|(words, length)| name(words, *length))
+                .collect();
+            let colliding: Vec<usize> = (0..names.len())
+                .filter(|index| {
+                    names
+                        .iter()
+                        .filter(|other| **other == names[*index])
+                        .count()
+                        > 1
+                })
+                .collect();
+            if colliding.is_empty() {
+                break;
+            }
+            let mut grew = false;
+            for index in colliding.iter().copied() {
+                if take[index] < tokens[index].len() {
+                    take[index] += 1;
+                    grew = true;
+                }
+            }
+            if !grew {
+                for index in colliding {
+                    let digest = path_digest(&operations[members[index]].path);
+                    names[index] = format!("{}_{digest}", names[index]);
+                }
+                break;
+            }
+        }
+        for (index, name) in members.iter().zip(names) {
+            operations[*index].object = Some(name);
+        }
+    }
 }
 
 /// Whether a Swagger 2.0 list of media types (`produces`, `consumes`) lets
@@ -1104,6 +1267,90 @@ mod tests {
         }
         let yaml = b"openapi: 3.1.0\npaths:\n  /orders:\n    get:\n      responses:\n        '200': {description: ok}\n";
         assert_eq!(operations(yaml).unwrap().len(), 1);
+    }
+
+    /// A description of reads, each answering a list, at the given paths.
+    fn reads_at(paths: &[&str]) -> String {
+        let items: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                format!(
+                    r##""{path}": {{"get": {{"responses": {{"200": {{"content": {{"application/json": {{"schema": {{
+                      "type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}"##
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            items.join(",")
+        )
+    }
+
+    /// The object of each path, by path.
+    fn objects(paths: &[&str]) -> std::collections::BTreeMap<String, String> {
+        operations(reads_at(paths).as_bytes())
+            .unwrap()
+            .into_iter()
+            .map(|operation| (operation.path, operation.object.unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn two_reads_that_would_share_a_tool_name_are_told_apart_by_the_nearest_word_that_differs() {
+        let paths = [
+            "/repos/{owner}/issues/comments",
+            "/repos/{owner}/issues/{number}/comments",
+            "/repos/{owner}/pulls/{number}/comments",
+            "/repos/{owner}/issues",
+        ];
+        let forward = objects(&paths);
+        // The path with no placeholder keeps the name its words make; the
+        // other is told apart by the placeholder between them; a read that
+        // collides with nothing is named as before.
+        assert_eq!(forward["/repos/{owner}/issues/comments"], "issues_comments");
+        assert_eq!(
+            forward["/repos/{owner}/issues/{number}/comments"],
+            "issues_by_number_comments"
+        );
+        assert_eq!(
+            forward["/repos/{owner}/pulls/{number}/comments"],
+            "pulls_comments"
+        );
+        assert_eq!(forward["/repos/{owner}/issues"], "repos_issues");
+        // The same names in any order of reading.
+        let mut reversed = paths;
+        reversed.reverse();
+        assert_eq!(objects(&reversed), forward);
+
+        // Where the last two words are the same and the words before them
+        // tell them apart, one more word is added to each that still
+        // collides; and where no word does, a digest of the path does.
+        let deeper = objects(&["/a/x/{id}/notes", "/b/x/{id}/notes", "/x/notes"]);
+        assert_eq!(deeper["/x/notes"], "x_notes");
+        assert_eq!(deeper["/a/x/{id}/notes"], "a_x_by_id_notes");
+        assert_eq!(deeper["/b/x/{id}/notes"], "b_x_by_id_notes");
+        let alike = objects(&["/Notes/items", "/notes/items"]);
+        assert_ne!(alike["/Notes/items"], alike["/notes/items"]);
+        assert_eq!(alike, objects(&["/notes/items", "/Notes/items"]));
+    }
+
+    #[test]
+    fn a_collision_of_names_is_between_reads_of_one_verb_only() {
+        // A list and a read by key at one path's words are not told apart:
+        // their verbs differ, so their names already do.
+        let found = operations(
+            br##"{"openapi": "3.0.3", "paths": {
+              "/orders": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "array", "items": {"type": "object"}}}}}}}},
+              "/orders/{id}": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "object"}}}}}}}}}"##,
+        )
+        .unwrap();
+        assert!(
+            found
+                .iter()
+                .all(|read| read.object.as_deref() == Some("orders"))
+        );
     }
 
     /// A Swagger 2.0 document, small, in the form the 2.0 specification
