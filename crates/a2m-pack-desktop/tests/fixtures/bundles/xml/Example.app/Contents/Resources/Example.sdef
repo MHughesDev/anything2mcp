@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Example Desk Terminology">
+  <suite name="Example Desk Suite" code="ExDk" description="Orders of the example desk.">
+    <command name="open order" code="ExDkOpen" description="Open an order.">
+      <direct-parameter type="text" description="The order's number."/>
+      <parameter name="with" code="with" type="text" optional="yes"/>
+      <result type="boolean"/>
+    </command>
+    <event name="order changed" code="ExDkChgd"/>
+    <class name="order" code="ordr" inherits="item" plural="orders">
+      <property name="number" code="numb" type="text" access="r"/>
+      <property name="customer" code="cust" type="text" access="rw"/>
+      <property name="status" code="stat">
+        <type type="text"/>
+      </property>
+      <element type="line"/>
+    </class>
+    <class name="line" code="line">
+      <property name="quantity" code="qnty" type="integer" access="r"/>
+    </class>
+    <enumeration name="order state" code="OSte">
+      <enumerator name="open" code="Open"/>
+      <enumerator name="closed" code="Clsd"/>
+    </enumeration>
+  </suite>
+</dictionary>

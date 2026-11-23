@@ -42,6 +42,7 @@
 //! crate's design is `docs/architecture/crates/a2m-pack-desktop.md`.
 
 mod backend;
+mod bundle;
 pub mod codes;
 mod dbus;
 mod discover;
@@ -49,11 +50,14 @@ mod draft;
 mod driver;
 mod lower;
 mod model;
+mod plist;
 mod propose;
 mod roles;
 mod screens;
+mod sdef;
 mod service;
 mod tree;
+mod xml;
 
 use std::sync::Arc;
 
@@ -78,6 +82,12 @@ pub const SNAPSHOT_DISCOVERER: &str = "desktop_snapshot";
 
 /// The name of the pack's discoverer of a service on the session bus.
 pub const SERVICE_DISCOVERER: &str = "desktop_service";
+
+/// The name of the pack's discoverer of what a macOS application's bundle
+/// says of itself.
+pub const BUNDLE_DISCOVERER: &str = "desktop_bundle";
+
+pub use bundle::BUNDLE;
 
 pub use service::{INTERFACE_FILE, SERVICE_FILE};
 
@@ -162,6 +172,7 @@ impl Pack for DesktopPack {
         )?;
         let window = FindingKind::new(discover::WINDOW_FINDING)?;
         let service_kind = FindingKind::new(service::SERVICE_FINDING)?;
+        let bundle_kind = FindingKind::new(bundle::BUNDLE_FINDING)?;
         let mut compiler = CompilerRegistrations::new()
             .surface_kind(
                 SurfaceKindSpec::new(DESKTOP_SURFACE, ADDRESS_KEY, surface_fields())
@@ -199,6 +210,15 @@ impl Pack for DesktopPack {
                 clock: cx.telemetry().clock(),
             }),
             Arc::new(service::ServiceDescriber { kind: service_kind }),
+        )?;
+        to.discoverer(
+            Arc::new(bundle::DesktopBundle {
+                name: DiscovererName::new(BUNDLE_DISCOVERER)?,
+                kind: bundle_kind.clone(),
+                version: version(),
+                clock: cx.telemetry().clock(),
+            }),
+            Arc::new(bundle::BundleDescriber { kind: bundle_kind }),
         )
     }
 }

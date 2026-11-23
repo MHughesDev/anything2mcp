@@ -40,7 +40,7 @@ session = false
 
 [points]
 driver = ["desktop"]
-discoverer = ["desktop_snapshot", "desktop_service"]
+discoverer = ["desktop_snapshot", "desktop_service", "desktop_bundle"]
 
 [[discoverers]]
 name = "desktop_snapshot"
@@ -64,6 +64,19 @@ max_level = "discovered"
 bounds = { seconds = 30, bytes = 1048576, depth = 12 }
 files = ["service_file", "interface_file"]
 
+# Reads the files of a macOS application's bundle a person hands it, as bytes
+# and on every system: the property list and the scripting dictionary it
+# names. Sends nothing to any application (decision 0317).
+[[discoverers]]
+name = "desktop_bundle"
+archetype = "interface"
+surface_kinds = ["desktop"]
+kinds = ["application_bundle"]
+sources = ["artifact"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 4194304, depth = 24 }
+files = ["bundle"]
+
 [[file_kinds]]
 name = "screen"
 directory = "screens/"
@@ -75,6 +88,10 @@ surface_kinds = ["desktop"]
 
 [[finding_kinds]]
 name = "dbus_service"
+surface_kinds = ["desktop"]
+
+[[finding_kinds]]
+name = "application_bundle"
 surface_kinds = ["desktop"]
 
 # From a window's shape: a screen and a `get` read of the values it labels,
@@ -155,6 +172,10 @@ code = "service_not_running"
 [[failure_codes]]
 class = "unknown_variant"
 code = "property_not_text"
+
+[[failure_codes]]
+class = "policy"
+code = "dictionary_include_refused"
 
 [[failure_codes]]
 class = "input"

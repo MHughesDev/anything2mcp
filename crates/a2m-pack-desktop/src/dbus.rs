@@ -15,19 +15,13 @@
 //! (`read`, `write`, `readwrite`): it is the evidence that a property only
 //! reads, and the drafting rule reads only that (decision 0316).
 
-use std::collections::BTreeMap;
+use crate::xml::{self, Bounds, Element, NotRead};
 
-use quick_xml::NsReader;
-use quick_xml::XmlVersion;
-use quick_xml::escape::resolve_predefined_entity;
-use quick_xml::events::{BytesStart, Event};
-
-/// The deepest an introspection document's elements may nest.
-const DEEPEST: usize = 16;
-/// The most elements one document may hold.
-const MOST_ELEMENTS: usize = 20_000;
-/// The most attributes one element may carry.
-const MOST_ATTRIBUTES: usize = 16;
+/// How far an introspection document may go.
+const BOUNDS: Bounds = Bounds {
+    depth: 16,
+    elements: 20_000,
+};
 /// The longest name of an element or an attribute, in bytes.
 const LONGEST_NAME: usize = 255;
 /// The most interfaces, children, members of one kind, or arguments one
@@ -36,9 +30,6 @@ const MOST_IN_ONE_PLACE: usize = 2_000;
 
 /// The public identifier of the one document type the format uses.
 const DOCTYPE_PUBLIC: &str = "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN";
-
-/// Why a document is not read at all.
-pub(crate) type NotRead = &'static str;
 
 /// What a property's declaration says of who may use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,20 +115,6 @@ pub(crate) struct Object {
     pub children: Vec<String>,
 }
 
-/// One element of the document, with its attributes.
-#[derive(Debug)]
-struct Element {
-    local: String,
-    attributes: BTreeMap<String, String>,
-    children: Vec<Element>,
-}
-
-impl Element {
-    fn attribute(&self, name: &str) -> Option<&str> {
-        self.attributes.get(name).map(String::as_str)
-    }
-}
-
 /// Whether text is a well-formed D-Bus name or member name's characters: the
 /// bounded ASCII a bus accepts. A name from a service is its own words,
 /// and nothing else is let through into a finding or a draft.
@@ -168,128 +145,6 @@ pub(crate) fn is_object_path(text: &str) -> bool {
         && text[1..].split('/').all(|part| {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
-}
-
-/// Parses a document into a tree, within the bounds.
-fn tree(text: &str) -> Result<Element, NotRead> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let mut reader = NsReader::from_str(text);
-    let mut version = XmlVersion::Implicit1_0;
-    let mut stack: Vec<Element> = Vec::new();
-    let mut root: Option<Element> = None;
-    let mut elements = 0_usize;
-    let mut first = true;
-    loop {
-        let event = reader
-            .read_event()
-            .map_err(|_| "it is not well-formed XML")?;
-        let at_start = std::mem::take(&mut first);
-        let (start, empty) = match event {
-            Event::Eof => break,
-            Event::DocType(doctype) => {
-                let said = doctype.as_ref().to_owned();
-                // The format's one document type, with no declarations of
-                // its own: so that no entity is defined and nothing is
-                // fetched.
-                if said.contains('[') || !said.contains(DOCTYPE_PUBLIC) || root.is_some() {
-                    return Err(
-                        "it declares a document type other than the one the format uses, or one with declarations of its own, which the reader refuses so that no entity is expanded and nothing is fetched",
-                    );
-                }
-                continue;
-            }
-            Event::Decl(decl) => {
-                if !at_start {
-                    return Err("its XML declaration is not at its start");
-                }
-                if let Some(encoding) = decl.encoding() {
-                    let encoding =
-                        encoding.map_err(|_| "its XML declaration is not well formed")?;
-                    if !encoding.eq_ignore_ascii_case("utf-8") {
-                        return Err("it declares an encoding other than UTF-8");
-                    }
-                }
-                version = decl
-                    .xml_version()
-                    .map_err(|_| "its XML declaration is not well formed")?;
-                continue;
-            }
-            Event::Comment(_) | Event::PI(_) => continue,
-            Event::Text(part) => {
-                if stack.is_empty() && !part.xml_content(version).trim().is_empty() {
-                    return Err("it holds text outside its root element");
-                }
-                continue;
-            }
-            Event::CData(_) | Event::GeneralRef(_) => {
-                return Err("it holds text or a reference where the format has none");
-            }
-            Event::End(_) => {
-                let Some(done) = stack.pop() else {
-                    return Err("it is not well-formed XML");
-                };
-                match stack.last_mut() {
-                    Some(parent) => parent.children.push(done),
-                    None => root = Some(done),
-                }
-                continue;
-            }
-            Event::Start(start) => (start, false),
-            Event::Empty(start) => (start, true),
-        };
-        if root.is_some() {
-            return Err("it holds more than one root element");
-        }
-        elements += 1;
-        if elements > MOST_ELEMENTS {
-            return Err("it holds more elements than the reader takes from one document");
-        }
-        if stack.len() >= DEEPEST {
-            return Err("its elements nest deeper than the reader takes");
-        }
-        let element = element(&start, version)?;
-        if empty {
-            match stack.last_mut() {
-                Some(parent) => parent.children.push(element),
-                None => root = Some(element),
-            }
-        } else {
-            stack.push(element);
-        }
-    }
-    if !stack.is_empty() {
-        return Err("it ends inside an element");
-    }
-    root.ok_or("it holds no element")
-}
-
-fn element(start: &BytesStart<'_>, version: XmlVersion) -> Result<Element, NotRead> {
-    if start.name().as_ref().len() > LONGEST_NAME {
-        return Err("an element's name is longer than the reader takes");
-    }
-    let local = start.local_name().as_ref().to_owned();
-    let mut attributes = BTreeMap::new();
-    for attribute in start.attributes() {
-        let attribute = attribute.map_err(|_| "an attribute is not written as XML defines")?;
-        if attribute.key.as_ref().len() > LONGEST_NAME {
-            return Err("an attribute's name is longer than the reader takes");
-        }
-        if attributes.len() == MOST_ATTRIBUTES {
-            return Err("an element carries more attributes than the reader takes");
-        }
-        let value = attribute
-            .normalized_value_with(version, 1, resolve_predefined_entity)
-            .map_err(
-                |_| "an attribute names an entity XML does not define, which is never expanded",
-            )?
-            .into_owned();
-        attributes.insert(attribute.key.as_ref().to_owned(), value);
-    }
-    Ok(Element {
-        local,
-        attributes,
-        children: Vec::new(),
-    })
 }
 
 fn bounded<T>(items: &[T]) -> Result<(), NotRead> {
@@ -393,7 +248,7 @@ fn interface(of: &Element) -> Result<Interface, NotRead> {
 /// A named reason when the text is not a document of the format, or holds
 /// a form the reader does not know.
 pub(crate) fn read_object(text: &str) -> Result<Object, NotRead> {
-    let root = tree(text)?;
+    let root = xml::parse(text, BOUNDS, &|said| said.contains(DOCTYPE_PUBLIC))?;
     let mut out = Object::default();
     match root.local.as_str() {
         "interface" => out.interfaces.push(interface(&root)?),

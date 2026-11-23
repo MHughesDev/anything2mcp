@@ -65,6 +65,9 @@ a2m_core::failure_codes! {
     PROPERTY_NOT_TEXT = UnknownVariant, "property_not_text",
         meaning "A service's property holds a value that is not text, a flag, a number, or an object path. The pack gives no other form.",
         next "Read another property.";
+    DICTIONARY_INCLUDE_REFUSED = Policy, "dictionary_include_refused",
+        meaning "A scripting dictionary a person handed the scout includes a file outside the application's bundle, which the pack never reads. The dictionary is refused whole.",
+        next "Hand a dictionary that includes nothing outside its bundle, or leave it out of the discovery.";
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
         next "Compile the target again with the version of the desktop pack that is enabled.";
