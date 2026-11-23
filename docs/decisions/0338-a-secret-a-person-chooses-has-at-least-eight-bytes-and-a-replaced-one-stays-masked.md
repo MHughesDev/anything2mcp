@@ -1,4 +1,4 @@
-# 0399. A secret a person chooses has at least eight bytes, and a replaced one stays masked
+# 0338. A secret a person chooses has at least eight bytes, and a replaced one stays masked
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
