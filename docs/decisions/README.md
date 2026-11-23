@@ -308,3 +308,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0314 | [A provider package is found by reading its entry, and no package code runs](0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md) | Accepted (design decision) |
 | 0316 | [Firmware is inspected by an optional provider and updated by one operation through the device's own sequence](0316-firmware-is-inspected-by-an-optional-provider-and-updated-by-one-operation-through-the-devices-own-sequence.md) | Accepted (design decision) |
 | 0317 | [The command pack's scout reads the plain facts of a binary it is handed](0317-the-command-packs-scout-reads-the-plain-facts-of-a-binary-it-is-handed.md) | Accepted (design decision) |
+| 0326 | ["Plan" names only the compiled plan, and the document of what to build next is the Build Order](0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md) | Accepted (owner decision) |

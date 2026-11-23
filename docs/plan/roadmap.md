@@ -65,7 +65,7 @@ A package is one branch and one pull request. When it merges, its row changes to
 
 ## Milestone 1: the first read
 
-Phase 1 of the build plan. One read travels through every layer, each as thin as it can be, before any is deepened.
+Phase 1 of the Build Order. One read travels through every layer, each as thin as it can be, before any is deepened.
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
@@ -321,7 +321,7 @@ The product is run against existing software that the project runs itself, while
 
 ### The short path (decision 0296)
 
-A read-only tool is to take about three commands. The order of these and of every other package is in [the build plan](build-plan.md).
+A read-only tool is to take about three commands. The order of these and of every other package is in [the Build Order](build-order.md).
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |

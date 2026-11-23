@@ -37,7 +37,7 @@ Every stated requirement is covered by the design; five are covered only under c
 
 **The risks that remain, largest first.**
 
-1. **Scope.** This is a large system. The build plan orders it so each phase is useful alone.
+1. **Scope.** This is a large system. The Build Order orders it so each phase is useful alone.
 2. **The Rust browser engine.** Rebuilding reliable waiting and acting is the hardest engineering in the project.
 3. **Per-user access on a server** depends on each organization's Conditional Access rules.
 4. **Permission.** Wrapping third-party software can conflict with vendor terms and IT policy. Anything2MCP is built to operate openly and with approval.

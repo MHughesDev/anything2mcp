@@ -19,7 +19,7 @@ The entry before this is [the first field test](2026-11-23-the-first-field-test.
 
 - The holding folder, built twice: the first design, in which the compiler set files aside, failed a review and was dropped.
 - FT8: a field named as a secret is no drafted input or output. Field test 1 then compiled the system's whole description, three runs alike.
-- Eight decision records, 0302 to 0309, and in [the build plan](../plan/build-plan.md) a section, "The design is settled: build in this order", with the steps of each package.
+- Eight decision records, 0302 to 0309, and in [the build plan](../plan/build-order.md) a section, "The design is settled: build in this order", with the steps of each package.
 - The architecture page, built from data in `docs/architecture/page/`.
 
 ## Measured

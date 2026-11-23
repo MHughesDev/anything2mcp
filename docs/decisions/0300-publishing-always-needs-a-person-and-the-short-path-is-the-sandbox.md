@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** [the build plan](../plan/build-plan.md) and the [roadmap](../plan/roadmap.md): package S1 is closed by this record, S2 is restated, and packages V1 to V5 are new. No code changes with this record.
+**Changes:** [the build plan](../plan/build-order.md) and the [roadmap](../plan/roadmap.md): package S1 is closed by this record, S2 is restated, and packages V1 to V5 are new. No code changes with this record.
 
 ## Context
 

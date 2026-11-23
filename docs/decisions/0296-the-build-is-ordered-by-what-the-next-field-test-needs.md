@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** [the build plan](../plan/build-plan.md) (new), the [roadmap](../plan/roadmap.md) (packages S1, S2, and FT6 are new), the [plan folder's index](../plan/README.md).
+**Changes:** [the build plan](../plan/build-order.md) (new), the [roadmap](../plan/roadmap.md) (packages S1, S2, and FT6 are new), the [plan folder's index](../plan/README.md).
 
 ## Context
 

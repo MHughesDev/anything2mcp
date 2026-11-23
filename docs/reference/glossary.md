@@ -17,6 +17,8 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Binding | How one mode carries out one operation. An operation can have several |
 | Binding Selector | The part of the engine loop that chooses which binding of an operation runs: the first verified binding whose driver is ready and whose surface has not drifted, with the reason recorded |
 | Bridge | Code that runs inside a host application or process, through an interface the host offers, and speaks to the runtime from there |
+| Build brief | What a lead hands a worker for one package: the goal, the proof, the files it owns, and the checks to run. Kept outside the repository ([decision 0326](../decisions/0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md)) |
+| Build Order | The document of what is left to build, in what order, and how far the build has come: [docs/plan/build-order.md](../plan/build-order.md) (decision 0326). Not the plan |
 | Candidate | A published version being compared in shadow before it becomes current |
 | Blob | Any stored evidence or value, named by a keyed digest of its content and sealed |
 | Change (of a watch) | One difference a check reports, kept in the ledger as the kind, the keyed digest of the record's key, and the names of the outputs that differ, never a value. The kinds are `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, and `ended` ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
@@ -102,7 +104,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
-| Plan | The compiled, hashed form of a target version that the engine runs |
+| Plan | The compiled, hashed form of a target version that the engine runs. The only part this word names ([decision 0326](../decisions/0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md)) |
 | Policy set | The versioned rules the policy engine evaluates |
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
 | Preset | A named bundle of settings a person picks instead of setting each one. A preset may only tighten |

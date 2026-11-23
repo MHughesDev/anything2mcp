@@ -68,7 +68,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 
 ## How to work
 
-- **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the build plan ends with an exit test; the next phase starts when it passes and the result is in the journal.
+- **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the Build Order ends with an exit test; the next phase starts when it passes and the result is in the journal.
 - **Start each slice with a plan.** Take a package marked ready in the roadmap, and read the design of each crate it touches in `docs/architecture/crates/`. State the slice, the hypotheses it tests, an alternative you considered, the crates and interfaces involved, which side of the kernel boundary each piece falls on, and the tests that will prove it. Write it down, then build. When the package merges, mark it done in the roadmap in the same pull request.
 - **Run the research first.** Before a phase, check [docs/research/11-open-research.md](docs/research/11-open-research.md) for briefs marked as needed before it. Run them, write each up as a new file in `docs/research/`, and update the spec sections they feed.
 - **Verify before you depend.** Many crate names in the docs are unverified. Before adding a dependency, confirm it exists, is maintained, carries a licence on the closed list in `deny.toml`, and supports Windows, macOS, and Linux. Record the choice.
@@ -127,7 +127,7 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 
 ## Definition of done for a phase
 
-- The exit test in the build plan passes on all three operating systems, or the gap is written down in the journal.
+- The exit test in the Build Order passes on all three operating systems, or the gap is written down in the journal.
 - Formatting, lints, unit tests, and benchmarks pass.
 - New public interfaces are documented in the technical reference.
 - Decisions made along the way have records.

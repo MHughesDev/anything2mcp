@@ -2,7 +2,7 @@
 
 Research that was planned but not completed. Each item is a ready brief: hand it to a research agent, write the result up as a new file in this folder, then update the spec section it feeds and remove the item from this list.
 
-Run an item before the build phase that depends on it. The phase numbers refer to the [build plan](../plan/roadmap.md).
+Run an item before the build phase that depends on it. The phase numbers refer to the [roadmap](../plan/roadmap.md).
 
 | # | Topic | Needed before | Feeds spec section |
 | --- | --- | --- | --- |
