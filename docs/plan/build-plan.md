@@ -94,8 +94,9 @@ E4: 1. List which packs draft by rule and which do not. 2. Add the missing rules
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| S1 (new) | The lighter publish for a read | A decision record, then the build: whether a read-only version may be published without the presence prompt, and what guards it instead | A read is published by one command in a container; a version holding a write is still refused there |
-| S2 (new) | One command to a tool | `add` runs the scout, keeps the reads that passed their trial, records their offline tests, and requests the publish | From an empty folder: `init`, `add`, `connect`, and an agent calls a read |
+| ~~S1~~ | ~~The lighter publish for a read~~ | Decided against ([decision 0300](../decisions/0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md)): every publish needs a person | The record |
+| S2 | One command to a working read | `add` carries a system to drafted reads that passed their trial; an agent calls them at once through the trial action, in the sandbox | From an empty folder: `init`, `add`, `connect`, and an agent reads a value with no person and no publish |
+| V1 to V5 | What the review of S1 found | The evidence level decides nothing today; two gates are built; a web read that acts; one wrong help text; what a description may hold | Each has its proof in the roadmap |
 | 3.6 | The presence prompt on Windows and macOS | The prompts, run by a person | A person approves on each system; a script cannot |
 | 2.2 | The operating system's key store | The vault's key held by the system's store on each system | A saved value survives a restart and cannot be read without the key store |
 | 5.2 | The shortcuts and `doctor` | What remains of the project folder, build state, and shortcuts | A new project goes from nothing to a linted draft with the shortcuts alone |
@@ -104,9 +105,7 @@ E4: 1. List which packs draft by rule and which do not. 2. Add the missing rules
 
 **Low level.**
 
-S1: 1. Read sections 403 and 503 and decisions 0252 and 0264. 2. Write the record: a version whose every tool is a read with no declared destination outside its surface may be published by the local user without the presence prompt; anything else keeps it. Name what a manipulated agent could gain and why that is acceptable or not. 3. If the record cannot make that case, keep the prompt and build only S2. 4. Build, with a manipulation test that tries to pass a write as a read.
-
-S2: 1. Write the rule for which drafted reads are kept: passed a trial, compiled, no open question. 2. `add` does target add, scout, keep, fixture record, test, promote, publish request, and prints what it kept and what it left with the reason. 3. Each step stays a separate action; the shortcut only chains them. 4. A test from an empty folder in `crates/anything2mcp/tests/`. 5. Measure the time and write it in the journal.
+S2: 1. Write the rule for which drafted reads are reported as ready: passed a trial, compiled, not held. 2. `add` does target add, scout, and sign-in where needed, and prints what is ready, what is held and why. 3. `connect` with the build toolset gives an agent the trial action; the guidance file says a ready read is called through it. 4. A test from an empty folder in `crates/anything2mcp/tests/`. 5. Measure the time and write it in the journal.
 
 3.6: 1. Write the two-minute steps for a person. 2. The owner, or anyone at such a machine, runs them; the result goes in the journal. 3. Fix what they show. This is the one package of the stage that needs a person at a machine.
 
@@ -316,4 +315,5 @@ Everything else in this file the lead decides, builds, and merges, and writes do
 - Strike a package through when it is done, with the pull request's number.
 - A stage's low level is rewritten when the stage before it is reached, from what was learned.
 - A new package gets a row here and in the roadmap in the same change.
+- A decision that changes the design is put on the architecture page, A2MArchitecture, in the same step: under the part it changes, with the alternative that lost.
 - A field test's finding that needs work becomes a package in the stage it blocks.

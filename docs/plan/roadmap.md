@@ -319,8 +319,13 @@ A read-only tool is to take about three commands. The order of these and of ever
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| S1 | Decide, with a record, whether a version that holds only reads may be published without the presence prompt, and build what the record says | `a2m-policy`, `a2m-actions`, `a2m-local` | FT2, FT3 | A read is published by one command where no prompt can be shown; a version holding a write is still refused there; a manipulation test tries to pass a write as a read | held |
-| S2 | `add` carries a system to a requested publish: scout, keep the reads that passed their trial, record their offline tests, run the gates, promote, request | `a2m-actions`, `anything2mcp` | S1 | From an empty folder, `init`, `add`, and `connect`, and an agent calls a read; the time is measured | held |
+| S1 | Decided by [decision 0300](../decisions/0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md): every publish needs a person; no lighter publish is built | None | FT2, FT3 | The record | done |
+| S2 | `add` carries a system to drafted reads that passed their trial and reports them; an agent with the build toolset calls any of them through the trial action, in the sandbox posture | `a2m-actions`, `anything2mcp` | FT2 | From an empty folder, `init`, `add`, and `connect`, and an agent reads a value through a trial with no person and no publish; the time is measured | ready |
+| V1 | Something reads the evidence level to decide, or the documents stop saying it decides | `a2m-core`, `a2m-actions`, documents | None | A test that fails when a tool below the needed level is listed, or the corrected documents | ready |
+| V2 | The publish gates say which are built; a gate a builder cannot satisfy alone is built | `a2m-actions` | S2 | A version whose only evidence is fixtures its builder wrote is told apart at review | held |
+| V3 | A web read binding that sets a field or invokes a control not lowered as a commit is refused by the compiler | `a2m-pack-web-ui`, `a2m-files` | None | Such a binding fails to compile, with a test | ready |
+| V4 | The help of `tool.call` and the code agree on which environment a call runs in when none is named | `a2m-actions` | None | One sentence, and a test of the default | ready |
+| V5 | What a published tool's description may hold, and that a client is told who wrote it | A decision record; `a2m-mcp` | None | The record, then its test | held |
 
 ## What can run at once
 
