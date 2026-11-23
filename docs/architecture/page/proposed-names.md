@@ -617,7 +617,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Write Gate | group | ledger | coined | The group in the Ledger view that holds Intent Token, Ledger Rules. |
 | Write Path | part | engine-write, engine-loop | coined | The stage of a write that takes each record from lock to verified: lock, freshness check, intent, act, read back, compare. |
 | Write Sequence | group | engine-loop | coined | The group in the Engine Loop view that holds Preview, Approval Check, Write Path, Reconciliation. |
-| Field Build | part | pages | glossary | The second program, built from the product crate, that stands in for the person in a field test (decision 0304). |
-| Field Prompt | part | pages | glossary | The presence prompt of the Field Build; it passes only the approval whose hash the runner named (decision 0304). |
+| Field Harness | part | pages | glossary | The program under `tools/field-harness/`, the product's own serve with the Field Prompt, run in a closed container network in a field test (decision 0310). |
+| Field Prompt | part | pages | glossary | The presence prompt of the Field Harness; it passes only the short hash the runner answers on its pipe (decision 0310). |
 | Handed Files | part | project | glossary | The files in the project's `sources` folder that a person gives a scout or a pipeline; never compiled (decision 0309). |
 | Waiting Reads | part | scout | glossary | The part of the scout's report that lists each read not sent because no one has signed in (decision 0303). |

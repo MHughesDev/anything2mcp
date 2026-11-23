@@ -7292,7 +7292,7 @@
    "name": "Plan Analysis",
    "group": "Compiler",
    "state": "b",
-   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails. A plan whose effect is a read and which holds a step that can change the system is refused.",
+   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails. A plan whose effect is a read and which holds a step that can change the system is refused. A read whose binding holds a step of a kind its pack marks as able to change the system is refused as kernel.read_acts; each kind is marked never, as declared, or can, and an unmarked kind counts as can (decision 0312).",
    "where": "a2m-files: src/compile.rs",
    "decided": [
     "The kernel refuses a read plan that holds a step which can change the system, whichever pack lowered it; a pack says so where it registers a step kind. Not: leave the check to each pack (0307)."
@@ -9986,32 +9986,32 @@
    ]
   },
   "pages-field-build": {
-   "name": "Field Build",
+   "name": "Field Harness",
    "group": "Person Surface",
-   "where": "a new crate with publish = false, built from the product crate's library",
+   "where": "tools/field-harness/, a workspace program built from the product crate's library",
    "state": "t",
-   "text": "A second program that is the product in every part but one: its presence prompt is the Field Prompt. It stands in for the person in a field test. It starts only with a home folder that holds the runner's marker file, and it serves only targets whose every address is on this machine. It is never packaged, and the packaging check fails when a wheel or an npm package holds a file named for it. Not built; roadmap packages FT4 and FT9.",
+   "text": "A second program that is the product's own serve in every part but one: the command line's Host carries the Field Prompt, which the shipped program never sets. It runs in a container on a network with no route out, beside copies of systems the field-test runner started with invented data; at start it refuses to serve if a public address answers. The runner builds it into a folder of its own and deletes it after the run, and the packaging check fails when a wheel or npm package holds any binary but the expected ones. Not built; roadmap package FT4 (decision 0310).",
    "never": [
-    "Start outside a field test.",
-    "Be packaged.",
-    "Serve a target with an address off this machine."
+    "Ship in a wheel or an npm package.",
+    "Serve when a public address can be reached."
    ],
    "decided": [
-    "The runner signs in by posting an invented credential to the engine's own page, as a person's browser would; nothing new is added to the product for it. Not: an action that takes a credential (0304).",
-    "One field build runs every step of a recipe that runs the product, so a read and a write of one recipe are the same build. Not: the product for some steps and the field build for others (0304)."
+    "The harness runs in a closed container network and says in the ledger what it is (decision 0310). Not: a field build that passed an approval named in a file (decision 0304, superseded: any program running as the user could write the file)."
    ]
   },
   "pages-field-prompt": {
    "name": "Field Prompt",
    "group": "Person Surface",
-   "where": "the field build crate",
-   "state": "t",
-   "text": "The presence prompt of the Field Build. It passes only an approval whose own hash the runner wrote to a file in the field build's home folder, and removes the file. Anything else is refused, so a field test still approves one stated change, and a run with no such file rests as the product does. Not built; roadmap package FT4.",
+   "where": "a2m-local (FieldPrompt), built only by the Field Harness",
+   "state": "p",
+   "text": "The presence prompt of the Field Harness. It writes the prompt's text to the runner's pipe and passes only when the runner answers with the short hash it showed; the ledger records the presence as field_harness, never as an operating system's prompt. It refuses an approval of an irreversible operation, and one whose effect it was not told, without asking. Built in a2m-local; the harness that uses it is roadmap package FT4.",
    "never": [
-    "Pass an approval the runner did not name."
+    "Pass an approval the runner did not name.",
+    "Approve an irreversible operation.",
+    "Be recorded as polkit, Windows Hello or Local Authentication."
    ],
    "decided": [
-    "The prompt passes only the one approval whose hash the runner named. Not: a prompt that passes any approval (0304)."
+    "The prompt answers on a pipe only the runner holds, and refuses an approval whose effect it does not know (decision 0310). Not: a hash in a file (decision 0304)."
    ]
   },
   "proj-source-defs": {
