@@ -24,7 +24,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 1. **A field test decides what is next.** Whatever stops the next field test from passing is built before anything else.
 2. **A fault found on existing software is first made a case in a test stand,** then fixed, so that CI holds it on three operating systems.
 3. **No new kind of system** until Stage 5. The ten packs are enough to be wrong in.
-4. **One package at a time.** Other agents, when used, run on the cheapest model and get a package with a stated proof ([decision 0294](../decisions/0294-the-owner-hands-the-open-questions-to-the-agents.md)).
+4. **One package at a time,** given to the smallest size of model that can do it well; the table under "Who does which line of work" says which ([decision 0294](../decisions/0294-the-owner-hands-the-open-questions-to-the-agents.md)).
 5. **The ten rules, and what an agent does not do alone, are unchanged.** Publishing a release and touching a system the project does not run are the owner's.
 
 ## High level: the eight stages
@@ -260,6 +260,25 @@ The packs' own packages: after each field test, close what it found, a stand cas
 | R2 | Release 1.0 | | The owner's |
 
 **Low level.** Written when Stage 7 is reached. Until then the roadmap rows are the detail.
+
+## Who does which line of work
+
+Four sizes of model work on this build. The lead is the largest and the dearest, and the owner's usage is limited, so work goes to the smallest size that can do it well. The sizes are named here by their place, not by a product's name.
+
+| Size | Its lines of work | It does not |
+| --- | --- | --- |
+| **The lead** (the largest) | Every decision and its record. This plan and the roadmap. The brief for every other agent, with a stated proof. Reading every diff before it merges, and merging. Reading what a field test shows and deciding what it means. The three open decisions by name: an absent object (FT3), the lighter publish (S1), the interpreter (0282). Anything that touches the ten rules, the provider contract, the ledger's nine rules, or the policy engine's verdicts | Write code another size can write from a brief |
+| **The large builder** | A package that changes a kernel crate, or a write path, or crosses several crates: the engine, the ledger, policy, sign-in and sessions, stop and resume (3.7), capture and inference (E2), the first write of a field test (FT4), the lighter publish once decided (S1). A design review round. A second reading of a diff that touches security, before the lead's | Decide between designs; it returns the alternatives it saw and the lead decides |
+| **The middle builder** | A package inside one pack or one tool, with a stand case and a proof: the Swagger reader, drafted names, the credential lint, and the scout's summary (FT2); a widget driver; one pack's drafting rules; a sign-in variant; a test stand's new case; the fault proxy (`tools/`); a field test's recipe; finding the cause of a red check | Change a public interface or a failure code's class without a record from the lead |
+| **The small worker** | Work with one right answer that a check confirms: counts and index rows after a new document; a rename across files; running the audit, the lints, or a field test and reporting what they print; searching the repository; reading a CI log for the first failure; seeding invented data; striking a finished package here and in the roadmap | Write a decision, a design, or product code |
+
+**Rules for handing work down.**
+
+1. A brief names the package, the files, the proof, and what not to touch. An agent that cannot meet the proof stops and says why; it does not widen its task.
+2. Two agents never change the same crate at the same time.
+3. Nothing merges on an agent's word. The lead reads the diff and CI holds the gate.
+4. When a smaller size fails a package twice, the package goes up one size, and the journal says so.
+5. The large builder is used sparingly: one at a time, and only for the lines in its row.
 
 ## What is the owner's, and nothing else is
 

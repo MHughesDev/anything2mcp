@@ -12,7 +12,7 @@ The entry before this is [the wider reach](2026-11-18-the-wider-reach.md). Betwe
 
 - **Existing software that we run ourselves is tested against during the build, and may be written to** ([0293](../decisions/0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md)).
 - **The open questions, and the deciding, are the agents'** ([0294](../decisions/0294-the-owner-hands-the-open-questions-to-the-agents.md)). The ten rules, the three things an agent does not do alone, and publishing stay as they were: that part is my inference and is written as one.
-- **Other agents run on the cheapest model.** The lead does what needs judgment.
+- **Work goes to the smallest size of model that can do it well.** The build plan sets out the lines of work of each size; the lead keeps what needs judgment.
 - The owner also agreed to five things the lead proposed, which are not yet records because nothing has been built for them: add no new kind of system for now; build the capture of a person's use of a web application; make a read-only tool take about three commands; propose a lighter publish for a read-only tool; and try reads against real software, which this session began.
 
 ## Done

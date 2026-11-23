@@ -14,7 +14,7 @@ Agents already plan, build, and merge without waiting ([decision 0055](0055-agen
 
 1. **An open question that was waiting for the owner is now decided by the agent leading the work,** with a record that says so and gives the evidence. The owner reads it afterwards and may reverse it.
 2. **The lead tells the owner what was decided,** in the conversation and in the journal, and does not ask first.
-3. **When the lead uses other agents, they run on the cheapest model.** The owner's usage is limited, and the lead does the work that needs judgment itself.
+3. **Work goes to the smallest size of model that can do it well.** The owner's usage is limited. The owner first asked that other agents run on the cheapest model only, and later the same day asked for the lines of work of each size to be set out; [the build plan](../plan/build-plan.md) sets them out, and the lead keeps the work that needs judgment.
 
 ## What I inferred, and what this leaves alone
 
