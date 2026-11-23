@@ -14,8 +14,8 @@ use a2m_core::{
     WriteEvidence,
 };
 use a2m_files::{
-    Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepChanges, StepCommits,
+    BindingStatement, Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered,
+    Lowering, Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -902,6 +902,27 @@ impl Lowering for DeviceLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable. It
+    /// sends frames over one link, to its surface's address and to no other:
+    /// the address is a socket address the driver parses without a lookup,
+    /// and it dials only an address among the run's destinations. A firmware
+    /// update is frames over the same link. An input never names an address
+    /// (decision 0399).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: true,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     fn binding_schema(&self) -> &JsonSchema {

@@ -508,3 +508,28 @@ fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
         "kernel.effect_lower_than_derived",
     );
 }
+
+#[test]
+fn every_tool_states_that_it_starts_nothing_and_sends_only_to_its_broker() {
+    use a2m_files::{BindingStates, Reach};
+    let folder = Folder::new("states");
+    let registry = registry(&folder);
+    let compiled = compile(&registry, &common::fixture_root()).unwrap();
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        let Reach::Stated { groups, .. } = &item.reach else {
+            panic!("`{}` does not state where it sends", item.tool);
+        };
+        let addresses: Vec<&str> = groups
+            .iter()
+            .flat_map(|group| group.addresses.iter().map(String::as_str))
+            .collect();
+        assert_eq!(addresses, ["broker.example.test:7001"], "{}", item.tool);
+        for binding in &item.bindings {
+            let BindingStates::Stated { runs, environment } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            assert!(runs.is_empty() && environment.is_empty(), "{}", item.tool);
+        }
+    }
+}

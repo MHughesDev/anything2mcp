@@ -11,8 +11,9 @@ use a2m_core::{
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb, WriteEvidence,
 };
 use a2m_files::{
-    Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepChanges, StepCommits,
+    BindingStatement, Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered,
+    Lowering, Place, Possible, ResolvedBinding, Sends, Stage, Statement as ReviewStatement,
+    StepChanges, StepCommits,
 };
 
 use crate::model::{Access, Does, Returns, Section, Statement, StepDetail};
@@ -45,6 +46,16 @@ impl SqlLowering {
 
 fn problem(code: &LintCode, stage: Stage, at: &Place, message: String, fix: &str) -> Diagnostic {
     Diagnostic::error(code.clone(), stage, at, message, fix)
+}
+
+/// Whether a store's file is named by a path that begins with two
+/// separators, `\\host\share` or `//host/share`: another machine's.
+fn names_another_machine(address: &str) -> bool {
+    let mut chars = address.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('/' | '\\'), Some('/' | '\\'))
+    )
 }
 
 /// A step that fails as the code of `row`, in the class its table gives it.
@@ -338,6 +349,43 @@ impl Lowering for SqlLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable. On a
+    /// store in a file it sends no request: the driver opens the one file
+    /// the surface names, inside the engine's roots, and that is stated
+    /// where the file's address is a local path in form. An address that
+    /// names another machine (`\\host\share` or `//host/share`) is reached
+    /// over the network by the operating system, and is not stated. On a
+    /// store on a server it sends to the surface's address and to no other:
+    /// the driver dials only a surface among the run's destinations, and an
+    /// input never names a host or a file (decision 0399).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> ReviewStatement {
+        let Some(surface) = cx.target().surface(lowered.surface.as_str()) else {
+            return ReviewStatement::NotStated;
+        };
+        let surface_sends = if *surface.kind == DATABASE {
+            if names_another_machine(surface.address) {
+                return ReviewStatement::NotStated;
+            }
+            false
+        } else if crate::names::is_database(surface.kind) {
+            true
+        } else {
+            return ReviewStatement::NotStated;
+        };
+        ReviewStatement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: surface_sends,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     /// The fields the statements file declares `nullable`, as the `fetch`

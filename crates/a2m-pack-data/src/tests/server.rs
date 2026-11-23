@@ -1360,3 +1360,35 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
     }
     assert!(scene.server.writes().unwrap().is_empty());
 }
+
+/// The review needs no server: it is read from the target's files.
+#[test]
+fn a_store_on_a_server_states_that_it_sends_only_to_its_own_address() {
+    let folder = Folder::new("states");
+    let registry = registry_of(
+        &crate::pack(),
+        &folder,
+        std::sync::Arc::new(a2m_core::NoSecrets),
+    );
+    let compiled = match compile_folder(&registry, &fixtures()) {
+        Ok(compiled) => compiled,
+        Err(problems) => panic!("the server fixtures do not compile: {problems:#?}"),
+    };
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        let a2m_files::Reach::Stated { groups, .. } = &item.reach else {
+            panic!("`{}` does not state where it sends", item.tool);
+        };
+        let addresses: Vec<&str> = groups
+            .iter()
+            .flat_map(|group| group.addresses.iter().map(String::as_str))
+            .collect();
+        assert_eq!(addresses, ["127.0.0.1"], "{}", item.tool);
+        for binding in &item.bindings {
+            let a2m_files::BindingStates::Stated { runs, environment } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            assert!(runs.is_empty() && environment.is_empty());
+        }
+    }
+}

@@ -11,8 +11,8 @@ use a2m_core::{
     PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
-    Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Possible,
-    ResolvedBinding, Stage, StepChanges, StepCommits,
+    BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
+    Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -697,6 +697,27 @@ impl Lowering for StreamLowering {
         } else {
             EffectClass::Read
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable. It
+    /// sends to its surface's broker and to no other: a channel's address
+    /// is a subject, never a network address, the driver dials only a
+    /// surface among the run's destinations, and the broker's own list of
+    /// other servers is not followed. The wire is plain TCP to this
+    /// machine's loopback address only (decision 0399).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: true,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     /// What a write offers as the evidence that it landed (decision 0161).
