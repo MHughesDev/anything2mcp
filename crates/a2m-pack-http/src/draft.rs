@@ -17,29 +17,13 @@ use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::json::Json;
-use crate::openapi::{DescribedOperation, Parameter, snake};
+use crate::openapi::{DescribedOperation, Parameter, object_words, snake};
 
 /// Named values of a draft, in order.
 type Pairs = Vec<(String, DraftValue)>;
 
 /// The kernel's file kind for operations.
 const OPERATION: FileKindName = FileKindName::fixed("operation");
-
-/// The part of a tool's name made from the description's path: its last
-/// two plain words, lowercase. `None` when the path has no plain word.
-fn object_words(path: &str) -> Option<String> {
-    let words: Vec<String> = path
-        .split('/')
-        .filter(|part| !part.starts_with('{'))
-        .map(snake)
-        .filter(|word| word.starts_with(|c: char| c.is_ascii_lowercase()))
-        .collect();
-    match words.as_slice() {
-        [] => None,
-        [only] => Some(only.clone()),
-        [.., module, object] => Some(format!("{module}_{object}")),
-    }
-}
 
 /// The field type of a plain value of the answer, from the kind its shape
 /// states. Text the system gives is untrusted. `None` for a value that is
@@ -151,7 +135,10 @@ impl DraftingRule for DescribedReadRule {
         let (Some(path), Some(shape), Some(object)) = (
             operation.template_path(),
             operation.response.as_ref(),
-            object_words(&operation.path),
+            operation
+                .object
+                .clone()
+                .or_else(|| object_words(&operation.path)),
         ) else {
             return Ok(Vec::new());
         };

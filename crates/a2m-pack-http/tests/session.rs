@@ -1082,3 +1082,108 @@ async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_ma
             .all(|(line, _)| !line.contains("openapi")),
     );
 }
+
+/// The findings a discovery of the surface at `address` makes from the
+/// test application's description, handed in as a file.
+async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding> {
+    let description = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let folder = Folder::new("handed-file");
+    std::fs::write(folder.path().join("example-openapi.json"), description).unwrap();
+    let root = RootName::new("sources").unwrap();
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), folder.path(), Access::Read)
+        .unwrap();
+    let mut paths = CheckedPaths::none();
+    paths.insert(
+        a2m_pack_http::DESCRIPTION_FILE,
+        roots
+            .check(&root, "example-openapi.json", Access::Read)
+            .unwrap(),
+    );
+    let scene = Scene::new("example", address);
+    discover_with(&scene, &Values::new(), &paths, &a2m_core::NoSecrets)
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_for() {
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let draft_into = |target_text: String, findings: &[Finding]| {
+        let folder = Folder::new("handed-draft");
+        std::fs::write(folder.path().join("target.yaml"), target_text).unwrap();
+        let scene = Scene::new("example", &base);
+        let root = TargetRoot::new(folder.path());
+        let report = Drafter::new(scene.registry.compiler_set(), &root)
+            .draft(findings)
+            .unwrap();
+        (folder, root, scene, report)
+    };
+
+    // One `http` surface, whose address ends in a path: the findings carry
+    // the origin and that path, and the surface is not an open question.
+    let prefixed = format!("{base}/v1");
+    let findings = findings_from_handed_file(&app, &prefixed).await;
+    assert_eq!(findings.len(), 9);
+    let one = target.replace("http://127.0.0.1:4010", &prefixed);
+    let (_folder, root, scene, report) = draft_into(one, &findings);
+    assert!(
+        report.kept_failing.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let set = scene.registry.compiler_set();
+    let sources = a2m_files::load(&root, set).unwrap();
+    let compiled = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap();
+    assert!(!compiled.plan.operations.is_empty());
+
+    // One `http` surface, and a second surface of another kind: the one of
+    // kind `http` is still the only one to name.
+    let with_other = target.replace("http://127.0.0.1:4010", &base).replace(
+        "environments:",
+        "  files:\n    kind: files\n    base: \"/tmp\"\nenvironments:",
+    );
+    let findings = findings_from_handed_file(&app, &base).await;
+    let (folder, _, _, report) = draft_into(with_other, &findings);
+    assert!(report.open_questions.is_empty(), "{report:?}");
+    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    assert!(entry.contains("surface: \"api\""), "{entry}");
+
+    // Several `http` surfaces: the path the address ends in tells which
+    // the discovery was for; two at one address cannot be told apart, and
+    // the question stays.
+    let two = |second: &str| {
+        target
+            .replace("http://127.0.0.1:4010", &format!("{base}/v1"))
+            .replace(
+                "environments:",
+                &format!("  other:\n    kind: http\n    base: \"{second}\"\nenvironments:"),
+            )
+    };
+    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
+    assert!(report.open_questions.is_empty(), "{report:?}");
+    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    assert!(entry.contains("surface: \"api\""), "{entry}");
+    let (_folder, _, _, report) = draft_into(two(&prefixed), &findings);
+    assert!(!report.open_questions.is_empty(), "{report:?}");
+}

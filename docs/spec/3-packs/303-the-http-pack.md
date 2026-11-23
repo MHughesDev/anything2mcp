@@ -141,7 +141,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 
 | Discoverer | Action | Reads | May send |
 | --- | --- | --- | --- |
-| `http_description` | `spec.import`, `discover.run` | A description given as a file, or fetched from the surface. Either way its text passes the redactor before it is parsed, and reading it is bounded in depth, in steps, and in bytes; past a bound the import is refused as `input`, `description_too_large` | GET of the description's address. For GraphQL, the one fixed introspection query, which the GraphQL contract makes a read. Nothing else |
+| `http_description` | `spec.import`, `discover.run` | A description (OpenAPI 3.0 or 3.1, or Swagger 2.0) given as a file, or fetched from the surface. Either way its text passes the redactor before it is parsed, and reading it is bounded in depth, in steps, and in bytes; past a bound the import is refused as `input`, `description_too_large` | GET of the description's address. For GraphQL, the one fixed introspection query, which the GraphQL contract makes a read. Nothing else |
 | `http_surface` | `target.probe`, `auth.detect` | Whether the base address answers; challenges in `WWW-Authenticate`; a request for a client certificate; links to a description | GET, HEAD, OPTIONS |
 
 **Discovery cannot write.** Discovery runs as a job on a runner, inside the engine's sandbox ([section 218](../2-kernel/218-discovery-and-findings.md)). Within that, a discoverer is given a read client: a type that can build only GET, HEAD, and OPTIONS requests and the fixed introspection request, and that refuses a destination outside the declared surfaces. It cannot send a body of the caller's choosing. The drivers' client is a different type that discoverers are never given.
