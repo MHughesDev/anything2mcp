@@ -15,7 +15,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepCommits,
+    Possible, ResolvedBinding, Stage, StepChanges, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -543,6 +543,17 @@ impl Lowering for DeviceLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `write_frame` changes the device exactly when it sends a write,
+    /// and the lowering marks exactly that step. `open`, `build_frame`,
+    /// `read_frame`, and `expect` send no write.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == self.names.write_frame {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

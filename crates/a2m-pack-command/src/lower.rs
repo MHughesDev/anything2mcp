@@ -11,7 +11,7 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema, Located,
     LowerContext, Lowered, Lowering, Place, Possible, ProgramRun, ResolvedBinding, Sends, Stage,
-    Statement, StepCommits, VariableValue,
+    Statement, StepChanges, StepCommits, VariableValue,
 };
 
 use crate::codes::{self, EXPECT, FILE_KIND, PARSE, SPAWN, SURFACE_KIND, lint};
@@ -270,6 +270,17 @@ impl Lowering for CliLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `spawn` changes the system exactly when its command is declared a
+    /// write, and the driver refuses a `spawn` whose mark and command
+    /// disagree. `expect` and `parse` read how the start ended.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SPAWN {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

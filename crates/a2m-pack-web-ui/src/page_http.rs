@@ -42,7 +42,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, Statement, StepCommits,
+    ResolvedBinding, Stage, Statement, StepChanges, StepCommits,
 };
 use a2m_pack_web_browser::{
     ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
@@ -615,6 +615,17 @@ impl Lowering for PageHttpLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `request` changes the system exactly when its entry is declared a
+    /// write, and the driver refuses the mismatch both ways. A `goto` in an
+    /// observing tab only looks.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == REQUEST {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

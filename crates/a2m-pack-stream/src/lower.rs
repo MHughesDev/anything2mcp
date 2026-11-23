@@ -10,7 +10,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Possible,
-    ResolvedBinding, Stage, StepCommits,
+    ResolvedBinding, Stage, StepChanges, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -661,6 +661,18 @@ impl Lowering for StreamLowering {
             StepCommits::Always
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// `publish` and `acknowledge` can change what the broker holds. Every
+    /// other kind takes nothing: `subscribe` and `await` hold a delivery that
+    /// is given back unless a later `acknowledge` removes it, and the rest
+    /// only look.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == STEP_PUBLISH || *kind == STEP_ACKNOWLEDGE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 

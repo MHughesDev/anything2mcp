@@ -9,7 +9,8 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema,
     Level, LintRule, Located, LowerContext, Lowered, Lowering, Place, Possible, ProgramRun,
-    ResolvedBinding, ResolvedView, Sends, Stage, Statement, StepCommits, TargetView, VariableValue,
+    ResolvedBinding, ResolvedView, Sends, Stage, Statement, StepChanges, StepCommits, TargetView,
+    VariableValue,
 };
 
 use crate::codes;
@@ -306,6 +307,17 @@ impl Lowering for McpLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `call_tool` changes the system exactly when the mapping declares
+    /// its tool a write, and the driver refuses such a tool from a step not
+    /// marked as a save.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == names::CALL_TOOL {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

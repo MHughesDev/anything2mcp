@@ -13,9 +13,9 @@ use a2m_core::{
     Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload,
     PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
     PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex, SignInMode,
-    SourcePlan, Stands, Step, StepArg, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
-    TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan, ToolRuns,
-    Value, ValueType, Values, Verb, Version, WriteEvidence,
+    SourcePlan, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName,
+    SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan,
+    ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -27,7 +27,8 @@ use crate::kernel::{
 };
 use crate::load::{SourceFile, Sources};
 use crate::register::{
-    CompileMode, CompilerSet, Lowered, Lowering, Possible, StepCommits, SurfaceKindSpec,
+    CompileMode, CompilerSet, Lowered, Lowering, Possible, StepChanges, StepCommits,
+    SurfaceKindSpec,
 };
 use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
@@ -2677,6 +2678,8 @@ impl<'a> Compiler<'a> {
             ("read_back", &lowered.read_back),
             ("lookup", &lowered.lookup),
         ];
+        // The kinds of step this binding holds that can change the system.
+        let mut acting: Vec<StepKind> = Vec::new();
         for (list, steps) in lists {
             for step in steps {
                 if !step_kinds.contains(&step.kind) {
@@ -2707,6 +2710,20 @@ impl<'a> Compiler<'a> {
                     );
                     fine = false;
                 }
+                let changes = by.lowering.changes(&step.kind);
+                if changes == StepChanges::Never && step.commits {
+                    self.error(
+                        codes::LOWERING_INVALID,
+                        Stage::Lower,
+                        &binding.at,
+                        format!("A `{list}` step of kind `{}` of this `{mode}` binding is marked as a save, and its pack declares that a step of that kind cannot change the system.", step.kind),
+                        "Correct the pack: a kind of step that can save is one that can change the system.".to_owned(),
+                    );
+                    fine = false;
+                }
+                if changes == StepChanges::Can && !acting.contains(&step.kind) {
+                    acting.push(step.kind.clone());
+                }
                 if step.commits && list != "act" {
                     self.error(
                         codes::LOWERING_INVALID,
@@ -2718,6 +2735,25 @@ impl<'a> Compiler<'a> {
                     fine = false;
                 }
             }
+        }
+        // A read that acts, whichever pack lowered it (decision 0307, point
+        // 4): a kind the pack does not mark counts as one that can change
+        // the system.
+        if info.effect == EffectClass::Read && !acting.is_empty() {
+            let at = info
+                .doc
+                .get("effect")
+                .map_or(&info.doc.at, |effect| &effect.at)
+                .clone();
+            let kinds: Vec<String> = acting.iter().map(|kind| format!("`{kind}`")).collect();
+            self.error(
+                codes::READ_ACTS,
+                Stage::Analyze,
+                &at,
+                format!("The operation declares the effect `read`, and its `{mode}` binding has steps of the kinds {}, which the pack `{}` does not state cannot change the system.", kinds.join(", "), by.pack),
+                "Declare the effect the binding has, or bind the operation to something that only reads. If a kind cannot change the system, its pack states so for the kind.".to_owned(),
+            );
+            fine = false;
         }
         let commits = index(lowered.act.iter().filter(|step| step.commits).count());
         let writes = info.effect >= EffectClass::Write;

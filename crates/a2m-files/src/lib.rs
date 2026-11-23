@@ -51,7 +51,7 @@ pub use load::{
 pub use register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
     DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering, NoticeField,
-    Possible, ProgramField, StepCommits, SurfaceKindSpec,
+    Possible, ProgramField, StepChanges, StepCommits, SurfaceKindSpec,
 };
 pub use review::{
     BindingReview, BindingStatement, BindingStates, CredentialShown, EnvironmentVariable,

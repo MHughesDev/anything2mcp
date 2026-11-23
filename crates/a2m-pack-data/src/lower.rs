@@ -12,7 +12,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepCommits,
+    Possible, ResolvedBinding, Stage, StepChanges, StepCommits,
 };
 
 use crate::model::{Access, Does, Returns, Section, Statement, StepDetail};
@@ -281,6 +281,20 @@ impl Lowering for SqlLowering {
             StepCommits::Always
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `commit` saves and can change the store. An `execute` runs a
+    /// statement as its file declares it, and the driver runs one declared
+    /// `read_only` on the reading connection, where a write is refused.
+    /// `begin`, `fetch`, and `expect_rows` change nothing.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == COMMIT {
+            StepChanges::Can
+        } else if *kind == EXECUTE {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

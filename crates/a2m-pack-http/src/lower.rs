@@ -16,7 +16,7 @@ use a2m_core::{
 };
 use a2m_files::{
     BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
-    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepCommits,
+    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes;
@@ -650,6 +650,18 @@ impl Lowering for HttpLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `request` changes the system exactly when its endpoint is marked
+    /// `write`, and the driver refuses such an endpoint from a `request` not
+    /// marked as a save. `validate` and `extract` read an answer already
+    /// held.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == REQUEST {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 

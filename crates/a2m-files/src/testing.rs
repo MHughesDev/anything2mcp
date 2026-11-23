@@ -51,7 +51,7 @@ use crate::load::TargetRoot;
 use crate::register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
     DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering, Possible,
-    ProgramField, StepCommits, SurfaceKindSpec,
+    ProgramField, StepChanges, StepCommits, SurfaceKindSpec,
 };
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
@@ -394,6 +394,15 @@ impl Lowering for StandLowering {
             StepCommits::Always
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `fetch` reads; a `send` saves, and can change the system.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if kind.as_str() == "send" {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 

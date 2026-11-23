@@ -13,7 +13,7 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
     LintRule, Located, LowerContext, Lowered, Lowering, OperationView, Possible, ResolvedBinding,
-    ResolvedView, Sends, Stage, Statement, StepCommits, SurfaceView,
+    ResolvedView, Sends, Stage, Statement, StepChanges, StepCommits, SurfaceView,
 };
 
 use crate::codes;
@@ -307,6 +307,16 @@ impl Lowering for FileLowering {
             StepCommits::Always
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `save` replaces the file and can change it. `open`, `locate`,
+    /// `set`, which builds bytes in memory, and `read` change nothing.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SAVE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 

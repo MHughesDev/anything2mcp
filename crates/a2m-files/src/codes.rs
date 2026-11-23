@@ -69,6 +69,7 @@ kernel_codes! {
     ACKNOWLEDGED_WHERE_READ_BACK = "acknowledged_where_read_back": "A binding that reads its record back by its key is verified by that read, never ended on an acknowledgement.",
     COMMIT_POINTS_DIFFER = "commit_points_differ": "The steps that commit in each write binding number what the operation declares.",
     EFFECT_LOWER_THAN_DERIVED = "effect_lower_than_derived": "A declared effect is never lower than the derived one.",
+    READ_ACTS = "read_acts": "An operation whose effect is `read` holds no step of a kind its pack states can change the system.",
     STEP_CYCLE = "step_cycle": "A pipeline step uses only the results of steps before it.",
     SURFACE_NOT_DECLARED = "surface_not_declared": "Nothing names a surface the target does not declare.",
     SCOPE_INVALID = "scope_invalid": "A permission names one exact address or one name, once: no wildcard, no range of addresses, no path, and no user information.",

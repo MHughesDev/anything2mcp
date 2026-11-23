@@ -160,6 +160,29 @@ pub enum StepCommits {
     AsDeclared,
 }
 
+/// Whether a step of one kind can change the system, whatever it is marked.
+/// A pack states it once for each kind of step its lowering emits, and the
+/// compiler refuses an operation whose effect is `read` that holds a step of
+/// a kind that can (decision 0307, point 4). A kind the pack does not mark
+/// counts as one that can, so a kind forgotten fails closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepChanges {
+    /// A step of this kind cannot change the system: it reads, waits,
+    /// finds, or builds something in memory. A step of it marked `commits`
+    /// is refused.
+    Never,
+    /// A step of this kind changes the system only where the pack's own
+    /// files declare that what it refers to does, such as a request whose
+    /// endpoint is declared a write, and the pack's driver holds the step to
+    /// that declaration when it runs. A read may hold one; the compiler then
+    /// has the pack's word and the steps' `commits` marks.
+    AsDeclared,
+    /// A step of this kind can change the system whatever its files say,
+    /// such as one that types into a page or presses its buttons. A read
+    /// never holds one. It is what a kind the pack does not mark counts as.
+    Can,
+}
+
 /// Whether an identity strategy can be carried out by a binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Possible {
@@ -211,6 +234,15 @@ pub trait Lowering: Send + Sync {
     /// lowering's own mark on each step.
     fn commits(&self, _kind: &StepKind) -> StepCommits {
         StepCommits::AsDeclared
+    }
+    /// Whether a step of `kind` can change the system, stated once for the
+    /// kind. The compiler refuses an operation whose effect is `read` that
+    /// holds a step of a kind that [`StepChanges::Can`], whichever pack
+    /// lowered it. A lowering that does not say leaves every kind `Can`, so
+    /// that a kind it forgot fails closed: every pack's lowering is owed
+    /// this statement for each of its kinds.
+    fn changes(&self, _kind: &StepKind) -> StepChanges {
+        StepChanges::Can
     }
     /// The least effect class an operation with this binding can have, by
     /// what the binding does: `write` for a verb that changes a record,

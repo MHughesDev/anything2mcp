@@ -19,7 +19,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, Statement, StepCommits,
+    ResolvedBinding, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes::{self, shown};
@@ -437,6 +437,17 @@ impl Lowering for UiLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `goto`, `wait`, or `read` only looks at a page. A `set` types into
+    /// one and an `invoke` presses one of its actions, and either can change
+    /// the system whatever the screen says, so a read holds neither.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SET || *kind == INVOKE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 

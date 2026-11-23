@@ -303,3 +303,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0309 | [Two disagreements between documents are settled: the two folders named `sources`, and what guard checks](0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md) | Accepted (design decision) |
 | 0310 | [The field harness runs in a closed network, and says in the ledger what it is](0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md) | Accepted (design decision) |
 | 0311 | [The review shows, from the ledger, what this engine proved](0311-the-review-shows-from-the-ledger-what-this-engine-proved.md) | Accepted (design decision) |
+| 0312 | [A kind of step is marked as never, as declared, or as able to change the system](0312-a-kind-of-step-is-marked-never-as-declared-or-can-change-the-system.md) | Accepted (design decision) |

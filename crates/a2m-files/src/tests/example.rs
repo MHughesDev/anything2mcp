@@ -11,8 +11,8 @@ use crate::testing::{example_root, stand_set, surface_kind};
 use crate::{
     CompileMode, Compiled, CompilerSet, DRAFT_VERSION, Diagnostic, Diagnostics, JsonSchema, Level,
     LintRule, LowerContext, Lowered, Lowering, Possible, ProgramField, RelPath, ResolvedBinding,
-    ResolvedView, SourceFile, Stage, StepCommits, SurfaceKindSpec, TargetRoot, compile, lint_one,
-    load, load_files,
+    ResolvedView, SourceFile, Stage, StepChanges, StepCommits, SurfaceKindSpec, TargetRoot,
+    compile, lint_one, load, load_files,
 };
 use a2m_core::{
     ApproveWrites, CaptureLevel, DecimalMark, DeclaredProgram, Digest, DriftRisk, EffectClass,
@@ -321,6 +321,10 @@ fn cases() -> Vec<(&'static str, Case)> {
         (
             "kernel.effect_lower_than_derived",
             Case::Edit(SHEET, "effect: write", "effect: read"),
+        ),
+        (
+            "kernel.read_acts",
+            Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
         ),
         (
             "kernel.step_cycle",
@@ -1087,6 +1091,17 @@ impl Lowering for Faulty {
             _ => StepCommits::AsDeclared,
         }
     }
+    /// `fetch` cannot change the system, `ask` changes it as the files
+    /// declare, and `save` and `press` can; `poke` is left unmarked, and
+    /// has what a lowering that states nothing gives.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        match kind.as_str() {
+            "fetch" => StepChanges::Never,
+            "ask" => StepChanges::AsDeclared,
+            "save" | "press" => StepChanges::Can,
+            _ => Unmarked.changes(kind),
+        }
+    }
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
         match binding.field("fault").and_then(|fault| fault.as_text()) {
             Some("sends") => EffectClass::Irreversible,
@@ -1155,6 +1170,12 @@ impl Lowering for Faulty {
                 "unmarked" => step("save", false),
                 // A kind that never saves, marked as one.
                 "marked" => step("fetch", true),
+                // Under `read`: a kind the pack states can change the
+                // system, a kind it left unmarked, and one that changes the
+                // system only as the files declare.
+                "presses" => step("press", false),
+                "pokes" => step("poke", false),
+                "asks" => step("ask", false),
                 _ => step("fetch", false),
             }],
             confirm: vec![],
@@ -1184,6 +1205,9 @@ fn faulty_set(reads_a_kind_nobody_owns: bool) -> CompilerSet {
         step_kinds: vec![
             StepKind::new("fetch").unwrap(),
             StepKind::new("save").unwrap(),
+            StepKind::new("press").unwrap(),
+            StepKind::new("poke").unwrap(),
+            StepKind::new("ask").unwrap(),
         ],
     };
     builder.lowering("faulty", Arc::new(lowering)).unwrap();
@@ -1237,6 +1261,10 @@ fn what_a_faulty_lowering_returns_is_refused() {
         // A binding that writes or sends by what it does, under `read`.
         ("changes", "kernel.effect_lower_than_derived"),
         ("sends", "kernel.effect_lower_than_derived"),
+        // A read that acts, by a kind its pack states can change the
+        // system, or by one it never marked (decision 0307, point 4).
+        ("presses", "kernel.read_acts"),
+        ("pokes", "kernel.read_acts"),
     ] {
         let problems = draft(fault);
         let problem = problems
@@ -1251,6 +1279,14 @@ fn what_a_faulty_lowering_returns_is_refused() {
             .find("kernel.effect_lower_than_derived")
             .is_some()
     );
+    // A kind that changes the system only as the files declare may be
+    // read with, and the plain read holds no kind that acts.
+    assert!(!draft("asks").has_errors(), "{}", draft("asks"));
+    assert!(draft("none").find("kernel.read_acts").is_none());
+    let presses = draft("presses");
+    let problem = presses.find("kernel.read_acts").unwrap();
+    assert_eq!(problem.at.file.as_str(), "operations/order_probe.yaml");
+    assert!(problem.message.contains("`press`"), "{}", problem.message);
     // A mode that reads a kind no enabled pack owns compiles nothing.
     let problems = problems_with(
         &faulty_operation("none"),
@@ -2600,4 +2636,32 @@ fn a_declared_absent_output_admits_null_in_the_output_schema_and_no_other_does()
         schema["required"],
         serde_json::json!(["status", "total", "note"])
     );
+}
+
+/// A lowering that states nothing but what it must: what it says of a kind
+/// of step is the trait's default.
+struct Unmarked;
+
+impl Lowering for Unmarked {
+    fn mode(&self) -> Mode {
+        Mode::new("unmarked").unwrap()
+    }
+    fn verbs(&self) -> &[Verb] {
+        &[]
+    }
+    fn reads(&self) -> &[(FileKindName, SurfaceKind)] {
+        &[]
+    }
+    fn step_kinds(&self) -> &[StepKind] {
+        &[]
+    }
+    fn binding_schema(&self) -> &JsonSchema {
+        unreachable!("the tests never register it")
+    }
+    fn identity(&self, _: &ResolvedBinding<'_>, _: IdentityStrategy) -> Possible {
+        Possible::Yes
+    }
+    fn lower(&self, _: &ResolvedBinding<'_>, _: &LowerContext<'_>) -> Result<Lowered, Diagnostics> {
+        unreachable!("the tests never register it")
+    }
 }
