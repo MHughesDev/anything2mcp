@@ -136,6 +136,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- The lint that suspects a credential no longer warns about a path into an answer, such as `*.pin_order`, under a key that holds a secret's name as a word; it now also sees that word in a key written in camel case.
 - `anything2mcp lint` (`draft.lint`) now fails with `lint_failed` when it lists a problem at the level of an error, as `try` already did; the problems are still in the result. A lint with warnings only still answers ok.
 - The scout's text summary gives, for a discoverer that failed, the failure's code and its fix.
 - A page the engine only observes can no longer open a peer connection under the browser's older prefixed name; both names are refused.

@@ -38,7 +38,7 @@ and `note`:
                                       system's data folder, opened read-only
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
-command), `status` (of a request), `contains` (text in the output), and
+command), `status` (of a request), `contains` and `lacks` (text in the output), and
 `rows` (of a query). A step with `gap` expects what the product does today
 where that is not what it should do; the report lists these apart, and such a
 step failing means the gap has closed and the recipe is to be updated.
@@ -180,6 +180,8 @@ def met(expect, shown):
             return f"`{key}` was {shown.get(key)!r}, expected {expect[key]!r}"
     if "contains" in expect and expect["contains"] not in shown.get("output", ""):
         return f"the output does not contain {expect['contains']!r}"
+    if "lacks" in expect and expect["lacks"] in shown.get("output", ""):
+        return f"the output contains {expect['lacks']!r}"
     return None
 
 
