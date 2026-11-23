@@ -333,7 +333,17 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
         .draft(&findings)
         .unwrap();
-    assert_eq!(drafted.written.len(), 9, "{drafted:?}");
+    // Every command is its own finding and each file holds an open
+    // question, so all nine wait in the holding folder (decision 0298).
+    assert!(drafted.written.is_empty(), "{drafted:?}");
+    assert_eq!(drafted.held.len(), 9, "{drafted:?}");
+    assert!(
+        drafted
+            .held
+            .iter()
+            .all(|path| path.as_str().starts_with("held/commands/")),
+        "{drafted:?}"
+    );
     assert_eq!(
         drafted.not_covered,
         files.iter().map(|file| file.id()).collect::<Vec<_>>()
@@ -355,8 +365,21 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert!(asked("item list", "--limit").contains("does not show it"));
     assert!(asked("catalog push", "--dry-run").contains("does not show it"));
     assert!(asked("item show", "How to print the item").contains("what a file handed"));
-    let draft =
-        std::fs::read_to_string(target.path().join("commands").join("item_list.yaml")).unwrap();
+    assert!(
+        !target
+            .path()
+            .join("commands")
+            .join("item_list.yaml")
+            .exists()
+    );
+    let draft = std::fs::read_to_string(
+        target
+            .path()
+            .join("held")
+            .join("commands")
+            .join("item_list.yaml"),
+    )
+    .unwrap();
     assert!(!draft.contains("limit:"), "{draft}");
     // Each draft compiles but for the questions it leaves: every problem
     // the compiler and the lints find is an open question, a value that
@@ -587,9 +610,25 @@ async fn a_powershell_help_file_and_a_manifest_are_read_as_data_and_draft_fixed_
     let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
         .draft(&ours)
         .unwrap();
-    assert_eq!(drafted.written.len(), 2, "{drafted:?}");
-    let draft =
-        |name: &str| std::fs::read_to_string(target.path().join("commands").join(name)).unwrap();
+    // Each command holds an open question (the program's digest, the
+    // effect), so both wait in the holding folder (decision 0298).
+    assert!(drafted.written.is_empty(), "{drafted:?}");
+    assert_eq!(
+        drafted
+            .held
+            .iter()
+            .map(|path| path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "held/commands/get_exampleitem.yaml",
+            "held/commands/set_exampleitem.yaml"
+        ],
+        "{drafted:?}"
+    );
+    assert!(!target.path().join("commands").exists());
+    let draft = |name: &str| {
+        std::fs::read_to_string(target.path().join("held").join("commands").join(name)).unwrap()
+    };
     let get = draft("get_exampleitem.yaml");
     for expected in [
         "-NoProfile",
