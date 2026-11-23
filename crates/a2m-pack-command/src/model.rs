@@ -341,6 +341,27 @@ pub enum Output {
 }
 
 impl Output {
+    /// The fields that may come back as `null` because the output form does
+    /// not make them certain: a JSON field that is not required, and a named
+    /// group of a pattern that is not certain to take part in a match. A
+    /// pattern with no alternation, no optional or repeated part, and no
+    /// counted repeat has every group certain; of any other, every group is
+    /// counted possibly absent, which can only say more than is so.
+    #[must_use]
+    pub fn may_be_absent(&self) -> Vec<String> {
+        match self {
+            Self::Json { fields, .. } => fields
+                .iter()
+                .filter(|(_, field)| !field.required)
+                .map(|(name, _)| name.clone())
+                .collect(),
+            Self::Pattern { pattern, .. } if pattern.contains(['|', '?', '*', '{']) => {
+                self.fields()
+            }
+            Self::Ignored | Self::Table { .. } | Self::Pattern { .. } => Vec::new(),
+        }
+    }
+
     /// The names of the fields a record or a row holds.
     #[must_use]
     pub fn fields(&self) -> Vec<String> {
@@ -387,6 +408,12 @@ pub enum StepPayload {
         /// Whether the rows of the output must be exactly one record: none
         /// is `absent`, more is ambiguous.
         one: bool,
+        /// The outputs of the command that its output form leaves possibly
+        /// absent (decision 0305): the plan states them, and the driver
+        /// returns a `null` for each when the program printed no value.
+        /// Left out of the text when empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        absent: Vec<String>,
     },
     /// A declared help or version form, which discovery may run.
     Probe {

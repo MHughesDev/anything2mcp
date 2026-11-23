@@ -4,6 +4,8 @@
 //! The channel is named in the binding and resolved here, at compile time.
 //! A step refers to it by `refers_to`; no step argument can name one.
 
+use std::collections::BTreeMap;
+
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload,
     PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
@@ -14,12 +16,14 @@ use a2m_files::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::channel::{ChannelEntry, Ownership, Role, Shape, duration_ms, problem, read_channel};
+use crate::channel::{
+    ChannelEntry, MessageSchema, Ownership, Role, Shape, duration_ms, problem, read_channel,
+};
 use crate::codes;
 use crate::names::{
-    BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_POSITION,
-    STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE, STEP_TAKEN, VERB_AWAIT, VERB_LIST, VERB_PUBLISH,
-    VERB_READ, VERB_TAKE,
+    BROKER, CHANNEL, MESSAGE_SCHEMA, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST,
+    STEP_POSITION, STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE, STEP_TAKEN, VERB_AWAIT, VERB_LIST,
+    VERB_PUBLISH, VERB_READ, VERB_TAKE,
 };
 
 /// The time a step that does not wait for a message may take, when the
@@ -59,6 +63,13 @@ pub(crate) struct StepDetail {
     pub address: Option<String>,
     /// `browse` sent by the discoverer: how many messages to look at.
     pub sample: u32,
+    /// The first step of a binding: the outputs every result of the
+    /// binding holds: a message body's fields the channel's schema
+    /// requires, where the verb returns a message, and a list's count,
+    /// `more`, and coverage. Every other output may be
+    /// absent (decision 0315). Left out of the payload when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub certain: Vec<String>,
 }
 
 impl StepDetail {
@@ -711,6 +722,26 @@ impl Lowering for StreamLowering {
         }
     }
 
+    /// Every output but the body fields the channel's schema requires, on
+    /// a binding that returns a message: a message may lack any other
+    /// field, a message has no key or place where the broker gives none,
+    /// and a wait may end with nothing (decision 0315).
+    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let certain: Vec<String> = lowered
+            .act
+            .iter()
+            .filter_map(|step| step.payload.decode::<StepDetail>().ok())
+            .flat_map(|detail| detail.certain)
+            .collect();
+        binding
+            .operation
+            .outputs()
+            .iter()
+            .map(|output| output.name.clone())
+            .filter(|name| !certain.contains(name))
+            .collect()
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -796,7 +827,7 @@ impl Lowering for StreamLowering {
                 .unwrap_or(STEP_TIMEOUT_MS),
             problems: Diagnostics::new(),
         };
-        let (act, read_back, lookup) = if *binding.verb == VERB_READ {
+        let (mut act, read_back, lookup) = if *binding.verb == VERB_READ {
             (work.read(), Vec::new(), Vec::new())
         } else if *binding.verb == VERB_LIST {
             (work.list(), Vec::new(), Vec::new())
@@ -808,6 +839,40 @@ impl Lowering for StreamLowering {
         } else {
             work.publish()
         };
+        // A read, a list, or a take returns the message, whose fields the
+        // channel's schema requires are always there; nothing else the
+        // pack returns is certain (decision 0315).
+        let returns_message =
+            *binding.verb == VERB_READ || *binding.verb == VERB_LIST || *binding.verb == VERB_TAKE;
+        let mut certain: Vec<String> = entry
+            .schema
+            .as_deref()
+            .filter(|_| returns_message)
+            .and_then(|schema| {
+                let (_, section) = cx.section(&MESSAGE_SCHEMA, &BROKER)?;
+                let all: BTreeMap<String, MessageSchema> = section.payload.decode().ok()?;
+                all.get(schema).map(|found| {
+                    found
+                        .fields
+                        .iter()
+                        .filter(|(_, rule)| rule.required)
+                        .map(|(name, _)| name.clone())
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        // A list always says how many it read, whether more are left, and
+        // whether it covered the channel.
+        if *binding.verb == VERB_LIST {
+            certain.extend(["count", "more", "coverage"].map(str::to_owned));
+        }
+        if let Some(first) = act.first_mut()
+            && !certain.is_empty()
+        {
+            let mut detail: StepDetail = first.payload.decode().unwrap_or_default();
+            detail.certain = certain;
+            first.payload = detail.encode();
+        }
         if work.problems.is_empty() {
             Ok(Lowered {
                 surface: surface.name.clone(),

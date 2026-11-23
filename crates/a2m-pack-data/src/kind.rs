@@ -41,7 +41,8 @@ impl StatementKind {
     pub(crate) fn new(max_rows: u32) -> Self {
         let field = JsonSchema::object()
             .required("column", JsonSchema::text())
-            .required("type", JsonSchema::field_type());
+            .required("type", JsonSchema::field_type())
+            .optional("nullable", JsonSchema::bool());
         let record = JsonSchema::object()
             .required("table", JsonSchema::text())
             .required("key", JsonSchema::list(JsonSchema::name()))
@@ -106,6 +107,8 @@ struct Field {
     field_type: String,
     stored: Stored,
     key_position: u32,
+    /// Whether the column may hold no value (decision 0305).
+    nullable: bool,
 }
 
 /// One record kind of a document, resolved.
@@ -132,6 +135,7 @@ impl Record {
                 field: field.name.clone(),
                 stored: field.stored,
                 key_position: field.key_position,
+                nullable: field.nullable,
             })
             .collect();
         if let Some(version) = &self.version
@@ -142,6 +146,7 @@ impl Record {
                 field: version.clone(),
                 stored: Stored::Either,
                 key_position: 0,
+                nullable: false,
             });
         }
         columns
@@ -170,6 +175,11 @@ fn records(
                 field_type: type_name.to_owned(),
                 stored: Stored::of(&field_type.plan.ty),
                 key_position: 0,
+                nullable: field
+                    .value
+                    .get("nullable")
+                    .and_then(Located::as_bool)
+                    .unwrap_or(false),
             });
         }
         let mut key = Vec::new();
@@ -491,6 +501,7 @@ impl TableForm<'_> {
                         field: field.name.clone(),
                         stored: field.stored,
                         key_position: field.key_position,
+                        nullable: field.nullable,
                     });
                 }
                 text.push_str(" RETURNING ");

@@ -26,6 +26,7 @@ mod control;
 mod def;
 mod dispatch;
 mod events;
+mod evidence;
 mod faces;
 mod fixture;
 mod handlers;
@@ -94,6 +95,7 @@ extern crate self as a2m_actions;
 mod tests {
     mod audit;
     mod authoring;
+    mod guard;
     mod kernel;
     mod keys;
     mod net;

@@ -43,7 +43,7 @@ Of three drafted reads tried against existing software, one returned its value a
 
 ## Next
 
-The order of everything left is now [the build plan](../plan/build-plan.md) ([decision 0296](../decisions/0296-the-build-is-ordered-by-what-the-next-field-test-needs.md)); work from it. Its first packages are:
+The order of everything left is now [the build plan](../plan/build-order.md) ([decision 0296](../decisions/0296-the-build-is-ordered-by-what-the-next-field-test-needs.md)); work from it. Its first packages are:
 
 1. **FT3:** decide what a read does when a described object is absent, with a record, then build it, first as a case in the test application.
 2. **FT2:** close findings 1, 2, 4, 5, and 6, each first as a case in the test application. The recipe's `gap` steps show when each is closed.

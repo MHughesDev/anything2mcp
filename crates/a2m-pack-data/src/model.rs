@@ -100,6 +100,17 @@ pub(crate) struct Column {
     pub stored: Stored,
     /// Whether it is part of the record's key, and its place in it from 1.
     pub key_position: u32,
+    /// Whether the column may hold no value, as the statements file
+    /// declares with `nullable: true` (decision 0305). An output read from
+    /// it may be absent. Left out of the encoded section when false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub nullable: bool,
+}
+
+// `skip_serializing_if` takes a reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// What a statement does, as the target declared it.
@@ -210,4 +221,8 @@ pub(crate) struct StepDetail {
     /// `expect_rows`: the count the write must have changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows: Option<u64>,
+    /// `fetch`: the fields whose column may hold no value, which the
+    /// lowering reports as outputs that may be absent (decision 0305).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nullable: Vec<String>,
 }

@@ -1,0 +1,167 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 6014, port 5880, both 5879, only engine 135, only port 1
+decompiled by port: 61; by engine: 61; compared (both): 61; port only: 0; engine only: 0
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | 0 | 61 |
+line similarity of the different ones after spelling: min 0.13 median 0.69 max 0.89
+
+--- 0x90080 _RNCNCNvCs8w4vE4l0ZCf_11example_mcp4mains_00B5_
+--- engine
++++ port
+@@ -1,4 +1 @@
+-/* example_mcp::main::{closure#1}::{closure#0} */
+-byte __rustcall
+-example_mcp::main::{closure#1}::_closure_0_
+-(undefined8 *param_1,undefined8 param_2)
++uchar _RNCNCNvCs8w4vE4l0ZCf_11example_mcp4mains_00B5_(undefined8 *param_1,undefined8 param_2)
+@@ -6 +3 @@
+-byte Var1;
++uchar Var1;
+@@ -9 +6 @@
+-Var1 = (*(code *)PTR_eq_001fdb90)(&stk_8,*param_1);
++Var1 = (*pcRam00000000001fdb90)(&stk_8,*param_1);
+
+--- 0x900a0 _RNCNvCs8w4vE4l0ZCf_11example_mcp4main0B3_
+--- engine
++++ port
+@@ -1,3 +1 @@
+-/* example_mcp::main::{closure#0} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_0_
++undefined8 _RNCNvCs8w4vE4l0ZCf_11example_mcp4main0B3_
+@@ -8,5 +6,6 @@
+-Var1 = <std::ffi::os_str::OsString_as_core::ops::deref::Deref>
+-::deref(param_3);
+-<std::ffi::os_str::OsStr>::to_string_lossy(stk_28,Var1._0_8_,Var1._8_8_);
+-(*(code *)PTR_into_owned_001fdb98)(param_1,stk_28);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(param_3);
++Var1 = _RNvXs3_NtNtCsh0g7Hz38UNf_3std3ffi6os_strNtB5_8OsStringNtNtNtCs8uuN1nrGffB_4core3ops5deref5Deref5derefCs8w4vE4l0ZCf_11example_mcp
++(param_3);
++_RNvMsj_NtNtCsh0g7Hz38UNf_3std3ffi6os_strNtB5_5OsStr15to_string_lossyCs8w4vE4l0ZCf_11example_mcp
+
+--- 0x90140 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains0_0B3_
+--- engine
++++ port
+@@ -1,3 +1 @@
+-/* example_mcp::main::{closure#2} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_2_(undefined8 param_1,undefined4 *param_2)
++undefined8 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains0_0B3_(undefined8 param_1,undefined4 *param_2)
+@@ -21,4 +19,4 @@
+-(*(code *)PTR_<std::path::PathBuf>_001fdba0)(stk_f0,&stk_28);
+-Var2 = (*(code *)PTR_<&str>_001fdba8)(stk_f0,&DAT_00047a18,8);
+-Var1 = <std::process::Stdio>::null();
+-Var2 = <std::process::Command>::stdin::<std::process::Stdio>
++(*pcRam00000000001fdba0)(stk_f0,&stk_28);
++Var2 = (*pcRam00000000001fdba8)(stk_f0,0x47a18,8);
++Var1 = _RNvMst_NtCsh0g7Hz38UNf_3std7processNtB5_5Stdio4nullCs8w4vE4l0ZCf_11example_mcp();
++Var2 = _RINvMsi_NtCsh0g7Hz38UNf_3std7processNtB6_7Command5stdinNtB6_5StdioECs8w4vE4l0ZCf_11example_mcp
+
+--- 0x90290 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains1_0B3_
+--- engine
++++ port
+@@ -1,3 +1 @@
+-/* example_mcp::main::{closure#3} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_3_
++undefined8 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains1_0B3_
+@@ -18,6 +16,7 @@
+-Var1 = <std::ffi::os_str::OsString_as_core::ops::deref::Deref>
+-::deref(&stk_48);
+-<std::ffi::os_str::OsStr>::to_string_lossy(stk_28,Var1._0_8_,Var1._8_8_);
+-(*(code *)PTR_into_owned_001fdb98)(param_1,stk_28);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(&stk_48);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(param_3 + 6);
++Var1 = _RNvXs3_NtNtCsh0g7Hz38UNf_3std3ffi6os_strNtB5_8OsStringNtNtNtCs8uuN1nrGffB_4core3ops5deref5Deref5derefCs8w4vE4l0ZCf_11example_mcp
++(&stk_48);
+
+--- 0x90380 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains2_0B3_
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_mcp::main::{closure#4} */
+-void __rustcall example_mcp::main::_closure_4_(undefined8 param_1)
++void _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains2_0B3_(undefined8 param_1)
+@@ -4 +3 @@
+-(*(code *)PTR_write_all_001fdbc0)(param_1,"\n",1);
++(*pcRam00000000001fdbc0)(param_1,0x47a90,1);
+
+--- 0x903a0 _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains_0B3_
+--- engine
++++ port
+@@ -1,3 +1 @@
+-/* example_mcp::main::{closure#1} */
+-byte __rustcall
+-example_mcp::main::_closure_1_
++uchar _RNCNvCs8w4vE4l0ZCf_11example_mcp4mains_0B3_
+@@ -6,5 +4,2 @@
+-undefined1 extraout_AL;
+-undefined1 extraout_AL_00;
+-byte Var1;
+-undefined7 extraout_var;
+-undefined7 extraout_var_00;
++undefined8 Var1;
++uchar Var2;
+@@ -19,5 +14,4 @@
+ROW	0x90080	_RNCNCNvCs8w4vE4l0ZCf_11example_mcp4mains_00B5_	different	11	0.53
+ROW	0x900a0	_RNCNvCs8w4vE4l0ZCf_11example_mcp4main0B3_	different	16	0.44
+ROW	0x90140	_RNCNvCs8w4vE4l0ZCf_11example_mcp4mains0_0B3_	different	36	0.65
+ROW	0x90290	_RNCNvCs8w4vE4l0ZCf_11example_mcp4mains1_0B3_	different	27	0.65
+ROW	0x90380	_RNCNvCs8w4vE4l0ZCf_11example_mcp4mains2_0B3_	different	7	0.55
+ROW	0x903a0	_RNCNvCs8w4vE4l0ZCf_11example_mcp4mains_0B3_	different	25	0.51
+ROW	0x90400	_RNvCs8w4vE4l0ZCf_11example_mcp4main	different	279	0.71
+ROW	0x1052a0	_RNCNCNvNtCsizHYDDAR21B_11example_mcp5tools11definitions00B7_	different	17	0.80
+ROW	0x1052f0	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools10run_listed0B5_	different	17	0.76
+ROW	0x105340	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools10run_listeds0_0B5_	different	23	0.76
+ROW	0x1053c0	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools10run_listeds1_0B5_	different	13	0.50
+ROW	0x105440	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools10run_listeds_0B5_	different	23	0.76
+ROW	0x1054c0	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools11definitions0B5_	different	22	0.67
+ROW	0x105510	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools11definitionss0_0B5_	different	19	0.67
+ROW	0x105610	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools11definitionss_0B5_	different	10	0.62
+ROW	0x105630	_RNCNvNtCsizHYDDAR21B_11example_mcp5tools8required0B5_	different	23	0.76
+ROW	0x1056f0	_RNvNtCsizHYDDAR21B_11example_mcp5tools10definition	different	4156	0.76
+ROW	0x111770	_RNvNtCsizHYDDAR21B_11example_mcp5tools10order_json	different	205	0.69
+ROW	0x112380	_RNvNtCsizHYDDAR21B_11example_mcp5tools10run_listed	different	1371	0.84
+ROW	0x115180	_RNvNtCsizHYDDAR21B_11example_mcp5tools11definitions	different	26	0.39
+ROW	0x115290	_RNvNtCsizHYDDAR21B_11example_mcp5tools11text_result	different	167	0.72
+ROW	0x115a50	_RNvNtCsizHYDDAR21B_11example_mcp5tools12add_required	different	347	0.78
+ROW	0x1167f0	_RNvNtCsizHYDDAR21B_11example_mcp5tools12order_schema	different	943	0.78
+ROW	0x119330	_RNvNtCsizHYDDAR21B_11example_mcp5tools17structured_result	different	201	0.69
+ROW	0x119d40	_RNvNtCsizHYDDAR21B_11example_mcp5tools3run	different	211	0.77
+ROW	0x11a640	_RNvNtCsizHYDDAR21B_11example_mcp5tools5apply	different	170	0.73
+ROW	0x11afa0	_RNvNtCsizHYDDAR21B_11example_mcp5tools5input	different	133	0.66
+ROW	0x11b670	_RNvNtCsizHYDDAR21B_11example_mcp5tools7written	different	35	0.75
+ROW	0x11b7a0	_RNvNtCsizHYDDAR21B_11example_mcp5tools8optional	different	45	0.80
+ROW	0x11b8f0	_RNvNtCsizHYDDAR21B_11example_mcp5tools8required	different	36	0.80
+ROW	0x14f190	_RNCNCNvNtCsizHYDDAR21B_11example_mcp5stdio3run00B7_	different	11	0.56
+ROW	0x14f3e0	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio10write_line0B5_	different	10	0.53
+ROW	0x14f400	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio12record_start0B5_	different	10	0.50
+ROW	0x14f440	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio3run0B5_	different	50	0.60
+ROW	0x14f6c0	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio3runs0_0B5_	different	32	0.77
+ROW	0x14f790	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio3runs1_0B5_	different	14	0.50
+ROW	0x14f7b0	_RNCNvNtCsizHYDDAR21B_11example_mcp5stdio3runs_0B5_	different	38	0.83
+ROW	0x150c50	_RNvNtCsizHYDDAR21B_11example_mcp5stdio10run_silent	different	86	0.79
+ROW	0x150e10	_RNvNtCsizHYDDAR21B_11example_mcp5stdio10write_line	different	42	0.59
+ROW	0x150f60	_RNvNtCsizHYDDAR21B_11example_mcp5stdio12record_start	different	57	0.89
+ROW	0x151080	_RNvNtCsizHYDDAR21B_11example_mcp5stdio3run	different	381	0.76
+ROW	0x151e10	_RNvNtCsizHYDDAR21B_11example_mcp5stdio7deliver	different	66	0.13
+ROW	0x151fd0	_RNvNtCsizHYDDAR21B_11example_mcp5stdio8send_all	different	20	0.50
+ROW	0x1520c0	_RNvNtCsizHYDDAR21B_11example_mcp5store5order	different	44	0.73
+ROW	0x155990	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol10list_tools0B5_	different	8	0.57
+ROW	0x1559b0	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol10list_toolss0_0B5_	different	19	0.73
+ROW	0x155a10	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol10list_toolss1_0B5_	different	8	0.43
+ROW	0x155a40	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol10list_toolss_0B5_	different	11	0.56
+ROW	0x155a70	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol5admit0B5_	different	7	0.55
+ROW	0x155a90	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol7execute0B5_	different	18	0.62
+ROW	0x155b10	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol8dispatch0B5_	different	48	0.73
+ROW	0x155c60	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol8dispatchs_0B5_	different	9	0.46
+ROW	0x155c70	_RNCNvNtCsizHYDDAR21B_11example_mcp8protocol9call_tool0B5_	different	12	0.60
+ROW	0x1572f0	_RNvNtCsizHYDDAR21B_11example_mcp8protocol10initialize	different	434	0.77
+ROW	0x158680	_RNvNtCsizHYDDAR21B_11example_mcp8protocol10list_tools	different	303	0.82
+ROW	0x1590d0	_RNvNtCsizHYDDAR21B_11example_mcp8protocol13announcements	different	160	0.61
+ROW	0x159740	_RNvNtCsizHYDDAR21B_11example_mcp8protocol13broken_answer	different	128	0.80
+ROW	0x159c60	_RNvNtCsizHYDDAR21B_11example_mcp8protocol5admit	different	103	0.62
+ROW	0x15a0e0	_RNvNtCsizHYDDAR21B_11example_mcp8protocol7execute	different	158	0.69
+ROW	0x15a6f0	_RNvNtCsizHYDDAR21B_11example_mcp8protocol8dispatch	different	677	0.76
+ROW	0x15c200	_RNvNtCsizHYDDAR21B_11example_mcp8protocol9call_tool	different	414	0.78

@@ -140,6 +140,7 @@ A lower layer is compiled as a further restriction. A target file, toolset, or w
 | `kill_switch_on` | A kill switch covers the request |
 | `policy_evaluation_failed` | An error while deciding, or no valid set is loaded |
 | `presence_required` | A set that loosens a protected setting, or the release of a kill switch on one machine, with no user-presence check |
+| `second_admin_required` | A set that needs a second administrator to publish it was offered without one, or the second one may not review it ([decision 0328](../../decisions/0328-a-toolset-only-narrows-a-role-is-a-bundle-of-grants-and-a-second-administrator-is-a-named-check.md)) |
 
 A candidate set that fails validation, or a lower layer that widens a higher one, is refused with `input`, `schema_invalid`; one that fails its own test table, with `input`, `policy_tests_failed`.
 

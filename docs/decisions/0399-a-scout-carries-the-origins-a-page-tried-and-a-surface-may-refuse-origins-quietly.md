@@ -1,4 +1,4 @@
-# 0313. A scout carries the origins a page tried, a surface may refuse origins quietly, and the sign-in tab holds what a page loads
+# 0399. A scout carries the origins a page tried, a surface may refuse origins quietly, and the sign-in tab holds what a page loads
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
@@ -27,7 +27,7 @@ Decision 0292 made a tool's tab send only to its surface and the origins its ope
 ## Decision
 
 1. **The scout carries the origins.** `web_snapshot` takes what its observing tab refused after each page; each refusal reported as `OUTSIDE` becomes an origin (scheme, host, port; no path, no query, no user information) in the `screen` finding's `refused_origins`, once, in order, and in the limitations as a `not_exercised` sentence naming them. The field is there only when there are some. Pages matched into one screen give the union. Everything else the tab refused is counted by method as before.
-2. **The drafting rules propose them.** The rules that draft a read from a `screen` finding put `refused_origins` in the drafted operation's `permissions.destinations`, for a person to review, for both reads they draft from it. An entry that is not an origin written with its scheme and a host of plain characters (no path, no name or password, no wildcard), and the page's own origin, is left out. A screen carries none. An exchange finding does not carry origins yet.
+2. **The drafting rules propose them, and the draft waits.** The rules that draft a read from a `screen` finding put `refused_origins` in the drafted operation's `permissions.destinations`, for both reads they draft from it, each origin as an open question: the page put it there, not a person, and declaring it widens where the tool's browser may send. So by [decision 0298](0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md) the read is written in `held/`, never in place, and the question names the page and the origin and asks the person to keep it (write the origin in its place, then move the file out) or remove it. A page that tried no other origin drafts in place as before. An entry that is not an origin written with its scheme and a host of plain characters (no path, no name or password, no wildcard), and the page's own origin, is left out. A screen carries none. An exchange finding does not carry origins yet.
 3. **A surface may refuse origins quietly.** The web surface has an optional `refuse_quietly`, a list of origins with their scheme. The tab opens with them as a third set in `Origins` (`and_refused_quietly`); `reaches_reported` is false for them whatever else declares them, and a request to one is failed and not reported.
 4. **The sign-in tab holds what a page loads.** The tab a person signs in in holds, besides its documents, the requests of the kinds the browser's interception filter accepts that carry no body: a style, an image, a media file, a font, a script, and the rest filed as `Other`. Each is held to the application's origin and the identity providers the target declares; one outside is failed, reported as `OUTSIDE`, and ends the sign-in with `policy`, `origin_not_declared`, saying to declare the origin under `identity_providers`. This closes the gap decision 0292 named: the person at the window is shown a named stop.
 
@@ -37,7 +37,7 @@ Decision 0292 made a tool's tab send only to its surface and the origins its ope
 ## Proof
 
 - `a_page_that_loads_from_the_other_name_gives_a_screen_that_names_that_origin_and_nothing_arrives` (`a2m-pack-web-probe`): the finding of `/escapes/loads` names the application's other name once, and the stand's count shows none of the page's loads arrived.
-- `a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_origin_and_it_runs` (`a2m-pack-web-ui`): from such a finding the drafted reads declare the origin; compiled, the plan's operation has it as a destination; without it the read stops with `origin_not_declared` and nothing arrives; with it the read is made and the image reaches the other name.
+- `a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_origin_and_it_runs` (`a2m-pack-web-ui`): from such a finding both reads are held, each with a question naming the origin, and not in place; a person keeps the origin and moves the read out; compiled, the plan's operation has it as a destination; without it the read stops with `origin_not_declared` and nothing arrives; with it the read is made and the image reaches the other name.
 - `an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on` (`a2m-pack-web-ui`): refused quietly, with and without a declaration, the read is made and the stand counts nothing arriving; a refusal of another origin still stops; a value that is not an origin stops by name.
 - `an_origin_refused_quietly_is_failed_in_the_browser_in_both_postures_and_reports_nothing` and `a_sign_in_tab_loads_nothing_from_an_origin_it_was_not_given_and_what_it_was_given_arrives` (`a2m-pack-web-browser`).
 
@@ -45,7 +45,7 @@ The whole path from a scout through the product's registry to a read, as `web_dr
 
 ## Consequences
 
-- A person building a tool over a page that loads from other origins reviews a drafted list instead of writing one.
+- A person building a tool over a page that loads from other origins answers a question for each origin instead of finding and writing the list; nothing widens until they do.
 - A page's analytics or fonts can be refused for good by naming them once in the target, and the run goes on.
 - A sign-in page that loads from an origin nobody declared now ends the sign-in by name, where before it worked. The origin is declared under `identity_providers`.
 - Not done: the name looked up without a request; a refusal reported to the person while a quiet one is not (a count of quiet refusals is not kept); a lint at compile time for a `refuse_quietly` value, which is a stop at the run's start; the exchange findings carrying origins.

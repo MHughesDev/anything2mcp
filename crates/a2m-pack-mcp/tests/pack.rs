@@ -139,6 +139,65 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(plan.surfaces[1].programs.len(), 1);
 }
 
+/// Decision 0315: the target's files pin a tool's output schema only by its
+/// digest, so the pack knows of no member that is always there but the
+/// record's key, which it requires, and the text of a tool whose result is
+/// text. Every other output may be absent, so a `null` there does not stop a
+/// read, as it did not before.
+#[test]
+fn an_output_is_certain_only_where_the_mapping_makes_it_so() {
+    let folder = Folder::new("absent");
+    let registry = registry(&folder);
+    let plan = compiled_fixture(&registry);
+    let flags = |operation: &str| -> Vec<(String, bool)> {
+        plan.operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap()
+            .outputs
+            .iter()
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+    assert_eq!(
+        flags("example_order_get"),
+        [
+            ("status".to_owned(), true),
+            ("customer".to_owned(), true),
+            ("note".to_owned(), true)
+        ]
+    );
+    assert_eq!(flags("example_order_search"), [("text".to_owned(), false)]);
+    // The create's key is certain where an operation returns it.
+    let root = folder.path().join("target");
+    write_target(&root, &|path, text| {
+        if path == "operations/order_create.yaml" {
+            text.replace(
+                "outputs:\n  customer: {type: free_text}\n",
+                "outputs:\n  order_id: {type: free_text}\n  customer: {type: free_text}\n",
+            )
+        } else {
+            text
+        }
+    });
+    let keyed = compile(&registry, &root).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let create = keyed
+        .plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == "example_order_create")
+        .unwrap();
+    let flags: Vec<(&str, bool)> = create
+        .outputs
+        .iter()
+        .map(|output| (output.name.as_str(), output.may_be_absent))
+        .collect();
+    assert_eq!(
+        flags,
+        [("order_id", false), ("customer", true), ("note", true)]
+    );
+}
+
 #[tokio::test]
 async fn the_fixture_pins_are_the_stands_definitions() {
     let stand = HttpStand::start().await.unwrap();

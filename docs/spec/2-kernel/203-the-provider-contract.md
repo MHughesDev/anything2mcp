@@ -103,7 +103,7 @@ found -> checked -> enabled -> started -> healthy
 
 | Step | What happens | Fails as |
 | --- | --- | --- |
-| Found | The manifest is located: built in, from an entry point, or from a mapping file | Not listed |
+| Found | The manifest is located: built in, from an entry point (read as text, never loaded; [decision 0314](../../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md)), or from a mapping file | Not listed |
 | Checked | The manifest is validated against the contract version; a plug-in's signature is checked | A named problem in the listing |
 | Enabled | A person switched it on. On one machine this is a protected setting when the provider starts processes or reaches the network | Stays off |
 | Started | On first use, under the supervisor ([section 204](204-supervising-subsystems.md)), with a handshake | `transient`, or a stop with the availability state |

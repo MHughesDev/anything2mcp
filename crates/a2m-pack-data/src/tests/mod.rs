@@ -456,6 +456,17 @@ pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Val
             output.name,
             output.ty.name()
         );
+        // A `null`, whole or as an item, stops the engine in an output
+        // that may not be absent (decision 0305).
+        let holds_null = match &value {
+            Value::List(items) => items.iter().any(Value::is_null),
+            other => other.is_null(),
+        };
+        assert!(
+            output.may_be_absent || !holds_null,
+            "the output `{}` holds a null and may not be absent",
+            output.name
+        );
         out.insert(output.name.clone(), value);
     }
     out

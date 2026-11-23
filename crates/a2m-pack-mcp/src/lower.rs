@@ -209,9 +209,14 @@ struct Call<'a> {
 
 fn step(call: Call<'_>, cx: &LowerContext<'_>) -> Option<Step> {
     let section = cx.section_index(&names::MAPPING_KIND, &names::SURFACE_KIND)?;
+    let mut certain = call.entry.key.clone();
+    if call.entry.result == "text" {
+        certain.push("text".to_owned());
+    }
     let payload = PackPayload::encode(&CallPayload {
         surface: call.surface.to_owned(),
         tool: call.tool.to_owned(),
+        certain,
     })
     .ok()?;
     Some(Step {
@@ -354,6 +359,25 @@ impl Lowering for McpLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// Every output but those the calls of the act and the read-back are
+    /// certain to give, as their payloads carry them (decision 0315).
+    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let certain: Vec<String> = lowered
+            .act
+            .iter()
+            .chain(&lowered.read_back)
+            .filter_map(|step| step.payload.decode::<CallPayload>().ok())
+            .flat_map(|payload| payload.certain)
+            .collect();
+        binding
+            .operation
+            .outputs()
+            .iter()
+            .map(|output| output.name.clone())
+            .filter(|name| !certain.contains(name))
+            .collect()
     }
 
     fn binding_schema(&self) -> &JsonSchema {

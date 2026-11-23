@@ -371,6 +371,7 @@ async fn an_approval_is_only_for_the_change_the_page_showed() {
             tool: ITEM_UPSERT.to_owned(),
             diff_hash: other,
             summary: "Another change.".to_owned(),
+            effect: a2m_core::EffectClass::Write,
         })
         .await
         .unwrap();

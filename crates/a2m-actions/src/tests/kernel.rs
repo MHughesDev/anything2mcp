@@ -605,6 +605,44 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_with_no_environment_runs_in_the_targets_default_and_the_help_says_so() {
+    let world = World::ready().await;
+    let described = world
+        .ok("action.describe", json!({"action": "tool.call"}))
+        .await;
+    let help = described["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "environment")
+        .unwrap()["help"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        help.contains("no environment runs in the target's default environment"),
+        "{help}"
+    );
+    // The same key with the default named is the same call: a call with no
+    // environment ran in the example target's default, `test`.
+    let input = json!({"order_id": "A-100"});
+    let first = world
+        .ok(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": input, "idempotency_key": "default-env-1"}),
+        )
+        .await;
+    let again = world
+        .ok(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": input, "environment": "test", "idempotency_key": "default-env-1"}),
+        )
+        .await;
+    assert_eq!(first["run_id"], again["run_id"]);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_calls_at_once_are_two_runs_and_both_read() {
     let world = World::ready().await;
     let (first, second) = tokio::join!(

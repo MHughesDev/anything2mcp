@@ -3,7 +3,7 @@
 //! 0240).
 
 use a2m_core::{AddressScope, ScopedHost};
-use a2m_provider::Destinations;
+use a2m_provider::{Destinations, MachineState, NetworkPlace};
 
 /// The shared corpus of address spellings.
 const SPELLINGS: &str = include_str!("../../a2m-core/tests/address-spellings.txt");
@@ -64,4 +64,45 @@ fn the_allow_list_still_compares_addresses_as_written_whatever_their_scope() {
         Some(AddressScope::ThisMachine)
     );
     assert_eq!(Destinations::default().iter().count(), 0);
+}
+
+#[test]
+fn every_destination_of_the_corpus_has_a_place_derived_from_its_scope_and_the_machine() {
+    let mut addresses = spellings();
+    for spelling in spellings() {
+        addresses.push(format!("http://{spelling}/"));
+    }
+    let destinations = Destinations::new(addresses.clone());
+    let attached = MachineState::of_subnets([
+        ("192.168.1.20".parse().unwrap(), 24),
+        ("fe80::1".parse().unwrap(), 64),
+    ]);
+    let mut unknown = 0;
+    for state in [MachineState::unread(), attached] {
+        for address in &addresses {
+            let placed = destinations.place_of(address, &state).expect("declared");
+            let host = ScopedHost::of_destination(address);
+            // This machine is a loopback address written plainly, and
+            // nothing else: no name, no zone, no IPv4 inside IPv6.
+            assert_eq!(
+                placed.place == NetworkPlace::ThisMachine,
+                host.scope() == AddressScope::ThisMachine && !host.may_leave_this_machine(),
+                "{address}"
+            );
+            // A name is never resolved: it has no place but `unknown`.
+            if matches!(host.scope(), AddressScope::Name | AddressScope::Unreadable) {
+                assert_eq!(placed.place, NetworkPlace::Unknown, "{address}");
+            }
+            assert!(placed.place.is_direct(), "{address}");
+            assert!(!placed.because.is_empty(), "{address}");
+            unknown += usize::from(placed.place == NetworkPlace::Unknown);
+        }
+    }
+    // The count H-43 asks for: some spellings are `unknown`, and not all.
+    assert!(unknown > 0 && unknown < addresses.len() * 2);
+    // An address that is not a destination has no place.
+    assert_eq!(
+        destinations.place_of("http://not-declared.example.test/", &MachineState::unread()),
+        None
+    );
 }

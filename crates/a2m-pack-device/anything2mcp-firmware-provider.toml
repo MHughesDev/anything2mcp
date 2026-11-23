@@ -1,0 +1,40 @@
+# The optional provider that inspects a firmware image the person supplies as
+# a file. Off by default: the device pack does not register it. A person
+# reviews this file; the registry refuses anything the provider registers
+# that is not declared here.
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "device_firmware"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+[points]
+discoverer = ["firmware_image"]
+
+# Reads an image given as a file of the project's `sources` folder under the
+# name `firmware_image`. It sends no frame and writes nothing: what an image
+# says is a claim about a device, not an observation of one, so at most
+# `inferred`. It decrypts nothing and recovers no keys.
+[[discoverers]]
+name = "firmware_image"
+archetype = "device"
+surface_kinds = ["device_link"]
+kinds = ["firmware_image"]
+sources = ["artifact"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 1048576, depth = 1 }
+files = ["firmware_image"]
+
+[[finding_kinds]]
+name = "firmware_image"
+surface_kinds = ["device_link"]
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "image_protected"
+
+[effects]
+network = "none"

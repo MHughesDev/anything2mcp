@@ -101,6 +101,8 @@ struct Page {
     tool: String,
     diff_hash: Digest,
     summary: String,
+    /// The effect class of the operation the write carries out.
+    effect: a2m_core::EffectClass,
     started_by: PrincipalId,
     /// The one-time value of the page served last. A press takes it.
     once: Option<String>,
@@ -1203,6 +1205,7 @@ struct Pressed {
     run: RunId,
     tool: String,
     diff_hash: Digest,
+    effect: a2m_core::EffectClass,
     started_by: PrincipalId,
     whole: bool,
     deadline: Instant,
@@ -1240,6 +1243,7 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Respons
         run: found.run,
         tool: found.tool.clone(),
         diff_hash: found.diff_hash,
+        effect: found.effect,
         started_by: found.started_by,
         whole: found.whole,
         deadline: found.deadline,
@@ -1357,8 +1361,7 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             PromptText {
                 title: format!("Approve a write by `{}`", pressed.tool),
                 detail: format!("Change {}", short(pressed.diff_hash)),
-                // The effect class does not reach the surface yet.
-                purpose: PromptFor::Approval(None),
+                purpose: PromptFor::Approval(Some(pressed.effect)),
             },
             pressed.deadline,
         )
@@ -2226,6 +2229,7 @@ impl PersonSurface for LocalSurface {
                     tool: ask.tool,
                     diff_hash: ask.diff_hash,
                     summary: ask.summary,
+                    effect: ask.effect,
                     started_by: ask.started_by,
                     once: None,
                     pressed: false,

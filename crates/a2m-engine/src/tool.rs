@@ -372,28 +372,28 @@ fn parse_key(text: &str) -> Option<RecordKey> {
 }
 
 /// The outputs an operation declares, from what its steps observed, each
-/// normalized by its field type.
+/// normalized by its field type. Every declared output is in what this
+/// returns, on every path (decision 0315): one that was not observed and
+/// may be absent is `null`; one that was not observed and may not be
+/// absent stops the run, as a `null` in it does.
 fn outputs_of(
     loaded: &Loaded,
     operation: &OperationPlan,
     observed: &Values,
-    all_required: bool,
 ) -> Result<Values, Failure> {
     let mut out = Values::new();
     for output in &operation.outputs {
-        let Some(raw) = observed.get(&output.name) else {
-            if all_required {
+        let value = match observed.get(&output.name) {
+            Some(raw) => output_value(loaded, operation, output, raw)?,
+            None if output.may_be_absent => Value::Null,
+            None => {
                 return Err(output_unexpected(format!(
-                    "The operation `{}` returned no value for its output `{}`.",
+                    "The operation `{}` returned no value for its output `{}`, which is not declared `may_be_absent`.",
                     operation.name, output.name
                 )));
             }
-            continue;
         };
-        out.insert(
-            output.name.clone(),
-            output_value(loaded, operation, output, raw)?,
-        );
+        out.insert(output.name.clone(), value);
     }
     Ok(out)
 }
@@ -436,6 +436,18 @@ pub(crate) fn output_value(
             let mut normalized = Vec::with_capacity(items.len());
             for (at, item) in items.iter().enumerate() {
                 if item.is_null() {
+                    // A `null` item is the system's "no value here", and
+                    // only an output that may be absent is given one; in
+                    // any other, it is a value the schema does not admit
+                    // (decision 0305).
+                    if !output.may_be_absent {
+                        return Err(unexpected(format!(
+                            "The item {} of the output `{}` of `{}` has no value, and the output is not declared `may_be_absent`.",
+                            at + 1,
+                            output.name,
+                            operation.name
+                        )));
+                    }
                     normalized.push(Value::Null);
                     continue;
                 }
@@ -462,6 +474,15 @@ pub(crate) fn output_value(
                 ))
             })?,
     };
+    // A `null` stops the run unless the output may be absent: the output
+    // schema of one that may not does not admit `null`, whichever pack
+    // gave it (decision 0305).
+    if value.is_null() && !output.may_be_absent {
+        return Err(unexpected(format!(
+            "The output `{}` of `{}` has no value, and it is not declared `may_be_absent`.",
+            output.name, operation.name
+        )));
+    }
     if !value.is_null() && !value.has_type(&output.ty) {
         return Err(unexpected(format!(
             "The output `{}` of `{}` is not a {}.",
@@ -996,7 +1017,7 @@ async fn read_pass(
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
     match observe(run, held, binding, scope, fields).await {
-        Ok(Some(seen)) => outputs_of(loaded, found, &seen, true).map_err(failed),
+        Ok(Some(seen)) => outputs_of(loaded, found, &seen).map_err(failed),
         Ok(None) => Err(failed(codes::fail(
             &codes::row::OUTPUT_UNEXPECTED,
             format!("The operation `{}` found nothing to read.", found.name),
@@ -1178,7 +1199,7 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                         run.checkpoint(Duration::ZERO)?;
                         let held = hold_for(run, found, record, None, false).await?;
                         if let Some(raw) = read_record(run, found, record, held, false).await? {
-                            record.outputs = outputs_of(loaded, found, &raw, false)?;
+                            record.outputs = outputs_of(loaded, found, &raw)?;
                         }
                     }
                 }
@@ -1502,6 +1523,7 @@ fn adopt(
         // is never sent back to the system as an argument or a key, and the
         // record is marked.
         let mut known = Values::new();
+        let mut masked_names = Vec::new();
         let stored = held
             .before_commit
             .iter()
@@ -1510,6 +1532,7 @@ fn adopt(
         for (name, value) in stored {
             if masked(value) {
                 record.masked = true;
+                masked_names.push(name.to_owned());
             } else {
                 known.insert(name.to_owned(), value.clone());
             }
@@ -1535,7 +1558,24 @@ fn adopt(
         // outputs with its save, and they were stored with it: the steps
         // after it take them, as they take a verified record's.
         if held.state == RecordState::Verified || held.acknowledged {
-            record.outputs = outputs_of(loaded, found, &record.known, false)?;
+            // An output the ledger holds masked is not handed back: not as
+            // the mask, which is not the system's value, and not as `null`,
+            // which would say the system holds none (decision 0315).
+            if let Some(output) = found
+                .outputs
+                .iter()
+                .find(|output| masked_names.contains(&output.name))
+            {
+                return Err(Stop::Fail(codes::fail(
+                    &codes::row::OUTPUT_UNEXPECTED,
+                    format!(
+                        "The ledger holds the output `{}` of `{}` masked by the redactor, so the resumed run cannot hand it back.",
+                        output.name, found.name
+                    ),
+                    "The system showed a registered secret in an output; look at the record in the system, and change the operation so that it does not return that value.",
+                )));
+            }
+            record.outputs = outputs_of(loaded, found, &record.known)?;
         }
     }
     Ok(())
@@ -1896,7 +1936,7 @@ async fn preview_record(
     if action == DiffAction::Unchanged {
         record.state = RecordState::Unchanged;
         if let Some(raw) = &record.current {
-            record.outputs = outputs_of(loaded, found, raw, false)?;
+            record.outputs = outputs_of(loaded, found, raw)?;
         }
     }
     Ok((
@@ -2075,7 +2115,7 @@ async fn reconcile(
         match run.control.settle(record.record, reconciled).await? {
             Settled::Verified => {
                 record.state = RecordState::Verified;
-                record.outputs = outputs_of(loaded, found, &observed, false)?;
+                record.outputs = outputs_of(loaded, found, &observed)?;
             }
             Settled::Planned => {
                 // Nothing landed, so what was recorded for the lost write
@@ -2388,7 +2428,7 @@ async fn keyless_found(
     match run.control.settle(record.record, reconciled).await? {
         Settled::Verified => {
             record.state = RecordState::Verified;
-            record.outputs = outputs_of(loaded, found, &observed, false)?;
+            record.outputs = outputs_of(loaded, found, &observed)?;
             Ok(())
         }
         Settled::Planned | Settled::Stale => Err(keyless_in_doubt(
@@ -2986,7 +3026,7 @@ async fn commit_point(
             observed.insert(name, value);
         }
     }
-    record.outputs = outputs_of(loaded, found, &observed, false)?;
+    record.outputs = outputs_of(loaded, found, &observed)?;
     Ok(())
 }
 
@@ -3015,7 +3055,7 @@ async fn acknowledge(
     // Its outputs are what its steps gave up to and with the save, which
     // the ledger stored with its `acted` mark: the same a resume hands back.
     // A confirm step's values are evidence, not outputs.
-    record.outputs = outputs_of(loaded, found, &record.known, false)?;
+    record.outputs = outputs_of(loaded, found, &record.known)?;
     Ok(())
 }
 

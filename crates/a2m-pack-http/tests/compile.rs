@@ -591,3 +591,94 @@ fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     assert!(untrue.message.contains("`customer`"), "{untrue}");
     assert!(!untrue.fix.is_empty(), "{untrue}");
 }
+
+/// The output schema of one tool of a compiled plan.
+fn output_schema(plan: &a2m_core::Plan, tool: &str) -> serde_json::Value {
+    let tool = plan
+        .tools
+        .iter()
+        .find(|found| found.name.as_str() == tool)
+        .unwrap();
+    serde_json::from_slice(tool.output_schema.as_bytes()).unwrap()
+}
+
+/// Decision 0305: a required property of the type `any` admits `null`, so
+/// an output taken from it may be absent, and a person may say so.
+#[test]
+fn an_output_from_an_untyped_required_property_may_be_absent() {
+    let folder = Folder::new("absent-untyped");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let untyped = |text: &str| {
+        text.replacen(
+            "    customer: {type: string}\n    status: {type: string, enum: [draft, submitted]}\n    items:",
+            "    customer: {type: any}\n    status: {type: string, enum: [draft, submitted]}\n    items:",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", untyped)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let operation = compiled
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap();
+    let customer = operation
+        .outputs
+        .iter()
+        .find(|output| output.name == "customer")
+        .unwrap();
+    assert!(customer.may_be_absent);
+    let schema = output_schema(&compiled.plan, "example_order_get");
+    assert!(
+        common::schema_fits(&schema["properties"]["customer"], &serde_json::Value::Null).is_ok()
+    );
+
+    // Declared by hand, it is not refused as untrue.
+    let declared = |text: &str| {
+        text.replacen(
+            "customer: {type: text}",
+            "customer: {type: text, may_be_absent: true}",
+            1,
+        )
+    };
+    common::compile_changed_files(
+        &registry,
+        "example",
+        &[
+            ("endpoints/orders.yaml", &untyped),
+            ("operations/orders.yaml", &declared),
+        ],
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+/// Decision 0305: an output taken through `*` from a property that may be
+/// absent is a list whose items may each be `null`, and its schema says so.
+#[test]
+fn a_list_output_that_may_be_absent_admits_null_items_in_its_schema() {
+    let folder = Folder::new("absent-list");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let optional = |text: &str| {
+        text.replacen(
+            "    required: [order_id, status]",
+            "    required: [status]",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let schema = output_schema(&compiled.plan, "example_order_list");
+    let fits = |value: serde_json::Value| common::schema_fits(&schema, &value);
+    fits(serde_json::json!({"order_ids": ["A-100", null]})).unwrap();
+    fits(serde_json::json!({"order_ids": null})).unwrap();
+    assert!(fits(serde_json::json!({"order_ids": ["A-100", 7]})).is_err());
+
+    // Where every item is certain, a `null` item does not fit.
+    let plain = compile(&registry, "example");
+    let schema = output_schema(&plain.plan, "example_order_list");
+    assert!(
+        common::schema_fits(&schema, &serde_json::json!({"order_ids": ["A-100", null]})).is_err()
+    );
+    common::schema_fits(&schema, &serde_json::json!({"order_ids": ["A-100"]})).unwrap();
+}

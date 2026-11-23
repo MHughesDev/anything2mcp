@@ -252,7 +252,10 @@ async fn serve(
     let clock = Arc::new(SystemClock::new());
     // The person surface of the options is replaced by the local engine's
     // own; the terminal's stands here only because the options need one.
-    let prompt = a2m_local::system_prompt_for(&paths);
+    let prompt = host
+        .prompt
+        .clone()
+        .unwrap_or_else(|| a2m_local::system_prompt_for(&paths));
     let mut options = EngineOptions::of_machine(
         paths,
         environment,

@@ -165,6 +165,18 @@ fn compile_drafts(
         .map(|compiled| compiled.plan)
 }
 
+/// Compiles a target folder as it stands, leaving out the holding folder.
+fn compile_without_held(stand: &Stand, folder: &Folder) -> Result<Plan, Diagnostics> {
+    let files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
+        .into_iter()
+        .filter(|(file, _)| !file.as_str().starts_with("held/"))
+        .collect();
+    let set = stand.registry.compiler_set();
+    let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+        .map(|compiled| compiled.plan)
+}
+
 fn class_and_code(failure: &StepFailure) -> (FailureClass, &str) {
     (failure.failure.class(), failure.failure.code().as_str())
 }
@@ -1078,17 +1090,21 @@ async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_
         report.refused.is_empty() && report.kept_failing.is_empty(),
         "{report:?}"
     );
-    // Both reads the page's screens give declare the origin, as a person
-    // will review it; the screens do not.
-    for operation in [
-        "operations/leaving_loads_orders_a_100_line_items_list.yaml",
-        "operations/leaving_loads_orders_a_100_values_get.yaml",
-    ] {
-        let text = std::fs::read_to_string(folder.path().join(operation)).unwrap();
-        assert!(
-            text.contains("permissions:") && text.contains(&other),
-            "{operation}: {text}"
-        );
+    // The page put the origin there, not a person, and declaring it widens
+    // where the tool's browser may send: both reads wait in the holding
+    // folder, each with a question for the origin, and are not in place
+    // (decision 0298). The screens name nothing held and are written.
+    let list = "operations/leaving_loads_orders_a_100_line_items_list.yaml";
+    let get = "operations/leaving_loads_orders_a_100_values_get.yaml";
+    let mut held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    held.sort_unstable();
+    assert_eq!(held, [format!("held/{list}"), format!("held/{get}")]);
+    assert!(!folder.path().join(list).exists() && !folder.path().join(get).exists());
+    assert_eq!(report.open_questions.len(), 2, "{report:?}");
+    for open in &report.open_questions {
+        let quoting = open.quoting.as_ref().unwrap();
+        assert!(quoting.sentence().contains("Keep it"), "{open:?}");
+        assert!(quoting.words().contains(&other), "{open:?}");
     }
     let screen = std::fs::read_to_string(
         folder
@@ -1097,28 +1113,26 @@ async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_
     )
     .unwrap();
     assert!(!screen.contains(&other), "{screen}");
-    let again = new_target("drafts-destinations-again", &origin);
-    draft(
-        &stand,
-        &again,
-        &[order_screen_that_loads(&origin, path, &[&other])],
-    );
-    assert_eq!(
-        std::fs::read(
-            folder
-                .path()
-                .join("operations/leaving_loads_orders_a_100_line_items_list.yaml")
-        )
-        .unwrap(),
-        std::fs::read(
-            again
-                .path()
-                .join("operations/leaving_loads_orders_a_100_line_items_list.yaml")
-        )
-        .unwrap()
-    );
-
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    // A person keeps the origin: writes it in the question's place and
+    // moves the file out. Then the target compiles, with the origin as the
+    // operation's destination.
+    let held_file = folder.path().join("held").join(list);
+    let text = std::fs::read_to_string(&held_file).unwrap();
+    let kept: Vec<String> = text
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("- ") && line.contains("Keep it") {
+                format!("    - \"{other}\"")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    assert!(kept.iter().any(|line| line.contains(&other)), "{text}");
+    std::fs::create_dir_all(folder.path().join("operations")).unwrap();
+    std::fs::write(folder.path().join(list), kept.join("\n") + "\n").unwrap();
+    std::fs::remove_file(&held_file).unwrap();
+    let plan = compile_without_held(&stand, &folder)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let read = plan
         .operations
@@ -1186,15 +1200,32 @@ fn only_an_origin_with_its_scheme_and_nothing_more_is_drafted_as_a_destination()
             "elsewhere",
         ],
     );
-    draft(&stand, &folder, std::slice::from_ref(&finding));
-    let text = std::fs::read_to_string(folder.path().join(OPERATION)).unwrap();
-    let listed: Vec<&str> = text
-        .lines()
-        .skip_while(|line| !line.starts_with("permissions:"))
-        .skip(1)
-        .take_while(|line| line.starts_with(' '))
-        .filter(|line| line.trim_start().starts_with('-'))
+    let report = draft(&stand, &folder, std::slice::from_ref(&finding));
+    // One question for the one origin that is a destination, in each of the
+    // two reads, which wait in the holding folder.
+    let asked: Vec<&a2m_files::OpenQuestion> = report
+        .open_questions
+        .iter()
+        .filter(|open| open.file.as_str() == format!("held/{OPERATION}"))
         .collect();
-    assert_eq!(listed.len(), 1, "{text}");
-    assert!(listed[0].contains("https://assets.example.com"), "{text}");
+    assert_eq!(asked.len(), 1, "{report:?}");
+    let words = asked[0].quoting.as_ref().unwrap().words();
+    assert!(
+        words.contains(&"https://assets.example.com".to_owned()),
+        "{words:?}"
+    );
+    assert_eq!(report.open_questions.len(), 2, "{report:?}");
+    assert!(!folder.path().join(OPERATION).exists());
+
+    // A page that tried no other origin drafts as before: in place, with no
+    // question and no permissions.
+    let plain = new_target("drafts-destinations-none", origin);
+    let none = order_screen_that_loads(origin, "/orders/A-100", &[]);
+    let report = draft(&stand, &plain, std::slice::from_ref(&none));
+    assert!(
+        report.held.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let text = std::fs::read_to_string(plain.path().join(OPERATION)).unwrap();
+    assert!(!text.contains("permissions"), "{text}");
 }

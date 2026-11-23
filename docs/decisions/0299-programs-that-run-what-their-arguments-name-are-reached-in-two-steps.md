@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** what [decision 0271](0271-the-check-of-programs-the-product-starts-after-a-second-reader.md), point D2, and [decision 0250](0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md), point 3, refuse; the [roadmap](../plan/roadmap.md) (packages L1 to L3 are new); [the build plan](../plan/build-plan.md). No code changes with this record: 0271 stays in force for each kind of program until the package that widens it merges.
+**Changes:** what [decision 0271](0271-the-check-of-programs-the-product-starts-after-a-second-reader.md), point D2, and [decision 0250](0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md), point 3, refuse; the [roadmap](../plan/roadmap.md) (packages L1 to L3 are new); [the build plan](../plan/build-order.md). No code changes with this record: 0271 stays in force for each kind of program until the package that widens it merges.
 
 ## Context
 

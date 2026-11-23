@@ -3672,8 +3672,20 @@ impl<'a> Compiler<'a> {
                     let schema = self.output_schema_of_type(&output.ty, output.field_type);
                     // An output that may be absent is returned as `null`
                     // under its own name, so its schema admits `null`
-                    // beside its type (decision 0305).
+                    // beside its type (decision 0305). A list of them is
+                    // a list whose items may each be `null`, as a value
+                    // taken through `*` is one item at a time.
                     let schema = if output.may_be_absent {
+                        let schema = match (schema, &output.ty) {
+                            (mut list, ValueType::List(_)) => {
+                                if let Some(items) = list.get_mut("items") {
+                                    let item = items.take();
+                                    *items = serde_json::json!({"anyOf": [item, {"type": "null"}]});
+                                }
+                                list
+                            }
+                            (schema, _) => schema,
+                        };
                         serde_json::json!({"anyOf": [schema, {"type": "null"}]})
                     } else {
                         schema

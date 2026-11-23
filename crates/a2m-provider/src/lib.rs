@@ -26,10 +26,13 @@ mod action;
 pub mod codes;
 mod discover;
 mod driver;
+mod entry_point;
 mod manifest;
 mod name;
 mod pack;
 mod path;
+mod place;
+mod reach;
 mod registry;
 mod replay;
 mod supervisor;
@@ -48,6 +51,7 @@ pub use driver::{
     Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort,
     RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef, recorded_digest,
 };
+pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_python_providers};
 pub use manifest::{
     ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,
     Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
@@ -61,6 +65,8 @@ pub use path::{
     Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, HeldFolder, Removal, Roots,
     Temporary, resolved_path,
 };
+pub use place::{MachineState, NetworkPlace, Placed};
+pub use reach::{GatewayName, PlacedInReach, Reach, ReachEntry};
 pub use registry::{
     FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
     RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,

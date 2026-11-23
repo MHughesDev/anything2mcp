@@ -248,6 +248,7 @@ jobs:
           node bindings/npm/scripts/assemble-platform.js --platform "$PLATFORM" --binary "binary/anything2mcp${EXE}" --out "package/$PLATFORM"
           (cd "package/$PLATFORM" && npm pack --pack-destination "$GITHUB_WORKSPACE/packed")
           ls -l packed
+          python3 tools/check_packages.py npm packed/*.tgz
           sha256sum "binary/anything2mcp${EXE}"
       # Pinned by commit; this is v7.0.2.
       - name: Keep the packed file for the check and publish jobs
@@ -276,6 +277,7 @@ jobs:
           mkdir packed
           npm pack --pack-destination packed ./bindings/npm/anything2mcp
           ls -l packed
+          python3 tools/check_packages.py npm-launcher packed/*.tgz
       # Pinned by commit; this is v7.0.2.
       - name: Keep the packed file for the check and publish jobs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

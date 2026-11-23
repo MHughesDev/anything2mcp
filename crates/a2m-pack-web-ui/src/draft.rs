@@ -192,19 +192,33 @@ fn refused_origins(found: &str, own: &str) -> Vec<String> {
     origins
 }
 
-/// What a drafted operation declares of the origins its page was seen to
-/// send to: the operation's `permissions.destinations`, for a person to
-/// review. Nothing when there were none.
-fn permissions(doc: &mut Vec<(&'static str, DraftValue)>, origins: &[String]) {
+/// What a drafted operation may declare of the origins its page was seen to
+/// send to: `permissions.destinations`, one open question for each origin.
+/// The page put the origin there, not the person, and declaring it widens
+/// where the tool's browser may send; so the read waits in the holding
+/// folder until a person keeps the origin, by writing it in the question's
+/// place, or removes it (decision 0298). Nothing when there were none.
+fn permissions(
+    doc: &mut Vec<(&'static str, DraftValue)>,
+    origins: &[String],
+    path: &str,
+    cx: &DraftContext<'_>,
+) {
     if origins.is_empty() {
         return;
     }
+    let asked = origins
+        .iter()
+        .map(|one| {
+            cx.open_question_quoting(
+                "While it was scouted, the page quoted first tried to send requests to the origin quoted second, which is not the surface's. Declaring it lets this tool's browser send there. Keep it (write the origin here, with its scheme) or remove this line?",
+                &[path, one],
+            )
+        })
+        .collect();
     doc.push((
         "permissions",
-        DraftValue::map(vec![(
-            "destinations",
-            DraftValue::List(origins.iter().map(|one| DraftValue::text(one)).collect()),
-        )]),
+        DraftValue::map(vec![("destinations", DraftValue::List(asked))]),
     ));
 }
 
@@ -703,7 +717,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 )),
             ),
         ]);
-        permissions(&mut doc, &sends_to);
+        permissions(&mut doc, &sends_to, path, cx);
         out.operations.push(DraftDoc {
             path: RelPath::new(&format!("operations/{name}_list.yaml"))?,
             body: DraftValue::map(doc),
@@ -788,7 +802,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 )),
             ),
         ]);
-        permissions(&mut doc, &sends_to);
+        permissions(&mut doc, &sends_to, path, cx);
         out.operations.push(DraftDoc {
             path: RelPath::new(&format!("operations/{name}_get.yaml"))?,
             body: DraftValue::map(doc),

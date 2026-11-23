@@ -295,7 +295,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("input", MAP, "The tool's own input, as its schema describes.")
             .opt("source_file", TEXT, "For a tool that reads a source: the file, by its path inside the project folder. It is read once; a resumed run reads the same bytes.")
             .opt("source_rows", FieldType::MapList, "For a tool that reads a source, in place of a file: the rows themselves, for a small input. A list of records, read as a JSON document.")
-            .opt("environment", TEXT, "The environment to run in. The target's first production environment when left out.")
+            .opt("environment", TEXT, "The environment to run in. A call with no environment runs in the target's default environment.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for the run to rest or end before returning its run_id.")
             .opt("idempotency_key", TEXT, "A key of your own, 1 to 200 printable characters with no space, that makes a repeated call the same call: the same call with the same key gives back the run the first one started, unfinished or finished, and starts no other. The same key with another call is refused. Send one with every call that may write, and after a lost answer make the same call again with the same key.")
             .effect(Effect::OfTool)

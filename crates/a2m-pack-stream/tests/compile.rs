@@ -411,6 +411,82 @@ fn text_a_broker_returns_is_an_output_only_as_untrusted_text() {
     }
 }
 
+/// Decision 0315: an output is certain only where the pack knows every
+/// result holds it: a body field the channel's schema requires, on a verb
+/// that returns the message, and a list's count. Anything else, a field a
+/// message may lack, a place the broker may not give, or what a wait gives,
+/// may be absent, so a `null` there does not stop the read.
+#[test]
+fn an_output_is_certain_only_where_the_channels_schema_or_the_verb_makes_it_so() {
+    let registry_with_folder = registry;
+    let folder = Folder::new("absent");
+    let plan = plan(&registry_with_folder(&folder));
+    let absent = |operation: &str, output: &str| {
+        plan.operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap()
+            .outputs
+            .iter()
+            .find(|found| found.name == output)
+            .unwrap()
+            .may_be_absent
+    };
+    // Required by the schema, read from the message: certain.
+    assert!(!absent("example_order_status_get", "status"));
+    // A list's count is always there.
+    assert!(!absent("example_order_status_list", "count"));
+    // The place a log gives a publish, and what a wait gives, may be absent.
+    assert!(absent("example_order_event_record", "position"));
+    assert!(absent("example_order_status_await", "arrived"));
+
+    // A field the schema does not require, and one on a channel with no
+    // schema, may be absent.
+    let read = |outputs: &str, channel: &str| {
+        format!(
+            "operation: example_extra\neffect: read\ninputs: {{}}\noutputs: {outputs}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: list\n    channel: {channel}\n"
+        )
+    };
+    for (outputs, channel, name) in [
+        (
+            "{task: {type: broker_text, list: true}}",
+            "orders.work",
+            "task",
+        ),
+        (
+            "{note: {type: broker_text, list: true}}",
+            "orders.status",
+            "note",
+        ),
+    ] {
+        let folder = Folder::new("absent-extra");
+        let extra_registry = registry_with_folder(&folder);
+        let root = edited(&folder, "operations/extra.yaml", &read(outputs, channel));
+        if name == "note" {
+            let schemas = root.path().join("schemas").join("orders.yaml");
+            let text = std::fs::read_to_string(&schemas).unwrap();
+            std::fs::write(
+                &schemas,
+                text.replacen(
+                    "  status: {type: string, enum: [draft, submitted, shipped]}\n",
+                    "  status: {type: string, enum: [draft, submitted, shipped]}\n  note: {type: string}\n",
+                    1,
+                ),
+            )
+            .unwrap();
+        }
+        let compiled =
+            compile(&extra_registry, &root).unwrap_or_else(|problems| panic!("{problems}"));
+        let extra = compiled
+            .plan
+            .operations
+            .iter()
+            .find(|found| found.name.as_str() == "example_extra")
+            .unwrap();
+        assert!(extra.outputs[0].may_be_absent, "{name}");
+    }
+}
+
 #[test]
 fn a_body_may_not_use_the_name_of_the_brokers_own_facts() {
     refused(

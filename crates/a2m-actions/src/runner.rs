@@ -817,6 +817,7 @@ impl Kernel {
             (ToolRef::Tool(row.tool_name.clone()), input)
         };
         let health = self.health();
+        let sessions = self.session_conditions(&row, &plan).await;
         let capture = |key: &str| match self.settings().text(key) {
             Some("full") => CaptureLevel::Full,
             Some("standard") => CaptureLevel::Standard,
@@ -848,6 +849,7 @@ impl Kernel {
                             }),
                     ),
                 },
+                sessions,
                 ..Conditions::default()
             },
             pin: None,
@@ -966,6 +968,48 @@ impl Kernel {
             },
         };
         Ok(end)
+    }
+
+    /// The state of the session of each surface of the plan that is signed
+    /// in to, as the session keeper holds it at claim time, for guard's
+    /// third check (decision 0309). Only a session that was ended on
+    /// purpose is listed: it is never signed in again by a lease, so a call
+    /// on it can only stop with `needs_login`. A session that is absent or
+    /// expired may still be signed in from a stored credential at the
+    /// lease, one that waits is waited for, one the keeper holds no row for
+    /// has its first sign-in at the lease, and a keeper that cannot be
+    /// asked leaves everything unlisted: the lease decides all of those. No
+    /// source of edge blocks exists here, so `edge_blocked` stays empty.
+    async fn session_conditions(
+        &self,
+        row: &RunRow,
+        plan: &a2m_core::Plan,
+    ) -> Vec<(a2m_core::SurfaceName, a2m_core::SessionState)> {
+        let Ok(keeper) = self.keeper() else {
+            return Vec::new();
+        };
+        let identity = Identity::Person(row.principal);
+        let Ok(held) = keeper.status(&row.workspace, Some(&identity)).await else {
+            return Vec::new();
+        };
+        let Some(ours) = held
+            .iter()
+            .find(|status| status.target == row.target && status.environment == row.environment)
+        else {
+            return Vec::new();
+        };
+        if ours.state != a2m_core::SessionState::Revoked {
+            return Vec::new();
+        }
+        plan.surfaces
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                u32::try_from(*index)
+                    .is_ok_and(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)).is_some())
+            })
+            .map(|(_, surface)| (surface.name.clone(), ours.state))
+            .collect()
     }
 
     /// What the ledger holds of a run that has been worked on before, with

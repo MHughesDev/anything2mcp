@@ -12,6 +12,7 @@ members = [
     "targets/example-mcp",
     "targets/example-nats",
     "bench",
+    "tools/field-harness",
 ]
 # Throwaway experiments are never part of the product or of its build.
 exclude = ["spikes"]
@@ -101,6 +102,12 @@ regex = { version = "1.13.1", default-features = false, features = ["std", "unic
 # reader with no default features, which reads no document type and fetches
 # nothing. Its one dependency, memchr, is already in the tree.
 quick-xml = { version = "0.42.0", default-features = false }
+# The command pack's reader of the plain facts of a binary (X5): the
+# headers, imports, exports, and code-signature blobs of ELF, PE, and
+# Mach-O, read from bytes and never run. Only the readers of those three
+# formats and `std`; compression is left out, so no decompressor comes in.
+# Licence Apache-2.0 OR MIT; its one dependency, memchr, is in the tree.
+object = { version = "0.41.0", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"] }
 # The client end of the local channel (decision 0117): hyper's HTTP/1.1
 # connection over a socket or a named pipe, and the adapter between Tokio's
 # and hyper's stream traits. axum already brings both crates.

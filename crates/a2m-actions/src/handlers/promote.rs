@@ -645,14 +645,15 @@ async fn promote_from_shadow(
         "was": "shadow",
     });
     let detail = format!(
-        "{target} {tool} {}: shadow to verified, on at least {} distinct inputs that matched the verified binding in each of: {}",
+        "{target} {tool} {}: shadow to verified, on at least {} distinct inputs that matched the verified binding in each of: {} {}",
         found.pin.mode,
         row.matches,
         row.evidence
             .iter()
             .map(|held| held.environment.as_str())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        crate::evidence::promoted_mark(found.pin.digest)
     );
     kernel
         .audit(
@@ -759,7 +760,11 @@ handler!(
             "was": "draft",
         });
         rewrite(kernel, project_folder, &target, &found).await?;
-        let detail = format!("{target} {tool} {mode}: draft to verified, on {}", evidence);
+        let detail = format!(
+            "{target} {tool} {mode}: draft to verified, on {} {}",
+            evidence,
+            crate::evidence::promoted_mark(found.pin.digest)
+        );
         kernel
             .audit(
                 &call.caller.principal.principal.id.to_string(),

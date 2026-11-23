@@ -20,7 +20,7 @@ use a2m_files::{
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
-use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, ValueKind};
+use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, ValueKind, scalar_text};
 use crate::names::{Names, lint_code};
 
 /// How long a reply may take when neither the map nor the target says.
@@ -83,6 +83,62 @@ pub(crate) enum StepPayload {
     },
     /// `expect`: the reply acknowledges the write.
     Acknowledged,
+    /// `expect`: the reply holds a number, and it is the one a precondition
+    /// of the update declares. Nothing is written until each one holds.
+    Precondition {
+        /// The register, by its name in the map.
+        register: String,
+        /// The number it must hold, as an exact decimal.
+        equals: String,
+    },
+    /// `build_frame`: check the image against the map's mechanism, the
+    /// operation's list of digests, and the version it names, give out
+    /// what is to be recorded (the image's digest, its length, how it will
+    /// be cut into blocks, what the operation declares), and send nothing.
+    /// The step before the one that commits.
+    BuildFirmware {
+        /// The step argument that holds the image, as hexadecimal text.
+        image: String,
+        /// The step argument that holds the version the image carries.
+        version: String,
+        /// The digests the operation accepts; none listed accepts any.
+        accepts: Vec<String>,
+        /// What the operation declares: the recovery route, what cannot be
+        /// undone, and whether the device checks the maker's signature.
+        recovery: String,
+        cannot_undo: Vec<String>,
+        signature_checked: bool,
+        /// How many frames the read-back sends after the update.
+        reads_after: u32,
+    },
+    /// `write_frame`: carry out the device's own sequence for the image the
+    /// step before built, and send its commit, whose reply the confirm
+    /// steps read. The one step that commits.
+    Install {
+        /// The step argument that holds the image.
+        image: String,
+        /// The step argument that holds the version.
+        version: String,
+    },
+    /// `open`, after the commit: wait for the device to come back within
+    /// the map's restart window on a link of its own, identify it, and
+    /// compare its model and serial with the map and the surface. Its
+    /// version is given out under `output`.
+    AfterUpdate {
+        /// The name the version the device reports is given out under.
+        output: String,
+    },
+    /// `expect`: the reply holds the device's checksum of its image, and it
+    /// is the checksum the image carries.
+    Checksum {
+        /// The register, by its name in the map.
+        register: String,
+        /// The step argument that holds the image.
+        image: String,
+        /// The name the checksum is given out under, when the operation
+        /// declares it as an output.
+        output: Option<String>,
+    },
 }
 
 /// The name a value read before a write is kept under, for reconcile.
@@ -124,7 +180,24 @@ impl DeviceLowering {
                 .required("device_map", JsonSchema::name())
                 .optional("read", JsonSchema::map_of(JsonSchema::name()))
                 .optional("registers", JsonSchema::map_of(JsonSchema::expression()))
-                .optional("read_back", JsonSchema::map_of(JsonSchema::name())),
+                .optional("read_back", JsonSchema::map_of(JsonSchema::name()))
+                // The device's own update, one operation with one commit
+                // point. The recovery route is checked where the binding is
+                // lowered, so that its absence has a rule of its own.
+                .optional(
+                    "firmware",
+                    JsonSchema::object()
+                        .required("image", JsonSchema::expression())
+                        .required("version", JsonSchema::expression())
+                        .optional("recovery", JsonSchema::text())
+                        .required(
+                            "cannot_undo",
+                            JsonSchema::non_empty_list(JsonSchema::text()),
+                        )
+                        .required("signature_checked", JsonSchema::bool())
+                        .optional("preconditions", JsonSchema::map_of(JsonSchema::decimal()))
+                        .optional("accepts", JsonSchema::list(JsonSchema::text())),
+                ),
         }
     }
 }
@@ -156,7 +229,10 @@ impl Scene<'_> {
         at: &Place,
     ) -> Option<Step> {
         // The one step that changes the device: the frame that writes.
-        let commits = matches!(payload, StepPayload::Write { .. });
+        let commits = matches!(
+            payload,
+            StepPayload::Write { .. } | StepPayload::Install { .. }
+        );
         let payload = match PackPayload::encode(payload) {
             Ok(payload) => payload,
             Err(failure) => {
@@ -240,16 +316,21 @@ impl Scene<'_> {
 
     /// A register that may be read without changing it, by its name.
     fn readable(&mut self, name: &Located<Doc>) -> Option<String> {
-        let register = name.as_text()?;
+        self.readable_named(name.as_text()?, &name.at)
+    }
+
+    /// The same, for a register named by a key.
+    fn readable_named(&mut self, register: &str, at: &Place) -> Option<String> {
+        let name = (register, at);
         match self.map.registers.get(register) {
             None => {
-                self.unknown_register(register, &name.at);
+                self.unknown_register(register, name.1);
                 None
             }
             Some(found) if !found.access.readable() => {
                 self.problem(
                     "register_not_readable",
-                    &name.at,
+                    name.1,
                     format!("The register `{register}` is a command and has nothing to read."),
                     "Name a register whose `access` is `read` or `read_write`.",
                 );
@@ -258,7 +339,7 @@ impl Scene<'_> {
             Some(found) if found.read_effect != ReadEffect::None => {
                 self.problem(
                     "read_has_effect",
-                    &name.at,
+                    name.1,
                     format!("Reading the register `{register}` changes it, and an operation that reads such a register is not built."),
                     "Name a register whose `read_effect` is `none`.",
                 );
@@ -516,6 +597,247 @@ impl DeviceLowering {
     }
 }
 
+impl DeviceLowering {
+    /// A binding that writes to a device names a unit: the surface declares
+    /// the serial of at least one device. The driver holds the run's own
+    /// environment to it.
+    fn serial_declared(scene: &mut Scene<'_>, cx: &LowerContext<'_>, at: &Place) {
+        let names_a_unit = cx
+            .target()
+            .surface(&scene.map.surface)
+            .and_then(|surface| surface.doc.get("serials"))
+            .is_some_and(|serials| !serials.entries().is_empty());
+        if !names_a_unit {
+            let surface = scene.map.surface.clone();
+            scene.problem(
+                "write_without_serial",
+                at,
+                format!("The binding writes to a device, and the surface `{surface}` declares the serial of no device."),
+                "Add `serials:` to the surface, with the serial of the unit that answers in each environment.",
+            );
+        }
+    }
+
+    /// The steps of the device's own update. Every one of them is declared
+    /// before anything is published: the recovery route, what cannot be
+    /// undone, and whether the device checks the maker's signature.
+    #[allow(clippy::too_many_lines)] // one declaration after another, in the order the stages run
+    fn firmware(
+        scene: &mut Scene<'_>,
+        binding: &ResolvedBinding<'_>,
+        cx: &LowerContext<'_>,
+        firmware: &Located<Doc>,
+        outputs: &[&str],
+        lists: [&mut Vec<Step>; 3],
+    ) {
+        let [act, confirm, read_back] = lists;
+        let at = &firmware.at;
+        let Some(update) = scene.map.firmware_update.clone() else {
+            let map = scene.map_name.clone();
+            scene.problem(
+                "firmware_update_not_declared",
+                at,
+                format!("The map `{map}` declares no `firmware_update`, so an update of its device is not built on it."),
+                "Declare the device's own update mechanism under `firmware_update:` in the map, from the device's documentation.",
+            );
+            return;
+        };
+        let operation = binding.operation;
+        if operation.effect() != EffectClass::Irreversible
+            || operation.hazard() < Hazard::DeviceFunction
+        {
+            scene.problem(
+                "firmware_not_irreversible",
+                &binding.doc.at,
+                format!("A firmware update declares the effect `{}` and the hazard `{}`; it is always `irreversible`, with the hazard `device_function`.", operation.effect(), operation.hazard()),
+                "Declare `effect: irreversible` and `hazard: device_function` on the operation, so that a person approves every run.",
+            );
+        }
+        let recovery = firmware
+            .text("recovery")
+            .map(str::trim)
+            .filter(|route| !route.is_empty());
+        if recovery.is_none() {
+            scene.problem(
+                "firmware_without_recovery",
+                at,
+                "The update declares no recovery route, and a firmware operation without one is not published.".to_owned(),
+                "Add `recovery:` with how a person gets the device running again if it does not start, from the device's documentation.",
+            );
+        }
+        let cannot_undo: Vec<String> = firmware
+            .get("cannot_undo")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| item.as_text().map(|text| text.trim().to_owned()))
+            .collect();
+        if cannot_undo.iter().any(String::is_empty) {
+            scene.problem(
+                "firmware_without_recovery",
+                at,
+                "An entry of `cannot_undo` is empty.".to_owned(),
+                "Say what an update cannot undo, such as a counter that only rises, or leave the entry out.",
+            );
+        }
+        let accepts: Vec<String> = firmware
+            .get("accepts")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                let digest = item.as_text()?;
+                if digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    scene.problem(
+                        "firmware_accepts_malformed",
+                        &item.at,
+                        "This is not the digest of an image.".to_owned(),
+                        "Write the 64 lowercase hexadecimal characters of the image's digest.",
+                    );
+                    return None;
+                }
+                Some(digest.to_owned())
+            })
+            .collect();
+        if !outputs.contains(&"version") {
+            scene.problem(
+                "unknown_output",
+                at,
+                "The operation has no output `version`; the update reads the version the device reports back into it.".to_owned(),
+                "Declare an output `version` on the operation.",
+            );
+        }
+        let text = Some(ValueType::Text);
+        let (Some(image), Some(version)) = (firmware.get("image"), firmware.get("version")) else {
+            return;
+        };
+        let (image, version) = match (
+            cx.expr(image, text.as_ref()),
+            cx.expr(version, text.as_ref()),
+        ) {
+            (Ok(image), Ok(version)) => (image, version),
+            (Err(problem), _) | (_, Err(problem)) => {
+                scene.problems.push(problem);
+                return;
+            }
+        };
+        let arg = |name: &str, expr| StepArg {
+            name: name.to_owned(),
+            value: expr,
+        };
+        let args = || vec![arg("image", image), arg("version", version)];
+        Self::serial_declared(scene, cx, &binding.doc.at);
+
+        // The conditions: the device is not already in an update, and each
+        // one the operation declares.
+        let mut conditions = vec![(update.state.clone(), "0".to_owned(), at.clone())];
+        for entry in firmware
+            .get("preconditions")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            if let Some(register) = scene.readable_named(&entry.key.value, &entry.key.at) {
+                let equals = scalar_text(&entry.value);
+                conditions.push((register, equals, entry.value.at.clone()));
+            }
+        }
+        for (register, equals, place) in conditions {
+            let expect = StepPayload::Precondition {
+                register: register.clone(),
+                equals,
+            };
+            act.extend(scene.read(&register, &expect, &place).unwrap_or_default());
+        }
+        // The checksum before, for reconcile.
+        let before = StepPayload::Before {
+            register: update.checksum.clone(),
+        };
+        act.extend(
+            scene
+                .read(&update.checksum, &before, at)
+                .unwrap_or_default(),
+        );
+
+        let reads_after = 2;
+        let kind = scene.names.build_frame.clone();
+        let build = scene.step(
+            &kind,
+            &StepPayload::BuildFirmware {
+                image: "image".to_owned(),
+                version: "version".to_owned(),
+                accepts,
+                recovery: recovery.unwrap_or_default().to_owned(),
+                cannot_undo,
+                signature_checked: firmware
+                    .get("signature_checked")
+                    .and_then(Located::as_bool)
+                    .unwrap_or(false),
+                reads_after,
+            },
+            &codes::row::IMAGE_NOT_ACCEPTED,
+            args(),
+            at,
+        );
+        let kind = scene.names.write_frame.clone();
+        let install = scene.step(
+            &kind,
+            &StepPayload::Install {
+                image: "image".to_owned(),
+                version: "version".to_owned(),
+            },
+            &codes::row::NO_CONFIRMATION,
+            args(),
+            at,
+        );
+        act.extend(build);
+        act.extend(install);
+        confirm.extend(scene.reply(at));
+        confirm.extend(scene.expect(&StepPayload::Acknowledged, at));
+
+        // After the restart window: identify again, then the device's own
+        // checksum of the image it runs.
+        let kind = scene.names.open.clone();
+        read_back.extend(scene.step(
+            &kind,
+            &StepPayload::AfterUpdate {
+                output: "version".to_owned(),
+            },
+            &codes::row::DEVICE_NOT_RETURNED,
+            Vec::new(),
+            at,
+        ));
+        let checksum = StepPayload::Checksum {
+            register: update.checksum.clone(),
+            image: "image".to_owned(),
+            output: outputs.contains(&"checksum").then(|| "checksum".to_owned()),
+        };
+        let kind = scene.names.write_frame.clone();
+        let ask = scene.step(
+            &kind,
+            &StepPayload::AskRead {
+                register: update.checksum,
+            },
+            &codes::row::CONNECTION_LOST,
+            Vec::new(),
+            at,
+        );
+        read_back.extend(ask);
+        read_back.extend(scene.reply(at));
+        let kind = scene.names.expect.clone();
+        read_back.extend(scene.step(
+            &kind,
+            &checksum,
+            &codes::row::UNEXPECTED_REPLY,
+            vec![arg("image", image)],
+            at,
+        ));
+    }
+}
+
 impl Lowering for DeviceLowering {
     fn mode(&self) -> Mode {
         self.names.mode.clone()
@@ -562,7 +884,7 @@ impl Lowering for DeviceLowering {
     /// verified and is `irreversible`. A register's hazard asks for more, by
     /// the pack's own rule `device.hazard_not_declared`.
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
-        if *binding.verb == self.names.submit {
+        if *binding.verb == self.names.submit || binding.field("firmware").is_some() {
             EffectClass::Irreversible
         } else if *binding.verb == self.names.update {
             EffectClass::Write
@@ -613,7 +935,31 @@ impl Lowering for DeviceLowering {
             .collect();
         let (mut act, mut confirm, mut read_back) = (Vec::new(), Vec::new(), Vec::new());
         act.extend(scene.open(at));
-        if *binding.verb == self.names.read {
+        let firmware = binding
+            .field("firmware")
+            .filter(|_| *binding.verb == self.names.update);
+        if let Some(found) = binding.field("firmware")
+            && firmware.is_none()
+        {
+            let verb = binding.verb.as_str().to_owned();
+            scene.problem(
+                "field_not_of_verb",
+                &found.at,
+                format!("A `{verb}` binding does not take `firmware`."),
+                "Remove it, or use `verb: update`.",
+            );
+        }
+        if let Some(firmware) = firmware {
+            Self::absent(&mut scene, binding, &["read", "registers", "read_back"]);
+            Self::firmware(
+                &mut scene,
+                binding,
+                cx,
+                firmware,
+                &outputs,
+                [&mut act, &mut confirm, &mut read_back],
+            );
+        } else if *binding.verb == self.names.read {
             Self::absent(&mut scene, binding, &["registers", "read_back"]);
             match binding.field("read") {
                 Some(read) if !read.entries().is_empty() => {
@@ -631,20 +977,7 @@ impl Lowering for DeviceLowering {
             // A map proven on one unit must not write to another: the
             // surface names the unit. The driver compares it, and refuses
             // a write in an environment that has none.
-            let names_a_unit = cx
-                .target()
-                .surface(&scene.map.surface)
-                .and_then(|surface| surface.doc.get("serials"))
-                .is_some_and(|serials| !serials.entries().is_empty());
-            if !names_a_unit {
-                let surface = scene.map.surface.clone();
-                scene.problem(
-                    "write_without_serial",
-                    at,
-                    format!("The binding writes to a device, and the surface `{surface}` declares the serial of no device."),
-                    "Add `serials:` to the surface, with the serial of the unit that answers in each environment.",
-                );
-            }
+            Self::serial_declared(&mut scene, cx, at);
             let hazard = Self::hazard(&mut scene, binding, &name, &register);
             let updating = *binding.verb == self.names.update;
             // How many frames the read-back sends after the write.

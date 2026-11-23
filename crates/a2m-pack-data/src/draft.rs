@@ -239,13 +239,17 @@ impl DraftingRule for TableToStatements {
             .zip(names)
             .enumerate()
             .map(|(position, (column, name))| {
-                (
-                    name.clone(),
-                    DraftValue::map(vec![
-                        ("column", DraftValue::text(&column.name)),
-                        ("type", type_of(position)),
-                    ]),
-                )
+                let mut field = vec![
+                    ("column", DraftValue::text(&column.name)),
+                    ("type", type_of(position)),
+                ];
+                // A column that takes a null may hold no value, and an
+                // output read from it may be absent (decision 0305). A
+                // column of the key names the row, and is never drafted so.
+                if !column.not_null && column.key_position == 0 {
+                    field.push(("nullable", DraftValue::Bool(true)));
+                }
+                (name.clone(), DraftValue::map(field))
             })
             .collect();
         let keyed = !shaped.key.is_empty();

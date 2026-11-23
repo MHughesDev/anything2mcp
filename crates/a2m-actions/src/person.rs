@@ -55,6 +55,9 @@ pub struct ApprovalAsk {
     pub diff_hash: Digest,
     /// What the write would do, in a sentence.
     pub summary: String,
+    /// The effect class of the operation the write carries out. A prompt
+    /// that must refuse an `irreversible` operation reads it here.
+    pub effect: a2m_core::EffectClass,
 }
 
 /// A session needs its person: tell them.

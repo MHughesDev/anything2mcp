@@ -1137,6 +1137,51 @@ pub(crate) const GATES: [(&str, bool); 12] = [
     ("human_review", false),
 ];
 
+/// The digest of a fixture folder as the gate read it: every file by name,
+/// in name order, with its bytes. `fixture.record` writes it in the ledger
+/// when it records the folder, and the publish review looks the folder's
+/// current digest up there (decision 0311), so the digest is of the bytes
+/// the tests ran on.
+pub(crate) fn fixture_digest(held: &[(String, Vec<u8>)]) -> Digest {
+    let mut files: Vec<&(String, Vec<u8>)> = held.iter().collect();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = a2m_core::FieldHasher::new();
+    hasher.field("purpose", b"anything2mcp fixture folder 1");
+    for (name, bytes) in files {
+        hasher.field("name", name.as_bytes());
+        hasher.field("bytes", bytes);
+    }
+    hasher.finish()
+}
+
+/// The state of each of the twelve publish gates, in the order the
+/// documents name them: `passed` or `failed` for one this build runs, and
+/// `not built` for one it does not. This is the one table of gates; no
+/// other place lists them (decision 0311).
+pub(crate) fn gate_table(ran: &Json) -> Vec<(&'static str, &'static str)> {
+    GATES
+        .iter()
+        .map(|(name, built)| {
+            let state = if *built {
+                let found = ran
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|gate| gate["gate"] == *name)
+                    .and_then(|gate| gate["state"].as_str());
+                if found == Some("passed") {
+                    "passed"
+                } else {
+                    "failed"
+                }
+            } else {
+                "not built"
+            };
+            (*name, state)
+        })
+        .collect()
+}
+
 /// The gates of [`GATES`] this build does not run.
 pub(crate) fn gates_not_built() -> Vec<&'static str> {
     GATES
@@ -1162,6 +1207,10 @@ pub(crate) struct GateRun {
     pub(crate) plan: Digest,
     /// See `plan`.
     pub(crate) sources: Digest,
+    /// Each fixture folder the tests name, by the path the plan gives it,
+    /// with the digest of the bytes the gate read there; `None` for a
+    /// folder that could not be read.
+    pub(crate) fixtures: Vec<(String, Option<Digest>)>,
 }
 
 impl GateRun {
@@ -1171,10 +1220,25 @@ impl GateRun {
         json!({
             "gates": self.gates,
             "not_run": gates_not_built(),
+            "table": self.table_json(),
             "passed": self.passed,
             "plan": self.plan.to_string(),
             "sources": self.sources.to_string(),
         })
+    }
+
+    /// The one table of gates, each as `passed`, `failed`, or `not built`.
+    pub(crate) fn table(&self) -> Vec<(&'static str, &'static str)> {
+        gate_table(&self.gates)
+    }
+
+    fn table_json(&self) -> Json {
+        Json::Array(
+            self.table()
+                .into_iter()
+                .map(|(gate, state)| json!({"gate": gate, "state": state}))
+                .collect(),
+        )
     }
 
     /// One line per gate, for the page a person decides a publish on.
@@ -1212,8 +1276,12 @@ impl GateRun {
             lines.push(line);
         }
         lines.push(format!(
-            "Not built, so these gates did not run: {}.",
-            gates_not_built().join(", ")
+            "The gates, each as passed, failed, or not built: {}.",
+            self.table()
+                .iter()
+                .map(|(gate, state)| format!("{gate} {state}"))
+                .collect::<Vec<_>>()
+                .join("; ")
         ));
         lines
     }
@@ -1527,6 +1595,22 @@ pub(crate) async fn run_gates(
             "Make no change to the target while it is published, and ask again.",
         ));
     }
+    // The digest of each fixture folder as read, before the tests take the
+    // bytes.
+    let mut read_digests: Vec<(String, Option<Digest>)> = Vec::new();
+    for (test, fixture) in plan.tests.iter().zip(&fixtures) {
+        let Some(folder) = &test.fixture else {
+            continue;
+        };
+        if read_digests.iter().any(|(held, _)| held == folder) {
+            continue;
+        }
+        let digest = fixture
+            .as_ref()
+            .and_then(|read| read.as_ref().ok())
+            .map(|read| fixture_digest(&read.held));
+        read_digests.push((folder.clone(), digest));
+    }
     let engine = kernel.engine().await?;
     // The engine's future is not `Send`: a driver's prepared state is held
     // across its waits. So the tests run on a thread of their own, driven
@@ -1619,6 +1703,7 @@ pub(crate) async fn run_gates(
         sources,
         passed: missing.is_empty(),
         missing,
+        fixtures: read_digests,
     })
 }
 

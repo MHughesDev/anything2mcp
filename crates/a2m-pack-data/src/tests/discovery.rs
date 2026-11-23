@@ -394,6 +394,75 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
     assert_eq!(scene.db.data_version().unwrap(), before);
 }
 
+/// Decision 0305: a column that takes a null is drafted `nullable`, and its
+/// outputs, one record's and a list's, may be absent; a column that refuses
+/// one, or is part of the key, is not.
+#[tokio::test]
+async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_absent() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (folder, plan) = drafted_plan(&scene, 1000).await;
+    let customers = std::fs::read_to_string(
+        folder
+            .path()
+            .join("example")
+            .join("statements")
+            .join("customers.yaml"),
+    )
+    .unwrap();
+    assert!(
+        customers.contains(
+            "notes:\n        column: \"notes\"\n        type: \"text\"\n        nullable: true"
+        ),
+        "{customers}"
+    );
+    assert!(
+        customers.contains("name:\n        column: \"name\"\n        type: \"text\"\n      "),
+        "{customers}"
+    );
+    let flags = |operation: &str| -> Vec<(String, bool)> {
+        plan.operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap()
+            .outputs
+            .iter()
+            .filter(|output| ["customer_id", "name", "notes"].contains(&output.name.as_str()))
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+    let expected = [
+        ("customer_id".to_owned(), false),
+        ("name".to_owned(), false),
+        ("notes".to_owned(), true),
+    ];
+    // The read by key takes the key as its input, and returns the rest.
+    assert_eq!(flags("example_customers_get"), expected[1..]);
+    assert_eq!(flags("example_customers_list"), expected);
+
+    // The list of every customer gives `null` for the one with no notes,
+    // and its outputs are what the plan allows.
+    scene.plan = plan;
+    let steps = scene
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_customers_list")
+        .unwrap()
+        .bindings[0]
+        .act
+        .clone();
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
+    run.release().await;
+    let result = super::outputs_of(&scene.plan, "example_customers_list", &observed);
+    let notes = result
+        .get("notes")
+        .and_then(a2m_core::Value::as_list)
+        .unwrap();
+    assert!(notes.contains(&a2m_core::Value::Null), "{notes:?}");
+}
+
 #[tokio::test]
 async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_question() {
     let scene = Scene::new();

@@ -38,6 +38,11 @@ One input may name an entry inside a folder the target declares, as a row's key 
 - Results are structured. Free text from the system sits only in fields marked untrusted, limited in length and stripped of markup.
 - A validation message from the system, returned with a `rejected` result, is such a field. A driver hands it over apart from the failure's own sentence, bounded and redacted, and every door shows it marked as the system's words, never joined into the product's message ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)), with every character that can reorder, hide, or restyle shown text written as its escape: control characters and terminal escapes, bidirectional marks and isolates, invisible format characters, and line and paragraph separators ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - Snapshots and captures given to a building agent mark the system's text the same way.
+- A tool's whole definition is bounded text, not only its description: the names, descriptions, defaults, and enum labels in its input and output schemas follow the same rules, and the compiler refuses what breaks them ([decision 0325](../../decisions/0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md)). A length bound limits what a description can hold; it does not prove the text harmless. The reviewer, shown every changed description first, and the linter are the barriers, and neither is complete.
+
+## Reaching the engine through a browser
+
+A web page can make a browser send requests to a loopback address, and can make a name resolve to one after the page has loaded. Nothing in the engine is reached by a browser except two listeners: the approval and sign-in listener, which answers only at the one-time code in its address and checks `Host` and `Origin` ([section 503](503-approval-and-sign-in-surfaces.md)), and local HTTP where it is switched on, which is held to the rules of [section 222](../2-kernel/222-front-doors-and-the-local-engine.md). A check of `Host` and `Origin` is the second barrier. The first is that the page holds no credential ([decision 0325](../../decisions/0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md), [research note 39](../../research/39-mcp-transport-and-injection-threats.md)).
 
 ## A manipulated building agent
 
@@ -57,7 +62,7 @@ The agent that builds a target reads the system more than anyone. If it is steer
 | Changed descriptions | What agents will now be told |
 | What each tool starts and sets; every address a tool or a sign-in's credential can reach, by kind of place | What runs on the machine, and where data and credentials can go ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
 
-4. **The linter looks for the obvious.** Credentials in files, undeclared destinations, and descriptions that address the reader as an instruction.
+4. **The linter looks for the obvious.** Credentials in files, undeclared destinations, and descriptions that address the reader as an instruction. The rule for a description that addresses the reader lists its patterns in the lint's own documentation, with a test for each: an imperative sentence aimed at the model, a mention of a tool this version does not publish, a mention of a file or address outside the target, and a request to hide something from the person. It helps the reviewer and is known to be evadable.
 
 ## Targets written by someone else
 
@@ -76,7 +81,7 @@ A shared target pack or a bundle from another machine is unreviewed code.
 
 ## What this cannot do
 
-Anything2MCP controls what passes through Anything2MCP. An agent that has been granted a read tool can read what that tool returns, and the agent's other tools are outside Anything2MCP's control. Sensitivity labels decide what reaches an agent in the first place; after that, the organization's own controls on the agent apply.
+Anything2MCP controls what passes through Anything2MCP. An agent that has been granted a read tool can read what that tool returns, and the agent's other tools are outside Anything2MCP's control. Anything2MCP is never an MCP client: a hostile server loaded beside it in the same agent can write text that steers the agent's use of this product's tools, and only the agent's host can stop that. The annotations the product sets are true of the tool, but a client has no way to know it, so nothing in the product relies on a client honoring them. Sensitivity labels decide what reaches an agent in the first place; after that, the organization's own controls on the agent apply.
 
 ## What to build and test
 

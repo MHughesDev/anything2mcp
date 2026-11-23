@@ -9,7 +9,7 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 pub use crate::codes::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, DECISION_NOT_FOUND, EFFECT_TOO_HIGH,
     IDENTITY_NOT_ALLOWED, KILL_SWITCH_ON, LIMIT_EXCEEDED, NOT_GRANTED, POLICY_EVALUATION_FAILED,
-    POLICY_TESTS_FAILED, PRESENCE_REQUIRED,
+    POLICY_TESTS_FAILED, PRESENCE_REQUIRED, SECOND_ADMIN_REQUIRED,
 };
 
 pub(crate) fn policy(
@@ -106,5 +106,13 @@ pub(crate) fn presence_required(what: &str) -> Failure {
         PRESENCE_REQUIRED,
         format!("Only a person who is present may do this: {what}."),
         "Make the change yourself and pass the user-presence prompt.",
+    )
+}
+
+pub(crate) fn second_admin_required(why: &str) -> Failure {
+    policy(
+        SECOND_ADMIN_REQUIRED,
+        format!("This policy set needs a second administrator to publish it: {why}."),
+        "Have a second administrator, a person other than the publisher and the author, review and publish it with you.",
     )
 }

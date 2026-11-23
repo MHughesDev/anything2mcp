@@ -1298,10 +1298,13 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
         page.contains("Gate offline_replay: passed, 3 of 3 offline tests passed."),
         "{page}"
     );
+    // What this engine's ledger holds of the fixtures: nothing was recorded
+    // here, so each is said not to be (decision 0311).
+    assert!(page.contains("not recorded by this engine."), "{page}");
     assert!(
-        page.contains("Not built, so these gates did not run: contract, determinism,")
-            && page.contains("write_round_trip")
-            && page.contains("human_review."),
+        page.contains("schema_and_lint passed; offline_replay passed; contract not built; determinism not built;")
+            && page.contains("write_round_trip not built")
+            && page.contains("human_review not built."),
         "{page}"
     );
 

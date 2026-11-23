@@ -310,6 +310,7 @@ def main():
             stands.add(stand)
 
     on_disk = {}
+    places = {"a2m-field-harness": "tools/field-harness"}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
         folder = manifest_path.parent.name
@@ -325,11 +326,27 @@ def main():
         for stand in sorted(stands & internal_dependencies(manifest, ("dependencies", "build-dependencies"))):
             note("layering", f"{folder} depends on {stand} outside its tests; "
                              "a crate under targets/ is test equipment and may only be a dev-dependency")
+    # The field harness is the one program under tools/ that is built as part of the workspace:
+    # it is named in the layout and the layering table like a crate, and sits in tools/<name>
+    # as the package a2m-<name> (decision 0310).
+    tools_dir = repo / "tools"
+    for manifest_path in sorted(tools_dir.glob("*/Cargo.toml")) if tools_dir.is_dir() else []:
+        folder = manifest_path.parent.name
+        try:
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as e:
+            note("layering", f"tools/{folder}/Cargo.toml cannot be parsed: {e}")
+            continue
+        name = manifest.get("package", {}).get("name")
+        if name != f"a2m-{folder}":
+            note("layering", f"tools/{folder} holds a package named {name}; it must be a2m-{folder}")
+        on_disk[name] = internal_dependencies(manifest)
+        places[name] = f"tools/{folder}"
     if crates_dir.is_dir():
         for c in sorted(set(on_disk) - set(layer)):
-            note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")
+            note("layering", f"{places.get(c, 'crates/' + c)} exists but is not in the layering table of the technical reference")
         for c in sorted(set(layer) - set(on_disk)):
-            note("layering", f"{c} is in the layering table but crates/{c} does not exist")
+            note("layering", f"{c} is in the layering table but {places.get(c, 'crates/' + c)} does not exist")
     # Edges the layers would allow and the design forbids (docs/architecture/README.md).
     forbidden = {
         ("a2m-engine", "a2m-files"): "the engine runs only compiled plans and never depends on the compiler "

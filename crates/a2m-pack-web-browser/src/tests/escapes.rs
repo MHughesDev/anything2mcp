@@ -1175,3 +1175,45 @@ async fn a_frame_in_another_process_of_an_acting_tab_sends_nothing_outside_the_t
     drop(browser);
     stand.end().await;
 }
+
+/// Every origin the test application is reached by has a place, told from
+/// the address and the machine's state and never from the name the browser
+/// would resolve (decision 0223, package N2b). The stand is asked for its
+/// own address.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_origin_of_the_test_application_has_a_place_and_a_name_is_never_resolved() {
+    use a2m_provider::{MachineState, NetworkPlace};
+
+    let app = TestApp::start().await.unwrap();
+    let origins = reaching_the_other_name(&app);
+    let places = origins.places(&MachineState::read());
+    // The application's own address, and its other name as a place the
+    // page may send requests to: two origins, two places.
+    assert_eq!(places.len(), 2);
+    for (origin, placed) in &places {
+        let expected = if origin.starts_with("http://127.0.0.1") {
+            // The stand listens on loopback, and says so in its own address.
+            assert!(app.url("/").starts_with(origin), "{origin}");
+            NetworkPlace::ThisMachine
+        } else {
+            // `localhost` is a name, and a name is never resolved here,
+            // although the browser would take it to loopback.
+            assert!(origin.starts_with("http://localhost"), "{origin}");
+            NetworkPlace::Unknown
+        };
+        assert_eq!(placed.place, expected, "{origin}: {}", placed.because);
+        // Every connection is direct, as the launch holds it (decision 0197).
+        assert!(placed.place.is_direct(), "{origin}");
+    }
+    // The place does not change what the guard allows: the guard compares
+    // origins, and the other name is still not a place the tab may be on.
+    assert!(!origins.allows(&at(&other(&app, "/"))));
+    assert!(origins.reaches_reported(&other(&app, "/")));
+    // A machine whose state cannot be read still places the stand.
+    assert!(
+        origins
+            .places(&MachineState::unread())
+            .iter()
+            .any(|(_, placed)| placed.place == NetworkPlace::ThisMachine)
+    );
+}

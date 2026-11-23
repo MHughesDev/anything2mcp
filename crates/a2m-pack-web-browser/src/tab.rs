@@ -2924,7 +2924,7 @@ fn fetch_everything() -> FetchEnable<'static> {
 }
 
 /// The requests of documents, and of what a page loads and no body goes
-/// with: what a sign-in tab holds (decision 0313). A style, an image, a
+/// with: what a sign-in tab holds (decision 0399). A style, an image, a
 /// media file, a font, a script, and the rest the browser files as `Other`
 /// carry no body of the person's. A `fetch`, an `XHR`, and a beacon do, and
 /// are not held, because the password a person types would cross into the
@@ -3258,7 +3258,7 @@ async fn prepare(
     } else if page.quiet {
         // A tab a person signs in in holds the requests of documents and
         // of what the page loads with no body, to its origins and the
-        // providers' (decision 0313), and hears no network event at all. A
+        // providers' (decision 0399), and hears no network event at all. A
         // `fetch`, an `XHR`, or a beacon of its page is not held: what the
         // person types would cross in it.
         page.call(&fetch_documents_and_loads(), deadline).await?;

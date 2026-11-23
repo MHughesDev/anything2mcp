@@ -55,4 +55,4 @@ Added 2026-11-18, from the validation of the tree this record's work is in.
 
 ## Carried on
 
-The four items under "Not done (package P3b)" are taken up in [decision 0313](0313-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md): the first three are built, in part for the third; the fourth was measured and is still not held.
+The four items under "Not done (package P3b)" are taken up in [decision 0399](0399-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md): the first three are built, in part for the third; the fourth was measured and is still not held.

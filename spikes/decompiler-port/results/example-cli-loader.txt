@@ -1,0 +1,137 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 5017, port 4889, both 4888, only engine 129, only port 1
+decompiled by port: 37; by engine: 37; compared (both): 37; port only: 0; engine only: 0
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | 0 | 37 |
+line similarity of the different ones after spelling: min 0.33 median 0.62 max 0.87
+
+--- 0x6e430 _RNvCs1caKHPvdxP_11example_cli4main
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::main */
+-void __rustcall example_cli::main(void)
++void _RNvCs1caKHPvdxP_11example_cli4main(void)
+@@ -5 +4 @@
+-(*(code *)PTR_main_00191b08)(0);
++(*pcRam0000000000191b08)(0);
+
+--- 0x706a0 _RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjEB4_
+--- engine
++++ port
+@@ -1,3 +1,2 @@
+-/* example_cli::program::whole_number::<usize> */
+-undefined8 * __rustcall
+-example_cli::program::whole_number::<usize>
++undefined8 *
++_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjEB4_
+@@ -14 +13 @@
+-byte stk_a0 [8];
++uchar stk_a0 [8];
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = _RNvMNtCs8uuN1nrGffB_4core3stre8is_emptyCsa85MH2zKtGE_11example_cli(param_2,param_3);
+@@ -40,4 +39,3 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+
+--- 0x70870 _RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermEB4_
+--- engine
++++ port
+@@ -1,3 +1,2 @@
+-/* example_cli::program::whole_number::<u32> */
+-undefined8 * __rustcall
+-example_cli::program::whole_number::<u32>
++undefined8 *
++_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermEB4_
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = _RNvMNtCs8uuN1nrGffB_4core3stre8is_emptyCsa85MH2zKtGE_11example_cli(param_2,param_3);
+@@ -40,4 +39,3 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+-Var1 = (*(code *)
+-PTR_<example_cli::program::whole_number<u32>::_closure_0_>_00193e78)
+-(stk_b0);
+
+--- 0x70a50 _RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberyEB4_
+--- engine
++++ port
+@@ -1,3 +1,2 @@
+-/* example_cli::program::whole_number::<u64> */
+-undefined8 * __rustcall
+-example_cli::program::whole_number::<u64>
++undefined8 *
++_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberyEB4_
+@@ -14 +13 @@
+-byte stk_a0 [8];
++uchar stk_a0 [8];
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = _RNvMNtCs8uuN1nrGffB_4core3stre8is_emptyCsa85MH2zKtGE_11example_cli(param_2,param_3);
+@@ -40,4 +39,3 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+
+--- 0x70ea0 _RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjE0B6_
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<usize>::{closure#0} */
+-byte __rustcall example_cli::program::whole_number::<usize>::_closure_0_(void)
++uchar _RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjE0B6_(void)
+@@ -4 +3 @@
+-byte Var1;
++uchar Var1;
+@@ -6 +5 @@
+-Var1 = <u8>::is_ascii_digit(&stk_1);
++Var1 = _RNvMs4_NtCs8uuN1nrGffB_4core3numh14is_ascii_digitCsa85MH2zKtGE_11example_cli(&stk_1);
+
+--- 0x70ec0 _RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermE0B6_
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<u32>::{closure#0} */
+-byte __rustcall example_cli::program::whole_number::<u32>::_closure_0_(void)
++uchar _RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermE0B6_(void)
+@@ -4 +3 @@
+-byte Var1;
++uchar Var1;
+@@ -6 +5 @@
+-Var1 = <u8>::is_ascii_digit(&stk_1);
++Var1 = _RNvMs4_NtCs8uuN1nrGffB_4core3numh14is_ascii_digitCsa85MH2zKtGE_11example_cli(&stk_1);
+ROW	0x6e430	_RNvCs1caKHPvdxP_11example_cli4main	different	11	0.71
+ROW	0x706a0	_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjEB4_	different	72	0.79
+ROW	0x70870	_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermEB4_	different	74	0.81
+ROW	0x70a50	_RINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberyEB4_	different	72	0.79
+ROW	0x70ea0	_RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberjE0B6_	different	10	0.53
+ROW	0x70ec0	_RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numbermE0B6_	different	10	0.53
+ROW	0x70ee0	_RNCINvNtCsa85MH2zKtGE_11example_cli7program12whole_numberyE0B6_	different	10	0.53
+ROW	0x70ff0	_RNCNCNvNtCsa85MH2zKtGE_11example_cli7program4mains0_00B7_	different	16	0.44
+ROW	0x71090	_RNCNCNvNtCsa85MH2zKtGE_11example_cli7program4mains0_0s_0B7_	different	15	0.56
+ROW	0x726e0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program11control_dir0B5_	different	15	0.77
+ROW	0x72720	_RNCNvNtCsa85MH2zKtGE_11example_cli7program11environment0B5_	different	56	0.74
+ROW	0x728d0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program13asks_for_help0B5_	different	10	0.62
+ROW	0x728f0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program13asks_for_helps_0B5_	different	12	0.60
+ROW	0x72910	_RNCNvNtCsa85MH2zKtGE_11example_cli7program4main0B5_	different	16	0.44
+ROW	0x729b0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program4mains0_0B5_	different	63	0.76
+ROW	0x72c70	_RNCNvNtCsa85MH2zKtGE_11example_cli7program4mains_0B5_	different	10	0.47
+ROW	0x72cb0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program6linger0B5_	different	10	0.43
+ROW	0x72cc0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program6lingers0_0B5_	different	13	0.48
+ROW	0x72cf0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program6lingers1_0B5_	different	13	0.48
+ROW	0x72d20	_RNCNvNtCsa85MH2zKtGE_11example_cli7program6lingers2_0B5_	different	11	0.47
+ROW	0x72d50	_RNCNvNtCsa85MH2zKtGE_11example_cli7program6lingers_0B5_	different	10	0.50
+ROW	0x72d80	_RNCNvNtCsa85MH2zKtGE_11example_cli7program9reference0B5_	different	24	0.84
+ROW	0x72de0	_RNCNvNtCsa85MH2zKtGE_11example_cli7program9signed_in0B5_	different	11	0.35
+ROW	0x7f150	_RNvNtCsa85MH2zKtGE_11example_cli7program10split_home	different	70	0.87
+ROW	0x7f3e0	_RNvNtCsa85MH2zKtGE_11example_cli7program11control_dir	different	114	0.79
+ROW	0x7f790	_RNvNtCsa85MH2zKtGE_11example_cli7program11environment	different	12	0.43
+ROW	0x7f7e0	_RNvNtCsa85MH2zKtGE_11example_cli7program12command_name	different	130	0.62
+ROW	0x7fbb0	_RNvNtCsa85MH2zKtGE_11example_cli7program13asks_for_help	different	13	0.42
+ROW	0x7fbe0	_RNvNtCsa85MH2zKtGE_11example_cli7program3sku	different	73	0.77
+ROW	0x7fe20	_RNvNtCsa85MH2zKtGE_11example_cli7program4main	different	285	0.83
+ROW	0x807e0	_RNvNtCsa85MH2zKtGE_11example_cli7program6absent	different	33	0.81
+ROW	0x80880	_RNvNtCsa85MH2zKtGE_11example_cli7program6linger	different	54	0.33
+ROW	0x80be0	_RNvNtCsa85MH2zKtGE_11example_cli7program8location	different	66	0.77
+ROW	0x80d80	_RNvNtCsa85MH2zKtGE_11example_cli7program8overview	different	90	0.76
+ROW	0x81050	_RNvNtCsa85MH2zKtGE_11example_cli7program9item_name	different	36	0.71
+ROW	0x81130	_RNvNtCsa85MH2zKtGE_11example_cli7program9reference	different	33	0.74
+ROW	0x81210	_RNvNtCsa85MH2zKtGE_11example_cli7program9signed_in	different	27	0.47
