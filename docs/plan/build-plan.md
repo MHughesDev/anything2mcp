@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 55 of 146 packages done, 37% (`python3 tools/progress.py`). **Done last:** FT7 (decision 0305) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 56 of 146 packages done, 38% (`python3 tools/progress.py`). **Done last:** FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -284,7 +284,7 @@ Written on 2026-11-23 for the lead that takes over. Every question that was open
 | 8 | FT9 | [0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md) | 1. `waiting` in the scout's `try` stage and report; the counts add up. 2. The trial's answer for a waiting read names `session.login`. 3. In the recipe: make an invented token with the software's own command, sign in with the `person` step, read through the session. 4. Search every file the run wrote for the token: none | Middle |
 | 9 | V2, V5 | [0311](../decisions/0311-the-review-shows-from-the-ledger-what-this-engine-proved.md); 0307, point 6 | V2: `fixture.record` writes the folder's digest in the ledger; the review looks it up, shows each tool's level by 0311's mapping, names hand-written `verified` bindings, and shows the gates from a table the runner holds. V5: the bound on a description in the compiler; `_meta` at the MCP door | Middle each |
 | 10 | 2.3, then E2 | [0308](../decisions/0308-the-first-capture-records-reads-only-in-the-engines-own-browser-and-drafts-to-the-holding-folder.md) | The sign-in window first. Then the three handlers, in the order record, stop, infer, each with its test in the test application. Then FT6 | Large |
-| 11 | FT10 | 0302, point 5 | One pack at a time, each with a case in its own stand | Middle |
+| ~~11~~ | ~~FT10~~, done | 0302, point 5 | One pack at a time, each with a case in its own stand | Middle |
 | 12 | L1, L2, L3 | [0299](../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) | As the roadmap's rows | Large |
 | 13 | FT5 | [0295](../decisions/0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | One recipe for each kind, in this order: a database, files, a command-line program, an existing MCP server, a broker, a page in a browser, a desktop application, a device's protocol. See "Choosing the software" below | Middle each |
 
