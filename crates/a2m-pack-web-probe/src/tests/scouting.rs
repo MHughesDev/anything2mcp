@@ -915,3 +915,50 @@ async fn a_matched_screen_keeps_what_each_of_its_pages_showed() {
     );
     bench.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_loads_from_the_other_name_gives_a_screen_that_names_that_origin_and_nothing_arrives()
+ {
+    let site = Site::start().await;
+    let bench = Bench::new("loads-screen", no_secrets());
+    let start = site.url("/");
+    // The page loads an image, a script, and a style, and sends a `fetch`
+    // and a POST, to the application's other name; it says so once each has
+    // settled. The observing tab refuses every one before it leaves the
+    // browser.
+    let other = site.url("").replacen("127.0.0.1", "localhost", 1);
+    let focus = Look {
+        paths: vec!["/escapes/loads"],
+        depth: Some(0),
+        ready_text: Some("Tried."),
+        ..Look::default()
+    };
+    let first = must(bench.run("web_snapshot", &start, &focus).await);
+    check(&first);
+    let again = must(bench.run("web_snapshot", &start, &focus).await);
+    assert_eq!(again.ids(), first.ids());
+    let (finding, found) = first.one("screen", "/escapes/loads");
+    // The origin the page tried to reach is in the finding, once, and it is
+    // an origin and nothing more: no path, no query.
+    assert_eq!(found["refused_origins"], json!([other]), "{found}");
+    assert!(
+        finding
+            .limitations()
+            .iter()
+            .any(|one| one.code == LimitationCode::NotExercised
+                && one.sentence.contains(&other)
+                && one.sentence.contains("refused_origins")),
+        "{:?}",
+        finding.limitations()
+    );
+    // The start page tried nothing of the kind, and carries no such field.
+    let (_, start_page) = first.one("screen", "/orders");
+    assert!(start_page.get("refused_origins").is_none(), "{start_page}");
+    // The stand's count: not one of the page's attempts arrived.
+    let arrived = site.control("/__control/traps").await;
+    assert!(
+        !arrived.to_string().contains("loads-"),
+        "the stand saw {arrived}"
+    );
+    bench.end().await;
+}

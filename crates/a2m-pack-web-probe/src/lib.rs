@@ -42,7 +42,7 @@ use a2m_core::{Failure, Value};
 use a2m_pack_web_browser::{BrowserSettings, SharedBrowsers};
 use a2m_provider::{DiscovererName, Pack, PackContext, Registrar, RegistryBuilder};
 
-pub use discover::{EMPTY_INTERFACE, INTERFACE_RULES, InterfaceRule, Marker};
+pub use discover::{EMPTY_INTERFACE, INTERFACE_RULES, InterfaceRule, Marker, REFUSED_ORIGINS};
 pub use infer::{Answer, Endpoint, Exchange, Segment, Tier, infer_endpoints};
 pub use look::{
     ACTION_WORDS, DISCOVERY_ACCOUNT, FOCUS_PATHS, FOCUS_READY_TEXT, FOCUS_TIER_TWO,
