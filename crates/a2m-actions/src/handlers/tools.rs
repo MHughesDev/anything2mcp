@@ -1527,6 +1527,7 @@ pub(crate) async fn run_output(
                                     "`{}` would write to `{}`.",
                                     row.tool_name, row.target
                                 ),
+                                effect: row.effect,
                             })
                             .await
                             .ok();

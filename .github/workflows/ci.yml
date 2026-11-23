@@ -110,6 +110,8 @@ jobs:
         run: python3 tools/test_field_proxy.py
       - name: Prove the field-test runner's closed network
         run: python3 tools/test_field_test.py
+      - name: Prove the packaging check fails when a package holds another binary
+        run: python3 tools/test_check_packages.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}
@@ -161,6 +163,8 @@ jobs:
           "$RUNNER_TEMP/tools/$VENV_BIN/maturin" build --release --out dist
           "$RUNNER_TEMP/tools/$VENV_BIN/maturin" sdist --out dist
           ls -l dist
+      - name: Check the wheel holds the product's program and no other binary
+        run: python3 tools/check_packages.py wheel bindings/python/dist/*.whl
       - name: Install the wheel into a clean environment and run both names and the import
         run: |
           python -m venv "$RUNNER_TEMP/try"

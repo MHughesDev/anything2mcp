@@ -130,6 +130,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2m-field-harness"
+version = "0.0.1"
+dependencies = [
+ "a2m-local",
+ "anything2mcp",
+ "tokio",
+]
+
+[[package]]
 name = "a2m-files"
 version = "0.0.1"
 dependencies = [

@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
 use a2m_local::{
-    Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptName, PromptText,
-    StopReason,
+    Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptFor, PromptName,
+    PromptText, StopReason,
 };
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
@@ -366,6 +366,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
         person: None,
         key_store: None,
         program: None,
+        prompt: None,
     };
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let finished = run_with(&args, &host).await;
@@ -650,6 +651,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         person: None,
         key_store: None,
         program: None,
+        prompt: None,
     };
     let args: Vec<String> = ["version", "publish", "example"]
         .iter()
@@ -802,5 +804,96 @@ async fn an_agents_publish_waits_on_its_page_and_a_persons_press_publishes_it_on
     let stop = output(machine.program(&["engine", "stop"])).await;
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    lock_comes_free(&machine).await;
+}
+
+/// A presence prompt that keeps what it was asked for, and passes.
+struct Recording(std::sync::Mutex<Vec<PromptFor>>);
+
+impl PresencePrompt for Recording {
+    fn available(&self) -> BoxFuture<'_, Availability> {
+        Box::pin(async { Availability::ready(PromptName::Polkit, "The prompt of a test.") })
+    }
+
+    fn ask(
+        &self,
+        text: PromptText,
+        _deadline: tokio::time::Instant,
+    ) -> BoxFuture<'_, PromptAnswer> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(text.purpose);
+            PromptAnswer::Present(PromptName::Polkit)
+        })
+    }
+}
+
+/// Decision 0310: `serve` run with a `Host` that carries a presence prompt
+/// asks that prompt, and asks it for an approval with the effect class of
+/// the operation, which a prompt that must refuse an irreversible one reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_effect_class() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let prompt = Arc::new(Recording(std::sync::Mutex::new(Vec::new())));
+    let host = Host {
+        cwd: machine.project.path().to_path_buf(),
+        environment: machine.environment(),
+        stdout_is_terminal: false,
+        person_at_terminal: false,
+        person: None,
+        key_store: None,
+        program: None,
+        prompt: Some(Arc::clone(&prompt) as Arc<dyn PresencePrompt>),
+    };
+    let serving = tokio::spawn({
+        let args = vec!["serve".to_owned()];
+        async move { run_with(&args, &host).await }
+    });
+    let paths = Paths::under(machine.home.path());
+    let give_up = tokio::time::Instant::now() + PATIENCE;
+    while !EngineLock::held(&paths).unwrap() {
+        assert!(
+            tokio::time::Instant::now() < give_up,
+            "serve never took the lock"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let (rested, response) =
+        command(&machine, &["tool", "call", UPSERT, "--input", WRITE_INPUT]).await;
+    assert_eq!(rested.code, 3, "{rested:?}");
+    let link = response["result"]["link"].as_str().unwrap().to_owned();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/approve/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/approve"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        pressed.status().as_u16(),
+        200,
+        "{}",
+        pressed.text().await.unwrap()
+    );
+    assert_eq!(
+        *prompt.0.lock().unwrap(),
+        [PromptFor::Approval(Some(a2m_core::EffectClass::Write))]
+    );
+
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    let ended = serving.await.unwrap();
+    assert_eq!(ended.code, 0, "{ended:?}");
     lock_comes_free(&machine).await;
 }

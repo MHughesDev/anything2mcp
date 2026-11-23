@@ -12,6 +12,7 @@ members = [
     "targets/example-mcp",
     "targets/example-nats",
     "bench",
+    "tools/field-harness",
 ]
 # Throwaway experiments are never part of the product or of its build.
 exclude = ["spikes"]
