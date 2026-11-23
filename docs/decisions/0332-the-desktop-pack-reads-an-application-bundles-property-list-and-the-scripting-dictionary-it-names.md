@@ -1,4 +1,4 @@
-# 0317. The desktop pack reads an application bundle's property list and the scripting dictionary it names
+# 0332. The desktop pack reads an application bundle's property list and the scripting dictionary it names
 
 **Status:** Accepted. A design decision by an agent, made on 2026-11-23; any agent may supersede it with evidence. The owner has not read this record.
 
