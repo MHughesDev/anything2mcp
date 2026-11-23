@@ -14,7 +14,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 6 | Web sign-in methods and auto-detection. Partly answered by note 35 | Phase 2 | 15 |
 | 7 | Durable execution and idempotency | Phase 3 | 10 |
 | 8 | Human approval patterns | Phase 3 | 18 |
-| 9 | Network channel practice and endpoint inference | Phase 4 | 6, 26 |
+| 9 | Network channel practice and endpoint inference. The inference half answered by note 36 | Phase 4 | 6, 26 |
 | 10 | AI discovery turned into deterministic steps | Phase 5 | 26 |
 | 11 | File-format prior art | Phase 1 | 7 |
 | 12 | Testing against third-party apps | Phase 3 | 27 |
@@ -63,7 +63,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **8. Human approval patterns.** MCP elicitation and client support; approval pages; Teams, Slack, and email approvals; binding an approval to a content hash with expiry and single use; tiering and batching to avoid fatigue; what to record for audit; how LangGraph, the OpenAI Agents SDK, Temporal, GitHub environments, and Terraform handle it.
 
-**9. Network channel practice and endpoint inference.** Capturing traffic through the DevTools protocol; tools that derive API descriptions from captures (mitmproxy2swagger, HAR-to-OpenAPI, Integuru); anti-forgery tokens, GraphQL, WebSockets, and server-rendered pages; schema validation of undocumented responses; the stability and terms risks of calling internal endpoints.
+**9. Network channel practice and endpoint inference.** (The inference half answered by [note 36](36-inferring-endpoints-from-recorded-traffic.md) and [decision 0322](../decisions/0322-a-capture-never-infers-required-and-types-a-parameter-from-every-value.md). What remains: anti-forgery tokens, GraphQL, WebSockets, server-rendered pages, and the stability and terms risks of internal endpoints.) Capturing traffic through the DevTools protocol; tools that derive API descriptions from captures (mitmproxy2swagger, HAR-to-OpenAPI, Integuru); anti-forgery tokens, GraphQL, WebSockets, and server-rendered pages; schema validation of undocumented responses; the stability and terms risks of calling internal endpoints.
 
 **10. AI discovery turned into deterministic steps.** How Stagehand, workflow-use, Skyvern, AgentQL, and Pomerado convert a model's decision into a stored step and re-validate it later; their reported limits; how to keep exploration strictly read-only on a live system.
 
