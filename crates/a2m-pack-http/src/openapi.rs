@@ -857,8 +857,26 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     None => None,
                 }
             };
-            let parameters =
+            let mut parameters =
                 walk.parameters(item_parameters(resolved), operation.get("parameters"))?;
+            // A 3.x request body that is required is a parameter the read
+            // needs, as a 2.0 `in: body` one is: the same check refuses it.
+            if !swagger {
+                if let Some(body) = operation.get("requestBody") {
+                    walk.step(1)?;
+                    if walk.resolve(body)?.and_then(|body| body.get("required"))
+                        == Some(&Json::Bool(true))
+                    {
+                        parameters.push(Parameter {
+                            name: "body".to_owned(),
+                            place: "body".to_owned(),
+                            required: true,
+                            kind: "any".to_owned(),
+                            example: None,
+                        });
+                    }
+                }
+            }
             walk.write(length(path))?;
             found.push(DescribedOperation {
                 method: method.to_ascii_uppercase(),
@@ -1600,6 +1618,34 @@ mod tests {
         for (parameter, drafted) in [(body, false), (form, false), (optional, true)] {
             let found = operations(read(parameter).as_bytes()).unwrap();
             assert_eq!(would_draft(&found[0]), drafted, "{parameter}");
+        }
+    }
+
+    #[test]
+    fn a_3_read_with_a_required_body_is_not_a_read_the_rule_drafts() {
+        let read = |body: &str| {
+            format!(
+                r##"{{"openapi": "3.0.3", "paths": {{"/a/b": {{"get": {{
+                  {body}
+                  "responses": {{"200": {{"description": "ok", "content": {{"application/json": {{"schema": {{
+                    "type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}}}}}"##
+            )
+        };
+        let content = r#""content": {"application/json": {"schema": {"type": "object"}}}"#;
+        for (body, drafted) in [
+            (
+                format!(r#""requestBody": {{"required": true, {content}}},"#),
+                false,
+            ),
+            (
+                format!(r#""requestBody": {{"required": false, {content}}},"#),
+                true,
+            ),
+            (format!(r#""requestBody": {{{content}}},"#), true),
+            (String::new(), true),
+        ] {
+            let found = operations(read(&body).as_bytes()).unwrap();
+            assert_eq!(would_draft(&found[0]), drafted, "{body}");
         }
     }
 
