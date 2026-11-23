@@ -112,6 +112,8 @@ The `found` of a `table` finding is JSON: the surface, the store, the table's na
 | A column whose declared type states none of those | An open question in place of the type | The type |
 | A table with no key, or a view | The record, with an open question in place of its key, and no statement | The key |
 
+**A column named as a secret is never drafted as a field or an output.** The drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each column, as the store writes its name and as the field it becomes. Such a column is no field of the drafted record, no part of the drafted list's text, and no output of either read, and the last sentence of each drafted read's description names the fields left out. A key that holds such a column is no key: the draft holds the question of the key, as for a table whose store states none. The compiler's refusal of a secret in a file does not change ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Interface
 
 ```rust

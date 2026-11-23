@@ -12,7 +12,9 @@
 //! kept: discovery reads no row, so a read by key has no example.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+};
 
 use crate::discover::{ColumnFound, TableFound};
 use crate::names::{FOLDER, STATEMENT};
@@ -44,6 +46,61 @@ struct Shaped {
     names: Vec<String>,
     types: Vec<Option<&'static str>>,
     key: Vec<usize>,
+}
+
+/// Whether a column is named as a secret, as the store writes its name or as
+/// the field it becomes (decision 0302).
+fn named_as_secret(column: &str) -> bool {
+    names_a_secret(column) || names_a_secret(&plain_name(column, "c_"))
+}
+
+/// The table as it is drafted: without any column named as a secret, and
+/// the names of those left out, as the fields they would have been. A key
+/// that held such a column is no key, so the draft holds the question of
+/// the key, as it does for a table whose store states none.
+fn without_secrets(table: &TableFound) -> (TableFound, Vec<String>) {
+    let mut kept = table.clone();
+    let left_out: Vec<String> = table
+        .columns
+        .iter()
+        .filter(|column| named_as_secret(&column.name))
+        .map(|column| plain_name(&column.name, "c_"))
+        .collect();
+    if left_out.is_empty() {
+        return (kept, left_out);
+    }
+    if table
+        .columns
+        .iter()
+        .any(|column| column.key_position > 0 && named_as_secret(&column.name))
+    {
+        for column in &mut kept.columns {
+            column.key_position = 0;
+        }
+    }
+    kept.columns.retain(|column| !named_as_secret(&column.name));
+    (kept, left_out)
+}
+
+/// The sentence that ends a drafted description when columns were left out
+/// for their names.
+fn left_out_sentence(secrets: &[String]) -> String {
+    const MOST_NAMED: usize = 8;
+    let named: Vec<String> = secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
 }
 
 impl Shaped {
@@ -177,9 +234,11 @@ impl DraftingRule for TableToStatements {
     }
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let table: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
+        let found: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
         // A finding of a store this build does not speak to is not drafted.
-        opener(&table.store).ok_or_else(unreadable)?;
+        opener(&found.store).ok_or_else(unreadable)?;
+        // A column named as a secret is no field of the record (decision 0302).
+        let (table, _) = without_secrets(&found);
         let shaped = Shaped::of(&table);
         let (record, names) = (&shaped.record, &shaped.names);
         // The type the store states, or a question where it states none.
@@ -294,8 +353,14 @@ impl DraftingRule for TableToReads {
     }
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let table: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
-        opener(&table.store).ok_or_else(unreadable)?;
+        let found: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
+        opener(&found.store).ok_or_else(unreadable)?;
+        let (table, secrets) = without_secrets(&found);
+        let left_out = if secrets.is_empty() {
+            String::new()
+        } else {
+            left_out_sentence(&secrets)
+        };
         // A tool is named after its target; with none there is no name.
         let Some(target) = cx.target() else {
             return Ok(Vec::new());
@@ -361,7 +426,7 @@ impl DraftingRule for TableToReads {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Reads one row of the table `{record}` by its key, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional."
+                    "Reads one row of the table `{record}` by its key, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional.{left_out}"
                 )),
             ),
         ]);
@@ -397,7 +462,7 @@ impl DraftingRule for TableToReads {
                 (
                     "description",
                     DraftValue::text(&format!(
-                        "Lists the rows of the table `{record}` in the order of its key, as many as the pack's row limit allows, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional."
+                        "Lists the rows of the table `{record}` in the order of its key, as many as the pack's row limit allows, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional.{left_out}"
                     )),
                 ),
             ]);

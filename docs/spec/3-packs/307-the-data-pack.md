@@ -222,6 +222,8 @@ The discoverer reads the store's own catalog, through the SQL standard's informa
 
 The scout tries each drafted read in the sandbox, read-only, five times. A read by key has no example, because discovery reads no row: the drafted list is tried, and the read by key waits for a key a person gives. Whether the scout may take a key from the list it tried is open. The trace stores the digests and shapes of results, not their values.
 
+**A column named as a secret is never drafted as a field or an output.** The drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each column, as the store writes its name and as the field it becomes. Such a column is no field of the drafted record, no part of the drafted list's text, and no output of either read, and the last sentence of each drafted read's description names the fields left out. A key that holds such a column is no key: the draft holds the question of the key, as for a table whose store states none. The compiler's refusal of a secret in a file does not change ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Failures
 
 | What goes wrong | Class | Code |

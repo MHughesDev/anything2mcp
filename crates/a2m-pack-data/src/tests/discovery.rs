@@ -600,3 +600,90 @@ async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
     assert_eq!(written, ["statements/only_reads.yaml"]);
     assert!(!root.join("statements").join("tries_a_write.yaml").exists());
 }
+
+/// Decision 0302: a column named as a secret is no field of the drafted
+/// record and no output of a drafted read, whether its name is a secret's as
+/// the store writes it or as the field it becomes; the description of each
+/// read says so. The value is invented, and no draft holds it.
+#[tokio::test]
+async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
+    const VALUE: &str = "example-not-a-secret-0001";
+    let scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    scene
+        .db
+        .someone_else(
+            "CREATE TABLE account_logins (login_id text PRIMARY KEY, label text NOT NULL, \
+             \"Client-Secret\" text NOT NULL, passwordHint text)",
+            &[],
+        )
+        .unwrap();
+    scene
+        .db
+        .someone_else(
+            &format!(
+                "INSERT INTO account_logins VALUES ('login-1', 'first', '{VALUE}', '{VALUE}')"
+            ),
+            &[],
+        )
+        .unwrap();
+    let (findings, _) = discover(&scene).await;
+    let finding = findings
+        .into_iter()
+        .find(|finding| {
+            serde_json::from_str::<TableFound>(finding.found())
+                .unwrap()
+                .table
+                == "account_logins"
+        })
+        .unwrap();
+    let folder = Folder::new("draft-secret-columns");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&finding))
+        .unwrap();
+    assert!(report.refused.is_empty(), "{report:?}");
+    assert_eq!(report.written.len(), 3, "{report:?}");
+    for path in &report.written {
+        let text = std::fs::read_to_string(root.join(path.as_str())).unwrap();
+        assert!(!text.contains(VALUE), "{path}: {text}");
+        // No field, output, or input is named as a secret.
+        for line in text.lines() {
+            let key = line.trim().split(':').next().unwrap_or("");
+            assert!(
+                !(a2m_files::names_a_secret(key) && line.trim().ends_with(':')),
+                "{path}: {line}"
+            );
+        }
+        // The statement text selects only the columns that are drafted.
+        // Only a description names them, to say they were left out.
+        for line in text
+            .lines()
+            .filter(|line| !line.starts_with("description:"))
+        {
+            let line = line.to_ascii_lowercase();
+            assert!(
+                !line.contains("client-secret") && !line.contains("passwordhint"),
+                "{path}: {line}"
+            );
+        }
+    }
+    let list = std::fs::read_to_string(root.join("operations/account_logins_list.yaml")).unwrap();
+    assert!(
+        list.contains("Left out because their names are a secret's, so that a secret is never an output: `client_secret`, `passwordhint`."),
+        "{list}"
+    );
+    let get = std::fs::read_to_string(root.join("operations/account_logins_get.yaml")).unwrap();
+    assert!(
+        get.contains("label:") && get.contains("Left out because"),
+        "{get}"
+    );
+    // The target compiles.
+    compile_folder(&scene.registry, &root).unwrap();
+}
