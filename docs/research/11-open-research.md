@@ -18,8 +18,8 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 10 | AI discovery turned into deterministic steps | Phase 5 | 26 |
 | 11 | File-format prior art | Phase 1 | 7 |
 | 12 | Testing against third-party apps | Phase 3 | 27 |
-| 13 | Local and remote MCP transport security | Phase 6 | 19, 22 |
-| 14 | Prompt injection and MCP-specific threats | Phase 6 | 18, 19 |
+| 13 | Local and remote MCP transport security. Answered by note 39 | Phase 6 | 19, 22 |
+| 14 | Prompt injection and MCP-specific threats. Answered by note 39 | Phase 6 | 18, 19 |
 | 15 | Enterprise governance of agent tools | Phase 6 | 20 |
 | 16 | Hosted-agent compatibility, hands-on | Phase 6 | 24 |
 | 17 | Remote sign-in to a server-hosted browser | Phase 7 | 16 |
@@ -71,9 +71,9 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **12. Testing against third-party apps.** Safe testing of write workflows without a test environment; recorded fixtures as a mock target; contract tests for locators and response shapes; flakiness thresholds; fault injection; canary frequency and alerting.
 
-**13. Local and remote MCP transport security.** Risks of localhost HTTP servers (DNS rebinding, any local page connecting) and the recommended mitigations; what the MCP authorization specification requires end to end; sharing one server among many clients.
+**13. Local and remote MCP transport security.** (Answered by [note 39](39-mcp-transport-and-injection-threats.md) and [decision 0325](../decisions/0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md), with the specification read through a summariser; its quotes are to be re-read from the source. The brief stays so that references to it resolve.) Risks of localhost HTTP servers (DNS rebinding, any local page connecting) and the recommended mitigations; what the MCP authorization specification requires end to end; sharing one server among many clients.
 
-**14. Prompt injection and MCP-specific threats.** Indirect injection through application text returned in tool results; tool poisoning, shadowing, and confused-deputy problems; guidance from the MCP security pages and OWASP; which mitigations fit a deterministic server.
+**14. Prompt injection and MCP-specific threats.** (Answered by [note 39](39-mcp-transport-and-injection-threats.md) and [decision 0325](../decisions/0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md); the attacks on clients are from search summaries only. The brief stays so that references to it resolve.) Indirect injection through application text returned in tool results; tool poisoning, shadowing, and confused-deputy problems; guidance from the MCP security pages and OWASP; which mitigations fit a deterministic server.
 
 **15. Enterprise governance of agent tools.** (The decision engine is covered by [note 14](14-sessions-and-policy-engines.md).) Per-user and per-group tool visibility with Entra groups and app roles; admin consent; allowlists; audit suitable for compliance; data-loss-prevention hooks; how Microsoft, Anthropic, and OpenAI recommend governing MCP tools.
 
