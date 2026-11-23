@@ -105,6 +105,26 @@ pub fn registry_set(
     registry
 }
 
+/// A registry that holds the device pack and the optional provider that
+/// inspects firmware images.
+pub fn registry_inspecting(folder: &Folder) -> Registry {
+    let redact: Arc<dyn Redact> = Arc::new(a2m_core::NoSecrets);
+    let logs = folder.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let host = HostServices {
+        supervisor: Supervisor::new(SupervisorLimits::default()),
+        roots: Roots::none(),
+        redact: Arc::clone(&redact),
+        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+    };
+    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    a2m_pack_device::add_to(&mut builder);
+    a2m_pack_device::add_firmware_inspection_to(&mut builder);
+    let (registry, problems) = builder.build();
+    assert!(problems.is_empty(), "{problems:?}");
+    registry
+}
+
 pub fn registry(folder: &Folder) -> Registry {
     registry_with(folder, Arc::new(a2m_core::NoSecrets))
 }

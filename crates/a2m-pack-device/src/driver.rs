@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{Digest, Failure, Hazard, Plan, Redact, Step, Value, Values};
+use a2m_core::{Decimal, Digest, Failure, Hazard, Plan, Redact, Step, Value, Values};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -30,9 +30,10 @@ use serde::Deserialize;
 
 use crate::codec::{self, Unwritable};
 use crate::codes;
+use crate::firmware;
 use crate::link::{self, Link, LinkError, OpenError, Refusal, Reply, Request, SendError};
 use crate::lower::{StepPayload, before_name, frame_name};
-use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, SECTION_FORMAT};
+use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, SECTION_FORMAT, UpdatePlan};
 use crate::names::{Names, PACK};
 
 /// How long a reply may take when neither a map nor a setting says.
@@ -79,6 +80,21 @@ struct Staged {
     bytes: Vec<u8>,
 }
 
+/// Where a link goes, to open it again after the device restarts.
+struct Endpoint {
+    protocol: String,
+    address: String,
+    unit: u8,
+}
+
+/// An image that was checked and given out to be recorded, and waits to be
+/// installed.
+struct StagedImage {
+    digest: Digest,
+    version: String,
+    bytes: Vec<u8>,
+}
+
 /// A frame that was sent and whose reply has not been read.
 struct Pending {
     request: Request,
@@ -107,6 +123,14 @@ struct LinkState {
     /// The write frame that was built and waits to be sent. While one
     /// waits, no other frame is sent.
     staged: Option<Staged>,
+    /// The image that was checked and waits to be installed. While one
+    /// waits, no other frame is sent.
+    staged_image: Option<StagedImage>,
+    /// Where the link goes.
+    endpoint: Endpoint,
+    /// What the device reported about itself when it was compared with a
+    /// map.
+    identity: BTreeMap<String, String>,
     /// How many more frames this run may send on the link.
     frames_left: u32,
     pending: Option<Pending>,
@@ -217,6 +241,11 @@ fn acting(step: &Step, payload: &StepPayload, framed: bool, measured: Vec<Detail
         StepPayload::Value { register, .. } => ("value", Some(register)),
         StepPayload::Before { register } => ("before", Some(register)),
         StepPayload::Acknowledged => ("acknowledged", None),
+        StepPayload::Precondition { register, .. } => ("precondition", Some(register)),
+        StepPayload::BuildFirmware { .. } => ("build_firmware", None),
+        StepPayload::Install { .. } => ("install", None),
+        StepPayload::AfterUpdate { .. } => ("after_update", None),
+        StepPayload::Checksum { register, .. } => ("checksum", Some(register)),
     };
     let mut means = vec![
         Detail::new("step", step.kind.as_str()),
@@ -339,7 +368,7 @@ impl LinkState {
                 "a frame is sent while another still waits for its reply",
             ));
         }
-        if self.staged.is_some() {
+        if self.staged.is_some() || self.staged_image.is_some() {
             return Err(plan_unreadable(
                 "a frame is sent while a write frame that was built still waits to be sent",
             ));
@@ -631,10 +660,514 @@ impl DeviceDriver {
             )));
         }
         state.identified.insert(key);
+        state.identity = found;
         Ok(StepOutcome::Done(Observed {
             captures: vec![capture],
             ..Observed::default()
         }))
+    }
+
+    /// The map of the step, once the device was compared with it, and the
+    /// update mechanism it declares. Anything that writes needs the serial
+    /// the surface declares, too.
+    fn firmware_scene(
+        state: &LinkState,
+        step: &Step,
+        writing: bool,
+    ) -> Result<(MapPlan, UpdatePlan), StepFailure> {
+        let (index, name, map) = state.map(step)?;
+        if !state.identified.contains(&(index, name.to_owned())) {
+            return Err(StepFailure::not_sent(fail(
+                &codes::row::DEVICE_IDENTITY_MISMATCH,
+                "The device on this link was not compared with the map, so nothing was sent.",
+                "Identify the device first: every binding of the device mode starts with an `open` step.",
+            )));
+        }
+        if writing && state.serial.is_none() {
+            return Err(StepFailure::not_sent(fail(
+                &codes::row::DEVICE_SERIAL_NOT_DECLARED,
+                "The surface declares no serial for the device of this environment, so nothing is written to it. No frame was sent.",
+                "Declare the unit's serial for this environment under `serials:` on the surface, after proving the map against that unit.",
+            )));
+        }
+        let update = map.firmware_update.clone().ok_or_else(|| {
+            plan_unreadable("a step updates firmware on a map that declares no update mechanism")
+        })?;
+        Ok((map.clone(), update))
+    }
+
+    /// The image an update sends, once it passed every check made before
+    /// a byte of it is sent: it is hexadecimal text, of the form an image
+    /// has, with a checksum that holds, no larger than the device takes,
+    /// carrying the version the operation names, and on the operation's
+    /// list of digests where there is one.
+    fn image(
+        input: &StepInput<'_>,
+        image: &str,
+        version: &str,
+        update: &UpdatePlan,
+        accepts: &[String],
+    ) -> Result<Vec<u8>, StepFailure> {
+        let refuse = |why: &str| {
+            StepFailure::not_sent(fail(
+                &codes::row::IMAGE_NOT_ACCEPTED,
+                format!("The firmware image was not sent: {why}."),
+                "Give the image the device's maker issued for this model, as hexadecimal text, with the version it carries.",
+            ))
+        };
+        let bytes = input
+            .args
+            .get(image)
+            .and_then(Value::as_text)
+            .and_then(unhex)
+            .ok_or_else(|| refuse("it is absent or is not hexadecimal text"))?;
+        if bytes.len() > usize::try_from(update.max_image_bytes).unwrap_or(usize::MAX) {
+            return Err(refuse("it is larger than the device takes"));
+        }
+        let form =
+            firmware::read(&bytes).map_err(|_| refuse("it is not of the form an image has"))?;
+        if !form.checksum_holds() {
+            return Err(refuse("its checksum does not hold, so it is damaged"));
+        }
+        if input.args.get(version).and_then(Value::as_text) != Some(form.version.as_str()) {
+            return Err(refuse(
+                "it carries another version than the one the operation names",
+            ));
+        }
+        if !accepts.is_empty() && !accepts.contains(&Digest::of(&bytes).to_string()) {
+            return Err(refuse("its digest is not on the operation's list"));
+        }
+        Ok(bytes)
+    }
+
+    /// Checks the image, and gives out what is recorded before the step that
+    /// installs it: the image's digest and length, how it will be cut, what
+    /// the operation declares, and the version the device runs now. Nothing
+    /// is sent.
+    fn build_firmware(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        input: &StepInput<'_>,
+        payload: &StepPayload,
+    ) -> Result<StepOutcome, StepFailure> {
+        let StepPayload::BuildFirmware {
+            image,
+            version,
+            accepts,
+            recovery,
+            cannot_undo,
+            signature_checked,
+            reads_after,
+        } = payload
+        else {
+            return Err(plan_unreadable("a `build_frame` step builds no frame"));
+        };
+        if !may_write(state.posture) {
+            return Err(read_only());
+        }
+        let (_, update) = Self::firmware_scene(state, step, true)?;
+        let bytes = Self::image(input, image, version, &update, accepts)?;
+        state.may_send(&Request::WriteWords {
+            offset: update.command,
+            words: vec![firmware::ENTER],
+        })?;
+        let blocks = bytes.len().div_ceil(usize::from(update.block_bytes.max(1)));
+        // An update that could not be read back afterwards is not started.
+        if firmware::frames(bytes.len(), update.block_bytes, *reads_after) > state.frames_left {
+            return Err(budget_exceeded(
+                "The frames this run may still send on the device link would not cover the update and its read-back, so the update was not started.",
+            ));
+        }
+        let digest = Digest::of(&bytes);
+        let current = state
+            .identity
+            .get("firmware_version")
+            .cloned()
+            .unwrap_or_default();
+        let evidence = serde_json::json!({
+            "digest": digest.to_string(),
+            "bytes": bytes.len(),
+            "blocks": blocks,
+            "from_version": current,
+            "to_version": input.args.get(version).and_then(Value::as_text),
+            "recovery": recovery,
+            "cannot_undo": cannot_undo,
+            "signature_checked": signature_checked,
+        })
+        .to_string();
+        let mut observed = Observed {
+            captures: vec![Capture {
+                name: "firmware".to_owned(),
+                media_type: "application/json".to_owned(),
+                bytes: self.redact.redact(&evidence).into_bytes(),
+            }],
+            ..Observed::default()
+        };
+        observed.for_reconcile.insert(
+            "firmware_image_digest".to_owned(),
+            Value::Text(digest.to_string()),
+        );
+        observed
+            .for_reconcile
+            .insert("before_firmware_version".to_owned(), Value::Text(current));
+        state.staged_image = Some(StagedImage {
+            digest,
+            version: input
+                .args
+                .get(version)
+                .and_then(Value::as_text)
+                .unwrap_or_default()
+                .to_owned(),
+            bytes,
+        });
+        Ok(StepOutcome::Done(observed))
+    }
+
+    /// One write of the update's sequence, sent and answered. A refusal
+    /// before update mode was entered changes nothing. A refusal after it
+    /// asks the device to leave update mode, and ends the update as refused.
+    async fn update_write(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        update: &UpdatePlan,
+        (gap, within): (Duration, Duration),
+        (offset, words): (u16, Vec<u16>),
+        entered: bool,
+    ) -> Result<(), StepFailure> {
+        let request = Request::WriteWords { offset, words };
+        state.may_send(&request)?;
+        let bytes = state.frame(&request)?;
+        state.send(request, bytes, gap, within).await?;
+        state.receive(within).await?;
+        let (_, reply) = state.answer()?;
+        match reply {
+            Some(Reply::Written) => Ok(()),
+            Some(Reply::Refused(refusal)) => {
+                // The device's own word for a refusal of an update command.
+                let definite = matches!(
+                    refusal,
+                    Refusal::Function | Refusal::Address | Refusal::Value | Refusal::Other(4)
+                );
+                if !entered {
+                    return Err(refused_write(if refusal == Refusal::Other(4) {
+                        Refusal::Value
+                    } else {
+                        refusal
+                    }));
+                }
+                if !definite {
+                    state.link = None;
+                    return Err(no_confirmation(
+                        "the device answered a block with a failure that does not say whether it was applied",
+                    ));
+                }
+                let why = self.update_error(state, step, update, (gap, within)).await;
+                Err(self
+                    .leave_update_mode(state, update, (gap, within), why)
+                    .await)
+            }
+            _ => {
+                state.link = None;
+                Err(no_confirmation(
+                    "the reply that came does not acknowledge it",
+                ))
+            }
+        }
+    }
+
+    /// The number a register of the update's mechanism holds, read now.
+    async fn read_number(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        register: &str,
+        (gap, within): (Duration, Duration),
+    ) -> Result<i64, StepFailure> {
+        let (found, _) = state.register(step, register)?;
+        state.ask(codec::read_request(&found), gap, within).await?;
+        state.receive(within).await?;
+        let (_, reply) = state.answer()?;
+        match reply {
+            Some(Reply::Refused(refusal)) => Err(refused_read(refusal)),
+            Some(reply) => codec::decode(&found, &reply)
+                .and_then(|value| value.as_int())
+                .ok_or_else(|| {
+                    StepFailure::answered(fail(
+                        &codes::row::UNEXPECTED_REPLY,
+                        "The device answered a read of the update's state with a reply of no form its map declares.",
+                        "Check the register's layout in the map against the device's documentation.",
+                    ))
+                }),
+            None => Err(StepFailure::answered(fail(
+                &codes::row::UNEXPECTED_REPLY,
+                "The device answered a read of the update's state with a reply of no declared form.",
+                "Check the register's layout in the map against the device's documentation.",
+            ))),
+        }
+    }
+
+    /// Why the device refused the last step of its update, when it can be
+    /// read.
+    async fn update_error(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        update: &UpdatePlan,
+        timing: (Duration, Duration),
+    ) -> Option<i64> {
+        state.link.as_ref()?;
+        self.read_number(state, step, &update.error, timing)
+            .await
+            .ok()
+    }
+
+    /// Asks the device to leave update mode, and says the image was
+    /// refused. The device's other slot held an image until update mode
+    /// began: it holds none now.
+    async fn leave_update_mode(
+        &self,
+        state: &mut LinkState,
+        update: &UpdatePlan,
+        (gap, within): (Duration, Duration),
+        why: Option<i64>,
+    ) -> StepFailure {
+        let mut left = false;
+        if state.link.is_some() {
+            let request = Request::WriteWords {
+                offset: update.command,
+                words: vec![firmware::ABORT],
+            };
+            if state.may_send(&request).is_ok()
+                && let Ok(bytes) = state.frame(&request)
+                && state.send(request, bytes, gap, within).await.is_ok()
+                && state.receive(within).await.is_ok()
+            {
+                left = matches!(state.answer(), Ok((_, Some(Reply::Written))));
+            }
+        }
+        let code = why.map_or_else(String::new, |code| format!(" (update error {code})"));
+        StepFailure::answered(fail(
+            &codes::row::IMAGE_REFUSED,
+            format!(
+                "The device refused the image{code}. {} The image its other slot held was given up when update mode began.",
+                if left {
+                    "It was told to leave update mode, and did."
+                } else {
+                    "It could not be told to leave update mode; check its state before anything else is sent."
+                }
+            ),
+            "Check the image and the device's reason against its documentation; the device still runs its present firmware.",
+        ))
+    }
+
+    /// Carries out the device's own update sequence for the image the step
+    /// before built, and sends the commit. The commit's reply is left for
+    /// the steps that confirm. Nothing is sent twice: a frame whose fate is
+    /// unknown ends the update as `possible_commit` and the link is
+    /// dropped.
+    async fn install(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        input: &StepInput<'_>,
+        payload: &StepPayload,
+    ) -> Result<StepOutcome, StepFailure> {
+        let StepPayload::Install { image, version } = payload else {
+            return Err(plan_unreadable("a step installs nothing"));
+        };
+        if !step.commits || !may_write(state.posture) {
+            return Err(read_only());
+        }
+        let (map, update) = Self::firmware_scene(state, step, true)?;
+        let bytes = Self::image(input, image, version, &update, &[])?;
+        // The image sent is the image that was recorded, or none.
+        let staged = state
+            .staged_image
+            .take()
+            .filter(|staged| {
+                staged.digest == Digest::of(&bytes)
+                    && staged.bytes == bytes
+                    && input.args.get(version).and_then(Value::as_text)
+                        == Some(staged.version.as_str())
+            })
+            .ok_or_else(|| {
+                plan_unreadable(
+                    "an image is installed that was not built and recorded first, or that changed since",
+                )
+            })?;
+        let timing = (
+            self.gap(&map),
+            self.reply_within(&map).min(input.deadline.remaining()),
+        );
+        let length = u16::try_from(staged.bytes.len())
+            .map_err(|_| plan_unreadable("an image is longer than the device's length register"))?;
+        self.update_write(
+            state,
+            step,
+            &update,
+            timing,
+            (update.length, vec![length]),
+            false,
+        )
+        .await?;
+        self.update_write(
+            state,
+            step,
+            &update,
+            timing,
+            (update.command, vec![firmware::ENTER]),
+            false,
+        )
+        .await?;
+        // From here the device's other slot is empty, and anything that is
+        // not a clear refusal may have changed it.
+        for words in firmware::blocks(&staged.bytes, update.block_bytes) {
+            self.update_write(state, step, &update, timing, (update.block, words), true)
+                .await?;
+        }
+        self.update_write(
+            state,
+            step,
+            &update,
+            timing,
+            (update.command, vec![firmware::VERIFY]),
+            true,
+        )
+        .await?;
+        let verified = match self.read_number(state, step, &update.state, timing).await {
+            Ok(number) => number,
+            Err(_) => {
+                state.link = None;
+                return Err(no_confirmation(
+                    "the device could not be read after the image was sent to it",
+                ));
+            }
+        };
+        if verified != firmware::STATE_VERIFIED {
+            let why = self.update_error(state, step, &update, timing).await;
+            return Err(self.leave_update_mode(state, &update, timing, why).await);
+        }
+        // The one frame that makes the image the running one. Its reply is
+        // read by the step that confirms.
+        let request = Request::WriteWords {
+            offset: update.command,
+            words: vec![firmware::COMMIT],
+        };
+        state.may_send(&request)?;
+        let bytes = state.frame(&request)?;
+        state.send(request, bytes, timing.0, timing.1).await?;
+        Ok(StepOutcome::Done(Observed::default()))
+    }
+
+    /// After the commit: waits for the device to come back, within the
+    /// window its map declares, on a link of its own, and compares its
+    /// model and serial with the map and the surface. The firmware version
+    /// is not compared with the map's list: a device that runs the version
+    /// the image carries is what the update is for, and the next run stops
+    /// until the map names it.
+    async fn after_update(
+        &self,
+        state: &mut LinkState,
+        step: &Step,
+        input: &StepInput<'_>,
+        output: &str,
+    ) -> Result<StepOutcome, StepFailure> {
+        let (map, update) = Self::firmware_scene(state, step, false)?;
+        let (index, name, _) = state.map(step)?;
+        let key = (index, name.to_owned());
+        state.identified.remove(&key);
+        // The device closed every link when it restarted.
+        state.link = None;
+        state.pending = None;
+        state.unread = None;
+        state.staged = None;
+        state.staged_image = None;
+        let gap = self.gap(&map);
+        let within = self.reply_within(&map);
+        let window = Duration::from_millis(u64::from(update.restart_within_ms))
+            .min(input.deadline.remaining());
+        let until = tokio::time::Instant::now() + window;
+        let (found, capture) = loop {
+            let left = until.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return Err(StepFailure::unknown(fail(
+                    &codes::row::DEVICE_NOT_RETURNED,
+                    "The device did not come back and identify itself within the restart window its map declares, after its update was committed.",
+                    "Alert a person and show the recovery route the operation declares; do not send the update again.",
+                )));
+            }
+            let endpoint = &state.endpoint;
+            if let Ok(link) = link::open(
+                &endpoint.protocol,
+                &endpoint.address,
+                endpoint.unit,
+                within.min(left),
+            )
+            .await
+            {
+                state.link = Some(link);
+                state.pending = None;
+                state.unread = None;
+                state.last_frame = None;
+                match self.identify_within(state, within.min(left)).await {
+                    Ok(identified) => break identified,
+                    Err(_) => state.link = None,
+                }
+            }
+            tokio::time::sleep(gap.min(left)).await;
+        };
+        let mismatch = |what: &str| {
+            StepFailure::answered(fail(
+                &codes::row::DEVICE_IDENTITY_MISMATCH,
+                format!("After its update the device {what}, so nothing more is read from it."),
+                "Check the device against the map and the surface; do not send the update again.",
+            ))
+        };
+        if found.get("model") != Some(&map.model) {
+            return Err(mismatch("reports another model than the map"));
+        }
+        if let Some(declared) = &state.serial
+            && found.get("serial") != Some(declared)
+        {
+            return Err(mismatch("does not report the serial its surface declares"));
+        }
+        let mut observed = Observed {
+            captures: vec![capture],
+            ..Observed::default()
+        };
+        if let Some(version) = found.get("firmware_version") {
+            observed
+                .values
+                .insert(output.to_owned(), Value::Text(self.redact.redact(version)));
+        }
+        state.identified.insert(key);
+        state.identity = found;
+        Ok(StepOutcome::Done(observed))
+    }
+
+    /// Identification on a link just opened, with the time it has left.
+    async fn identify_within(
+        &self,
+        state: &mut LinkState,
+        within: Duration,
+    ) -> Result<(BTreeMap<String, String>, Capture), StepFailure> {
+        state
+            .ask(Request::Identify, self.defaults.min_gap, within)
+            .await?;
+        state.receive(within).await?;
+        let (unread, reply) = state.answer()?;
+        let capture = self.capture(&unread.sent, &unread.reply);
+        match reply {
+            Some(Reply::Identity(found)) => Ok((found, capture)),
+            Some(Reply::Refused(refusal)) => Err(refused_read(refusal)),
+            _ => Err(StepFailure::answered(fail(
+                &codes::row::UNEXPECTED_REPLY,
+                "The device answered the request to identify itself with a reply of no declared form.",
+                "Check that the surface names the protocol the device speaks.",
+            ))),
+        }
     }
 
     fn reply_within(&self, map: &MapPlan) -> Duration {
@@ -815,6 +1348,9 @@ impl DeviceDriver {
                     .send(request, staged.bytes, self.gap(&map), within)
                     .await?;
             }
+            StepPayload::Install { .. } => {
+                return self.install(state, step, input, payload).await;
+            }
             _ => {
                 return Err(plan_unreadable(
                     "a `write_frame` step holds no frame to send",
@@ -859,6 +1395,7 @@ impl DeviceDriver {
         &self,
         state: &mut LinkState,
         step: &Step,
+        input: &StepInput<'_>,
         payload: &StepPayload,
         recorded: &Values,
         measured: &mut Vec<Detail>,
@@ -913,6 +1450,73 @@ impl DeviceDriver {
                     _ => {
                         observed.for_reconcile.insert(before_name(register), value);
                     }
+                }
+                Ok(StepOutcome::Done(observed))
+            }
+            StepPayload::Precondition { register, equals } => {
+                let (found, _) = state.register(step, register)?;
+                let value = match reply {
+                    Some(Reply::Refused(refusal)) => return Err(refused_read(refusal)),
+                    Some(reply) => codec::decode(&found, &reply).ok_or_else(unexpected)?,
+                    None => return Err(unexpected()),
+                };
+                let expected = Decimal::parse(equals).map_err(|_| {
+                    plan_unreadable("a precondition holds a number that is not one")
+                })?;
+                let held = match &value {
+                    Value::Int(number) => Some(Decimal::from_i64(*number)),
+                    Value::Decimal(number) => Some(*number),
+                    _ => None,
+                };
+                if held.as_ref() != Some(&expected) {
+                    return Err(StepFailure::not_sent(fail(
+                        &codes::row::UPDATE_PRECONDITION_UNMET,
+                        format!(
+                            "The register `{register}` does not hold `{equals}`, which the update needs before anything is written. Nothing was written."
+                        ),
+                        "Bring the device to the state its documentation sets for an update, then run the operation again.",
+                    )));
+                }
+                Ok(StepOutcome::Done(Observed {
+                    captures: vec![capture],
+                    ..Observed::default()
+                }))
+            }
+            StepPayload::Checksum {
+                register,
+                image,
+                output,
+            } => {
+                let (found, _) = state.register(step, register)?;
+                let value = match reply {
+                    Some(Reply::Refused(refusal)) => return Err(refused_read(refusal)),
+                    Some(reply) => codec::decode(&found, &reply).ok_or_else(unexpected)?,
+                    None => return Err(unexpected()),
+                };
+                let reported = value.as_int().ok_or_else(unexpected)?;
+                let carried = input
+                    .args
+                    .get(image)
+                    .and_then(Value::as_text)
+                    .and_then(unhex)
+                    .and_then(|bytes| firmware::read(&bytes).ok())
+                    .map(|image| image.carried)
+                    .ok_or_else(|| plan_unreadable("a checksum is compared with no image"))?;
+                if reported != i64::from(carried) {
+                    return Err(StepFailure::answered(fail(
+                        &codes::row::IMAGE_CHECKSUM_DIFFERS,
+                        "After the update the device reports a checksum of its image that is not the one the image carries.",
+                        "Do not trust the device's firmware. Follow the recovery route the operation declares, then read the device's version and checksum before anything else is written.",
+                    )));
+                }
+                let mut observed = Observed {
+                    captures: vec![capture],
+                    ..Observed::default()
+                };
+                if let Some(output) = output {
+                    observed
+                        .values
+                        .insert(output.clone(), Value::Text(format!("{reported:08x}")));
                 }
                 Ok(StepOutcome::Done(observed))
             }
@@ -1000,6 +1604,13 @@ impl Driver for DeviceDriver {
                 identified: BTreeSet::new(),
                 serial,
                 staged: None,
+                staged_image: None,
+                endpoint: Endpoint {
+                    protocol: fields.protocol.clone(),
+                    address: surface.address.clone(),
+                    unit: fields.unit,
+                },
+                identity: BTreeMap::new(),
                 frames_left: self.defaults.max_frames,
                 pending: None,
                 unread: None,
@@ -1029,9 +1640,12 @@ impl Driver for DeviceDriver {
             let names = &self.names;
             let mut measured = Vec::new();
             let outcome = if step.kind == names.open {
-                match payload {
+                match &payload {
                     StepPayload::Identify => self.open(state, step, input, false).await,
                     StepPayload::Report => self.open(state, step, input, true).await,
+                    StepPayload::AfterUpdate { output } => {
+                        self.after_update(state, step, input, output).await
+                    }
                     _ => Err(plan_unreadable("an `open` step opens nothing")),
                 }
             } else if step.kind == names.build_frame {
@@ -1041,6 +1655,9 @@ impl Driver for DeviceDriver {
                         arg,
                         reads_after,
                     } => self.build_frame(state, step, input, register, arg, *reads_after),
+                    StepPayload::BuildFirmware { .. } => {
+                        self.build_firmware(state, step, input, &payload)
+                    }
                     _ => Err(plan_unreadable("a `build_frame` step builds no frame")),
                 }
             } else if step.kind == names.write_frame {
@@ -1058,7 +1675,7 @@ impl Driver for DeviceDriver {
                     .await?;
                 Ok(StepOutcome::Done(Observed::default()))
             } else if step.kind == names.expect {
-                self.expect(state, step, &payload, &recorded, &mut measured)
+                self.expect(state, step, input, &payload, &recorded, &mut measured)
             } else {
                 Err(plan_unreadable(
                     "a step is of a kind this driver does not carry out",
@@ -1180,6 +1797,7 @@ mod tests {
             )]),
             safe_state: None,
             on_link_loss: None,
+            firmware_update: None,
         }
     }
 
@@ -1222,6 +1840,13 @@ mod tests {
             identified: BTreeSet::new(),
             serial: None,
             staged: None,
+            staged_image: None,
+            endpoint: super::Endpoint {
+                protocol: "modbus_tcp".to_owned(),
+                address: "127.0.0.1:1".to_owned(),
+                unit: 1,
+            },
+            identity: BTreeMap::new(),
             frames_left: u32::try_from(DEFAULT_MAX_FRAMES).unwrap(),
             pending: None,
             unread: None,

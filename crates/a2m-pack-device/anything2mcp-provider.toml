@@ -109,12 +109,20 @@ class = "input"
 code = "payload_unreadable"
 
 [[failure_codes]]
+class = "input"
+code = "image_not_accepted"
+
+[[failure_codes]]
 class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
 class = "policy"
 code = "device_serial_not_declared"
+
+[[failure_codes]]
+class = "policy"
+code = "update_precondition_unmet"
 
 [[failure_codes]]
 class = "policy"
@@ -138,6 +146,10 @@ code = "unexpected_reply"
 
 [[failure_codes]]
 class = "rejected"
+code = "image_refused"
+
+[[failure_codes]]
+class = "rejected"
 code = "device_refused"
 
 [[failure_codes]]
@@ -155,6 +167,14 @@ code = "frame_corrupt"
 [[failure_codes]]
 class = "transient"
 code = "device_busy"
+
+[[failure_codes]]
+class = "mismatch"
+code = "image_checksum_differs"
+
+[[failure_codes]]
+class = "possible_commit"
+code = "device_not_returned"
 
 [[failure_codes]]
 class = "possible_commit"

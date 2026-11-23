@@ -79,6 +79,24 @@ registers:
     data: text
     words: 9
     access: read
+  # The device's own update: where it reports its checksum, its update state,
+  # and why the last step was refused. Only readings; what the update writes
+  # is under `firmware_update` below, and no operation can write it.
+  firmware_checksum:
+    address: {table: input, offset: 118}
+    data: u32
+    type: integer
+    access: read
+  update_state:
+    address: {table: input, offset: 130}
+    data: u16
+    type: integer
+    access: read
+  update_error:
+    address: {table: input, offset: 131}
+    data: u16
+    type: integer
+    access: read
   # An address the device does not have, to show a refusal.
   absent_point:
     address: {table: holding, offset: 500}
@@ -88,3 +106,17 @@ safe_state:
   operation: example_pump_stop
   holds: {pump_speed_setpoint: "0", inlet_valve: "0"}
 on_link_loss: {device_reverts_to_safe_state: true, after: 2s}
+# The device's own update mechanism, from its documentation: a command
+# register, a length register, and blocks of at most 240 bytes written to one
+# address, with two slots. The device has to come back within ten seconds.
+firmware_update:
+  mechanism: register_blocks
+  command: 900
+  length: 901
+  block: 1000
+  block_bytes: 240
+  max_image_bytes: 4096
+  state: update_state
+  error: update_error
+  checksum: firmware_checksum
+  restart_within: 10s

@@ -234,6 +234,37 @@ pub(crate) struct OnLinkLoss {
     pub after_ms: Option<u32>,
 }
 
+/// The device's own update mechanism, as a map declares it: the addresses
+/// the sequence writes (which no register of the map names, so that no other
+/// operation can write them), and the registers it reads. The mechanism is
+/// `register_blocks`: one image length, one command register, and blocks
+/// written to one block address (spec section 310, Firmware).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdatePlan {
+    /// The holding offset the update commands are written to, alone.
+    pub command: u16,
+    /// The holding offset the image's length in bytes is written to.
+    pub length: u16,
+    /// The holding offset the blocks are written to, one block a frame.
+    pub block: u16,
+    /// The most image bytes one block carries.
+    pub block_bytes: u16,
+    /// The largest image the device takes, in bytes.
+    pub max_image_bytes: u32,
+    /// The register that reports the update's state: 0 idle, 1 receiving,
+    /// 2 verified, 3 failed.
+    pub state: String,
+    /// The register that says why the last update step was refused.
+    pub error: String,
+    /// The register that holds the device's own checksum of its image: the
+    /// CRC-32 of the image.
+    pub checksum: String,
+    /// How long the device has to come back after its commit, in
+    /// milliseconds.
+    pub restart_within_ms: u32,
+}
+
 /// One map, compiled: an entry of the plan's section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -246,6 +277,9 @@ pub(crate) struct MapPlan {
     pub registers: BTreeMap<String, RegisterPlan>,
     pub safe_state: Option<SafeState>,
     pub on_link_loss: Option<OnLinkLoss>,
+    /// The device's own update mechanism, where the map declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firmware_update: Option<UpdatePlan>,
 }
 
 /// The plan's section: every map of the target, by name.
@@ -319,6 +353,20 @@ pub(crate) fn schema() -> JsonSchema {
                 .required("device_reverts_to_safe_state", JsonSchema::bool())
                 .optional("after", JsonSchema::text()),
         )
+        .optional(
+            "firmware_update",
+            JsonSchema::object()
+                .required("mechanism", JsonSchema::words(&["register_blocks"]))
+                .required("command", JsonSchema::int_between(0, 0xFFFF))
+                .required("length", JsonSchema::int_between(0, 0xFFFF))
+                .required("block", JsonSchema::int_between(0, 0xFFFF))
+                .required("block_bytes", JsonSchema::int_between(1, 240))
+                .required("max_image_bytes", JsonSchema::int_between(1, 0xFFFF))
+                .required("state", JsonSchema::name())
+                .required("error", JsonSchema::name())
+                .required("checksum", JsonSchema::name())
+                .required("restart_within", JsonSchema::text()),
+        )
 }
 
 /// A length of time written as `20ms` or `5s`, in milliseconds.
@@ -352,7 +400,7 @@ fn decimal_of(doc: &Located<Doc>) -> Option<Decimal> {
 }
 
 /// A scalar as the text a person wrote.
-fn scalar_text(doc: &Located<Doc>) -> String {
+pub(crate) fn scalar_text(doc: &Located<Doc>) -> String {
     match &doc.value {
         Doc::Text(text) => text.clone(),
         Doc::Int(number) => number.to_string(),
@@ -514,6 +562,9 @@ impl Compiler<'_, '_> {
                 .unwrap_or(false),
             after_ms: self.time(loss.get("after")),
         });
+        let firmware_update = doc
+            .get("firmware_update")
+            .and_then(|update| self.update(update, &registers));
         Some((
             name,
             MapPlan {
@@ -531,8 +582,58 @@ impl Compiler<'_, '_> {
                 registers,
                 safe_state,
                 on_link_loss,
+                firmware_update,
             },
         ))
+    }
+
+    /// The update mechanism a map declares, once every register it reads
+    /// is one the map holds and can be read without effect.
+    fn update(
+        &mut self,
+        doc: &Located<Doc>,
+        registers: &BTreeMap<String, RegisterPlan>,
+    ) -> Option<UpdatePlan> {
+        let number = |key: &str| doc.get(key).and_then(Located::as_int);
+        let restart_within_ms = self.time(doc.get("restart_within"))?;
+        let mut fine = true;
+        let mut register = |this: &mut Self, key: &str, words: u16| -> String {
+            let name = doc.text(key).unwrap_or_default();
+            let ok = registers.get(name).is_some_and(|found| {
+                found.access.readable()
+                    && found.read_effect == ReadEffect::None
+                    && found.table == Table::Input
+                    && found.words == words
+                    && found.kind != ValueKind::Text
+            });
+            if !ok {
+                this.problem(
+                    "firmware_update_invalid",
+                    doc.get(key).map_or(&doc.at, |found| &found.at),
+                    format!("`{key}` names `{name}`, which is not a number in an `input` register of this map that can be read without effect, of {words} word(s)."),
+                    "Name a register of this map that holds the update's state, its error, or the device's checksum, in the table `input`.",
+                );
+                fine = false;
+            }
+            name.to_owned()
+        };
+        let state = register(self, "state", 1);
+        let error = register(self, "error", 1);
+        let checksum = register(self, "checksum", 2);
+        if !fine {
+            return None;
+        }
+        Some(UpdatePlan {
+            command: u16::try_from(number("command")?).ok()?,
+            length: u16::try_from(number("length")?).ok()?,
+            block: u16::try_from(number("block")?).ok()?,
+            block_bytes: u16::try_from(number("block_bytes")?).ok()?,
+            max_image_bytes: u32::try_from(number("max_image_bytes")?).ok()?,
+            state,
+            error,
+            checksum,
+            restart_within_ms,
+        })
     }
 
     #[allow(clippy::too_many_lines)] // one check after another on one register; splitting hides the order
