@@ -886,11 +886,14 @@ impl DraftingRule for DescribedOperationRule {
             ));
         };
         let name = operation.name();
-        // The surface is the one whose address the description was read
-        // for, when the target already declares it.
-        let origin = match finding.subject() {
-            a2m_core::Subject::Address(address) => Some(address.origin()),
-            _ => None,
+        // The surface is the one the description was read for. A discovery
+        // is of one surface, and its findings carry that surface's origin
+        // and path; a target that declares one `http` surface has no other
+        // to name, and with several the origin and the path they end in
+        // decide, or the question stays.
+        let (origin, at) = match finding.subject() {
+            a2m_core::Subject::Address(address) => (Some(address.origin()), address.path()),
+            _ => (None, "/"),
         };
         let surface = cx
             .existing()
@@ -898,15 +901,35 @@ impl DraftingRule for DescribedOperationRule {
             .and_then(|file| file.docs.first())
             .and_then(|target| target.get("surfaces"))
             .and_then(|surfaces| {
-                surfaces.entries().iter().find(|entry| {
-                    entry.value.text("kind") == Some(HTTP_SURFACE.as_str())
-                        && origin.is_some_and(|origin| {
-                            entry
-                                .value
-                                .text(crate::ADDRESS_KEY)
-                                .is_some_and(|base| base.trim_end_matches('/') == origin)
-                        })
-                })
+                let https: Vec<_> = surfaces
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.value.text("kind") == Some(HTTP_SURFACE.as_str()))
+                    .collect();
+                if let [only] = https.as_slice() {
+                    return Some(*only);
+                }
+                // Those at the finding's origin, each with the path its
+                // address ends in; the longest that the finding's path
+                // begins with, when one is longer than all the others.
+                let origin = origin?;
+                let mut best: Vec<(usize, &_)> = Vec::new();
+                for entry in https {
+                    let base = crate::driver::Origin::of(entry.value.text(crate::ADDRESS_KEY)?);
+                    let Ok(base) = base else { continue };
+                    let within = base.prefix.is_empty()
+                        || at == base.prefix
+                        || at.starts_with(&format!("{}/", base.prefix));
+                    if base.text == origin && within {
+                        best.push((base.prefix.len(), entry));
+                    }
+                }
+                let longest = best.iter().map(|(length, _)| *length).max()?;
+                let mut longest = best.iter().filter(|(length, _)| *length == longest);
+                match (longest.next(), longest.next()) {
+                    (Some((_, entry)), None) => Some(*entry),
+                    _ => None,
+                }
             })
             .map_or_else(
                 || {
