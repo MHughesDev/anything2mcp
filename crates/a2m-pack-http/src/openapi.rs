@@ -627,6 +627,13 @@ pub(crate) struct DescribedOperation {
     /// and path, the same in every run and the same for no other read: the
     /// file it takes when it is given no tool name.
     pub stem: Option<String>,
+    /// The name of the endpoint entry, when the import has made every
+    /// operation's name and this one's is its own alone ([`assign_endpoints`]).
+    /// A finding that states none is named by [`Self::base_name`].
+    pub endpoint: Option<String>,
+    /// True when every name the operation could take is another's: it takes
+    /// none, and its endpoint is drafted with its name as an open question.
+    pub endpoint_shared: bool,
     /// The base path a 2.0 description states, when it states one that is
     /// not the root: leading slash, no trailing one.
     pub base_path: Option<String>,
@@ -669,6 +676,14 @@ impl DescribedOperation {
             (
                 "stem".to_owned(),
                 self.stem.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "endpoint".to_owned(),
+                self.endpoint.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "endpoint_shared".to_owned(),
+                Json::Bool(self.endpoint_shared),
             ),
             (
                 "base_path".to_owned(),
@@ -722,6 +737,11 @@ impl DescribedOperation {
                 .map(str::to_owned),
             shared: json.get("shared") == Some(&Json::Bool(true)),
             stem: json.get("stem").and_then(Json::as_text).map(str::to_owned),
+            endpoint: json
+                .get("endpoint")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
+            endpoint_shared: json.get("endpoint_shared") == Some(&Json::Bool(true)),
             base_path: json
                 .get("base_path")
                 .and_then(Json::as_text)
@@ -729,15 +749,31 @@ impl DescribedOperation {
         })
     }
 
-    /// The name of the endpoint entry drafted for the operation.
+    /// The name of the endpoint entry drafted for the operation: the one
+    /// the import gave it, or, for a finding that states none, the name its
+    /// own words make.
     pub(crate) fn name(&self) -> String {
+        self.endpoint.clone().unwrap_or_else(|| self.base_name())
+    }
+
+    /// The name from the operation's `operationId`, when it makes one that
+    /// begins with a lowercase letter; else the one from its method and path.
+    pub(crate) fn base_name(&self) -> String {
+        self.id_name().unwrap_or_else(|| self.path_name())
+    }
+
+    fn id_name(&self) -> Option<String> {
         let from_id = self.operation_id.as_deref().map(snake).unwrap_or_default();
-        let name = if from_id.starts_with(|c: char| c.is_ascii_lowercase()) {
-            from_id
-        } else {
-            snake(&format!("{} {}", self.method, self.path))
-        };
-        name.chars().take(60).collect()
+        from_id
+            .starts_with(|c: char| c.is_ascii_lowercase())
+            .then(|| from_id.chars().take(60).collect())
+    }
+
+    fn path_name(&self) -> String {
+        snake(&format!("{} {}", self.method, self.path))
+            .chars()
+            .take(60)
+            .collect()
     }
 
     /// The path as a template of this pack: each placeholder a lowercase
@@ -861,20 +897,18 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 walk.parameters(item_parameters(resolved), operation.get("parameters"))?;
             // A 3.x request body that is required is a parameter the read
             // needs, as a 2.0 `in: body` one is: the same check refuses it.
-            if !swagger {
-                if let Some(body) = operation.get("requestBody") {
-                    walk.step(1)?;
-                    if walk.resolve(body)?.and_then(|body| body.get("required"))
-                        == Some(&Json::Bool(true))
-                    {
-                        parameters.push(Parameter {
-                            name: "body".to_owned(),
-                            place: "body".to_owned(),
-                            required: true,
-                            kind: "any".to_owned(),
-                            example: None,
-                        });
-                    }
+            if !swagger && let Some(body) = operation.get("requestBody") {
+                walk.step(1)?;
+                if walk.resolve(body)?.and_then(|body| body.get("required"))
+                    == Some(&Json::Bool(true))
+                {
+                    parameters.push(Parameter {
+                        name: "body".to_owned(),
+                        place: "body".to_owned(),
+                        required: true,
+                        kind: "any".to_owned(),
+                        example: None,
+                    });
                 }
             }
             walk.write(length(path))?;
@@ -898,11 +932,14 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 object: None,
                 shared: false,
                 stem: None,
+                endpoint: None,
+                endpoint_shared: false,
                 base_path: base_path.clone(),
             });
         }
     }
     assign_objects(&mut found, &mut walk)?;
+    assign_endpoints(&mut found, &mut walk)?;
     Ok(found)
 }
 
@@ -1121,6 +1158,60 @@ fn assign_objects(
     Ok(())
 }
 
+/// Gives each operation the name of its endpoint entry, and gives no two the
+/// same, so that no two files of `endpoints/` are one.
+///
+/// An operation is named from its `operationId`, or from its method and
+/// path where that makes no name. Operations that would share a name over
+/// the whole description do not take it: each that has an `operationId`
+/// falls back to the name its method and path make, and once every name is
+/// made, those still shared are marked `endpoint_shared`, take none, and are
+/// drafted with the name as an open question in a file named for their
+/// method and path. No operation is dropped and none takes another's name.
+/// The names are a function of the set of operations, never of their order.
+/// The work is counted as steps.
+///
+/// # Errors
+///
+/// `input`/`description_too_large` past the step bound.
+fn assign_endpoints(
+    operations: &mut [DescribedOperation],
+    walk: &mut Walk<'_>,
+) -> Result<(), Failure> {
+    fn shared_names(names: &[String]) -> BTreeSet<String> {
+        let mut seen = BTreeSet::new();
+        let mut shared = BTreeSet::new();
+        for name in names {
+            if !seen.insert(name.clone()) {
+                shared.insert(name.clone());
+            }
+        }
+        shared
+    }
+    let mut names: Vec<String> = Vec::with_capacity(operations.len());
+    for operation in operations.iter() {
+        let name = operation.base_name();
+        walk.step(length(&name).saturating_add(1))?;
+        names.push(name);
+    }
+    let shared = shared_names(&names);
+    for (operation, name) in operations.iter().zip(names.iter_mut()) {
+        if shared.contains(name.as_str()) && operation.id_name().is_some() {
+            *name = operation.path_name();
+        }
+    }
+    walk.step(u64::try_from(names.len()).unwrap_or(u64::MAX))?;
+    let shared = shared_names(&names);
+    for (operation, name) in operations.iter_mut().zip(names) {
+        if shared.contains(&name) {
+            operation.endpoint_shared = true;
+        } else {
+            operation.endpoint = Some(name);
+        }
+    }
+    Ok(())
+}
+
 /// Whether a `security` statement lets an operation be called with no
 /// credential, by the format's rule: none stated, an empty list, or a list
 /// that holds an empty requirement.
@@ -1177,6 +1268,9 @@ pub(crate) struct DescribedOperationRule {
     pub(crate) kind: FindingKind,
 }
 
+/// What an endpoint that was given no name is asked.
+const NAME_SHARED: &str = "Two or more operations of the description would share one endpoint name, so none was given by rule. What is this endpoint's name?";
+
 impl DraftingRule for DescribedOperationRule {
     fn finding_kind(&self) -> FindingKind {
         self.kind.clone()
@@ -1193,7 +1287,13 @@ impl DraftingRule for DescribedOperationRule {
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));
         };
-        let name = operation.name();
+        // An operation whose name is another's takes none: its name is an
+        // open question, in a file named for its method and path.
+        let name = if operation.endpoint_shared {
+            "(a name not yet given)".to_owned()
+        } else {
+            operation.name()
+        };
         // The surface is the one the description was read for, and it is
         // named only when it is certain. A surface of the target that
         // takes it is of kind `http`, at the finding's origin, with an
@@ -1273,7 +1373,14 @@ impl DraftingRule for DescribedOperationRule {
             responses.push(("absent", statuses(&operation.absent)));
         }
         let mut entry = vec![
-            ("endpoint", DraftValue::text(&name)),
+            (
+                "endpoint",
+                if operation.endpoint_shared {
+                    cx.open_question(NAME_SHARED)
+                } else {
+                    DraftValue::text(&name)
+                },
+            ),
             ("surface", surface),
             ("method", DraftValue::text(&operation.method)),
             ("path", path),
@@ -1310,7 +1417,14 @@ impl DraftingRule for DescribedOperationRule {
             entry.push(("responses", DraftValue::map(responses)));
         }
         Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("endpoints/{name}.yaml"))?,
+            path: RelPath::new(&if operation.endpoint_shared {
+                format!(
+                    "endpoints/held_{}.yaml",
+                    path_stem(&operation.method, &operation.path)
+                )
+            } else {
+                format!("endpoints/{name}.yaml")
+            })?,
             body: DraftValue::map(entry),
         }])
     }
@@ -1647,6 +1761,85 @@ mod tests {
             let found = operations(read(&body).as_bytes()).unwrap();
             assert_eq!(would_draft(&found[0]), drafted, "{body}");
         }
+    }
+
+    /// A description of GETs, each `(path, operationId)`, in the order given.
+    fn with_ids(operations: &[(&str, Option<&str>)]) -> Vec<DescribedOperation> {
+        let reads: Vec<String> = operations
+            .iter()
+            .map(|(path, id)| {
+                let id = id.map_or_else(String::new, |id| format!(r#""operationId": "{id}","#));
+                format!(
+                    r#""{path}": {{"get": {{{id} "responses": {{"200": {{"description": "ok"}}}}}}}}"#
+                )
+            })
+            .collect();
+        let text = format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            reads.join(",")
+        );
+        super::operations(text.as_bytes()).unwrap()
+    }
+
+    fn endpoint_names(found: &[DescribedOperation]) -> std::collections::BTreeMap<String, String> {
+        found
+            .iter()
+            .map(|read| {
+                (
+                    read.path.clone(),
+                    read.endpoint.clone().unwrap_or_else(|| "(held)".to_owned()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_operations_with_one_operation_id_take_two_endpoint_names_in_any_order() {
+        let forward = with_ids(&[
+            ("/a", Some("list")),
+            ("/b", Some("list")),
+            ("/c", Some("one")),
+        ]);
+        let reversed = with_ids(&[
+            ("/c", Some("one")),
+            ("/b", Some("list")),
+            ("/a", Some("list")),
+        ]);
+        let names = endpoint_names(&forward);
+        assert_eq!(names["/a"], "get_a");
+        assert_eq!(names["/b"], "get_b");
+        assert_eq!(names["/c"], "one");
+        assert!(forward.iter().all(|read| !read.endpoint_shared));
+        assert_eq!(names, endpoint_names(&reversed));
+    }
+
+    #[test]
+    fn operations_whose_fallback_name_collides_too_are_each_held_and_none_is_merged() {
+        // `/a/b`, `/a_b`, and `/a.b` all make `get_a_b` from method and path.
+        let forward = with_ids(&[("/a/b", Some("x")), ("/a_b", Some("x")), ("/a.b", None)]);
+        let reversed = with_ids(&[("/a.b", None), ("/a_b", Some("x")), ("/a/b", Some("x"))]);
+        for found in [&forward, &reversed] {
+            assert_eq!(found.len(), 3);
+            assert!(found.iter().all(|read| read.endpoint_shared));
+            assert!(found.iter().all(|read| read.endpoint.is_none()));
+        }
+        // An operation with a name of its own is not held by another's trouble.
+        let mixed = with_ids(&[("/a/b", Some("x")), ("/a_b", Some("x")), ("/c", Some("y"))]);
+        assert_eq!(endpoint_names(&mixed)["/c"], "y");
+    }
+
+    #[test]
+    fn a_fallback_name_that_is_another_operations_is_held_for_both() {
+        // `/d` falls back to `get_d`, which `/e` has by its own id.
+        let found = with_ids(&[
+            ("/d", Some("dup")),
+            ("/f", Some("dup")),
+            ("/e", Some("get_d")),
+        ]);
+        let names = endpoint_names(&found);
+        assert_eq!(names["/d"], "(held)");
+        assert_eq!(names["/e"], "(held)");
+        assert_eq!(names["/f"], "get_f");
     }
 
     #[test]
