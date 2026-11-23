@@ -28,6 +28,12 @@ use crate::tx::{Durability, Owner, PolicyKey, Tx};
 pub const DATABASE_FILE_NAME: &str = "store.sqlite3";
 /// The name of the folder of evidence blobs in the data directory.
 pub const BLOB_FOLDER_NAME: &str = "blobs";
+
+/// The name of the advisory lock file the store holds in its data folder
+/// while it is open. It is not the engine lock (`engine.lock`, taken by
+/// `a2m-local`): this one lets the store itself fail closed when a second
+/// process opens the same folder with the engine lock bypassed.
+pub const STORE_LOCK_NAME: &str = "store.lock";
 /// The name of the span around each commit.
 pub const COMMIT_SPAN: &str = "a2m.store.commit";
 
@@ -249,6 +255,10 @@ pub(crate) struct Inner {
     writer: Lane,
     readers: Option<Lane>,
     pub(crate) shared: Arc<Shared>,
+    /// The store's advisory lock on its data folder, held until the last
+    /// clone is dropped or [`Store::release_folder`] is called; `None` for a
+    /// store in memory.
+    folder_lock: std::sync::Mutex<Option<std::fs::File>>,
 }
 
 /// The store. Cheap to clone; every clone is the same store. It closes when
@@ -268,7 +278,41 @@ pub struct StoreHealth {
     pub vault_attached: bool,
 }
 
+/// Takes the store's advisory lock on its data folder, without waiting.
+fn take_folder_lock(dir: &std::path::Path) -> Result<std::fs::File, Failure> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(STORE_LOCK_NAME))
+        .map_err(|_| failure::unavailable("its lock file cannot be opened"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(failure::unavailable(
+            "another process has this data folder's store open",
+        )),
+        Err(std::fs::TryLockError::Error(_)) => {
+            Err(failure::unavailable("its lock file cannot be locked"))
+        }
+    }
+}
+
 impl Store {
+    /// Lets go of the advisory lock on the data folder, so that another
+    /// process may open it. The engine calls this when it has closed: the
+    /// store may still be held by a clone that outlives the engine, and
+    /// nothing is written through it afterwards. A second call, and a store
+    /// in memory, do nothing.
+    pub fn release_folder(&self) {
+        let held = self
+            .inner
+            .folder_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(held);
+    }
+
     /// Opens the store: makes the data directory if it is not there, checks
     /// the database's integrity, and applies the migrations it lacks.
     ///
@@ -277,13 +321,16 @@ impl Store {
     /// `busy`/`store_corrupt` when the integrity check fails;
     /// `busy`/`store_version_unsupported` when a newer engine wrote the
     /// store or an applied migration differs from the one this engine
-    /// carries; `busy`/`store_unavailable` when the file cannot be opened.
+    /// carries; `busy`/`store_unavailable` when the file cannot be opened or
+    /// another process holds the data folder's store lock.
     pub async fn open(config: StoreConfig) -> Result<Self, Failure> {
+        let mut folder_lock = None;
         let (place, blob_dir) = match &config.data_dir {
             Some(dir) => {
                 let blobs = dir.join(BLOB_FOLDER_NAME);
                 std::fs::create_dir_all(&blobs)
                     .map_err(|_| failure::unavailable("the data directory cannot be made"))?;
+                folder_lock = Some(take_folder_lock(dir)?);
                 (Place::File(dir.join(DATABASE_FILE_NAME)), Some(blobs))
             }
             None => (Place::Memory, None),
@@ -320,6 +367,7 @@ impl Store {
                 writer,
                 readers,
                 shared,
+                folder_lock: std::sync::Mutex::new(folder_lock),
             }),
         })
     }

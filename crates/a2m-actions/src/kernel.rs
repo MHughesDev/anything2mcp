@@ -969,6 +969,11 @@ impl Kernel {
                 },
             )
             .await;
+        // The engine is closed: the store's lock on its data folder goes,
+        // though a clone of the store may outlive this kernel for a while.
+        if let Some(store) = &self.inner.store {
+            store.release_folder();
+        }
     }
 }
 

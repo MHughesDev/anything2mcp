@@ -71,8 +71,11 @@ impl StoreConfig {
 }
 #[derive(Clone)] pub struct Store { /* the writing thread, the reading threads, what is attached */ }
 impl Store {
-    /// Opens, checks integrity, and migrates. Refuses a store a newer engine wrote.
+    /// Opens, checks integrity, and migrates. Refuses a store a newer engine wrote, and one
+    /// whose data folder another open store holds (`store.lock`, an advisory lock: `busy`/`store_unavailable`).
     pub async fn open(config: StoreConfig) -> Result<Store, Failure>;
+    /// Lets go of that lock; the kernel calls it when it has closed, as a clone may outlive it.
+    pub fn release_folder(&self);
     /// What the vault is opened with. Reads and writes only `vault_keys`.
     pub fn key_records(&self) -> StoreKeyRecords;
     /// Joins the opened vault: sealing, the keyed digest, the redactor. Until then runs, events,

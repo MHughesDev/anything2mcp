@@ -1148,3 +1148,38 @@ async fn a_broken_audit_chain_is_detected() {
         ChainCheck::Broken { at: 2 }
     );
 }
+
+/// The store fails closed on its own: a second open of one data folder
+/// is refused by name while the first is open, even when no engine lock
+/// stands in the way, and is let in when the first has closed.
+#[tokio::test]
+async fn a_second_open_of_one_data_folder_is_refused_while_the_first_is_open() {
+    let folder = Folder::new("twice");
+    let first = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap();
+
+    let second = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(second.class(), FailureClass::Busy);
+    assert_eq!(second.code(), &codes::STORE_UNAVAILABLE);
+
+    // A clone is the same store: the folder is still held.
+    let clone = first.clone();
+    drop(first);
+    let still = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(still.code(), &codes::STORE_UNAVAILABLE);
+
+    // Let go on purpose, the folder opens though a clone is still held.
+    clone.release_folder();
+    let released = Store::open(StoreConfig::in_dir(folder.path())).await;
+    assert!(released.is_ok(), "{:?}", released.err());
+    drop(released);
+
+    drop(clone);
+    let again = Store::open(StoreConfig::in_dir(folder.path())).await;
+    assert!(again.is_ok(), "{:?}", again.err());
+}
