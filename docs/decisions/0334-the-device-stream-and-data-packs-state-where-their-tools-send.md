@@ -1,4 +1,4 @@
-# 0399. The device, stream, and data packs state where their tools send
+# 0334. The device, stream, and data packs state where their tools send
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
