@@ -1645,3 +1645,40 @@ fn a2m_files_texts(folder: &std::path::Path) -> Vec<(String, String)> {
     }
     found
 }
+
+/// An output the command's output form does not make certain is compiled as
+/// possibly absent (decision 0305), and a read that has no value for it
+/// still returns `null`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_output_the_form_does_not_make_certain_is_flagged_and_still_reads_null() {
+    let scene = Scene::build(Arc::new(NoSecrets), |files| {
+        let file = files
+            .iter_mut()
+            .find(|(path, _)| path == "operations/item_get.yaml")
+            .unwrap();
+        file.1 = file.1.replacen(
+            "  location: {type: location_code}\n",
+            "  location: {type: location_code}\n  ref: {type: item_name}\n",
+            1,
+        );
+    });
+    let flags: Vec<(String, bool)> = scene
+        .plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == "example_item_get")
+        .unwrap()
+        .outputs
+        .iter()
+        .map(|output| (output.name.clone(), output.may_be_absent))
+        .collect();
+    // `ref` is a field the command's JSON form does not require; `name`,
+    // `quantity`, and `location` it does.
+    assert!(flags.contains(&("ref".to_owned(), true)), "{flags:?}");
+    for certain in ["name", "quantity", "location"] {
+        assert!(flags.contains(&(certain.to_owned(), false)), "{flags:?}");
+    }
+    // The item has no `ref`: the read still returns `null` for it.
+    let item = done(scene.read("example_item_get", &sku("SK-1001")).await);
+    assert_eq!(item.values.get("ref"), Some(&Value::Null));
+}

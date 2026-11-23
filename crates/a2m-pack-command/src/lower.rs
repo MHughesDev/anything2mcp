@@ -187,6 +187,7 @@ fn steps(
     let payload = PackPayload::encode(&StepPayload::Command {
         key_params,
         one: run.role == Role::Lookup,
+        absent: command.output.may_be_absent(),
     })
     .ok()?;
     let step = |kind: StepKind, row: &CodeEntry, args: Vec<StepArg>, commits, lookup| Step {
@@ -314,6 +315,30 @@ impl Lowering for CliLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// The outputs the command's output form does not make certain to be
+    /// there, read from the payloads of the steps the lowering made
+    /// (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let mut names = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == PARSE)
+        {
+            if let Ok(StepPayload::Command { absent, .. }) = step.payload.decode::<StepPayload>() {
+                for name in absent {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
     }
 
     fn binding_schema(&self) -> &JsonSchema {
