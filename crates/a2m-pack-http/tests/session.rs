@@ -1400,3 +1400,56 @@ async fn a_read_with_no_name_to_give_is_drafted_with_an_open_question_and_a_file
         2
     );
 }
+
+#[tokio::test]
+async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let operation = |path: &str, id: &str| {
+        format!(
+            r#""{path}": {{"get": {{"operationId": "{id}", "responses": {{"200": {{"description": "ok"}}}}}}}}"#
+        )
+    };
+    let endpoints = |report: &a2m_files::DraftReport| -> Vec<String> {
+        report
+            .written
+            .iter()
+            .map(|path| path.as_str().to_owned())
+            .filter(|path| path.starts_with("endpoints/"))
+            .collect()
+    };
+    let drafted = |ids: &[(&str, &str)]| {
+        let reads: Vec<String> = ids.iter().map(|(p, i)| operation(p, i)).collect();
+        format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            reads.join(",")
+        )
+    };
+
+    // One id twice: each falls back to its method and path.
+    let findings =
+        findings_from_description(drafted(&[("/a", "list"), ("/b", "list")]), &base).await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let mut written = endpoints(&report);
+    written.sort();
+    assert_eq!(written, ["endpoints/get_a.yaml", "endpoints/get_b.yaml"]);
+
+    // The fallback collides too: two files, each held, none merged.
+    let findings = findings_from_description(drafted(&[("/a/b", "x"), ("/a_b", "x")]), &base).await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let written = endpoints(&report);
+    assert_eq!(written.len(), 2, "{written:?}");
+    assert!(
+        written.iter().all(|file| file.contains("held_")),
+        "{written:?}"
+    );
+    assert_eq!(
+        report
+            .open_questions
+            .iter()
+            .filter(|question| question.question.contains("share one endpoint name"))
+            .count(),
+        2
+    );
+}

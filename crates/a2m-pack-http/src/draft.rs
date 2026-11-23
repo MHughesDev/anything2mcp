@@ -170,6 +170,7 @@ pub(crate) fn would_draft(operation: &DescribedOperation) -> bool {
 
 /// What a read that was given no name is asked.
 const NAME_SHARED: &str = "Two or more reads of the description would share one tool name, so none was given by rule. What is this read's tool name?";
+const NAME_ENDPOINT_SHARED: &str = "Two or more operations of the description would share one endpoint name, so none was given by rule. Which endpoint does this read bind?";
 const NAME_TOO_LONG: &str = "The tool name made from this read's path is longer than a tool name may be, so none was given by rule. What is this read's tool name?";
 
 fn unreadable() -> Failure {
@@ -251,7 +252,11 @@ impl DraftingRule for DescribedReadRule {
                 format!("operations/{object}_{verb}.yaml"),
             ),
         };
-        let endpoint = operation.name();
+        let endpoint = if operation.endpoint_shared {
+            "(a name not yet given)".to_owned()
+        } else {
+            operation.name()
+        };
         let inputs: Vec<(String, DraftValue)> = placeholders
             .iter()
             .map(|(name, parameter)| {
@@ -267,7 +272,14 @@ impl DraftingRule for DescribedReadRule {
                 "verb",
                 DraftValue::text(if listed { "list" } else { "read" }),
             ),
-            ("endpoint", DraftValue::text(&endpoint)),
+            (
+                "endpoint",
+                if operation.endpoint_shared {
+                    cx.open_question(NAME_ENDPOINT_SHARED)
+                } else {
+                    DraftValue::text(&endpoint)
+                },
+            ),
         ];
         if !extract.is_empty() {
             binding.push(("extract", DraftValue::Map(extract)));
