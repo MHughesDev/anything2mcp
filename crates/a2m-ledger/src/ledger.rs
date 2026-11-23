@@ -759,11 +759,12 @@ fn may_move(from: RunState, to: RunState) -> bool {
 /// The presence checks that show a person was present, as the policy engine
 /// writes them in `approvals.presence_check`. `not_available` is the one
 /// other word: a machine with no such check.
-const PRESENCE_PROVED: [&str; 5] = [
+const PRESENCE_PROVED: [&str; 6] = [
     "os_prompt",
     "polkit",
     "local_authentication",
     "windows_hello",
+    "field_harness",
     "signed_in",
 ];
 

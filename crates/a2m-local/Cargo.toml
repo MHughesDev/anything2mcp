@@ -19,7 +19,7 @@ axum.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["fs"] }

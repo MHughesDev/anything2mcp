@@ -26,6 +26,7 @@ use tokio::time::Instant;
 // The macOS and Windows prompts are compiled into the tests on every
 // system, so that their mapping is tested everywhere; their calls into the
 // system are compiled on their own system only.
+pub(crate) mod field;
 #[cfg(any(target_os = "macos", test))]
 pub(crate) mod local_authentication;
 #[cfg(target_os = "linux")]
@@ -72,6 +73,11 @@ pub enum PromptName {
     LocalAuthentication,
     /// Windows Hello: a face, a fingerprint, or the Hello PIN.
     WindowsHello,
+    /// The field harness's prompt: a line read from a pipe only a test
+    /// runner holds. The shipped program never constructs a prompt that
+    /// answers with it (decision 0310); a record that names it shows that
+    /// a field test, not a person at an operating system's prompt, passed.
+    FieldHarness,
 }
 
 impl PromptName {
@@ -82,6 +88,7 @@ impl PromptName {
             Self::Polkit => "polkit",
             Self::LocalAuthentication => "local_authentication",
             Self::WindowsHello => "windows_hello",
+            Self::FieldHarness => "field_harness",
         }
     }
 }
@@ -219,6 +226,23 @@ pub struct PromptText {
     /// What it is about. For an approval, the first twelve characters of
     /// the hash of the change, which the page shows beside Approve.
     pub detail: String,
+    /// What the prompt is for. A prompt that answers only some kinds of
+    /// ask reads it.
+    pub purpose: PromptFor,
+}
+
+/// What a prompt is raised for: an approval of one write, or one of a
+/// person's own acts (a sign-in, a publish, a confirmation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptFor {
+    /// A person's act: a sign-in on the engine's own page, a publish, or a
+    /// confirmation.
+    Act,
+    /// An approval of a write, with the effect class of the operation it
+    /// would carry out. `None` where the asker does not know it; a prompt
+    /// that must refuse an `irreversible` operation treats `None` as
+    /// `irreversible` (rule 3).
+    Approval(Option<a2m_core::EffectClass>),
 }
 
 /// How a prompt ended.

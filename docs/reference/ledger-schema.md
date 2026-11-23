@@ -94,7 +94,7 @@ Append-only. An insert carrying an `epoch` other than the run's current `lease_e
 | `pattern`, `caller`, `window_start`, `window_end` | text, id, ts, ts | For standing scope |
 | `diff_hash`, `tool_version_hash` | text, text | What was approved |
 | `approver_id` | id | The person |
-| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed: `os_prompt`, `polkit`, `local_authentication`, `windows_hello`, or `signed_in`, each of which proves presence, or `not_available`, accepted only on the engine's own prompt (`local_prompt`) |
+| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed: `os_prompt`, `polkit`, `local_authentication`, `windows_hello`, `field_harness` (only a field test's harness records it, decision 0310), or `signed_in`, each of which proves presence, or `not_available`, accepted only on the engine's own prompt (`local_prompt`) |
 | `granted_at`, `expires_at`, `used_at`, `revoked_at` | ts | A run-scope approval is used once |
 
 ## decisions

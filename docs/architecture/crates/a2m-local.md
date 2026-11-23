@@ -154,9 +154,13 @@ pub trait PresencePrompt: Send + Sync {
     /// The surface never calls it while an earlier ask of its own has not answered.
     fn ask(&self, text: PromptText, deadline: tokio::time::Instant) -> BoxFuture<'_, PromptAnswer>;
 }
-pub struct PromptText { pub title: String, pub detail: String }
+pub struct PromptText { pub title: String, pub detail: String, pub purpose: PromptFor }
+pub enum PromptFor { Act, Approval(Option<EffectClass>) }              // what the ask is for; None = effect not known
+// `FieldPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the field
+// harness builds it. It passes Act and Approval(Some(not irreversible)) when the line read is the short
+// hash shown, and refuses Approval(Some(Irreversible)) and Approval(None) without asking.
 pub enum PresenceKind { OsPrompt, DialogOnly, NotAvailable }            // os_prompt, dialog_only, not_available
-pub enum PromptName { Polkit, LocalAuthentication, WindowsHello }       // polkit, local_authentication, windows_hello
+pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, FieldHarness }  // polkit, local_authentication, windows_hello, field_harness
 pub enum PresenceReason {                                               // one word, for a report
     Ready, NotBuilt, NoSystemBus, NoPolkit, PolicyNotInstalled, SessionNotActive,
     NoAgent, GrantedWithoutAsking, NoWindowStation, SessionRemote, SessionLocked,

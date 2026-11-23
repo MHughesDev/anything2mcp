@@ -47,7 +47,7 @@ use tokio::time::Instant;
 
 use crate::codes;
 use crate::presence::{
-    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptName, PromptText,
+    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptFor, PromptName, PromptText,
 };
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
@@ -299,11 +299,12 @@ fn short(diff_hash: Digest) -> String {
 /// The check an approval is recorded with: the policy engine has one word
 /// for each prompt an operating system owns, and this is the one place that
 /// maps them (decision 0145).
-const fn recorded_check(prompt: PromptName) -> PresenceCheck {
+pub(crate) const fn recorded_check(prompt: PromptName) -> PresenceCheck {
     match prompt {
         PromptName::Polkit => PresenceCheck::Polkit,
         PromptName::LocalAuthentication => PresenceCheck::LocalAuthentication,
         PromptName::WindowsHello => PresenceCheck::WindowsHello,
+        PromptName::FieldHarness => PresenceCheck::FieldHarness,
     }
 }
 
@@ -1356,6 +1357,8 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             PromptText {
                 title: format!("Approve a write by `{}`", pressed.tool),
                 detail: format!("Change {}", short(pressed.diff_hash)),
+                // The effect class does not reach the surface yet.
+                purpose: PromptFor::Approval(None),
             },
             pressed.deadline,
         )
@@ -1785,6 +1788,7 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, 
             PromptText {
                 title: format!("Carry out `{}`", pressed.action),
                 detail: format!("Act {}", short_act(pressed.act)),
+                purpose: PromptFor::Act,
             },
             pressed.deadline,
         )
@@ -2338,6 +2342,7 @@ impl PersonSurface for LocalSurface {
                     PromptText {
                         title: format!("Confirm `{}`", ask.action),
                         detail: ask.summary,
+                        purpose: PromptFor::Act,
                     },
                     // A prompt nobody answers ends as an approval's does.
                     deadline,

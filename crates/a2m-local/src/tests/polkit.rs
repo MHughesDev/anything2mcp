@@ -189,6 +189,7 @@ fn text() -> PromptText {
     PromptText {
         title: "Approve a write by `example_orders_item_upsert`".to_owned(),
         detail: "Change 0123456789ab".to_owned(),
+        purpose: crate::PromptFor::Approval(None),
     }
 }
 
