@@ -19,7 +19,8 @@ use crate::model::{
     ActingFor, ActionName, ActionRef, Context, IdentityMode, ModuleName, PrincipalKind,
     PrincipalRef, Question, Request, Resource, Role, RunRef, ToolRef, word,
 };
-use crate::set::{ApproveWrites, Compiled, PolicyTest, Settings};
+use crate::set::{ApproveWrites, Compiled, PolicyTest, Scope, Settings, Subject};
+use crate::toolset;
 
 word! {
     /// The answer to a question: a plain allow or deny.
@@ -229,6 +230,14 @@ pub(crate) fn evaluate(set: &Compiled, request: &Request) -> Verdict {
             refusal: (first.refusal)(),
         };
     }
+    // A toolset only narrows: its forbids are consulted before any permit.
+    if let Some(narrowed) = toolset::forbids(&set.layers, request) {
+        return Verdict {
+            answer: Answer::Deny,
+            rules: narrowed.rules,
+            refusal: narrowed.refusal,
+        };
+    }
     match permits(set, request) {
         Err(_) => Verdict::deny(EVALUATION_ERROR, failure::evaluation_failed()),
         Ok(Permits { rules, .. }) if !rules.is_empty() => Verdict {
@@ -283,6 +292,15 @@ fn permits(set: &Compiled, request: &Request) -> Result<Permits, Failure> {
                     }
                 }
             }
+            for (index, grant) in layers.role_grants.iter().enumerate() {
+                if holds(set, principal, grant.role) && grant.scope.covers(tool) {
+                    if grant.max_effect >= context.effect {
+                        found.rules.push(format!("role_grant.{index}"));
+                    } else {
+                        found.effect_too_low = true;
+                    }
+                }
+            }
         }
         (Question::ActAs, Resource::Identity(identity)) => {
             let fits = |mode: IdentityMode| match identity {
@@ -295,6 +313,14 @@ fn permits(set: &Compiled, request: &Request) -> Result<Permits, Failure> {
                     && fits(grant.identity_mode)
                 {
                     found.rules.push(format!("grant.{index}"));
+                }
+            }
+            for (index, grant) in layers.role_grants.iter().enumerate() {
+                if holds(set, principal, grant.role)
+                    && context.identity_mode == Some(grant.identity_mode)
+                    && fits(grant.identity_mode)
+                {
+                    found.rules.push(format!("role_grant.{index}"));
                 }
             }
         }
@@ -381,7 +407,74 @@ fn condition_holds(
     }
 }
 
-/// What a rule says, in words, for `explain`.
+/// Where a determining rule comes from, for `explain`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RuleKind {
+    /// A built-in guardrail, which no set can remove.
+    Guardrail,
+    /// A rule of the engine itself: the default denial, an evaluation error,
+    /// a kill switch, or a role that a question needs.
+    Engine,
+    /// A grant of the set.
+    Grant,
+    /// A grant given to a role.
+    RoleGrant,
+    /// A rule about labels.
+    Label,
+    /// A rule about per-call options.
+    Option,
+    /// A pre-approval rule.
+    PreApproval,
+    /// A toolset's narrowing.
+    Toolset,
+    /// A rule of a set this binary can no longer read.
+    Unknown,
+}
+
+/// The kind of rule an identifier names.
+pub(crate) fn kind_of(rule: &str) -> RuleKind {
+    if GUARDRAILS.iter().any(|g| g.id == rule) {
+        return RuleKind::Guardrail;
+    }
+    if BASE_RULES.iter().any(|(id, _)| *id == rule) {
+        return RuleKind::Engine;
+    }
+    match rule.split_once('.').map(|(kind, _)| kind) {
+        Some("grant") => RuleKind::Grant,
+        Some("role_grant") => RuleKind::RoleGrant,
+        Some("label") => RuleKind::Label,
+        Some("option") => RuleKind::Option,
+        Some("pre_approval") => RuleKind::PreApproval,
+        Some("toolset") => RuleKind::Toolset,
+        _ => RuleKind::Unknown,
+    }
+}
+
+/// Who a rule was given to, in words. A principal's identifier and a group's
+/// name are names, never secrets.
+fn who_words(who: &Subject) -> String {
+    match who {
+        Subject::Principal(id) => format!("the principal `{id}`"),
+        Subject::Group(group) => format!("the group `{group}`"),
+        Subject::Anyone => "every authenticated principal".to_owned(),
+    }
+}
+
+/// Which tools a scope covers, in words.
+fn scope_words(scope: &Scope) -> String {
+    match scope {
+        Scope::Target(target) => format!("every tool of the target `{target}`"),
+        Scope::Module(target, module) => {
+            format!("every tool of the module `{module}` of the target `{target}`")
+        }
+        Scope::Pattern(pattern) => format!("the tools named like `{pattern}`"),
+    }
+}
+
+/// What a rule says, in words, for `explain`. A rule of the set names the
+/// entry that decided: who holds it and what it covers. It never prints a
+/// pre-approval rule's condition, which an administrator wrote and which may
+/// hold anything.
 pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
     if let Some(guardrail) = GUARDRAILS.iter().find(|g| g.id == rule) {
         return guardrail.says.to_owned();
@@ -389,32 +482,72 @@ pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
     if let Some((_, says)) = BASE_RULES.iter().find(|(id, _)| *id == rule) {
         return (*says).to_owned();
     }
+    if rule == toolset::UNKNOWN_TOOLSET {
+        return "The call came through a toolset the policy set does not define, and an unknown toolset stops the call.".to_owned();
+    }
     let from_set = set.and_then(|set| {
         let (kind, rest) = rule.split_once('.')?;
         let layers = &set.layers;
         match kind {
             "grant" => {
-                let grant = layers.grants.get(rest.parse::<usize>().ok()?)?;
+                let index = rest.parse::<usize>().ok()?;
+                let grant = layers.grants.get(index)?;
                 Some(format!(
-                    "A grant covers this principal and this tool, up to the effect class `{}`, with the identity mode `{}`.",
-                    grant.max_effect, grant.identity_mode
+                    "Grant {index} gives {} {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    who_words(&grant.who),
+                    scope_words(&grant.scope),
+                    grant.max_effect,
+                    grant.identity_mode
+                ))
+            }
+            "role_grant" => {
+                let index = rest.parse::<usize>().ok()?;
+                let grant = layers.role_grants.get(index)?;
+                Some(format!(
+                    "Role grant {index} gives everyone who holds the role `{}` {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    grant.role,
+                    scope_words(&grant.scope),
+                    grant.max_effect,
+                    grant.identity_mode
                 ))
             }
             "label" => {
-                let grant = layers.labels.get(rest.parse::<usize>().ok()?)?;
+                let index = rest.parse::<usize>().ok()?;
+                let grant = layers.labels.get(index)?;
                 Some(format!(
-                    "A rule lets this principal see fields labelled up to `{}`.",
+                    "Label rule {index} lets {} see fields labelled up to `{}`.",
+                    who_words(&grant.who),
                     grant.up_to
                 ))
             }
-            "option" => Some("A rule lets this principal set this per-call option.".to_owned()),
-            "pre_approval" => {
-                let found = layers.pre_approvals.iter().find(|r| r.name == rest)?;
+            "option" => {
+                let index = rest.parse::<usize>().ok()?;
+                let grant = layers.options.get(index)?;
+                let option = grant.option.as_ref().map_or_else(
+                    || "every per-call option".to_owned(),
+                    |name| format!("the per-call option `{name}`"),
+                );
                 Some(format!(
-                    "The pre-approval rule `{}` lets a write of at most {} records proceed without a person.",
-                    found.name, found.max_records
+                    "Option rule {index} lets {} set {option}.",
+                    who_words(&grant.who)
                 ))
             }
+            "pre_approval" => {
+                let found = layers.pre_approvals.iter().find(|r| r.name == rest)?;
+                let condition = if found.condition.is_some() {
+                    ", and its condition held"
+                } else {
+                    ""
+                };
+                Some(format!(
+                    "The pre-approval rule `{}` lets {} write to {} without a person, up to {} records{condition}.",
+                    found.name,
+                    who_words(&found.who),
+                    scope_words(&found.scope),
+                    found.max_records
+                ))
+            }
+            "toolset" => toolset::describe(layers, rest),
             _ => None,
         }
     });
@@ -633,6 +766,9 @@ mod tests {
                 condition: Some("true".to_owned()),
             }],
             quotas: Vec::new(),
+            role_grants: Vec::new(),
+            toolsets: Vec::new(),
+            second_admin_publish: false,
             settings: Settings {
                 approve_writes: ApproveWrites::NamedApprover,
                 max_records_per_run: 1_000_000,

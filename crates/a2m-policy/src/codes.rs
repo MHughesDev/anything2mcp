@@ -33,6 +33,9 @@ a2m_core::failure_codes! {
     PRESENCE_REQUIRED = Policy, "presence_required",
         meaning "A change to a protected setting that only a person, present, may make.",
         next "Have the person make the change and pass the user-presence prompt.";
+    SECOND_ADMIN_REQUIRED = Policy, "second_admin_required",
+        meaning "A policy set that needs a second administrator to publish it was offered without one, or the second one may not review it.",
+        next "Have a second administrator, a person other than the publisher and the author, review and publish it with you.";
     POLICY_TESTS_FAILED = Input, "policy_tests_failed",
         meaning "A policy set whose own test table does not pass.",
         next "Correct the set or its tests until its test table passes, then publish it again.";

@@ -22,6 +22,7 @@ use crate::model::{
     word,
 };
 use crate::rules::{self, Answer};
+use crate::toolset::{RoleGrant, Toolset};
 
 /// The format of a stored policy set. Raised when the stored shape changes.
 pub const SET_FORMAT: u32 = 1;
@@ -270,8 +271,8 @@ pub struct PolicyTest {
 }
 
 /// What an administrator writes: one layer of roles, grants, and rules, with
-/// its settings and its tests. Lower layers that only narrow (workspace,
-/// toolset, target files) are not built yet.
+/// its settings and its tests. The toolsets are the lower layer that only
+/// narrows; the layers of a workspace and of target files are not built yet.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PolicyLayers {
     /// Who holds which role.
@@ -286,12 +287,76 @@ pub struct PolicyLayers {
     pub pre_approvals: Vec<PreApproval>,
     /// The quotas.
     pub quotas: Vec<Quota>,
+    /// The grants of roles: each is held by everyone who holds the role.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_grants: Vec<RoleGrant>,
+    /// The toolsets. They only narrow what the grants allow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub toolsets: Vec<Toolset>,
+    /// Whether publishing a version needs a second administrator besides
+    /// the one who publishes it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub second_admin_publish: bool,
     /// The protected settings.
     pub settings: Settings,
     /// The set's own tests. They are hashed into the version and stored
     /// beside the layers, and are never read back into a request.
     #[serde(skip)]
     pub tests: Vec<PolicyTest>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl PolicyLayers {
+    /// These layers with `grant` added. A grant the layers already hold is
+    /// not added twice.
+    #[must_use]
+    pub fn with_grant(&self, grant: Grant) -> Self {
+        let mut next = self.clone();
+        if !next.grants.contains(&grant) {
+            next.grants.push(grant);
+        }
+        next
+    }
+
+    /// These layers without `grant`, and whether it was there.
+    #[must_use]
+    pub fn without_grant(&self, grant: &Grant) -> (Self, bool) {
+        let mut next = self.clone();
+        let before = next.grants.len();
+        next.grants.retain(|held| held != grant);
+        let removed = next.grants.len() != before;
+        (next, removed)
+    }
+
+    /// These layers with the toolset of the same name replaced by `toolset`,
+    /// or added where there is none.
+    #[must_use]
+    pub fn with_toolset(&self, toolset: Toolset) -> Self {
+        let mut next = self.clone();
+        match next
+            .toolsets
+            .iter_mut()
+            .find(|set| set.name == toolset.name)
+        {
+            Some(held) => *held = toolset,
+            None => next.toolsets.push(toolset),
+        }
+        next
+    }
+
+    /// These layers without the toolset called `name`, and whether it was there.
+    #[must_use]
+    pub fn without_toolset(&self, name: &crate::model::ToolsetName) -> (Self, bool) {
+        let mut next = self.clone();
+        let before = next.toolsets.len();
+        next.toolsets.retain(|set| set.name != *name);
+        let removed = next.toolsets.len() != before;
+        (next, removed)
+    }
 }
 
 /// Where a set runs, which decides what it may say.
@@ -341,6 +406,9 @@ impl BuiltIn {
             options: vec![OptionGrant { who, option: None }],
             pre_approvals: Vec::new(),
             quotas: Vec::new(),
+            role_grants: Vec::new(),
+            toolsets: Vec::new(),
+            second_admin_publish: false,
             settings: Settings::default(),
             tests: rules::local_tests(user, workspace),
         };
@@ -457,6 +525,30 @@ impl CandidateSet {
         for grant in &layers.grants {
             check_scope(&grant.scope)?;
         }
+        for grant in &layers.role_grants {
+            check_scope(&grant.scope)?;
+        }
+        let mut toolset_names = BTreeSet::new();
+        for toolset in &layers.toolsets {
+            if !toolset_names.insert(toolset.name.as_str()) {
+                return Err(invalid(
+                    format!("Two toolsets are named `{}`.", toolset.name),
+                    "Give each toolset its own name.",
+                ));
+            }
+            if toolset.who.is_empty() || toolset.tools.is_empty() {
+                return Err(invalid(
+                    format!(
+                        "The toolset `{}` names no one who may connect, or no tool.",
+                        toolset.name
+                    ),
+                    "List who may connect to it and the tools it selects.",
+                ));
+            }
+            for scope in &toolset.tools {
+                check_scope(scope)?;
+            }
+        }
         if layers
             .quotas
             .iter()
@@ -551,6 +643,7 @@ impl CandidateSet {
     pub fn loosens(&self, current: &PolicyLayers) -> bool {
         let (new, old) = (&self.compiled.layers.settings, &current.settings);
         new.looser_than(old)
+            || (current.second_admin_publish && !self.compiled.layers.second_admin_publish)
             || self
                 .compiled
                 .layers
