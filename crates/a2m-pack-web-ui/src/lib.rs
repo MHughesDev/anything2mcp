@@ -117,6 +117,7 @@ fn surface_fields() -> JsonSchema {
         )
         .optional("color_scheme", JsonSchema::words(&["light", "dark"]))
         .optional("reduced_motion", JsonSchema::bool())
+        .optional("refuse_quietly", JsonSchema::list(JsonSchema::text()))
 }
 
 impl Pack for WebUiPack {

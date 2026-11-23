@@ -353,6 +353,12 @@ pub(crate) struct SurfaceFields {
     pub color_scheme: Option<String>,
     /// Whether the page is told the person prefers reduced motion.
     pub reduced_motion: Option<bool>,
+    /// Origins the surface's pages are refused without a stop: a request
+    /// of the page to one is failed in the browser, nothing is reported,
+    /// and the run goes on (package P3b). Each is an origin with its
+    /// scheme.
+    #[serde(default)]
+    pub refuse_quietly: Vec<String>,
 }
 
 /// A viewport.

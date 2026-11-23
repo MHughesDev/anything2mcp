@@ -111,7 +111,10 @@ async fn order_list(State(state): State<AppState>) -> Html<String> {
     )
 }
 
-async fn order_detail(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+pub(crate) async fn order_detail(
+    State(state): State<AppState>,
+    Path(order_id): Path<String>,
+) -> Response {
     let inner = state.lock().await;
     let Some(order) = inner.store.order(&order_id) else {
         return missing("order");

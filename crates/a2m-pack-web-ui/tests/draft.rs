@@ -1042,3 +1042,159 @@ fn a_column_or_a_value_named_as_a_secret_is_never_a_drafted_output() {
     );
     assert!(report.written.is_empty(), "{report:?}");
 }
+
+/// The order screen's finding as a scout gives it of a page that loads from
+/// other origins: the origins its observing tab refused, in the finding.
+fn order_screen_that_loads(origin: &str, path: &str, refused: &[&str]) -> Finding {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("findings")
+            .join("order_screen.json"),
+    )
+    .unwrap();
+    let shared: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut found: serde_json::Value =
+        serde_json::from_str(shared["found"].as_str().unwrap()).unwrap();
+    found["refused_origins"] = serde_json::json!(refused);
+    screen_finding(origin, path, &found.to_string())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_origin_and_it_runs()
+{
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let other = origin.replacen("127.0.0.1", "localhost", 1);
+    // The page of the order that loads an image and sends a `fetch` to the
+    // application's other name while it loads.
+    let path = "/leaving/loads/orders/A-100";
+    let finding = order_screen_that_loads(&origin, path, &[other.as_str()]);
+    let stand = Stand::new("drafted-destinations", Arc::new(NoSecrets));
+    let folder = new_target("drafts-destinations", &origin);
+    let report = draft(&stand, &folder, std::slice::from_ref(&finding));
+    assert!(
+        report.refused.is_empty() && report.kept_failing.is_empty(),
+        "{report:?}"
+    );
+    // Both reads the page's screens give declare the origin, as a person
+    // will review it; the screens do not.
+    for operation in [
+        "operations/leaving_loads_orders_a_100_line_items_list.yaml",
+        "operations/leaving_loads_orders_a_100_values_get.yaml",
+    ] {
+        let text = std::fs::read_to_string(folder.path().join(operation)).unwrap();
+        assert!(
+            text.contains("permissions:") && text.contains(&other),
+            "{operation}: {text}"
+        );
+    }
+    let screen = std::fs::read_to_string(
+        folder
+            .path()
+            .join("screens/leaving_loads_orders_a_100_line_items.yaml"),
+    )
+    .unwrap();
+    assert!(!screen.contains(&other), "{screen}");
+    let again = new_target("drafts-destinations-again", &origin);
+    draft(
+        &stand,
+        &again,
+        &[order_screen_that_loads(&origin, path, &[&other])],
+    );
+    assert_eq!(
+        std::fs::read(
+            folder
+                .path()
+                .join("operations/leaving_loads_orders_a_100_line_items_list.yaml")
+        )
+        .unwrap(),
+        std::fs::read(
+            again
+                .path()
+                .join("operations/leaving_loads_orders_a_100_line_items_list.yaml")
+        )
+        .unwrap()
+    );
+
+    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let read = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str().ends_with("_line_items_list"))
+        .unwrap();
+    assert_eq!(read.manifest.destinations, std::slice::from_ref(&other));
+    let name = read.name.as_str().to_owned();
+
+    // Without the declaration the page stops the run, naming the origin, and
+    // nothing reaches it.
+    let mut scene = Scene::over(stand, plan.clone(), &origin);
+    let stopped = look(&scene, &name).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Policy, "origin_not_declared"),
+        "{stopped}"
+    );
+    assert!(stopped.failure.message().contains(&other), "{stopped}");
+    assert!(app.trap_writes().await.unwrap().is_empty());
+
+    // With what the drafted operation declares, as the run is given it, the
+    // page loads from the other name, and the read is made.
+    scene.destinations = a2m_provider::Destinations::new(
+        std::iter::once(origin.clone()).chain(read.manifest.destinations.iter().cloned()),
+    );
+    let ran = look(&scene, &name).await.unwrap();
+    let stored = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(
+        ran.values.get("item_code"),
+        Some(&Value::List(
+            stored
+                .items
+                .values()
+                .map(|item| Value::from(item.item_code.clone()))
+                .collect()
+        ))
+    );
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.contains_key("leaving/loads-image"), "{arrived:?}");
+    assert!(app.writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
+#[test]
+fn only_an_origin_with_its_scheme_and_nothing_more_is_drafted_as_a_destination() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("drafted-destinations-bad", Arc::new(NoSecrets));
+    let folder = new_target("drafts-destinations-bad", origin);
+    let finding = order_screen_that_loads(
+        origin,
+        "/orders/A-100",
+        &[
+            // One good, one twice, and what is no destination: a path, no
+            // scheme, a name and a password, a wildcard, another scheme, the
+            // page's own origin, and a word.
+            "https://assets.example.com",
+            "https://assets.example.com",
+            "https://assets.example.com/fonts",
+            "assets.example.com",
+            "https://someone:word@assets.example.com",
+            "https://*.example.com",
+            "ftp://assets.example.com",
+            origin,
+            "elsewhere",
+        ],
+    );
+    draft(&stand, &folder, std::slice::from_ref(&finding));
+    let text = std::fs::read_to_string(folder.path().join(OPERATION)).unwrap();
+    let listed: Vec<&str> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("permissions:"))
+        .skip(1)
+        .take_while(|line| line.starts_with(' '))
+        .filter(|line| line.trim_start().starts_with('-'))
+        .collect();
+    assert_eq!(listed.len(), 1, "{text}");
+    assert!(listed[0].contains("https://assets.example.com"), "{text}");
+}

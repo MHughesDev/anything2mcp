@@ -1536,6 +1536,30 @@ fn surface_addresses(plan: &a2m_core::Plan) -> BTreeSet<&str> {
         .collect()
 }
 
+/// The origins a surface declares as refused without a stop, as addresses.
+fn quiet_origins(fields: &SurfaceFields, own: &Address) -> Result<Vec<Address>, StepFailure> {
+    let mut origins = Vec::new();
+    for text in &fields.refuse_quietly {
+        let address = Address::new(text).map_err(|_| {
+            codes::not_usable(
+                "an origin the surface refuses quietly is not an address with a scheme",
+            )
+        })?;
+        if address.origin() != *text {
+            return Err(codes::not_usable(
+                "an origin the surface refuses quietly is written with more than an origin: a scheme, a host, and a port at most",
+            ));
+        }
+        if address.origin() == own.origin() {
+            return Err(codes::not_usable(
+                "the surface refuses quietly its own origin",
+            ));
+        }
+        origins.push(address);
+    }
+    Ok(origins)
+}
+
 /// The tab's setup, from the run's context and its session.
 pub(crate) fn tab_setup(
     cx: &PrepareContext<'_>,
@@ -1661,7 +1685,13 @@ pub(crate) fn tab_setup(
         .filter(|address| address.starts_with("https://") || address.starts_with("http://"))
         .filter_map(|address| Address::new(address).ok())
         .collect();
-    let origins = Origins::of([&own]).and_requests_to(declared.iter());
+    // The origins the surface declares as refused without a stop. Each is
+    // one origin with its scheme, and none is the surface's own: anything
+    // else is a stop by name, never a guess (rule 7).
+    let quiet = quiet_origins(&fields, &own)?;
+    let origins = Origins::of([&own])
+        .and_requests_to(declared.iter())
+        .and_refused_quietly(quiet.iter());
     Ok(TabSetup {
         origin,
         profile,
