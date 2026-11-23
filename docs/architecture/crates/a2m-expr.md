@@ -202,6 +202,7 @@ The codes are declared once, each with its meaning and next step, in the crate's
 | Every library function has a test of its edge cases and is listed by `docs.get` | `every_library_function_has_a_case_and_a_page` walks `library()` and fails on a function with no case or no sentence |
 | A failure's sentence never contains a bound value | `a_failure_never_carries_a_bound_value`: failing cases with a planted marker |
 | A value the system rounds or reformats compares equal under its field type's rule, and a different value does not | `a_value_the_system_rounds_or_reformats_compares_equal_and_another_does_not`, over every base |
+| Normalizing is idempotent, and a value sent and what the system shows of it once it has rounded it to what it holds agree after normalization | `normalizing_is_idempotent_and_the_intended_value_agrees_with_its_read_back`: 400 seeded draws for each of seven rules, decimals with each mark, money, inches shown in feet and inches and in millimetres, whole numbers, and text; a failure names its seed |
 | A runaway expression stops with a named failure | `the_cost_limit_stops_a_runaway_with_a_named_failure` |
 | A plan's expression loads only when it is what the compiler wrote | `a_plan_expression_loads_only_when_it_is_what_the_compiler_wrote` |
 | A choice read back never stands for two choices: the intended value and a stale one never agree | `a_choice_read_back_never_stands_for_two_choices`; `functions::tests`, for the rule where the value is read |

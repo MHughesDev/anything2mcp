@@ -383,7 +383,7 @@ It produces every class through the loop. `possible_commit`, `ambiguous_match` i
 | Guard makes its five checks in order, and the first that fails names the stop | `tests/guard.rs`: one test for each check, each of which fails when its check is taken out, because nothing after the check (the policy question, the move to `running`, a driver) was reached; and one run per check with every later check failing too, each naming the earlier |
 | A condition that is neither true nor false stops the call | `tests/read.rs` |
 | A discoverer that floods is held to its declared size | `tests/sandbox.rs` |
-| Comparison never uses a float | The `Value` type, and `tests/write.rs`: a rounded decimal |
+| Comparison never uses a float | The `Value` type, and `tests/write.rs`: a rounded decimal. Against the test application, in the product (`crates/anything2mcp/tests/normalized_write.rs`): `2.53"` is rounded by `length_ft_in` to 40 sixteenths, which the application stores, and is verified; the same length typed as plain text reads back as the application shows it, stops with `mismatch`, `read_back_differs`, is written once, and is never verified |
 | Cancel never abandons a commit point halfway | `tests/faults.rs`: cancel arrives during a save, which is finished and recorded before the run ends |
 | A call to `Control` that never answers, and a provider that panics or hangs, end the step and not the engine | `tests/faults.rs` |
 | No input changes where a request goes, which record is written, or which step runs; a value from the system stays a value | `tests/manipulation.rs` |

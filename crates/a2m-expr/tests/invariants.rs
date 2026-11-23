@@ -1330,6 +1330,216 @@ fn the_parse_functions_read_a_source_as_the_host_functions_do() {
     );
 }
 
+/// A small seeded source of numbers (SplitMix64), so that a property test
+/// draws the same values on every machine and a failure names its seed.
+struct Draw(u64);
+
+impl Draw {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// A whole number from `0` to `below - 1`.
+    fn below(&mut self, below: u64) -> u64 {
+        self.next() % below
+    }
+
+    fn int(&mut self, below: u64) -> i64 {
+        i64::try_from(self.below(below)).unwrap()
+    }
+}
+
+/// A whole number written with a comma between each group of three
+/// digits, as a system shows it.
+fn grouped(digits: &str, mark: char) -> String {
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            out.push(mark);
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// A decimal as a system shows it, with `places` places, its whole part
+/// grouped, and the given decimal mark.
+fn shown_decimal(value: &Decimal, places: u32, mark: DecimalMark) -> String {
+    let text = value.to_places(places, Rounding::HalfEven);
+    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    let (group, point) = match mark {
+        DecimalMark::Point => (',', '.'),
+        DecimalMark::Comma => ('.', ','),
+    };
+    let mut out = grouped(whole, group);
+    if !fraction.is_empty() {
+        out.push(point);
+        out.push_str(fraction);
+    }
+    out
+}
+
+/// Inches, a whole number of sixteenths, as a system shows them in feet
+/// and inches: `7' 6 1/2"`.
+fn shown_feet_inches(inches: &Decimal) -> String {
+    let sixteenths = ok(inches
+        .checked_mul(&Decimal::from_i64(16))
+        .and_then(|units| units.to_i64())
+        .ok_or("not a whole number of sixteenths"));
+    let (feet, rest) = (sixteenths / 192, sixteenths % 192);
+    let (whole, mut over, mut part) = (rest / 16, 16, rest % 16);
+    while part != 0 && part % 2 == 0 {
+        part /= 2;
+        over /= 2;
+    }
+    if part == 0 {
+        format!("{feet}' {whole}\"")
+    } else {
+        format!("{feet}' {whole} {part}/{over}\"")
+    }
+}
+
+/// Text as a system that shows capitals and pads spaces shows it.
+fn shown_shouting(text: &str, draw: &mut Draw) -> String {
+    let mut out = " ".repeat(usize::try_from(draw.below(3)).unwrap());
+    for word in text.split(' ') {
+        out.push_str(&word.to_uppercase());
+        out.push_str(&" ".repeat(1 + usize::try_from(draw.below(3)).unwrap()));
+    }
+    out
+}
+
+/// For each field-type rule a system rounds or re-forms through, many
+/// drawn values: normalizing a normalized value changes nothing, and the
+/// value a caller sent and what the system shows of it, once it has
+/// rounded it to what it can hold, agree after normalization.
+#[test]
+fn normalizing_is_idempotent_and_the_intended_value_agrees_with_its_read_back() {
+    const DRAWS: u32 = 400;
+    let even = Rounding::HalfEven;
+    let decimal = FieldRule::Decimal {
+        places: 2,
+        rounding: even,
+        mark: DecimalMark::Point,
+    };
+    let comma = FieldRule::Decimal {
+        places: 3,
+        rounding: even,
+        mark: DecimalMark::Comma,
+    };
+    let money = FieldRule::Money {
+        currency: "USD".into(),
+        places: None,
+        rounding: even,
+        mark: DecimalMark::Point,
+    };
+    let feet_inches = FieldRule::Measurement {
+        unit: "in".into(),
+        display_unit: "ft_in".into(),
+        step: d("0.0625"),
+        rounding: Rounding::HalfUp,
+        mark: DecimalMark::Point,
+    };
+    let millimetres = FieldRule::Measurement {
+        unit: "in".into(),
+        display_unit: "mm".into(),
+        step: d("0.0625"),
+        rounding: even,
+        mark: DecimalMark::Point,
+    };
+    let integer = FieldRule::Integer {
+        mark: DecimalMark::Point,
+    };
+    let text = FieldRule::Text {
+        case_sensitive: false,
+        whitespace: Whitespace::Collapse,
+    };
+    let rules = [
+        &decimal,
+        &comma,
+        &money,
+        &feet_inches,
+        &millimetres,
+        &integer,
+        &text,
+    ];
+    let normalizers: Vec<Normalizer> = rules.iter().map(|rule| normalizer(rule)).collect();
+    let words = ["rail", "bolt", "nut", "washer", "plate", "pin"];
+    for seed in 0..u64::from(DRAWS) {
+        let mut draw = Draw(seed);
+        for (rule, normalizer) in rules.iter().zip(&normalizers) {
+            // What a caller sends: an exact number with up to six places,
+            // or text of a few words.
+            let sent = match rule {
+                FieldRule::Integer { .. } => Value::Int(draw.int(10_000_000)),
+                FieldRule::Text { .. } => {
+                    let count = 1 + draw.below(4);
+                    let chosen: Vec<&str> = (0..count)
+                        .map(|_| words[usize::try_from(draw.below(6)).unwrap()])
+                        .collect();
+                    Value::from(chosen.join(" ").as_str())
+                }
+                _ => {
+                    let places = u32::try_from(draw.below(7)).unwrap();
+                    Value::Decimal(ok(Decimal::from_units(draw.int(20_000_000), places)))
+                }
+            };
+            let intended = normalizer
+                .normalize(&sent)
+                .unwrap_or_else(|error| panic!("seed {seed}, {rule:?}, {sent:?}: {error:?}"));
+            // Normalizing what was normalized changes nothing.
+            let again = ok(normalizer.normalize(&intended.normalized));
+            assert_eq!(
+                again.normalized, intended.normalized,
+                "seed {seed}, {rule:?}"
+            );
+            // What the system shows of the value it stored, which is the
+            // value rounded to what it can hold.
+            let held = &intended.normalized;
+            let shown = match (rule, held) {
+                (FieldRule::Decimal { places, mark, .. }, Value::Decimal(number)) => {
+                    shown_decimal(number, *places, *mark)
+                }
+                (FieldRule::Money { .. }, Value::Decimal(number)) => {
+                    format!("${}", shown_decimal(number, 2, DecimalMark::Point))
+                }
+                (FieldRule::Measurement { display_unit, .. }, Value::Decimal(inches))
+                    if display_unit == "ft_in" =>
+                {
+                    shown_feet_inches(inches)
+                }
+                (FieldRule::Measurement { .. }, Value::Decimal(inches)) => {
+                    let mm = ok(inches.checked_mul(&d("25.4")).ok_or("too large"));
+                    format!("{} mm", mm.to_places(1, Rounding::HalfEven))
+                }
+                (FieldRule::Integer { .. }, Value::Int(number)) => {
+                    grouped(&number.to_string(), ',')
+                }
+                (FieldRule::Text { .. }, Value::Text(words)) => shown_shouting(words, &mut draw),
+                _ => panic!("seed {seed}: {rule:?} normalized to {held:?}"),
+            };
+            let read_back = normalizer
+                .normalize(&Value::from(shown.as_str()))
+                .unwrap_or_else(|error| panic!("seed {seed}, {rule:?}, {shown}: {error:?}"));
+            assert!(
+                intended.agrees_with(&read_back),
+                "seed {seed}, {rule:?}: sent {sent:?}, shown {shown:?}, {:?} against {:?}",
+                intended.normalized,
+                read_back.normalized
+            );
+            let again = ok(normalizer.normalize(&read_back.normalized));
+            assert_eq!(
+                again.normalized, read_back.normalized,
+                "seed {seed}, {rule:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_loaded_program_can_be_shared_between_threads() {
     fn shared<T: Send + Sync>() {}
