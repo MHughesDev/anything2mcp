@@ -165,6 +165,16 @@ impl World {
         Self::build(prompt, window, declare_code_sign_in, true).await
     }
 
+    /// A world whose target's surface is signed in to through the test
+    /// provider [`PASSWORD_PROVIDER`], which takes a stored username and
+    /// password and asks its person for nothing more.
+    pub(crate) async fn signing_in_by_password(
+        prompt: Arc<dyn PresencePrompt>,
+        window: Duration,
+    ) -> Self {
+        Self::build(prompt, window, declare_password_sign_in, true).await
+    }
+
     async fn build(
         prompt: Arc<dyn PresencePrompt>,
         window: Duration,
@@ -257,7 +267,7 @@ publisher = "Example"
 kind = "pack"
 
 [points]
-auth_provider = ["example_code"]
+auth_provider = ["example_code", "example_password"]
 
 [effects]
 sessions = ["json_app"]
@@ -276,7 +286,8 @@ impl a2m_provider::Pack for CodePack {
         _cx: &a2m_provider::PackContext,
         to: &mut a2m_provider::Registrar<'_>,
     ) -> Result<(), a2m_core::Failure> {
-        to.auth_provider(Arc::new(CodeProvider))
+        to.auth_provider(Arc::new(CodeProvider))?;
+        to.auth_provider(Arc::new(PasswordProvider))
     }
 }
 
@@ -375,6 +386,119 @@ impl a2m_auth::AuthProvider for CodeProvider {
     ) -> Result<(), a2m_core::Failure> {
         Ok(())
     }
+}
+
+/// The test provider that signs in with a stored username and password.
+pub(crate) const PASSWORD_PROVIDER: &str = "example_password";
+/// The vault references of its two credentials.
+pub(crate) const USER_REF: &str = "vault://example/app/user";
+pub(crate) const PASSWORD_REF: &str = "vault://example/app/password";
+
+/// Every username and password [`PasswordProvider`] was handed, in order.
+pub(crate) static PASSWORDS_SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// Signs in with the two credentials its entry names, `user` and
+/// `password`, as a provider that fills an application's sign-in form uses
+/// them. It keeps what it was handed, so that a test sees both reached it.
+struct PasswordProvider;
+
+impl a2m_auth::AuthProvider for PasswordProvider {
+    fn name(&self) -> a2m_auth::ProviderName {
+        a2m_auth::ProviderName::fixed(PASSWORD_PROVIDER)
+    }
+
+    fn needs(&self) -> a2m_auth::ProviderNeeds {
+        a2m_auth::ProviderNeeds {
+            person: false,
+            silent_renewal: false,
+            light_prompt: false,
+            movable: false,
+            confirms: true,
+        }
+    }
+
+    fn check(&self, _entry: &a2m_auth::AuthEntry) -> Result<(), a2m_core::Failure> {
+        Ok(())
+    }
+
+    fn sign_in<'a>(
+        &'a self,
+        cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<a2m_auth::Material, a2m_core::Failure>> {
+        Box::pin(async move {
+            let user = cx.credential("user").await?;
+            let password = cx.credential("password").await?;
+            PASSWORDS_SEEN
+                .lock()
+                .unwrap()
+                .push((user.expose().to_owned(), password.expose().to_owned()));
+            Ok(a2m_auth::Material::new(self.name()).with_plain("signed_in", "yes"))
+        })
+    }
+
+    fn is_signed_in<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _now: Timestamp,
+    ) -> a2m_auth::BoxFuture<'a, a2m_auth::SignedIn> {
+        Box::pin(async { a2m_auth::SignedIn::Yes { until: None } })
+    }
+
+    fn detect_expiry(&self, _sign: &a2m_auth::RawSign) -> Option<a2m_auth::ExpirySign> {
+        None
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<a2m_auth::Material, a2m_core::Failure>> {
+        Box::pin(async {
+            Err(a2m_core::Failure::new(
+                a2m_core::FailureClass::SessionExpired,
+                a2m_auth::codes::NEEDS_LOGIN,
+                "The test provider does not renew.",
+                "Sign in again.",
+            ))
+        })
+    }
+
+    fn sign_out<'a>(
+        &'a self,
+        _material: &'a a2m_auth::Material,
+        _cx: &'a a2m_auth::SignInContext<'a>,
+    ) -> a2m_auth::BoxFuture<'a, Result<(), a2m_core::Failure>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn inject(
+        &self,
+        _material: &a2m_auth::Material,
+        _sink: &mut dyn a2m_auth::CredentialSink,
+    ) -> Result<(), a2m_core::Failure> {
+        Ok(())
+    }
+}
+
+/// The published plan, with its first surface signed in to through
+/// [`PasswordProvider`] with a username and a password stored for the
+/// person, probed with the read the plan has first.
+fn declare_password_sign_in(plan: &mut a2m_core::Plan) {
+    declare_code_sign_in(plan);
+    let Some(auth) = plan.auth.last_mut() else {
+        unreachable!("the code sign-in was just declared");
+    };
+    auth.provider = a2m_auth::ProviderName::fixed(PASSWORD_PROVIDER);
+    auth.credentials = vec![
+        a2m_core::CredentialUse {
+            role: "password".to_owned(),
+            reference: a2m_core::CredentialRef::new(PASSWORD_REF).unwrap(),
+        },
+        a2m_core::CredentialUse {
+            role: "user".to_owned(),
+            reference: a2m_core::CredentialRef::new(USER_REF).unwrap(),
+        },
+    ];
 }
 
 /// The published plan, with its first surface signed in to through the

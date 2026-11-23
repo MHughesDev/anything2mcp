@@ -1355,6 +1355,95 @@ async fn a_sign_in_that_asks_for_a_code_asks_on_the_persons_own_page_and_keeps_i
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A provider that signs in with two stored credentials, a username and a
+/// password, has its page ask for each role, each in a field of its own
+/// that is served empty; what the person types is never shown back, on
+/// the page, in its answer, or to the agent. A press that leaves one out
+/// stops by name, and the page asked next says the other is stored and
+/// still shows no value of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_sign_in_page_asks_for_each_role_the_provider_needs_and_shows_none_back() {
+    use super::world::{PASSWORD_REF, PASSWORDS_SEEN, USER_REF};
+    const TYPED_USER: &str = "invented-person-7c1d";
+    const TYPED_PASSWORD: &str = "invented-password-4e9b2a";
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::signing_in_by_password(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let login = || world.call("session.login", json!({"target": "example"}));
+    let press_with = |asked: &Asked, once: &str, typed: &str| {
+        http.post(format!("{}/confirm", asked.link))
+            .header(ORIGIN, &asked.origin)
+            .header(CONTENT_TYPE, FORM)
+            .body(format!("once={once}{typed}"))
+            .send()
+    };
+    let field = |role: &str, required: bool| {
+        format!(
+            "name=\"secret.{role}\" type=\"password\" autocomplete=\"off\"{}>",
+            if required { " required" } else { "" }
+        )
+    };
+
+    // The agent asks with no secret. Nothing is stored, so the person is
+    // asked on the act's page for both roles the entry names, each with
+    // the reference it is sealed under.
+    let asked = asked_of(&login().await);
+    let (text, once) = open(&http, &asked.link).await;
+    for (role, reference) in [("user", USER_REF), ("password", PASSWORD_REF)] {
+        assert!(text.contains(&field(role, true)), "{text}");
+        assert!(text.contains(reference), "{text}");
+    }
+    assert!(!text.contains("value=\"invented"), "{text}");
+
+    // The person types the username alone. The sign-in stops by name for
+    // want of the password; the answer shows neither.
+    let answered = press_with(&asked, &once, &format!("&secret.user={TYPED_USER}"))
+        .await
+        .unwrap();
+    let said = answered.text().await.unwrap();
+    assert!(said.contains("did not succeed"), "{said}");
+    assert!(said.contains(PASSWORD_REF), "{said}");
+    assert!(!said.contains(TYPED_USER), "{said}");
+    world.surface.settled().await;
+    assert!(PASSWORDS_SEEN.lock().unwrap().is_empty());
+
+    // Asked again, the page says the username is stored, asks for it no
+    // more, and still shows no value of it; the password is asked for.
+    let asked = asked_of(&login().await);
+    let (text, once) = open(&http, &asked.link).await;
+    assert!(text.contains(&field("user", false)), "{text}");
+    assert!(text.contains(&field("password", true)), "{text}");
+    assert!(text.contains("Stored already"), "{text}");
+    assert!(!text.contains(TYPED_USER), "{text}");
+    let answered = press_with(&asked, &once, &format!("&secret.password={TYPED_PASSWORD}"))
+        .await
+        .unwrap();
+    assert_eq!(answered.status(), StatusCode::OK);
+    let said = answered.text().await.unwrap();
+    assert!(said.contains("was carried out as you, once"), "{said}");
+    assert!(
+        !said.contains(TYPED_USER) && !said.contains(TYPED_PASSWORD),
+        "{said}"
+    );
+    assert_eq!(prompt.asked(), 2);
+
+    // Both reached the provider, each under its own role.
+    assert_eq!(
+        *PASSWORDS_SEEN.lock().unwrap(),
+        [(TYPED_USER.to_owned(), TYPED_PASSWORD.to_owned())]
+    );
+    // The agent is told a session holds, and nothing typed.
+    let signed = login().await;
+    assert!(signed.ok, "{signed:?}");
+    let shown = signed.to_json().to_string();
+    assert!(shown.contains("\"signed_in\""), "{shown}");
+    assert!(
+        !shown.contains(TYPED_USER) && !shown.contains(TYPED_PASSWORD),
+        "{shown}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 /// The page a person publishes from shows the sign-ins before the tools,
 /// a sign-in whose read is not drafted as not confirmed, where each sign-in
 /// sends in each environment, and for each tool where it sends, what it
