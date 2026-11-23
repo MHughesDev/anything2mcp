@@ -1,0 +1,168 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 6014, port 5883, both 5883, only engine 131, only port 0
+decompiled by port: 61; by engine: 61; compared (both): 61; port only: 0; engine only: 0
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | 0 | 61 |
+line similarity of the different ones after spelling: min 0.14 median 0.70 max 0.87
+
+--- 0x90080 example_mcp::main::{closure#1}::{closure#0}
+--- engine
++++ port
+@@ -1,4 +1 @@
+-/* example_mcp::main::{closure#1}::{closure#0} */
+-byte __rustcall
+-example_mcp::main::{closure#1}::_closure_0_
+-(undefined8 *param_1,undefined8 param_2)
++uchar example_mcp::main::{closure#1}::{closure#0}(undefined8 *param_1,undefined8 param_2)
+@@ -6 +3 @@
+-byte Var1;
++uchar Var1;
+@@ -9 +6 @@
+-Var1 = (*(code *)PTR_eq_001fdb90)(&stk_8,*param_1);
++Var1 = (*pcRam00000000001fdb90)(&stk_8,*param_1);
+
+--- 0x900a0 example_mcp::main::{closure#0}
+--- engine
++++ port
+@@ -1,4 +1 @@
+-/* example_mcp::main::{closure#0} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_0_
+-(undefined8 param_1,undefined8 param_2,undefined8 param_3)
++undefined8 example_mcp::main::{closure#0}(undefined8 param_1,undefined8 param_2,undefined8 param_3)
+@@ -8,2 +5 @@
+-Var1 = <std::ffi::os_str::OsString_as_core::ops::deref::Deref>
+-::deref(param_3);
++Var1 = <std::ffi::os_str::OsString as core::ops::deref::Deref>::deref(param_3);
+@@ -11,2 +7,2 @@
+-(*(code *)PTR_into_owned_001fdb98)(param_1,stk_28);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(param_3);
++(*pcRam00000000001fdb98)(param_1,stk_28);
+
+--- 0x90140 example_mcp::main::{closure#2}
+--- engine
++++ port
+@@ -1,3 +1 @@
+-/* example_mcp::main::{closure#2} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_2_(undefined8 param_1,undefined4 *param_2)
++undefined8 example_mcp::main::{closure#2}(undefined8 param_1,undefined4 *param_2)
+@@ -21,2 +19,2 @@
+-(*(code *)PTR_<std::path::PathBuf>_001fdba0)(stk_f0,&stk_28);
+-Var2 = (*(code *)PTR_<&str>_001fdba8)(stk_f0,&DAT_00047a18,8);
++(*pcRam00000000001fdba0)(stk_f0,&stk_28);
++Var2 = (*pcRam00000000001fdba8)(stk_f0,0x47a18,8);
+@@ -24,2 +22 @@
+-Var2 = <std::process::Command>::stdin::<std::process::Stdio>
+-(Var2,Var1,extraout_EDX);
++Var2 = <std::process::Command>::stdin::<std::process::Stdio>(Var2,Var1,extraout_EDX);
+
+--- 0x90290 example_mcp::main::{closure#3}
+--- engine
++++ port
+@@ -1,4 +1 @@
+-/* example_mcp::main::{closure#3} */
+-undefined8 __rustcall
+-example_mcp::main::_closure_3_
+-(undefined8 param_1,undefined8 param_2,undefined4 *param_3)
++undefined8 example_mcp::main::{closure#3}(undefined8 param_1,undefined8 param_2,undefined4 *param_3)
+@@ -18,2 +15 @@
+-Var1 = <std::ffi::os_str::OsString_as_core::ops::deref::Deref>
+-::deref(&stk_48);
++Var1 = <std::ffi::os_str::OsString as core::ops::deref::Deref>::deref(&stk_48);
+@@ -21,3 +17,3 @@
+-(*(code *)PTR_into_owned_001fdb98)(param_1,stk_28);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(&stk_48);
+-(*(code *)PTR_<std::ffi::os_str::OsString>_001fdb70)(param_3 + 6);
+
+--- 0x90380 example_mcp::main::{closure#4}
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_mcp::main::{closure#4} */
+-void __rustcall example_mcp::main::_closure_4_(undefined8 param_1)
++void example_mcp::main::{closure#4}(undefined8 param_1)
+@@ -4 +3,2 @@
+-(*(code *)PTR_write_all_001fdbc0)(param_1,"\n",1);
++(*pcRam00000000001fdbc0)
++(param_1,"\nEXAMPLE_MCP_STATE--grandchild--stderr-megabyteEXAMPLE_MCP_TOKEN",1);
+
+--- 0x903a0 example_mcp::main::{closure#1}
+--- engine
++++ port
+@@ -1,4 +1 @@
+-/* example_mcp::main::{closure#1} */
+-byte __rustcall
+-example_mcp::main::_closure_1_
+-(undefined8 *param_1,undefined8 param_2,undefined8 param_3)
++uchar example_mcp::main::{closure#1}(undefined8 *param_1,undefined8 param_2,undefined8 param_3)
+@@ -6,5 +3,2 @@
+-undefined1 extraout_AL;
+-undefined1 extraout_AL_00;
+-byte Var1;
+-undefined7 extraout_var;
+-undefined7 extraout_var_00;
++undefined8 Var1;
++uchar Var2;
+ROW	0x90080	example_mcp::main::{closure#1}::{closure#0}	different	11	0.53
+ROW	0x900a0	example_mcp::main::{closure#0}	different	13	0.50
+ROW	0x90140	example_mcp::main::{closure#2}	different	33	0.68
+ROW	0x90290	example_mcp::main::{closure#3}	different	24	0.70
+ROW	0x90380	example_mcp::main::{closure#4}	different	8	0.50
+ROW	0x903a0	example_mcp::main::{closure#1}	different	22	0.50
+ROW	0x90400	example_mcp::main	different	272	0.73
+ROW	0x1052a0	example_mcp::tools::definitions::{closure#0}::{closure#0}	different	17	0.80
+ROW	0x1052f0	example_mcp::tools::run_listed::{closure#0}	different	16	0.79
+ROW	0x105340	example_mcp::tools::run_listed::{closure#2}	different	23	0.81
+ROW	0x1053c0	example_mcp::tools::run_listed::{closure#3}	different	12	0.52
+ROW	0x105440	example_mcp::tools::run_listed::{closure#1}	different	23	0.81
+ROW	0x1054c0	example_mcp::tools::definitions::{closure#0}	different	22	0.67
+ROW	0x105510	example_mcp::tools::definitions::{closure#2}	different	18	0.62
+ROW	0x105610	example_mcp::tools::definitions::{closure#1}	different	9	0.53
+ROW	0x105630	example_mcp::tools::required::{closure#0}	different	23	0.81
+ROW	0x1056f0	example_mcp::tools::definition	different	4194	0.76
+ROW	0x111770	example_mcp::tools::order_json	different	207	0.69
+ROW	0x112380	example_mcp::tools::run_listed	different	1369	0.85
+ROW	0x115180	example_mcp::tools::definitions	different	26	0.39
+ROW	0x115290	example_mcp::tools::text_result	different	167	0.73
+ROW	0x115a50	example_mcp::tools::add_required	different	345	0.78
+ROW	0x1167f0	example_mcp::tools::order_schema	different	953	0.78
+ROW	0x119330	example_mcp::tools::structured_result	different	201	0.70
+ROW	0x119d40	example_mcp::tools::run	different	212	0.77
+ROW	0x11a640	example_mcp::tools::apply	different	169	0.72
+ROW	0x11afa0	example_mcp::tools::input	different	134	0.65
+ROW	0x11b670	example_mcp::tools::written	different	34	0.76
+ROW	0x11b7a0	example_mcp::tools::optional	different	44	0.86
+ROW	0x11b8f0	example_mcp::tools::required	different	36	0.80
+ROW	0x14f190	example_mcp::stdio::run::{closure#0}::{closure#0}	different	11	0.56
+ROW	0x14f3e0	example_mcp::stdio::write_line::{closure#0}	different	10	0.53
+ROW	0x14f400	example_mcp::stdio::record_start::{closure#0}	different	10	0.62
+ROW	0x14f440	example_mcp::stdio::run::{closure#0}	different	50	0.60
+ROW	0x14f6c0	example_mcp::stdio::run::{closure#2}	different	31	0.81
+ROW	0x14f790	example_mcp::stdio::run::{closure#3}	different	12	0.55
+ROW	0x14f7b0	example_mcp::stdio::run::{closure#1}	different	38	0.86
+ROW	0x150c50	example_mcp::stdio::run_silent	different	86	0.79
+ROW	0x150e10	example_mcp::stdio::write_line	different	41	0.57
+ROW	0x150f60	example_mcp::stdio::record_start	different	55	0.87
+ROW	0x151080	example_mcp::stdio::run	different	378	0.76
+ROW	0x151e10	example_mcp::stdio::deliver	different	64	0.14
+ROW	0x151fd0	example_mcp::stdio::send_all	different	18	0.47
+ROW	0x1520c0	example_mcp::store::order	different	41	0.78
+ROW	0x155990	example_mcp::protocol::list_tools::{closure#0}	different	7	0.46
+ROW	0x1559b0	example_mcp::protocol::list_tools::{closure#2}	different	18	0.75
+ROW	0x155a10	example_mcp::protocol::list_tools::{closure#3}	different	7	0.46
+ROW	0x155a40	example_mcp::protocol::list_tools::{closure#1}	different	10	0.47
+ROW	0x155a70	example_mcp::protocol::admit::{closure#0}	different	7	0.55
+ROW	0x155a90	example_mcp::protocol::execute::{closure#0}	different	17	0.65
+ROW	0x155b10	example_mcp::protocol::dispatch::{closure#0}	different	48	0.73
+ROW	0x155c60	example_mcp::protocol::dispatch::{closure#1}	different	9	0.46
+ROW	0x155c70	example_mcp::protocol::call_tool::{closure#0}	different	14	0.45
+ROW	0x1572f0	example_mcp::protocol::initialize	different	427	0.78
+ROW	0x158680	example_mcp::protocol::list_tools	different	298	0.83
+ROW	0x1590d0	example_mcp::protocol::announcements	different	151	0.64
+ROW	0x159740	example_mcp::protocol::broken_answer	different	125	0.81
+ROW	0x159c60	example_mcp::protocol::admit	different	95	0.70
+ROW	0x15a0e0	example_mcp::protocol::execute	different	153	0.76
+ROW	0x15a6f0	example_mcp::protocol::dispatch	different	661	0.79
+ROW	0x15c200	example_mcp::protocol::call_tool	different	414	0.79

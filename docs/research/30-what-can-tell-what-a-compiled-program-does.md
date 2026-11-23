@@ -219,6 +219,6 @@ Written here, by the survey's judgment, because they are small and stable: the W
 - Whether `carapace-bin`'s licence allows its use; the `diec` JSON flag; `ilspycmd`'s .NET version; Apktool's Java version; `unblob` on Windows and macOS; install sizes of radare2, JADX, angr, the .NET and Java runtimes and Ghidra's JDK.
 - The date of `ltrace`'s release; the latest releases of `rz-ghidra`, `r2ghidra`, `radare2-mcp`, `pyghidra-mcp` and GhidraMCP; the Postman agent's version.
 - The startup time of the studied project; line counts of its TypeScript (compiled output was counted); line counts of JADX and the ILSpy library.
-- Whether `ghidra-decompiler` is equal to Ghidra on this project's own test programs (decision 0276 point 5; work package X7); whether Kuna's output is.
+- Whether Kuna's output is equal to Ghidra's on this project's own test programs. (The same question for `ghidra-decompiler` was answered by package X7: no, [note 31](31-the-rust-port-of-the-decompiler-against-the-engine.md).)
 - Open issue counts of any Rust crate, docs.rs status, and a real compile of the recommended set on the three operating systems; the binary size of the set (estimated, not measured).
 - Whether `object`'s new code-signature reader reads real signed programs of each version found; no program was read.

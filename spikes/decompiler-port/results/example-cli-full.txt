@@ -1,0 +1,131 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 5017, port 4892, both 4892, only engine 125, only port 0
+decompiled by port: 37; by engine: 37; compared (both): 37; port only: 0; engine only: 0
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | 0 | 37 |
+line similarity of the different ones after spelling: min 0.33 median 0.67 max 0.90
+
+--- 0x6e430 example_cli::main
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::main */
+-void __rustcall example_cli::main(void)
++void example_cli::main(void)
+@@ -5 +4 @@
+-(*(code *)PTR_main_00191b08)(0);
++(*pcRam0000000000191b08)(0);
+
+--- 0x706a0 example_cli::program::whole_number::<usize>
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<usize> */
+-undefined8 * __rustcall
++undefined8 *
+@@ -14 +13 @@
+-byte stk_a0 [8];
++uchar stk_a0 [8];
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = <str>::is_empty(param_2,param_3);
+@@ -40,4 +39,2 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+-Var1 = (*(code *)
+-PTR_<example_cli::program::whole_number<usize>::_closure_0_>_00193e50
+
+--- 0x70870 example_cli::program::whole_number::<u32>
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<u32> */
+-undefined8 * __rustcall
++undefined8 *
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = <str>::is_empty(param_2,param_3);
+@@ -40,4 +39,2 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+-Var1 = (*(code *)
+-PTR_<example_cli::program::whole_number<u32>::_closure_0_>_00193e78)
+-(stk_b0);
++stk_b0 = <str>::bytes(stk_d0,stk_c8);
++Var1 = (*pcRam0000000000193e78)(stk_b0);
+
+--- 0x70a50 example_cli::program::whole_number::<u64>
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<u64> */
+-undefined8 * __rustcall
++undefined8 *
+@@ -14 +13 @@
+-byte stk_a0 [8];
++uchar stk_a0 [8];
+@@ -38 +37 @@
+-Var1 = ::<str>::is_empty(param_2,param_3);
++Var1 = <str>::is_empty(param_2,param_3);
+@@ -40,4 +39,2 @@
+-stk_b0 = ::<str>::bytes(stk_d0,stk_c8);
+-Var1 = (*(code *)
+-PTR_<example_cli::program::whole_number<u64>::_closure_0_>_00193e88)
+
+--- 0x70ea0 example_cli::program::whole_number::<usize>::{closure#0}
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<usize>::{closure#0} */
+-byte __rustcall example_cli::program::whole_number::<usize>::_closure_0_(void)
++uchar example_cli::program::whole_number::<usize>::{closure#0}(void)
+@@ -4 +3 @@
+-byte Var1;
++uchar Var1;
+
+--- 0x70ec0 example_cli::program::whole_number::<u32>::{closure#0}
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* example_cli::program::whole_number::<u32>::{closure#0} */
+-byte __rustcall example_cli::program::whole_number::<u32>::_closure_0_(void)
++uchar example_cli::program::whole_number::<u32>::{closure#0}(void)
+@@ -4 +3 @@
+-byte Var1;
++uchar Var1;
+ROW	0x6e430	example_cli::main	different	11	0.71
+ROW	0x706a0	example_cli::program::whole_number::<usize>	different	70	0.83
+ROW	0x70870	example_cli::program::whole_number::<u32>	different	72	0.85
+ROW	0x70a50	example_cli::program::whole_number::<u64>	different	70	0.83
+ROW	0x70ea0	example_cli::program::whole_number::<usize>::{closure#0}	different	10	0.67
+ROW	0x70ec0	example_cli::program::whole_number::<u32>::{closure#0}	different	10	0.67
+ROW	0x70ee0	example_cli::program::whole_number::<u64>::{closure#0}	different	10	0.67
+ROW	0x70ff0	example_cli::program::main::{closure#2}::{closure#0}	different	13	0.50
+ROW	0x71090	example_cli::program::main::{closure#2}::{closure#1}	different	12	0.55
+ROW	0x726e0	example_cli::program::control_dir::{closure#0}	different	14	0.80
+ROW	0x72720	example_cli::program::environment::{closure#0}	different	52	0.81
+ROW	0x728d0	example_cli::program::asks_for_help::{closure#0}	different	9	0.53
+ROW	0x728f0	example_cli::program::asks_for_help::{closure#1}	different	11	0.53
+ROW	0x72910	example_cli::program::main::{closure#0}	different	14	0.56
+ROW	0x729b0	example_cli::program::main::{closure#2}	different	61	0.75
+ROW	0x72c70	example_cli::program::main::{closure#1}	different	10	0.47
+ROW	0x72cb0	example_cli::program::linger::{closure#0}	different	9	0.46
+ROW	0x72cc0	example_cli::program::linger::{closure#2}	different	12	0.50
+ROW	0x72cf0	example_cli::program::linger::{closure#3}	different	12	0.50
+ROW	0x72d20	example_cli::program::linger::{closure#4}	different	10	0.62
+ROW	0x72d50	example_cli::program::linger::{closure#1}	different	10	0.62
+ROW	0x72d80	example_cli::program::reference::{closure#0}	different	23	0.90
+ROW	0x72de0	example_cli::program::signed_in::{closure#0}	different	10	0.38
+ROW	0x7f150	example_cli::program::split_home	different	71	0.87
+ROW	0x7f3e0	example_cli::program::control_dir	different	118	0.78
+ROW	0x7f790	example_cli::program::environment	different	12	0.43
+ROW	0x7f7e0	example_cli::program::command_name	different	134	0.64
+ROW	0x7fbb0	example_cli::program::asks_for_help	different	13	0.42
+ROW	0x7fbe0	example_cli::program::sku	different	71	0.80
+ROW	0x7fe20	example_cli::program::main	different	279	0.86
+ROW	0x807e0	example_cli::program::absent	different	31	0.80
+ROW	0x80880	example_cli::program::linger	different	53	0.33
+ROW	0x80be0	example_cli::program::location	different	61	0.82
+ROW	0x80d80	example_cli::program::overview	different	91	0.83
+ROW	0x81050	example_cli::program::item_name	different	35	0.75
+ROW	0x81130	example_cli::program::reference	different	31	0.73
+ROW	0x81210	example_cli::program::signed_in	different	31	0.47

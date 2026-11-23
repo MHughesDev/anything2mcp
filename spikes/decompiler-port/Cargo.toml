@@ -1,0 +1,18 @@
+# Throwaway. Roadmap package X7. Never promoted into the product.
+# The empty [workspace] table keeps this crate out of the product's workspace,
+# and so its dependencies out of the product's Cargo.lock (the root Cargo.toml
+# also excludes `spikes`).
+[package]
+name = "spike-decompiler-port"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+ghidra-decompiler = "=2.1.0"
+
+[profile.release]
+opt-level = 3
