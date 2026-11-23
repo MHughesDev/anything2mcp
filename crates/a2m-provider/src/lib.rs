@@ -30,6 +30,7 @@ mod manifest;
 mod name;
 mod pack;
 mod path;
+mod place;
 mod registry;
 mod replay;
 mod supervisor;
@@ -61,6 +62,7 @@ pub use path::{
     Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, HeldFolder, Removal, Roots,
     Temporary, resolved_path,
 };
+pub use place::{MachineState, NetworkPlace, Placed};
 pub use registry::{
     FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
     RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,

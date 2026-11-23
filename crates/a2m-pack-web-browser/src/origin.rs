@@ -14,6 +14,9 @@
 
 use std::collections::BTreeSet;
 
+use a2m_core::ScopedHost;
+use a2m_provider::{MachineState, NetworkPlace, Placed};
+
 use crate::browsers::Address;
 
 /// What stands for a page that has no origin of its own, such as a page
@@ -129,6 +132,27 @@ impl Origins {
     #[must_use]
     pub fn allows(&self, address: &Address) -> bool {
         self.allowed.contains(&address.origin())
+    }
+
+    /// The network place of each origin a request may go to (the tab's own
+    /// and those its page may send requests to), in order, each with the
+    /// reason. A place is derived from the origin's host as written and from
+    /// what the machine says of itself, never taken from an input, and a name
+    /// is never resolved: an origin on a name is `unknown`
+    /// (decisions 0223 and 0143). The guard itself still compares origins,
+    /// which tell apart what one place does not: two origins can be on one
+    /// place, and a tab refuses the other (package N2b).
+    #[must_use]
+    pub fn places(&self, state: &MachineState) -> Vec<(&str, Placed)> {
+        self.reach()
+            .into_iter()
+            .map(|origin| {
+                (
+                    origin,
+                    NetworkPlace::of(&ScopedHost::of_destination(origin), state),
+                )
+            })
+            .collect()
     }
 
     /// The origins, in order, each as the browser writes it.

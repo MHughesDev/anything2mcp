@@ -24,6 +24,7 @@ use crate::BoxFuture;
 use crate::codes;
 use crate::name::ProviderName;
 use crate::path::CheckedPaths;
+use crate::place::{MachineState, NetworkPlace, Placed};
 use crate::supervisor::{Cleanup, ScopedSupervisor};
 
 /// A moment by which something must be done. Nothing waits without one.
@@ -130,6 +131,17 @@ impl Destinations {
     #[must_use]
     pub fn scope_of(&self, address: &str) -> Option<&ScopedHost> {
         self.allowed.get(address)
+    }
+
+    /// The network place of `address` given what the machine says of
+    /// itself: derived from the scope read when the set was made and from
+    /// `state`, never set by anyone (decision 0223). Nothing when it is not
+    /// one of the destinations. The allow-list itself still compares
+    /// addresses as written.
+    #[must_use]
+    pub fn place_of(&self, address: &str, state: &MachineState) -> Option<Placed> {
+        self.scope_of(address)
+            .map(|host| NetworkPlace::of(host, state))
     }
 }
 
