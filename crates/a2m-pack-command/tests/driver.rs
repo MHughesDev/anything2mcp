@@ -1430,7 +1430,14 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
-    let discoverers = scene.registry.discoverers_for(&description);
+    // The pack has two discoverers: the one that runs a program's declared
+    // help forms, and the one that reads a binary's bytes and starts nothing.
+    let all = scene.registry.discoverers_for(&description);
+    assert_eq!(all.len(), 2);
+    let discoverers: Vec<_> = all
+        .into_iter()
+        .filter(|found| found.declared().name.to_string() == "help")
+        .collect();
     assert_eq!(discoverers.len(), 1);
     let port = ReadOnlyPort::new(scene.handle.clone(), prepared);
     let scope = DiscoveryScope {

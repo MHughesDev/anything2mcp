@@ -120,7 +120,14 @@ async fn discover(
     };
     let prepared = handle.prepare(&cx, None).await.unwrap();
     let before = stand.control().invocations().unwrap().len();
-    let discoverers = registry.discoverers_for(&description(&surface));
+    // The pack has two discoverers: the one that runs a program's declared
+    // help forms, and the one that reads a binary's bytes and starts nothing.
+    let all = registry.discoverers_for(&description(&surface));
+    assert_eq!(all.len(), 2);
+    let discoverers: Vec<_> = all
+        .into_iter()
+        .filter(|found| found.declared().name.to_string() == "help")
+        .collect();
     assert_eq!(discoverers.len(), 1);
     let port = ReadOnlyPort::new(handle.clone(), prepared);
     let scope = a2m_provider::DiscoveryScope {
@@ -203,6 +210,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert_eq!(
         taken,
         [
+            "binary",
             "completions",
             "manual",
             "module_manifest",
@@ -312,7 +320,11 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert!(control.writes().unwrap().is_empty());
     assert_eq!(control.stored_items().unwrap(), seed);
 
-    let described = registry.discoverers_for(&description(&surface))[0]
+    let described = registry
+        .discoverers_for(&description(&surface))
+        .into_iter()
+        .find(|found| found.declared().name.to_string() == "help")
+        .unwrap()
         .describe(&findings, a2m_provider::DescribeForm::Summary);
     assert!(
         described.text.contains("2 handed files"),

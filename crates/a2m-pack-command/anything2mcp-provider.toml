@@ -24,7 +24,7 @@ archetype = "command"
 
 [points]
 driver = ["cli"]
-discoverer = ["help"]
+discoverer = ["help", "binary"]
 
 # Runs only the help and version forms a target declares. Handed a fish
 # completion file under `completions` or a manual page under `manual`, as
@@ -42,6 +42,21 @@ max_level = "discovered"
 bounds = { seconds = 30, bytes = 1048576, depth = 2 }
 files = ["completions", "manual", "powershell_help", "module_manifest"]
 
+# Reads the plain facts of a binary a person hands it under `binary`, as a
+# file of the project's `sources` folder: its kind and system, imports and
+# exports, version resource, manifest, entitlements, and signature. It reads
+# bytes only and starts nothing: the file is never run or loaded (X5,
+# decision 0276). The bound of bytes is the largest program it reads.
+[[discoverers]]
+name = "binary"
+archetype = "command"
+surface_kinds = ["program"]
+kinds = ["binary"]
+sources = ["artifact"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 268435456, depth = 3 }
+files = ["binary"]
+
 [[file_kinds]]
 name = "command"
 directory = "commands/"
@@ -57,6 +72,10 @@ surface_kinds = ["program"]
 
 [[finding_kinds]]
 name = "powershell_command"
+surface_kinds = ["program"]
+
+[[finding_kinds]]
+name = "binary"
 surface_kinds = ["program"]
 
 [[lint_rules]]
@@ -148,6 +167,22 @@ code = "command_file_unreadable"
 [[failure_codes]]
 class = "input"
 code = "powershell_file_unreadable"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "binary_kind_unknown"
+
+[[failure_codes]]
+class = "input"
+code = "binary_truncated"
+
+[[failure_codes]]
+class = "input"
+code = "binary_cyclic"
+
+[[failure_codes]]
+class = "input"
+code = "binary_malformed"
 
 [[failure_codes]]
 class = "possible_commit"
