@@ -12,7 +12,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 4 | Session persistence and Entra session rules | Phase 2 | 15, 16 |
 | 5 | Vault design per operating system | Phase 2 | 15, 19 |
 | 6 | Web sign-in methods and auto-detection. Partly answered by note 35 | Phase 2 | 15 |
-| 7 | Durable execution and idempotency | Phase 3 | 10 |
+| 7 | Durable execution and idempotency. Answered by note 38 | Phase 3 | 10 |
 | 8 | Human approval patterns | Phase 3 | 18 |
 | 9 | Network channel practice and endpoint inference. The inference half answered by note 36 | Phase 4 | 6, 26 |
 | 10 | AI discovery turned into deterministic steps | Phase 5 | 26 |
@@ -59,7 +59,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **6. Web sign-in methods and auto-detection.** (Partly answered by [note 35](35-web-sign-in-methods-and-engine-owned-profiles.md), from search summaries only, and [decision 0321](../decisions/0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md). What remains: what Chromium supports under automation for each method, checked against primary pages, and detection tried against the test application.) For OIDC and SAML redirects, pop-up sign-in, form login, HTTP Basic and Digest, NTLM and Kerberos, client certificates, and passkeys: what Chromium supports under automation, the pitfalls, and how to detect each method from a URL and detect expiry mid-run.
 
-**7. Durable execution and idempotency.** (Partly answered by [note 13](13-ledger-leases-and-runner-links.md); check the design in spec section 208 against primary sources.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
+**7. Durable execution and idempotency.** (Answered by [note 13](13-ledger-leases-and-runner-links.md) and [note 38](38-recording-intent-and-reconciling-after-a-crash.md), which checked section 208 against the engines' own documents, and [decision 0324](../decisions/0324-an-idempotency-key-is-an-addition-to-the-read-back-and-holds-only-inside-its-window.md). Not done: a full comparison of the ledger's migrations; the vendors' own sites did not load. The brief stays so that references to it resolve.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
 
 **8. Human approval patterns.** MCP elicitation and client support; approval pages; Teams, Slack, and email approvals; binding an approval to a content hash with expiry and single use; tiering and batching to avoid fatigue; what to record for audit; how LangGraph, the OpenAI Agents SDK, Temporal, GitHub environments, and Terraform handle it.
 
