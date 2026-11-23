@@ -99,7 +99,7 @@ Decision 0223 says a forged fingerprint "can only impersonate a network the pers
 
 So the bet in H-44 holds in the narrow form: recognition raises no rung and sends nothing by itself. A recalled send can still reach the wrong host. This follows from decision 0223's own design and is not a flaw in the fingerprint.
 
-The size of the risk depends on what is sent. A read-only request to an address wrongly answered is low. A write, or a request carrying a credential, to a host that is not the device the person meant, is not. The defence belongs on the host and not on the fingerprint: a TLS certificate or key pinned when the person named the reach, or a device identifier. Note 28 already marks TLS pinning as the one signal a forger cannot copy without the key [read: S-note 28 part 6]. Whether the first reach should bind a send to a host identity was not researched here beyond this point.
+The size of the risk depends on what is sent. A read-only request to an address wrongly answered is low. A write, or a request carrying a credential, to a host that is not the device the person meant, is not. The defence belongs on the host and not on the fingerprint: a TLS certificate or key pinned when the person named the reach, or a device identifier. Note 28 already marks TLS pinning as the one signal a forger cannot copy without the key [read: note 28 part 6]. Whether the first reach should bind a send to a host identity was not researched here beyond this point.
 
 ## 5. Which subset to keep
 
