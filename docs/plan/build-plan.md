@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Done last:** FT3, and findings 1, 2, 4, 6 and half of 5 of FT2, each proven in field test 1. **In hand:** decision 0298 (a draft with an open question waits in a holding folder; the compiler does not change), which closes findings 5 and 9. Finding 8 is closed. **Next:** the two leftovers under FT2, then FT7. **Blocks:** nothing.
+**Progress:** 51 of 143 packages done, 35% (`python3 tools/progress.py`). **Done last:** FT2, FT3, and decision 0298 (the holding folder), each proven in field test 1; pull request 20 merged. **In hand:** six pack tests to bring in line with the holding folder. **Next:** FT8 (a secret-named field of an answer), S2 (one command to a working read), FT7, then the sign-in packages with FT9. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
