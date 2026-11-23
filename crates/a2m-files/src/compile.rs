@@ -4237,27 +4237,44 @@ enum KeyNames {
     PerhapsSecret,
 }
 
+/// The words that make a key a certain secret's.
+const SECRET_WORDS: [&str; 15] = [
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "api_key",
+    "apikey",
+    "private_key",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "id_token",
+    "session_token",
+    "bearer_token",
+    "client_secret",
+    "secret_key",
+];
+
+/// Whether a key, already in lower case with `-` as `_`, holds one of them.
+fn secret_key_word(key: &str) -> bool {
+    SECRET_WORDS.iter().any(|word| key.contains(word))
+}
+
+/// Whether the compiler takes `name` for a certain secret's: a key that
+/// holds one of the words of a password, a private key, a secret, or an
+/// access token. It is the test the compiler's refusal of a secret in a
+/// file (`kernel.credential_in_file`) uses, so a drafter that asks it
+/// cannot write a key the compiler would refuse (decision 0302).
+#[must_use]
+pub fn names_a_secret(name: &str) -> bool {
+    secret_key_word(&name.to_ascii_lowercase().replace('-', "_"))
+}
+
 /// What the name of a key says of its value, when it says anything. `exact`
 /// is true when the whole key is the word, which is all a number is judged
 /// by: `pin: 4821` is a secret, and `token_ttl_ms: 60000` is not.
 fn key_names(key: &str) -> Option<(KeyNames, bool)> {
-    const SECRET: [&str; 15] = [
-        "password",
-        "passwd",
-        "passphrase",
-        "secret",
-        "api_key",
-        "apikey",
-        "private_key",
-        "access_token",
-        "refresh_token",
-        "auth_token",
-        "id_token",
-        "session_token",
-        "bearer_token",
-        "client_secret",
-        "secret_key",
-    ];
     const PERHAPS: [&str; 7] = [
         "token",
         "tokens",
@@ -4281,8 +4298,8 @@ fn key_names(key: &str) -> Option<(KeyNames, bool)> {
     }
     let words = spaced.to_ascii_lowercase().replace('-', "_");
     let key = key.to_ascii_lowercase().replace('-', "_");
-    if SECRET.iter().any(|word| key.contains(word)) {
-        return Some((KeyNames::Secret, SECRET.contains(&key.as_str())));
+    if secret_key_word(&key) {
+        return Some((KeyNames::Secret, SECRET_WORDS.contains(&key.as_str())));
     }
     words
         .split(['_', '.'])
@@ -4527,4 +4544,46 @@ fn destination_problem(text: &str) -> Option<&'static str> {
 #[must_use]
 pub fn is_error(diagnostic: &Diagnostic) -> bool {
     diagnostic.level == Level::Error
+}
+
+#[cfg(test)]
+mod secret_names {
+    use super::{KeyNames, key_names, names_a_secret};
+
+    /// The answers `key_names` gave before the certain-secret test was
+    /// shared: the certain words, the perhaps words, and ordinary names.
+    #[test]
+    fn the_shared_test_gives_the_answers_the_compiler_always_gave() {
+        let table: [(&str, Option<(bool, bool)>); 20] = [
+            ("password", Some((true, true))),
+            ("client_secret", Some((true, true))),
+            ("clientSecret", Some((true, false))),
+            ("X-Api-Key", Some((true, false))),
+            ("apiKey", Some((true, true))),
+            ("access_token", Some((true, true))),
+            ("secrets_count", Some((true, false))),
+            ("secretary", Some((true, false))),
+            ("accessToken", Some((false, false))),
+            ("token", Some((false, true))),
+            ("tokens", Some((false, true))),
+            ("cookie", Some((false, true))),
+            ("pin", Some((false, true))),
+            ("pinCode", Some((false, false))),
+            ("X-Auth-Token", Some((true, false))),
+            ("spinner_count", None),
+            ("tokenizer_mode", None),
+            ("order_id", None),
+            ("name", None),
+            ("", None),
+        ];
+        for (key, want) in table {
+            let got = key_names(key).map(|(kind, exact)| (kind == KeyNames::Secret, exact));
+            assert_eq!(got, want, "{key:?}");
+            assert_eq!(
+                names_a_secret(key),
+                matches!(want, Some((true, _))),
+                "{key:?}"
+            );
+        }
+    }
 }

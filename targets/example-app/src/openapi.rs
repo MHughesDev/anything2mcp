@@ -98,6 +98,16 @@ fn document() -> Value {
                 "parameters": [order],
                 "responses": {"200": answer("The shipment; its carrier is optional", "Shipment"), "404": not_found}
             }},
+            "/api/orders/{order_id}/handoff": {"get": {
+                "operationId": "get_handoff",
+                "parameters": [order, {"name": "access_token", "in": "query", "required": false, "schema": {"type": "string"}, "example": "example-not-a-secret-0002"}],
+                "responses": {"200": answer("The hand-off; it carries the client's secret beside its ordinary values", "Handoff"), "404": not_found}
+            }},
+            "/api/orders/{order_id}/pickup": {"get": {
+                "operationId": "get_pickup",
+                "parameters": [order, {"name": "api_key", "in": "query", "required": true, "schema": {"type": "string"}, "example": "example-not-a-secret-0003"}],
+                "responses": {"200": answer("The pickup window; the request must carry an api key", "Pickup"), "400": answer("No api key", "Refusal"), "404": not_found}
+            }},
             "/api/orders/{order_id}/delivery": {
                 "get": {
                     "operationId": "get_delivery",
@@ -146,6 +156,11 @@ fn document() -> Value {
                     "order_id": {"type": "string"},
                     "carrier": {"type": "object", "required": ["name", "tracking"], "properties": {
                         "name": {"type": "string"}, "tracking": {"type": "string"}}}}},
+                "Handoff": {"type": "object", "required": ["order_id", "carrier_code", "client_secret"], "properties": {
+                    "order_id": {"type": "string"}, "carrier_code": {"type": "string"}, "packages": {"type": "integer"},
+                    "client_secret": {"type": "string", "description": "The client's secret, as the application returns it"}}},
+                "Pickup": {"type": "object", "required": ["order_id", "window"], "properties": {
+                    "order_id": {"type": "string"}, "window": {"type": "string"}}},
                 "Stock": {"type": "object", "required": ["item_code", "in_stock"], "properties": {
                     "item_code": {"type": "string"}, "in_stock": {"type": "integer"}}},
                 "Delivery": {"type": "object", "required": ["order_id", "shipping", "gift_wrap", "priority", "deliver_on", "notes", "version"], "properties": {

@@ -1,6 +1,6 @@
 # 0302. A field named as a secret is never drafted as an input or an output
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Built in the HTTP pack, except the report of a read that is not drafted and the report's count, which are roadmap package FT11.
 
 **Date:** 2026-11-23
 

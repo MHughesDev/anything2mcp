@@ -136,6 +136,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Changed
 
+- A read drafted from a published description no longer has as an output a property whose name is a secret's, and no longer takes such a parameter as an input: the property is left out and named in the drafted description, an optional parameter is left out, and a read that requires one is not drafted, so one such field no longer stops every tool of the target ([decision 0302](docs/decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
 - A draft with an open question now waits in the target's `held/` folder, with each file drafted from the same finding that names something the held draft defines (the rest of that finding stays in place), and is not read: the rest of the target compiles and is tried, `draft.lint` lists each held draft with its question, and `draft.try` of a held tool is refused by name ([decision 0298](docs/decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)).
 - The lint that suspects a credential no longer warns about a path into an answer, such as `*.pin_order`, under a key that holds a secret's name as a word; it now also sees that word in a key written in camel case.
 - `anything2mcp lint` (`draft.lint`) now fails with `lint_failed` when it lists a problem at the level of an error, as `try` already did; the problems are still in the result. A lint with warnings only still answers ok.

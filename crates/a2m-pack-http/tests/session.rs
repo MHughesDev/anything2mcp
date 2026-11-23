@@ -575,7 +575,7 @@ async fn discovery_observes_and_cannot_write() {
                 }
             }
             ("http_description", Ok(findings)) => {
-                assert_eq!(findings.len(), 9);
+                assert_eq!(findings.len(), 11);
                 for finding in findings {
                     assert_eq!(finding.level(), EvidenceLevel::Inferred);
                     assert_eq!(finding.source(), Source::PublishedDescription);
@@ -746,7 +746,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .filter(|(name, _)| name == "http_description")
         .flat_map(|(_, result)| result.unwrap())
         .collect();
-    assert_eq!(findings.len(), 9, "{findings:?}");
+    assert_eq!(findings.len(), 11, "{findings:?}");
 
     let folder = Folder::new("drafted-reads");
     let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
@@ -775,6 +775,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             "operations/api_orders_list.yaml",
             "operations/api_stock_get.yaml",
             "operations/orders_delivery_get.yaml",
+            "operations/orders_handoff_get.yaml",
             "operations/orders_items_get.yaml",
             "operations/orders_shipment_get.yaml",
             "operations/orders_totals_get.yaml",
@@ -973,6 +974,114 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
     assert!(app.writes().await.unwrap().is_empty());
 }
 
+/// Case 36 (decision 0302): the application's `client_secret` is no output
+/// of the read drafted for its answer, the optional `access_token` is no
+/// input, the read that requires an `api_key` is not drafted, the target
+/// compiles with no `credential_in_file`, and the invented value is in no
+/// part of a result and in no draft file.
+#[tokio::test]
+async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
+    use example_app::answers::HANDOFF_SECRET;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-secret");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &root).draft(&findings).unwrap();
+    assert!(report.kept_failing.is_empty(), "{report:?}");
+    assert!(
+        !report
+            .written
+            .iter()
+            .any(|path| path.as_str() == "operations/orders_pickup_get.yaml"),
+        "{report:?}"
+    );
+    let operation =
+        std::fs::read_to_string(folder.path().join("operations/orders_handoff_get.yaml")).unwrap();
+    assert!(!operation.contains("client_secret:"), "{operation}");
+    assert!(!operation.contains("access_token"), "{operation}");
+    assert!(operation.contains("carrier_code"), "{operation}");
+    assert!(
+        operation.contains("their names are a secret's") && operation.contains("`client_secret`"),
+        "{operation}"
+    );
+
+    // No draft file holds the invented value.
+    let mut stack = vec![folder.path().to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                assert!(!text.contains(HANDOFF_SECRET), "{}", path.display());
+            }
+        }
+    }
+
+    // The target compiles; the compiler refuses nothing.
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    assert!(
+        plan.operations
+            .iter()
+            .all(|operation| operation.name.as_str() != "example_orders_pickup_get")
+    );
+
+    let reading = Scene::over(
+        Folder::new("drafted-secret-run"),
+        common::registry(
+            &Folder::new("drafted-secret-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let ran = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_handoff_get",
+            &Values::new().with("order_id", "A-100"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ran.values.get("carrier_code").and_then(Value::as_text),
+        Some("EXF")
+    );
+    assert_eq!(ran.values.get("packages"), Some(&Value::Int(2)));
+    assert!(ran.values.get("client_secret").is_none());
+    assert!(
+        !format!("{ran:?}").contains(HANDOFF_SECRET),
+        "no part of the result holds the secret"
+    );
+    handle.release(prepared, false).await;
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
 /// A redactor that knows one secret.
 struct Knows(&'static str);
 
@@ -1143,7 +1252,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     // the origin and that path, and the surface is not an open question.
     let prefixed = format!("{base}/v1");
     let findings = findings_from_handed_file(&app, &prefixed).await;
-    assert_eq!(findings.len(), 9);
+    assert_eq!(findings.len(), 11);
     let one = target.replace("http://127.0.0.1:4010", &prefixed);
     let (_folder, root, scene, report) = draft_into(one, &findings);
     assert!(

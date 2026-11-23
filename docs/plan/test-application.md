@@ -62,6 +62,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 33 | Uses the browser's own controls: a select, a check box, a radio group, a date field, a text area, a confirmation dialog before saving, and a button disabled until a field is valid | One widget driver each for the native controls | 1 |
 | 34 | Redirects to another host name | A redirect off the target stops; no input changes where a request goes | 2 |
 | 35 | Answers an optional object property as an object, as `null`, as missing, or as a text, when told to; its description lists the property as not required and not nullable | A property the description does not require is drafted as possibly null; a value of another kind still stops ([decision 0297](../decisions/0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md)) | 2 |
+| 36 | Answers with a property named `client_secret`, with an invented value, beside ordinary values, and takes an optional query value `access_token`; a second read requires a query value `api_key` | A field or a parameter named as a secret is never drafted as an output or an input; the read that requires such a parameter is not drafted ([decision 0302](../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)) | 2 |
 
 ## The driver conformance suite
 
@@ -107,6 +108,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 33 | The delivery-details page and its JSON routes | No automated test drives the page's script: the interface driver exists, and none of its tests uses this page yet |
 | 34 | A redirect to the other loopback name on the same port | |
 | 35 | `GET /api/orders/{order}/shipment`, described by the schema `Shipment`; `POST /__control/shipment` with `{"answer": "object" \| "null" \| "missing" \| "text"}` sets how its `carrier` is answered until the next reset | |
+| 36 | `GET /api/orders/{order}/handoff`, described by the schema `Handoff`, whose `client_secret` is the invented text `example-not-a-secret-0001`, with an optional query value `access_token`; `GET /api/orders/{order}/pickup`, which requires a query value `api_key` | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
 

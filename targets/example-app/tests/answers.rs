@@ -124,3 +124,40 @@ async fn the_shipments_optional_carrier_is_answered_as_it_is_told_to() -> Outcom
     assert!(app.writes().await?.is_empty());
     Ok(())
 }
+
+/// Case 36: the hand-off answers with a `client_secret`, the pickup needs an
+/// `api_key`, and the description says so.
+#[tokio::test]
+async fn the_handoff_holds_an_invented_secret_and_the_pickup_needs_a_key() -> Outcome {
+    use example_app::answers::HANDOFF_SECRET;
+
+    let app = TestApp::start().await?;
+    let handoff: serde_json::Value = app
+        .http()
+        .get(app.url("/api/orders/A-100/handoff?access_token=x"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(handoff["client_secret"], HANDOFF_SECRET);
+    assert_eq!(handoff["carrier_code"], "EXF");
+    for (query, status) in [
+        ("", StatusCode::BAD_REQUEST),
+        ("?api_key=x", StatusCode::OK),
+    ] {
+        let address = app.url(&format!("/api/orders/A-100/pickup{query}"));
+        assert_eq!(app.http().get(address).send().await?.status(), status);
+    }
+    let described: serde_json::Value = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        described["components"]["schemas"]["Handoff"]["properties"]["client_secret"].is_object()
+    );
+    assert!(app.writes().await?.is_empty());
+    Ok(())
+}

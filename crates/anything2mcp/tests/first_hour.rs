@@ -44,13 +44,14 @@ use serde_json::{Value as Json, json};
 
 /// The reads the scout drafts from the test application's published
 /// description and proves by calling them.
-const PROVEN: [&str; 6] = [
+const PROVEN: [&str; 7] = [
     "example_api_orders_list",
     "example_api_orders_get",
     "example_orders_items_get",
     "example_orders_totals_get",
     "example_orders_shipment_get",
     "example_orders_delivery_get",
+    "example_orders_handoff_get",
 ];
 
 /// The kind of the test application's surface, as the developer names it
@@ -315,7 +316,7 @@ fn check_report(report: &Json) {
     // the live look found.
     assert_eq!(
         surface["findings_by_kind"],
-        json!({"described_operation": {"inferred": 9}, "endpoint": {"discovered": 2}}),
+        json!({"described_operation": {"inferred": 11}, "endpoint": {"discovered": 2}}),
         "{report}"
     );
     let written: Vec<&str> = content["drafted"]["written"]

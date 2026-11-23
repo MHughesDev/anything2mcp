@@ -153,7 +153,7 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
             &files("description", DESCRIPTION_FILE),
         ])
         .await;
-    assert_eq!(read["by_kind"]["described_operation"], 9, "{read}");
+    assert_eq!(read["by_kind"]["described_operation"], 11, "{read}");
 
     // The scout, handed the file, drafts from what it describes.
     let scouted = world
@@ -169,7 +169,7 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
     assert!(scouted["report_hash"].is_string(), "{scouted}");
     assert_eq!(
         found_by_kind(&scouted),
-        json!({"described_operation": {"inferred": 9}, "endpoint": {"discovered": 2}}),
+        json!({"described_operation": {"inferred": 11}, "endpoint": {"discovered": 2}}),
         "{scouted}"
     );
     let written = drafted(&scouted);
@@ -255,7 +255,7 @@ async fn spec_import_drafts_from_a_file_as_the_scout_does() {
     );
     assert_eq!(
         found_by_kind(&imported)["described_operation"],
-        json!({"inferred": 9}),
+        json!({"inferred": 11}),
         "{imported}"
     );
     let written = drafted(&imported);
@@ -373,7 +373,7 @@ async fn a_scout_of_a_large_description_answers_within_the_cap_and_its_lists_are
 
     // The counts are the whole report's.
     let counts = &scouted["counts"];
-    assert_eq!(count(&counts["found"]), MANY + SOUND + 9 + 2, "{counts}");
+    assert_eq!(count(&counts["found"]), MANY + SOUND + 11 + 2, "{counts}");
     assert!(written_in(&scouted).len() <= 20, "{scouted}");
     assert!(count(&counts["drafted.written"]) > 20, "{counts}");
     // Reads whose answer the description gives no shape of are held with
