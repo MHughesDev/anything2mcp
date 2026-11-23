@@ -18,13 +18,14 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Binding Selector | The part of the engine loop that chooses which binding of an operation runs: the first verified binding whose driver is ready and whose surface has not drifted, with the reason recorded |
 | Bridge | Code that runs inside a host application or process, through an interface the host offers, and speaks to the runtime from there |
 | Build brief | What a lead hands a worker for one package: the goal, the proof, the files it owns, and the checks to run. Kept outside the repository ([decision 0326](../decisions/0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md)) |
-| Build Order | The document of what is left to build, in what order, and how far the build has come: [docs/plan/build-order.md](../plan/build-order.md) (decision 0326). Not the plan |
+| Build Order | The document of what is left to build, in what order, and how far the build has come: [docs/plan/build-order.md](../plan/build-order.md) (decision 0326). Not the compiled target |
 | Candidate | A published version being compared in shadow before it becomes current |
 | Blob | Any stored evidence or value, named by a keyed digest of its content and sealed |
 | Change (of a watch) | One difference a check reports, kept in the ledger as the kind, the keyed digest of the record's key, and the names of the outputs that differ, never a value. The kinds are `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, and `ended` ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Check (of a watch) | One call of a watch's read: an ordinary run of that read, compared with the baseline when it completes ([decision 0234](../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md)) |
 | Client | Anything that talks to the engine: a command, an MCP client, an SDK, the tray application |
 | Commit point | One change the system makes durable: a save, a committed transaction, a replaced file, a published message. One ledger row |
+| Compiled target | The compiled, hashed form of a target version that the engine runs: what the compiler makes from a target's files, run step by step with no model. Formerly "plan" ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
 | Control | Everything the engine asks of the control plane while it runs a job: the plan, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
 | Control plane | The part that decides, records, and hands out work |
 | Coverage | How much of what could have been looked at was looked at: complete, partial, or unknown. An empty result with anything less than complete coverage is not absence |
@@ -104,7 +105,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
-| Plan | The compiled, hashed form of a target version that the engine runs. The only part this word names ([decision 0326](../decisions/0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md)) |
+| Plan | The old name of the compiled target, kept in the code until roadmap package N0 renames it ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
 | Policy set | The versioned rules the policy engine evaluates |
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
 | Preset | A named bundle of settings a person picks instead of setting each one. A preset may only tighten |

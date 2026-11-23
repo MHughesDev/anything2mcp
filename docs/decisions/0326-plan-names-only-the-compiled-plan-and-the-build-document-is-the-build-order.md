@@ -1,6 +1,6 @@
 # 0326. "Plan" names only the compiled plan, and the document of what to build next is the Build Order
 
-**Status:** Accepted. Owner decision.
+**Status:** Accepted. Owner decision. Point 1 is superseded by [decision 0329](0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md).
 
 **Date:** 2026-11-23
 

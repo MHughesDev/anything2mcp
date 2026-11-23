@@ -333,6 +333,7 @@ A read-only tool is to take about three commands. The order of these and of ever
 | V3 | A pack states which step kinds can change the system, and the compiler refuses a read plan that holds one (decision 0307, point 4) | `a2m-provider`, `a2m-files`, each pack | None | Such a binding fails to compile, with a test | done |
 | V4 | The help of `tool.call` says a call with no environment runs in the target's default, with a test (decision 0307, point 5) | `a2m-actions` | None | One sentence, and a test of the default | done |
 | V5 | A description is at most 1,024 characters of plain text, and the MCP door sends the target, the version, and who wrote the description with each tool (decision 0307, point 6) | `a2m-files`, `a2m-mcp` | None | The record, then its test | ready |
+| N0 | Rename the plan to the compiled target everywhere ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)): types, modules, the format number and hash, failure codes that carry the word, file formats, and documents, each use checked by hand | Every crate | None | No use of the old name names the compiled target; every check green on three systems | held |
 
 ## What can run at once
 
