@@ -184,7 +184,7 @@ The others: take each roadmap row's "not shown" items, one test each.
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| 0282 | The interpreter decision | Whether, and how, a path may start an interpreter | A decided record; then an MCP server run by an interpreter starts, or is refused with a reason a person can act on |
+| L1, L2, L3 | Launchers ([decision 0299](../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md), which decides 0282) | The listing commands of such programs; a launcher with its file pinned; an MCP server started that way | A server started through a launcher is wrapped and a write through it verified; a package runner is refused with what to do instead |
 | FT5 | A field test for each kind | Recipes: an existing MCP server; a command-line program; a database; files; a broker; a desktop application; a device's protocol | One recipe each, findings written down |
 | D3, D4, D5 | The command pack | The rest of reads; the result file of H-26; writes with a kill and resume | The roadmap's proofs |
 | G2, G3 | The data pack | Reads and writes, the rest | The roadmap's proofs |
@@ -198,7 +198,7 @@ The others: take each roadmap row's "not shown" items, one test each.
 
 **Low level.**
 
-0282: 1. Read the Proposed record and section 213. 2. Decide under decision 0294. The case to weigh: most existing MCP servers are started through an interpreter and a package runner, so refusing them leaves the MCP pack with little to wrap; allowing them means the product starts code it cannot identify by one digest. A middle course is a declared interpreter with a pinned package and digest, as the command pack already does for a script. 3. Build what the record says, with the fault tests of the command pack.
+L1 to L3: decided by decision 0299. Build in order; L3 is the one a field test of an existing MCP server needs.
 
 FT5, in this order, each a recipe and a findings table:
 1. A database server with invented rows: reads, then a write, checked by a direct query.

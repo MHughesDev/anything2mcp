@@ -290,3 +290,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0296 | [The build is ordered by what the next field test needs, in eight stages](0296-the-build-is-ordered-by-what-the-next-field-test-needs.md) | Accepted (design decision) |
 | 0297 | [A property a description does not require is drafted as possibly null](0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md) | Accepted (design decision) |
 | 0298 | [A draft with an open question waits in a holding folder, and the target compiles whole](0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md) | Accepted (design decision) |
+| 0299 | [Programs that run what their arguments name are reached in two steps, and a server started through a launcher starts with its file pinned](0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) | Accepted (design decision; decides 0282) |

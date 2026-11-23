@@ -305,6 +305,14 @@ The product is run against existing software that the project runs itself, while
 | FT7 | A tool's output schema says which outputs may be absent, from the uncertain paths the endpoint's shape already knows ([decision 0297](../decisions/0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md), point 5) | `a2m-core`, `a2m-files`, `a2m-pack-http` | FT3 | A drafted tool whose output reads through a property that may be null declares that output as optional, and a client that validates the result accepts an absent one | ready |
 | FT6 | The field test of a web application with a sign-in and no published description | None | E2, 2.3 | Reads drafted from a capture of a person's use run, and match the software's own database | held |
 
+### Programs that run what their arguments name (decision 0299)
+
+| # | Package | Crates | Needs | Proof | State |
+| --- | --- | --- | --- | --- | --- |
+| L1 | The commands of a launcher, a version manager, and a container runner that run no code but the program's own, by a closed list for each kind | `a2m-pack-command`, `a2m-provider` | D3 | A listed subcommand runs against the stand; one not listed is refused by name | held |
+| L2 | A launcher with the file it loads pinned by digest, as rows of the table of interpreter forms | `a2m-pack-command`, `a2m-provider` | L1 | A changed file is refused at start; each row has its test on three operating systems | held |
+| L3 | The MCP pack starts a local server through a launcher of the table with its entry file pinned; a package runner is refused with what to do instead; the publish review names the code nothing pins | `a2m-pack-mcp`, `a2m-actions` | L2 | The stand's server, started through a launcher, is wrapped and a write through it is verified; a server named by a package runner is refused | held |
+
 ### The short path (decision 0296)
 
 A read-only tool is to take about three commands. The order of these and of every other package is in [the build plan](build-plan.md).
