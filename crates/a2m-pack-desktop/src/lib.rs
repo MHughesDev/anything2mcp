@@ -49,6 +49,7 @@ mod discover;
 mod draft;
 mod driver;
 mod lower;
+mod members;
 mod model;
 mod plist;
 mod propose;
@@ -57,6 +58,8 @@ mod screens;
 mod sdef;
 mod service;
 mod tree;
+mod typelib;
+mod windows_kinds;
 mod xml;
 
 use std::sync::Arc;
@@ -67,7 +70,9 @@ use a2m_provider::{
     CompilerRegistrations, DiscovererName, Pack, PackContext, Registrar, RegistryBuilder,
 };
 
-pub use lower::{GOTO, INTROSPECT, INVOKE, PROPERTY, READ, SET, SNAPSHOT, WAIT};
+pub use lower::{
+    COM_GET, GOTO, INTROSPECT, INVOKE, MANAGEMENT_GET, PROPERTY, READ, SCHEMA, SET, SNAPSHOT, WAIT,
+};
 pub use screens::{CONTROLS, DESKTOP_SURFACE, PACK, SCREEN_KIND};
 
 /// The name of the mode this pack drives.
@@ -88,6 +93,14 @@ pub const SERVICE_DISCOVERER: &str = "desktop_service";
 pub const BUNDLE_DISCOVERER: &str = "desktop_bundle";
 
 pub use bundle::BUNDLE;
+pub use windows_kinds::TYPE_LIBRARY;
+
+/// The name of the pack's discoverer of a management class's definition.
+pub const MANAGEMENT_DISCOVERER: &str = "desktop_management";
+
+/// The name of the pack's discoverer of a COM type library a person hands
+/// the scout.
+pub const COM_DISCOVERER: &str = "desktop_com";
 
 pub use service::{INTERFACE_FILE, SERVICE_FILE};
 
@@ -130,6 +143,8 @@ fn surface_fields() -> JsonSchema {
         .required("application", JsonSchema::text())
         .optional("digest", JsonSchema::text())
         .optional("service", JsonSchema::text())
+        .optional("management_class", JsonSchema::text())
+        .optional("management_namespace", JsonSchema::text())
 }
 
 fn setting(cx: &PackContext, key: &str) -> Option<usize> {
@@ -173,6 +188,8 @@ impl Pack for DesktopPack {
         let window = FindingKind::new(discover::WINDOW_FINDING)?;
         let service_kind = FindingKind::new(service::SERVICE_FINDING)?;
         let bundle_kind = FindingKind::new(bundle::BUNDLE_FINDING)?;
+        let management_kind = FindingKind::new(windows_kinds::MANAGEMENT_FINDING)?;
+        let typelib_kind = FindingKind::new(windows_kinds::TYPELIB_FINDING)?;
         let mut compiler = CompilerRegistrations::new()
             .surface_kind(
                 SurfaceKindSpec::new(DESKTOP_SURFACE, ADDRESS_KEY, surface_fields())
@@ -188,6 +205,12 @@ impl Pack for DesktopPack {
             }))
             .drafting_rule(Arc::new(propose::PropertyReadRule {
                 kind: service_kind.clone(),
+            }))
+            .drafting_rule(Arc::new(members::ManagementReadRule {
+                kind: management_kind.clone(),
+            }))
+            .drafting_rule(Arc::new(members::ComReadRule {
+                kind: typelib_kind.clone(),
             }));
         for control in CONTROLS {
             compiler = compiler.control(ControlName::new(control)?);
@@ -219,6 +242,26 @@ impl Pack for DesktopPack {
                 clock: cx.telemetry().clock(),
             }),
             Arc::new(bundle::BundleDescriber { kind: bundle_kind }),
+        )?;
+        to.discoverer(
+            Arc::new(windows_kinds::DesktopManagement {
+                name: DiscovererName::new(MANAGEMENT_DISCOVERER)?,
+                kind: management_kind.clone(),
+                version: version(),
+                clock: cx.telemetry().clock(),
+            }),
+            Arc::new(windows_kinds::WindowsDescriber {
+                kind: management_kind,
+            }),
+        )?;
+        to.discoverer(
+            Arc::new(windows_kinds::DesktopCom {
+                name: DiscovererName::new(COM_DISCOVERER)?,
+                kind: typelib_kind.clone(),
+                version: version(),
+                clock: cx.telemetry().clock(),
+            }),
+            Arc::new(windows_kinds::WindowsDescriber { kind: typelib_kind }),
         )
     }
 }

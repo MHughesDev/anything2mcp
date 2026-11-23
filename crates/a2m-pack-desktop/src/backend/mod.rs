@@ -22,6 +22,8 @@ pub(crate) use linux::{Acted, Heard, Look, Proof, Settable};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
+pub(crate) mod wmi;
+#[cfg(windows)]
 pub(crate) use self::windows::Look;
 
 #[cfg(target_os = "macos")]

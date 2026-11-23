@@ -68,6 +68,13 @@ a2m_core::failure_codes! {
     DICTIONARY_INCLUDE_REFUSED = Policy, "dictionary_include_refused",
         meaning "A scripting dictionary a person handed the scout includes a file outside the application's bundle, which the pack never reads. The dictionary is refused whole.",
         next "Hand a dictionary that includes nothing outside its bundle, or leave it out of the discovery.";
+    TYPE_LIBRARY_FORMAT_UNKNOWN = UnknownVariant, "type_library_format_unknown",
+        meaning "A file handed as a COM type library is in a form the reader does not know: the older form, a program file that may hold one, or something else. Only the MSFT form is read, and none is loaded by the system.",
+        next "Hand a type library in the MSFT form, or leave it out of the discovery.";
+    STEP_NOT_BUILT = Busy, "step_not_built",
+        meaning "A read of a management class's property or of a COM property get was drafted and compiles, and this version of the pack carries out no such step.",
+        next "Use the read once a version of the desktop pack that carries out the step is enabled.",
+        passes not_by_itself;
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
         next "Compile the target again with the version of the desktop pack that is enabled.";
@@ -144,6 +151,33 @@ pub(crate) fn service_not_built() -> StepFailure {
             std::env::consts::OS
         ),
         "Run the target on Linux.",
+    ))
+}
+
+/// A management class asked on a system other than Windows. Nothing was
+/// sent.
+#[cfg(not(windows))]
+pub(crate) fn management_not_built() -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::SYSTEM_NOT_BUILT,
+        format!(
+            "The desktop pack reads the definitions of management classes only on Windows in this version; this system is {}. Nothing was sent.",
+            std::env::consts::OS
+        ),
+        "Run the target on Windows.",
+    ))
+}
+
+/// A drafted read that this version carries out no step for. Nothing was
+/// sent.
+pub(crate) fn step_not_built(kind: &str) -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::STEP_NOT_BUILT,
+        format!(
+            "This version of the desktop pack carries out no `{}` step: the read compiles, and is not run yet.",
+            shown(kind)
+        ),
+        "Use the read once a version of the desktop pack that carries out the step is enabled.",
     ))
 }
 

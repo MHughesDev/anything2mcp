@@ -38,7 +38,10 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INTROSPECT, INVOKE, KEY_ARG, PROPERTY, READ, SET, SNAPSHOT, WAIT};
+use crate::lower::{
+    COM_GET, GOTO, INTROSPECT, INVOKE, KEY_ARG, MANAGEMENT_GET, PROPERTY, READ, SCHEMA, SET,
+    SNAPSHOT, WAIT,
+};
 use crate::model::{
     Cond, PAYLOAD_FORMAT, PropertyStep, ReadStep, Screen, ScreenSection, SurfaceFields,
 };
@@ -82,6 +85,12 @@ struct Held {
     /// session bus. Linux only: the bus is Linux's.
     #[cfg(target_os = "linux")]
     service: Option<String>,
+    /// The management class the surface asks the scout to read, and its
+    /// namespace. Windows only.
+    #[cfg(windows)]
+    management_class: Option<String>,
+    #[cfg(windows)]
+    management_namespace: Option<String>,
     sections: BTreeMap<usize, ScreenSection>,
     /// The window the last `goto` found.
     window: Option<El>,
@@ -960,6 +969,50 @@ impl Held {
         Err(codes::service_not_built())
     }
 
+    /// The definition of the management class the surface names: on Windows
+    /// as the system's management service gives it, elsewhere a named stop
+    /// with nothing sent (decision 0318).
+    #[cfg(windows)]
+    async fn schema(&self) -> Result<Observed, StepFailure> {
+        let class = self
+            .management_class
+            .clone()
+            .ok_or_else(|| codes::not_usable("the surface names no `management_class`"))?;
+        let namespace = self
+            .management_namespace
+            .clone()
+            .unwrap_or_else(|| crate::windows_kinds::DEFAULT_NAMESPACE.to_owned());
+        let read = crate::backend::wmi::read(namespace.clone(), class.clone())
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let shape = json!({
+            "format": SNAPSHOT_FORMAT,
+            "namespace": namespace,
+            "class": class,
+            "singleton": read.singleton,
+            "cut": read.cut,
+            "properties": read.properties.iter().map(|property| json!({
+                "name": property.name,
+                "cim_type": property.cim_type,
+                "writable": property.writable,
+            })).collect::<Vec<_>>(),
+            "methods": read.methods,
+        });
+        Ok(Observed {
+            values: Values::new().with("shape", shape.to_string()),
+            ..Observed::default()
+        })
+    }
+
+    #[cfg(not(windows))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Windows, where it asks the system"
+    )]
+    async fn schema(&self) -> Result<Observed, StepFailure> {
+        Err(codes::management_not_built())
+    }
+
     /// The shape of every window of the application.
     async fn snapshot(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
         let windows = self
@@ -1124,6 +1177,10 @@ impl Driver for DesktopDriver {
                 program,
                 #[cfg(target_os = "linux")]
                 service: fields.service.clone(),
+                #[cfg(windows)]
+                management_class: fields.management_class.clone(),
+                #[cfg(windows)]
+                management_namespace: fields.management_namespace.clone(),
                 sections,
                 window: None,
                 limits: self.limits,
@@ -1161,6 +1218,10 @@ impl Driver for DesktopDriver {
                 held.introspect(deadline).await?
             } else if step.kind == PROPERTY {
                 held.property(step).await?
+            } else if step.kind == SCHEMA {
+                held.schema().await?
+            } else if step.kind == MANAGEMENT_GET || step.kind == COM_GET {
+                return Err(codes::step_not_built(step.kind.as_str()));
             } else if step.kind == SET {
                 held.set(step, input).await?
             } else if step.kind == INVOKE {

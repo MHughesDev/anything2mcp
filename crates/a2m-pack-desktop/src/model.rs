@@ -150,6 +150,23 @@ pub(crate) struct SurfaceFields {
     /// the target states one (decision 0316).
     #[serde(default)]
     pub service: Option<String>,
+    /// The management class (on Windows) whose definition the target asks
+    /// the scout to read, when it states one (decision 0318).
+    #[serde(default)]
+    pub management_class: Option<String>,
+    /// Its namespace, when not the default.
+    #[serde(default)]
+    pub management_namespace: Option<String>,
+}
+
+/// The payload of a `management_get` or a `com_get` step: the management
+/// class or the interface that owns the member, the member's name, and the
+/// output it fills (decision 0318).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub(crate) struct MemberStep {
+    pub owner: String,
+    pub name: String,
+    pub output: String,
 }
 
 /// The payload of a `property` step: the one property of one object of the

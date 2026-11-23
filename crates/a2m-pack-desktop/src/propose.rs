@@ -44,7 +44,7 @@ fn unreadable() -> Failure {
 }
 
 /// `CamelCase` and `snake_case` words as the snake case target files use.
-fn words(text: &str) -> String {
+pub(crate) fn words(text: &str) -> String {
     let mut spaced = String::new();
     let mut last_lower = false;
     for c in text.chars() {

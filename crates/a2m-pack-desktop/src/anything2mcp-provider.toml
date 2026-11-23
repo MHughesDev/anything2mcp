@@ -16,8 +16,11 @@ kind = "pack"
 
 # Reads (decision 0198) and, on Linux, `update` and `upsert` (decision
 # 0218). `snapshot` and `introspect` are sent by the discoverers only; no
-# lowering gives them. `property` reads one property of the surface's
-# service (decision 0316).
+# lowering gives them. `schema` is the same, for a management class.
+# `property` reads one property of the surface's service (decision 0316);
+# `management_get` and `com_get` are what a drafted read of a management
+# class's property or a COM property get lowers to, and no version carries
+# them out yet (decision 0318).
 # No kind of step always saves: an `invoke` saves when its action is
 # declared to, and the lowering refuses a `commits` mark on any other kind.
 # A write holds the person's screen alone: two runs never type into one
@@ -26,7 +29,7 @@ kind = "pack"
 name = "desktop"
 archetype = "interface"
 verbs = ["read", "list", "update", "upsert"]
-steps = ["goto", "wait", "read", "set", "invoke", "snapshot", "introspect", "property"]
+steps = ["goto", "wait", "read", "set", "invoke", "snapshot", "introspect", "property", "schema", "management_get", "com_get"]
 commit_steps = []
 rank = 60
 session_reads = 1
@@ -40,7 +43,7 @@ session = false
 
 [points]
 driver = ["desktop"]
-discoverer = ["desktop_snapshot", "desktop_service", "desktop_bundle"]
+discoverer = ["desktop_snapshot", "desktop_service", "desktop_bundle", "desktop_management", "desktop_com"]
 
 [[discoverers]]
 name = "desktop_snapshot"
@@ -77,6 +80,28 @@ max_level = "inferred"
 bounds = { seconds = 30, bytes = 4194304, depth = 24 }
 files = ["bundle"]
 
+# Asks the system's management service for the definition of the class a
+# surface names, on Windows, and reads a COM type library a person hands it,
+# as bytes on every system, never loaded by the system (decision 0318).
+[[discoverers]]
+name = "desktop_management"
+archetype = "interface"
+surface_kinds = ["desktop"]
+kinds = ["management_class"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 1048576, depth = 4 }
+
+[[discoverers]]
+name = "desktop_com"
+archetype = "interface"
+surface_kinds = ["desktop"]
+kinds = ["com_type_library"]
+sources = ["artifact"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 4194304, depth = 4 }
+files = ["type_library"]
+
 [[file_kinds]]
 name = "screen"
 directory = "screens/"
@@ -94,6 +119,14 @@ surface_kinds = ["desktop"]
 name = "application_bundle"
 surface_kinds = ["desktop"]
 
+[[finding_kinds]]
+name = "management_class"
+surface_kinds = ["desktop"]
+
+[[finding_kinds]]
+name = "com_type_library"
+surface_kinds = ["desktop"]
+
 # From a window's shape: a screen and a `get` read of the values it labels,
 # and a screen and a `list` read of each table it names. Never an action.
 [[drafting_rules]]
@@ -108,6 +141,17 @@ file_kind = "operation"
 # Never a write, and nothing for a property that states otherwise.
 [[drafting_rules]]
 finding_kind = "dbus_service"
+file_kind = "operation"
+
+# From a singleton management class's property its definition does not mark
+# writable, and from a dispatch interface's property get in a type library:
+# a read each. Never a write or a method (decision 0318).
+[[drafting_rules]]
+finding_kind = "management_class"
+file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "com_type_library"
 file_kind = "operation"
 
 [[controls]]
@@ -176,6 +220,14 @@ code = "property_not_text"
 [[failure_codes]]
 class = "policy"
 code = "dictionary_include_refused"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "type_library_format_unknown"
+
+[[failure_codes]]
+class = "busy"
+code = "step_not_built"
 
 [[failure_codes]]
 class = "input"

@@ -39,6 +39,8 @@ use a2m_provider::{
 use a2m_telemetry::TelemetrySettings;
 use example_desk::{Desk, Order, Session};
 
+pub mod typelib;
+
 example_desk::stand_child!();
 
 /// A folder under the system's temporary folder, removed when dropped.
@@ -171,6 +173,20 @@ impl Scene {
         let service = service.to_owned();
         fixture_copy(copy.path(), "target.yaml", move |text| {
             text.replace("service: org.example.Desk", &format!("service: {service}"))
+        });
+        Self::build(name, true, copy.path()).await
+    }
+
+    /// The same, with the surface stating the management class whose
+    /// definition the scout is to read.
+    pub async fn with_management_class(name: &str, class: &str) -> Option<Self> {
+        let copy = Folder::new("management-target");
+        let class = class.to_owned();
+        fixture_copy(copy.path(), "target.yaml", move |text| {
+            text.replace(
+                "    service: org.example.Desk\n",
+                &format!("    service: org.example.Desk\n    management_class: {class}\n"),
+            )
         });
         Self::build(name, true, copy.path()).await
     }

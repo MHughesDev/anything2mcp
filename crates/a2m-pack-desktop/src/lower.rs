@@ -30,7 +30,8 @@ use a2m_files::{
 
 use crate::codes::{self, shown};
 use crate::model::{
-    InvokeStep, PAYLOAD_FORMAT, PropertyStep, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
+    InvokeStep, MemberStep, PAYLOAD_FORMAT, PropertyStep, ReadItem, ReadStep, Screen,
+    ScreenSection, SetStep,
 };
 use crate::screens::{DESKTOP_SURFACE, SCREEN_KIND, problem};
 
@@ -51,6 +52,15 @@ pub const SNAPSHOT: StepKind = StepKind::fixed("snapshot");
 pub const INTROSPECT: StepKind = StepKind::fixed("introspect");
 /// The step that reads one property of the surface's service.
 pub const PROPERTY: StepKind = StepKind::fixed("property");
+/// The step a discoverer sends: the definition of the management class the
+/// surface names (Windows).
+pub const SCHEMA: StepKind = StepKind::fixed("schema");
+/// What a drafted read of a management class's property lowers to. This
+/// version carries out no such step (decision 0318).
+pub const MANAGEMENT_GET: StepKind = StepKind::fixed("management_get");
+/// What a drafted read of a COM property get lowers to. This version
+/// carries out no such step (decision 0318).
+pub const COM_GET: StepKind = StepKind::fixed("com_get");
 
 const READ_VERBS: &[&str] = &["read", "list"];
 const WRITE_VERBS: &[&str] = &["update", "upsert"];
@@ -80,6 +90,20 @@ impl DesktopLowering {
             schema: JsonSchema::object()
                 .optional("screen", JsonSchema::name())
                 .optional(
+                    "management",
+                    JsonSchema::object()
+                        .required("surface", JsonSchema::name())
+                        .required("class", JsonSchema::text())
+                        .required("name", JsonSchema::text()),
+                )
+                .optional(
+                    "com",
+                    JsonSchema::object()
+                        .required("surface", JsonSchema::name())
+                        .required("interface", JsonSchema::text())
+                        .required("name", JsonSchema::text()),
+                )
+                .optional(
                     "property",
                     JsonSchema::object()
                         .required("surface", JsonSchema::name())
@@ -98,7 +122,16 @@ impl DesktopLowering {
                 .chain(WRITE_VERBS)
                 .map(|verb| Verb::fixed(verb))
                 .collect(),
-            step_kinds: vec![GOTO, WAIT, READ, SET, INVOKE, PROPERTY],
+            step_kinds: vec![
+                GOTO,
+                WAIT,
+                READ,
+                SET,
+                INVOKE,
+                PROPERTY,
+                MANAGEMENT_GET,
+                COM_GET,
+            ],
         }
     }
 }
@@ -511,6 +544,147 @@ impl<'a> Lower<'a, '_> {
         })
     }
 
+    /// A binding that reads one member of a management class (`management`)
+    /// or of a COM interface (`com`): one step, which this version of the
+    /// pack does not carry out, and nothing that could change anything
+    /// (decision 0318). Only the verb `read`, and only an operation declared
+    /// to read.
+    fn member(
+        &mut self,
+        binding: &ResolvedBinding<'_>,
+        member: &Located<Doc>,
+        verb: &str,
+        key: &'static str,
+        kind: StepKind,
+    ) -> Result<Lowered, Diagnostics> {
+        let at = &binding.doc.at;
+        let text = |name: &str| {
+            member
+                .get(name)
+                .and_then(Located::as_text)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        if verb != "read" {
+            self.refuse(
+                "property_reads_only",
+                Stage::Analyze,
+                at,
+                format!(
+                    "The verb `{}` is not built for a binding that names a member of a {}: a member is read, and setting or calling one is not built.",
+                    shown(verb),
+                    if key == "com" { "COM interface" } else { "management class" }
+                ),
+                "Bind the verb `read`.",
+            );
+        }
+        if self.cx.operation().effect() != EffectClass::Read {
+            self.refuse(
+                "read_acts",
+                Stage::Analyze,
+                at,
+                "A binding that reads a member is a read, and the operation is declared to change something.".to_owned(),
+                "Declare `effect: read`.",
+            );
+        }
+        for other in [
+            "screen",
+            "fields",
+            "action",
+            "read_back",
+            "property",
+            "management",
+            "com",
+        ] {
+            if other != key
+                && let Some(stray) = binding.field(other)
+            {
+                self.refuse(
+                    "read_acts",
+                    Stage::Analyze,
+                    &stray.at,
+                    format!(
+                        "A binding that reads a member states `{other}`, which belongs to another kind of binding."
+                    ),
+                    "Remove it.",
+                );
+            }
+        }
+        let owner_key = if key == "com" { "interface" } else { "class" };
+        let (owner, name) = (text(owner_key), text("name"));
+        let plain = |word: &str, dots: bool| {
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || (dots && c == '.'))
+        };
+        if !plain(&owner, key == "com") || !plain(&name, false) {
+            self.refuse(
+                "property_invalid",
+                Stage::Resolve,
+                &member.at,
+                format!(
+                    "The binding's {owner_key} or member name is not one a definition can hold."
+                ),
+                "Write them as the definition gives them.",
+            );
+        }
+        let outputs = self.cx.operation().outputs();
+        let [output] = outputs else {
+            self.refuse(
+                "property_output",
+                Stage::Analyze,
+                at,
+                "A read of one member has exactly one output, which is its value as text."
+                    .to_owned(),
+                "Give the operation one output, of the type `untrusted_text`.",
+            );
+            return Err(std::mem::take(&mut self.problems));
+        };
+        let surface = SurfaceName::new(&text("surface")).map_err(|_| {
+            Diagnostics::from(problem(
+                "unknown_screen",
+                Stage::Resolve,
+                &member.at,
+                "The binding's surface has no well-formed name.",
+                "Name a surface the target declares.",
+            ))
+        })?;
+        let payload = MemberStep {
+            owner,
+            name,
+            output: output.name.clone(),
+        };
+        let step = Step {
+            kind: kind.clone(),
+            refers_to: None,
+            args: Vec::new(),
+            timeout_ms: self
+                .cx
+                .target()
+                .default_timeout_ms(kind.as_str())
+                .unwrap_or(DEFAULT_TIMEOUT_MS),
+            fails_as: Self::not_found(),
+            commits: false,
+            lookup: false,
+            idempotent: true,
+            when: None,
+            payload: self.encoded(&payload, &member.at),
+        };
+        if !self.problems.is_empty() {
+            return Err(std::mem::take(&mut self.problems));
+        }
+        Ok(Lowered {
+            surface,
+            act: vec![step],
+            confirm: Vec::new(),
+            read_back: Vec::new(),
+            lookup: Vec::new(),
+            settle_ms: 0,
+            prefer_response: false,
+        })
+    }
+
     fn invoke(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Option<Step> {
         let Some(named) = binding.get("action") else {
             self.refuse(
@@ -671,6 +845,11 @@ impl Lowering for DesktopLowering {
         }
         if let Some(property) = binding.field("property") {
             return lower.property(binding, property, verb);
+        }
+        for (key, kind) in [("management", MANAGEMENT_GET), ("com", COM_GET)] {
+            if let Some(member) = binding.field(key) {
+                return lower.member(binding, member, verb, key, kind);
+            }
         }
         let Some(found) = lower.screen(binding.doc) else {
             return Err(lower.problems);
