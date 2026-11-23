@@ -287,3 +287,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0293 | [Existing software that we run ourselves is tested against during the build, and may be written to](0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md) | Accepted (owner decision) |
 | 0294 | [The owner hands the open questions, and the deciding, to the agents](0294-the-owner-hands-the-open-questions-to-the-agents.md) | Accepted (owner decision) |
 | 0295 | [A field test is run from a recipe kept outside the repository, by a runner that names no software](0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | Accepted (design decision) |
+| 0296 | [The build is ordered by what the next field test needs, in eight stages](0296-the-build-is-ordered-by-what-the-next-field-test-needs.md) | Accepted (design decision) |

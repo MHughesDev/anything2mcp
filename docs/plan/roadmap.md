@@ -297,11 +297,21 @@ The product is run against existing software that the project runs itself, while
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| F1 | The runner, and the first field test: a request service with a published description, reads only | None; `tools/field_test.py` | None | The recipe runs three times with the same result, and the software's own database confirms the seeded data | done |
-| F2 | Close findings 1, 2, 4, 5, and 6 of field test 1, each first as a case in the test application | `a2m-pack-http`, `a2m-actions`, `a2m-files` | F1 | Each `gap` step of the recipe fails, and is changed to expect the right behaviour; the stand's new cases pass on three operating systems | ready |
-| F3 | Decide and build what a read does when a described object is absent (finding 7) | `a2m-pack-http`; a decision record | F1 | The two reads of field test 1 return the stored values, and a value of a kind the description does not allow still stops | ready |
-| F4 | Faults on purpose: a proxy between the product and the software that drops, delays, or cuts a connection, and the first verified write of a field test through it | None; `tools/` | F2, F3 | A write whose answer is lost is reconciled, and the software's own database holds it once | held |
-| F5 | A field test for each other kind of system: a page in a browser, an existing MCP server, a command-line program, a database, files, a desktop application, a broker, a device's protocol | None | F4 | One recipe for each kind, and its findings written down | held |
+| FT1 | The runner, and the first field test: a request service with a published description, reads only | None; `tools/field_test.py` | None | The recipe runs three times with the same result, and the software's own database confirms the seeded data | done |
+| FT2 | Close findings 1, 2, 4, 5, and 6 of field test 1, each first as a case in the test application | `a2m-pack-http`, `a2m-actions`, `a2m-files` | FT1 | Each `gap` step of the recipe fails, and is changed to expect the right behaviour; the stand's new cases pass on three operating systems | ready |
+| FT3 | Decide and build what a read does when a described object is absent (finding 7) | `a2m-pack-http`; a decision record | FT1 | The two reads of field test 1 return the stored values, and a value of a kind the description does not allow still stops | ready |
+| FT4 | Faults on purpose: a proxy between the product and the software that drops, delays, or cuts a connection, and the first verified write of a field test through it | None; `tools/` | FT2, FT3 | A write whose answer is lost is reconciled, and the software's own database holds it once | held |
+| FT5 | A field test for each other kind of system: a page in a browser, an existing MCP server, a command-line program, a database, files, a desktop application, a broker, a device's protocol | None | FT4 | One recipe for each kind, and its findings written down | held |
+| FT6 | The field test of a web application with a sign-in and no published description | None | E2, 2.3 | Reads drafted from a capture of a person's use run, and match the software's own database | held |
+
+### The short path (decision 0296)
+
+A read-only tool is to take about three commands. The order of these and of every other package is in [the build plan](build-plan.md).
+
+| # | Package | Crates | Needs | Proof | State |
+| --- | --- | --- | --- | --- | --- |
+| S1 | Decide, with a record, whether a version that holds only reads may be published without the presence prompt, and build what the record says | `a2m-policy`, `a2m-actions`, `a2m-local` | FT2, FT3 | A read is published by one command where no prompt can be shown; a version holding a write is still refused there; a manipulation test tries to pass a write as a read | held |
+| S2 | `add` carries a system to a requested publish: scout, keep the reads that passed their trial, record their offline tests, run the gates, promote, request | `a2m-actions`, `anything2mcp` | S1 | From an empty folder, `init`, `add`, and `connect`, and an agent calls a read; the time is measured | held |
 
 ## What can run at once
 

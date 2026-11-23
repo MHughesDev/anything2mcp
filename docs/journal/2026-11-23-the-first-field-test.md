@@ -39,12 +39,14 @@ Of three drafted reads tried against existing software, one returned its value a
 
 ## Decided without the owner having read it
 
-0295.
+0295 and 0296.
 
 ## Next
 
-1. **F3:** decide what a read does when a described object is absent, with a record, then build it, first as a case in the test application.
-2. **F2:** close findings 1, 2, 4, 5, and 6, each first as a case in the test application. The recipe's `gap` steps show when each is closed.
-3. **F4:** the proxy that makes faults on purpose, and the first verified write of a field test.
+The order of everything left is now [the build plan](../plan/build-plan.md) ([decision 0296](../decisions/0296-the-build-is-ordered-by-what-the-next-field-test-needs.md)); work from it. Its first packages are:
+
+1. **FT3:** decide what a read does when a described object is absent, with a record, then build it, first as a case in the test application.
+2. **FT2:** close findings 1, 2, 4, 5, and 6, each first as a case in the test application. The recipe's `gap` steps show when each is closed.
+3. **FT4:** the proxy that makes faults on purpose, and the first verified write of a field test.
 4. Decision 0282 (whether a path may start an interpreter) is now the lead's to decide under 0294. It decides whether most existing MCP servers can be started at all.
 5. The order of the last entry (P3b, the answer lost on macOS without TLS, W2d, X1, X5, P2) stands behind these.

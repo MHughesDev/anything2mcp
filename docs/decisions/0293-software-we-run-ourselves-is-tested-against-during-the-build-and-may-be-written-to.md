@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** the [roadmap](../plan/roadmap.md) (package F1 is new, and package 9.5 keeps only systems that are not ours), [SCOPE.md](../../SCOPE.md), [section 704](../spec/7-project/704-readiness.md), and the reading of rule 10 in [AGENTS.md](../../AGENTS.md), whose words are unchanged.
+**Changes:** the [roadmap](../plan/roadmap.md) (package FT1 is new, and package 9.5 keeps only systems that are not ours), [SCOPE.md](../../SCOPE.md), [section 704](../spec/7-project/704-readiness.md), and the reading of rule 10 in [AGENTS.md](../../AGENTS.md), whose words are unchanged.
 
 ## Context
 
