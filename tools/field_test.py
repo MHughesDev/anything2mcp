@@ -60,7 +60,8 @@ network (its container's name and port), `{host}` that name, `{base}` the addres
 product's own traffic uses (the system's, or the proxy's when there is one), `{port}` the
 system's port, `{project}` the project folder, `{data}` the system's data folder,
 `{recipe}` the recipe folder, `{direct}` an address of the system that the runner itself
-can reach.
+can reach. `{direct}` exists only after the system has started, so it cannot be used in
+`system.env`: a recipe that does so is refused before anything is started.
 
 The closed network (decision 0310, point 5). A run makes a docker network with
 `--internal`, whose name is unique to the run, and starts the system on it with no
@@ -68,9 +69,19 @@ published port. Every `a2m` step runs the product's binary inside a second conta
 the same network: a small Debian image pinned by digest, the binary mounted read-only, and
 the engine's home and the project folder mounted at the same paths as on this machine. The
 binary is built for glibc and needs a glibc at least as new as the machine that built it,
-which is why the image is a recent one. Before the first `a2m` step the runner tries, from
-inside that container, to reach two public addresses, and stops the run as
-`closed_network_open` when either answers.
+which is why the image is a recent one. Before the first `a2m` step the runner probes,
+from inside that container, three public addresses (two IPv4 and one IPv6) and resolves one
+public name. Each probe must print an explicit verdict: CLOSED only on a connect timeout,
+"network unreachable", "no route", or a name the resolver does not find; OPEN when an address
+answers, refuses, or resets, or the name resolves. The runner stops the run as
+`closed_network_open` when any probe says OPEN, and as `closed_network_unproven` when any
+probe gives no verdict or an unrecognised one (no shell in the image, the container not
+running, `docker exec` failing). Only a CLOSED from every probe lets the run go on.
+
+Where it runs. The runner itself reaches the system by the container's address on the
+`--internal` network, so it works only where this machine can reach a container's address
+on such a network: Linux with docker. It does not work on Docker Desktop, where containers
+live in a virtual machine and their addresses are not reachable from the host.
 
 The runner itself, which is the run's control and not the product, reaches the system
 through its address on the network (`{direct}`): the steps `http`, `sqlite`, `exec`, and
@@ -118,8 +129,10 @@ import field_proxy
 # build machine's is what the binary needs.
 BOX_IMAGE = "debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2"
 PROXY_IMAGE = "python@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90"
-# Addresses on the public internet. From inside the closed network neither may answer.
-PUBLIC_ADDRESSES = (("1.1.1.1", 443), ("8.8.8.8", 53))
+# Addresses on the public internet, IPv4 and IPv6. From inside the closed network none may answer.
+PUBLIC_ADDRESSES = (("1.1.1.1", 443), ("8.8.8.8", 53), ("2606:4700:4700::1111", 443))
+# A public name. From inside the closed network it must not resolve.
+PUBLIC_NAME = "one.one.one.one"
 BOX_BINARY = "/usr/local/bin/anything2mcp"
 PROXY_PORT = 8080
 CONTROL_PORT = 9099
@@ -131,6 +144,18 @@ NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 class CannotRun(Exception):
     """The field test could not be run at all."""
+
+
+def system_env(system, names):
+    """The environment of the system's container, filled with the names that exist before it
+    starts. `{direct}` is made from the started container's address, so it cannot be here."""
+    env = system.get("env", {})
+    if "{direct}" in json.dumps(env):
+        raise CannotRun(
+            "A recipe's `system.env` uses `{direct}`, which exists only after the system has "
+            "started. Use `{host}`, `{system}`, or `{port}`, or set the value in a step."
+        )
+    return fill(env, names)
 
 
 def fill(value, names):
@@ -267,23 +292,68 @@ def product_env(env):
     return {k: v for k, v in env.items() if k.startswith("A2M_") and k != "A2M_BINARY"}
 
 
-def reached(code, err):
-    """Whether a try at a public address got an answer. A refusal is an answer: something
-    on the way sent it. Unreachable, no route, and a timeout are not."""
-    return code == 0 or "refused" in err.lower() or "reset" in err.lower()
+def tcp_probe_script(host, port):
+    """A shell script that prints one verdict line for a try at an address: CLOSED on a
+    timeout, "unreachable", "no route", or an address family the box lacks; OPEN on an answer, a refusal, or a reset; UNKNOWN
+    for anything else."""
+    return (
+        f"out=$(timeout 4 bash -c 'exec 3<>/dev/tcp/{host}/{port}' 2>&1); rc=$?; "
+        'if [ "$rc" -eq 0 ]; then echo A2M_VERDICT OPEN; '
+        'elif [ "$rc" -eq 124 ]; then echo A2M_VERDICT CLOSED; '
+        'else case "$out" in '
+        '*nreachable*|*"No route"*|*"Address family not supported"*) echo A2M_VERDICT CLOSED;; '
+        "*refused*|*reset*) echo A2M_VERDICT OPEN;; "
+        "*) echo A2M_VERDICT UNKNOWN;; esac; fi"
+    )
+
+
+def dns_probe_script(name):
+    """A shell script that prints one verdict line for resolving a name: OPEN when it
+    resolves, CLOSED when the resolver says the name is not found, UNKNOWN otherwise (the
+    tool missing, for one)."""
+    return (
+        f"getent hosts {name} >/dev/null 2>&1; rc=$?; "
+        'if [ "$rc" -eq 0 ]; then echo A2M_VERDICT OPEN; '
+        'elif [ "$rc" -eq 2 ]; then echo A2M_VERDICT CLOSED; '
+        "else echo A2M_VERDICT UNKNOWN; fi"
+    )
+
+
+def probes():
+    """Every probe of the check, as (what it tries, the script that tries it)."""
+    found = [(f"{host}:{port}", tcp_probe_script(host, port)) for host, port in PUBLIC_ADDRESSES]
+    found.append((f"the name {PUBLIC_NAME}", dns_probe_script(PUBLIC_NAME)))
+    return found
+
+
+def verdict(code, out):
+    """What one probe showed: "OPEN", "CLOSED", or "UNPROVEN". Only an explicit verdict line
+    from a probe that ran and exited 0 counts; anything else, including no output at all,
+    is unproven, never closed."""
+    if code != 0:
+        return "UNPROVEN"
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    if not lines or lines[-1] not in ("A2M_VERDICT CLOSED", "A2M_VERDICT OPEN"):
+        return "UNPROVEN"
+    return lines[-1].split()[1]
 
 
 def check_closed(box, execute=None):
-    """Raise CannotRun, by name, when a public address can be reached from the box."""
+    """Raise CannotRun, by name, unless every probe from the box shows the network closed."""
     execute = execute or run
-    for host, port in PUBLIC_ADDRESSES:
-        code, _, err = execute(
-            ["docker", "exec", box, "timeout", "4", "bash", "-c", f"exec 3<>/dev/tcp/{host}/{port}"]
-        )
-        if reached(code, err):
+    for what, script in probes():
+        code, out, err = execute(["docker", "exec", box, "sh", "-c", script])
+        shown = verdict(code, out)
+        if shown == "OPEN":
             raise CannotRun(
-                f"closed_network_open: {host}:{port} can be reached from inside the run's network; "
+                f"closed_network_open: {what} can be reached from inside the run's network; "
                 "no a2m step was run. The network is not closed."
+            )
+        if shown != "CLOSED":
+            raise CannotRun(
+                f"closed_network_unproven: the probe of {what} gave no verdict "
+                f"(exit {code}: {(out + err).strip()[-200:]!r}); no a2m step was run. "
+                "The network is not proven closed."
             )
 
 
@@ -435,6 +505,11 @@ def main():
     if "@sha256:" not in system["image"]:
         print("The recipe's image is not pinned by digest.")
         return 2
+    try:
+        system_env(system, {})
+    except CannotRun as stop:
+        print(f"The field test could not be run: {stop}")
+        return 2
 
     run_dir = os.path.join(recipe_dir, "runs", time.strftime("%Y%m%d-%H%M%S"))
     active = Run(recipe["name"])
@@ -465,7 +540,7 @@ def main():
         code, _, err = run(active.network_argv())
         if code != 0:
             raise CannotRun(f"The closed network was not made: {err.strip()[-400:]}")
-        code, _, err = run(active.system_argv(system, names["data"], fill(system.get("env", {}), names)))
+        code, _, err = run(active.system_argv(system, names["data"], system_env(system, names)))
         if code != 0:
             raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
         _, address, _ = run(

@@ -11,7 +11,9 @@ Standard library only; Python 3.11 or newer.
 """
 import asyncio
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -96,22 +98,42 @@ class Containers(unittest.TestCase):
         self.assertEqual(field_test.product_env(env), {"A2M_HOME": "/h", "A2M_VAULT_PASSPHRASE": "s"})
 
 
-class PublicAddress(unittest.TestCase):
-    def test_an_answer_or_a_refusal_means_reached(self):
-        self.assertTrue(field_test.reached(0, ""))
-        self.assertTrue(field_test.reached(1, "bash: connect: Connection refused"))
-        self.assertTrue(field_test.reached(1, "Connection reset by peer"))
+CLOSED = (0, "A2M_VERDICT CLOSED\n", "")
+OPEN = (0, "A2M_VERDICT OPEN\n", "")
 
-    def test_no_route_and_a_timeout_mean_closed(self):
-        self.assertFalse(field_test.reached(1, "bash: connect: Network is unreachable"))
-        self.assertFalse(field_test.reached(124, ""))
+
+class PublicAddress(unittest.TestCase):
+    def test_only_an_explicit_verdict_from_a_probe_that_ran_counts(self):
+        self.assertEqual(field_test.verdict(*CLOSED[:2]), "CLOSED")
+        self.assertEqual(field_test.verdict(*OPEN[:2]), "OPEN")
+        self.assertEqual(field_test.verdict(0, "noise\nA2M_VERDICT CLOSED\n"), "CLOSED")
+
+    def test_no_verdict_is_unproven_never_closed(self):
+        for code, out in (
+            (0, ""),  # nothing printed
+            (127, ""),  # no shell in the image
+            (126, "OCI runtime exec failed"),
+            (1, "Error response: container is not running"),
+            (1, "A2M_VERDICT CLOSED\n"),  # a verdict from a probe that failed
+            (0, "A2M_VERDICT UNKNOWN\n"),
+            (0, "A2M_VERDICT CLOSED but\n"),
+            (0, "CLOSED\n"),
+        ):
+            self.assertEqual(field_test.verdict(code, out), "UNPROVEN", (code, out))
+
+    def test_the_probes_cover_ipv4_ipv6_and_a_name(self):
+        scripts = [script for _, script in field_test.probes()]
+        self.assertTrue(any("/dev/tcp/1.1.1.1/443" in one for one in scripts))
+        self.assertTrue(any("/dev/tcp/2606:4700:4700::1111/443" in one for one in scripts))
+        self.assertTrue(any("getent hosts " + field_test.PUBLIC_NAME in one for one in scripts))
+        self.assertEqual(len(scripts), len(field_test.PUBLIC_ADDRESSES) + 1)
 
     def test_the_run_is_stopped_by_name_when_an_address_answers(self):
         asked = []
 
         def execute(argv):
             asked.append(argv)
-            return 0, "", ""
+            return OPEN
 
         with self.assertRaises(field_test.CannotRun) as stop:
             field_test.check_closed("box", execute)
@@ -119,17 +141,46 @@ class PublicAddress(unittest.TestCase):
         self.assertEqual(len(asked), 1)
         self.assertIn("box", asked[0])
 
-    def test_every_public_address_is_tried_when_none_answers(self):
+    def test_a_resolved_name_means_open(self):
+        def execute(argv):
+            return OPEN if "getent" in argv[-1] else CLOSED
+
+        with self.assertRaises(field_test.CannotRun) as stop:
+            field_test.check_closed("box", execute)
+        self.assertIn("closed_network_open", str(stop.exception))
+        self.assertIn(field_test.PUBLIC_NAME, str(stop.exception))
+
+    def test_an_open_ipv6_address_means_open(self):
+        def execute(argv):
+            return OPEN if "2606:" in argv[-1] else CLOSED
+
+        with self.assertRaises(field_test.CannotRun) as stop:
+            field_test.check_closed("box", execute)
+        self.assertIn("closed_network_open", str(stop.exception))
+
+    def test_a_probe_that_did_not_run_stops_the_run_as_unproven(self):
+        for failure in ((127, "", "sh: bash: not found"), (1, "", "container is not running"), (0, "", "")):
+            with self.assertRaises(field_test.CannotRun) as stop:
+                field_test.check_closed("box", lambda argv, failure=failure: failure)
+            self.assertIn("closed_network_unproven", str(stop.exception))
+
+    def test_one_unproven_probe_among_closed_ones_stops_the_run(self):
+        def execute(argv):
+            return (0, "", "") if "2606:" in argv[-1] else CLOSED
+
+        with self.assertRaises(field_test.CannotRun) as stop:
+            field_test.check_closed("box", execute)
+        self.assertIn("closed_network_unproven", str(stop.exception))
+
+    def test_every_probe_is_tried_when_all_show_closed(self):
         asked = []
 
         def execute(argv):
             asked.append(argv[-1])
-            return 1, "", "Network is unreachable"
+            return CLOSED
 
         field_test.check_closed("box", execute)
-        self.assertEqual(len(asked), len(field_test.PUBLIC_ADDRESSES))
-        for host, port in field_test.PUBLIC_ADDRESSES:
-            self.assertTrue(any(f"{host}/{port}" in one for one in asked))
+        self.assertEqual(len(asked), len(field_test.probes()))
 
     def test_the_check_comes_before_the_first_command_of_the_product(self):
         run = field_test.Run("example", token="abc")
@@ -137,18 +188,92 @@ class PublicAddress(unittest.TestCase):
 
         def execute(argv):
             calls.append(argv)
-            return (0, "", "") if argv[1] == "run" else (1, "", "Network is unreachable")
+            return (0, "", "") if argv[1] == "run" else CLOSED
 
         run.ensure_box("/b", "/h", "/p", "0:0", execute)
         run.ensure_box("/b", "/h", "/p", "0:0", execute)  # once only
         self.assertEqual(calls[0][1], "run")
         self.assertTrue(all(call[1] == "exec" for call in calls[1:]))
-        self.assertEqual(len(calls), 1 + len(field_test.PUBLIC_ADDRESSES))
+        self.assertEqual(len(calls), 1 + len(field_test.probes()))
 
     def test_a_box_on_an_open_network_runs_no_command(self):
         run = field_test.Run("example", token="abc")
         with self.assertRaises(field_test.CannotRun):
-            run.ensure_box("/b", "/h", "/p", "0:0", lambda argv: (0, "", ""))
+            run.ensure_box("/b", "/h", "/p", "0:0", lambda argv: (0, "", "") if argv[1] == "run" else OPEN)
+
+    def test_a_box_whose_probe_did_not_run_runs_no_command(self):
+        run = field_test.Run("example", token="abc")
+        with self.assertRaises(field_test.CannotRun) as stop:
+            run.ensure_box("/b", "/h", "/p", "0:0", lambda argv: (0, "", "") if argv[1] == "run" else (127, "", ""))
+        self.assertIn("closed_network_unproven", str(stop.exception))
+
+
+class ProbeScripts(unittest.TestCase):
+    """The probe scripts as a real shell reads them, with `timeout` replaced by a stub that
+    ends the way a try at an address ends. No container engine, no network."""
+
+    def verdict_of(self, script, rc, message):
+        with tempfile.TemporaryDirectory() as folder:
+            stub = Path(folder) / "timeout"
+            stub.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit {rc}\n")
+            stub.chmod(0o755)
+            done = subprocess.run(
+                ["sh", "-c", script], env={"PATH": f"{folder}:/usr/bin:/bin"},
+                capture_output=True, text=True, check=False,
+            )
+        return field_test.verdict(done.returncode, done.stdout)
+
+    def test_a_tcp_probe_reads_each_ending(self):
+        script = field_test.tcp_probe_script("1.1.1.1", 443)
+        for rc, message, expected in (
+            (0, "", "OPEN"),
+            (1, "connect: Connection refused", "OPEN"),
+            (1, "Connection reset by peer", "OPEN"),
+            (124, "", "CLOSED"),
+            (1, "connect: Network is unreachable", "CLOSED"),
+            (1, "connect: No route to host", "CLOSED"),
+            (1, "socket: Address family not supported by protocol", "CLOSED"),
+            (127, "bash: not found", "UNPROVEN"),
+            (1, "something nobody expected", "UNPROVEN"),
+            (1, "", "UNPROVEN"),
+        ):
+            self.assertEqual(self.verdict_of(script, rc, message), expected, (rc, message))
+
+    def test_a_name_probe_reads_each_ending(self):
+        # `getent` is the program the probe runs; a stub named `getent` stands in for it.
+        script = field_test.dns_probe_script("example.invalid")
+        for rc, expected in ((0, "OPEN"), (2, "CLOSED"), (127, "UNPROVEN"), (1, "UNPROVEN")):
+            with tempfile.TemporaryDirectory() as folder:
+                stub = Path(folder) / "getent"
+                stub.write_text(f"#!/bin/sh\nexit {rc}\n")
+                stub.chmod(0o755)
+                done = subprocess.run(
+                    ["sh", "-c", script], env={"PATH": f"{folder}:/usr/bin:/bin"},
+                    capture_output=True, text=True, check=False,
+                )
+            self.assertEqual(field_test.verdict(done.returncode, done.stdout), expected, rc)
+
+
+class DirectInEnv(unittest.TestCase):
+    def test_a_recipe_that_uses_direct_in_the_system_env_is_refused(self):
+        system = {**SYSTEM, "env": {"URL": "{direct}/x"}}
+        with self.assertRaises(field_test.CannotRun) as stop:
+            field_test.system_env(system, {"host": "h"})
+        self.assertIn("{direct}", str(stop.exception))
+
+    def test_the_names_that_exist_before_start_are_filled(self):
+        system = {**SYSTEM, "env": {"URL": "http://{host}:{port}", "N": "x"}}
+        self.assertEqual(
+            field_test.system_env(system, {"host": "h", "port": "3000"}),
+            {"URL": "http://h:3000", "N": "x"},
+        )
+
+    def test_no_env_is_an_empty_env(self):
+        self.assertEqual(field_test.system_env(SYSTEM, {}), {})
+
+    def test_the_docstring_says_where_the_runner_works(self):
+        self.assertIn("Docker Desktop", field_test.__doc__)
+        self.assertIn("Linux", field_test.__doc__)
 
 
 class Removal(unittest.TestCase):
