@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Done last:** the field test runner and field test 1 (FT1). **Next:** FT3, then FT2. **Blocks:** nothing.
+**Done last:** FT3 (an absent value no longer stops a read) and finding 2 of FT2. **Next:** the rest of FT2 (findings 1, 4, 5, 6), then FT7. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -52,8 +52,9 @@ Stages 1 to 4 are one after another. Stage 5's packages can be taken in any orde
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| FT3 | An absent object | What a read does when the system answers `null` for a described object | The two reads of field test 1 return the stored values; a value of a kind the description does not allow still stops |
-| FT2 | Findings 1, 2, 4, 5, 6 | Swagger 2.0 read; the scout's summary gives the code and fix; a description handed in as a file is tied to the surface; no doubled tool name, and one bad draft does not block the rest; the credential lint matches whole words | Each `gap` step fails and is rewritten to expect the right behaviour |
+| ~~FT3~~ | ~~An absent object~~ (done, pull request 20) | What a read does when the system answers `null` for a described object | The two reads of field test 1 return the stored values; a value of a kind the description does not allow still stops |
+| FT7 (new) | Outputs that may be absent | A tool's output schema says which outputs may be absent | A drafted tool declares such an output optional |
+| FT2 | Findings 1, 2, 4, 5, 6 (2 done, pull request 20) | Swagger 2.0 read; the scout's summary gives the code and fix; a description handed in as a file is tied to the surface; no doubled tool name, and one bad draft does not block the rest; the credential lint matches whole words | Each `gap` step fails and is rewritten to expect the right behaviour |
 | 4.4 | Published descriptions, the rest | References to files outside the description, refused by name; the `api` mode | A described service becomes drafted reads that compile |
 | E4 | The drafter, the rest | Drafting rules for the packs that lack them | A draft made by rule compiles and carries no unit or key the system did not state |
 | 1.3 | The plan, the same on three systems | The compiled plan's bytes compared across systems in CI | The plan is byte-identical on three operating systems |

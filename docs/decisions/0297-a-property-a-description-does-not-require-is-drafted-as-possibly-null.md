@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** the drafting of an endpoint's `response_schema` from a published description in `a2m-pack-http` (`openapi.rs`), a new case of the test application, [section 303](../spec/3-packs/303-the-http-pack.md), the design of `a2m-pack-http`. The check of an answer against a shape does not change.
+**Changes:** the drafting of an endpoint's `response_schema` (an answer's shape only, never a request body or a parameter) from a published description in `a2m-pack-http` (`openapi.rs`), a new case of the test application, [section 303](../spec/3-packs/303-the-http-pack.md), the design of `a2m-pack-http`. The check of an answer against a shape does not change.
 
 ## Context
 
@@ -18,7 +18,7 @@ The shape an endpoint file holds already tells the two apart. A property not lis
 2. **A property the description lists under `required` is drafted as it is today:** `nullable` only where the description says so.
 3. **The check of an answer does not change.** A `null` where the endpoint file does not say `nullable` stops the read. A value of another kind than the one declared stops the read, marked `nullable` or not.
 4. **An endpoint file a person wrote is not touched.** The rule is a drafting rule.
-5. **An output that reads through such a property is declared as possibly absent** in the tool's output schema, as the existing rule for an uncertain path already gives.
+5. **An output that reads through such a property is returned as absent when the property is null or missing.** The tool's output schema does not yet say beforehand that it may be: the shape knows which paths are uncertain, and nothing after it carries that into the plan's outputs. That is a gap this decision leaves open, as roadmap package FT7. The first draft of this record said the declaration existed; building it showed that it does not.
 
 ## Why this keeps rule 7
 
