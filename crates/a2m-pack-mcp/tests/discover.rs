@@ -378,3 +378,119 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     assert_eq!(control.calls_to("orders_report").unwrap(), 1);
     assert_eq!(control.request_count("tools/call").unwrap(), 1);
 }
+
+/// A tool list that names secrets (decision 0302): a tool whose input and
+/// answer have properties named as a secret's, and one that needs a secret
+/// as an input. The first is drafted as a read with neither, and says so;
+/// the second is not drafted. No drafted file holds the invented value,
+/// and the target compiles.
+#[tokio::test]
+async fn a_tool_property_named_as_a_secret_is_never_a_drafted_input_or_output() {
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let folder = Folder::new("drafted-secrets");
+    let registry = registry(&folder);
+    let names = a2m_pack_mcp::Names::new().unwrap();
+    let digest = |digit: &str| format!("sha256:{}", digit.repeat(64));
+    let tool = |name: &str, digit: &str, input: serde_json::Value, output: serde_json::Value| {
+        let found = serde_json::json!({
+            "surface": "orders",
+            "tool": name,
+            "digest": digest(digit),
+            "pin": null,
+            "read_only": true,
+            "free_text": false,
+            "unchecked_keywords": [],
+            "input_schema": input,
+            "output_schema": output,
+            "annotations": {"readOnlyHint": true},
+            "untrusted": {"title": null, "description": null},
+        });
+        Finding::about(
+            a2m_core::Subject::Address(
+                a2m_core::Address::new("http://127.0.0.1:9", "/mcp").unwrap(),
+            ),
+            names.upstream_tool.clone(),
+            found.to_string(),
+            Source::LiveSystem,
+            a2m_core::ProducedBy {
+                provider: "mcp".to_owned(),
+                version: "0".to_owned(),
+                component: None,
+            },
+            a2m_core::Timestamp::from_unix_millis(0),
+        )
+        .level(EvidenceLevel::Discovered)
+        .build()
+        .unwrap()
+    };
+    let findings = vec![
+        tool(
+            "orders_lookup",
+            "a",
+            serde_json::json!({"type": "object", "required": ["order_id"], "properties": {
+                "order_id": {"type": "string", "examples": ["A-100"]},
+                "access_token": {"type": "string", "default": INVENTED},
+            }}),
+            serde_json::json!({"type": "object", "properties": {
+                "reference": {"type": "string"},
+                "client_secret": {"type": "string", "default": INVENTED},
+                "api_key": {"type": "string"},
+            }}),
+        ),
+        tool(
+            "orders_unlock",
+            "b",
+            serde_json::json!({"type": "object", "required": ["password"], "properties": {
+                "password": {"type": "string", "default": INVENTED},
+            }}),
+            serde_json::json!({"type": "object", "properties": {"ok": {"type": "boolean"}}}),
+        ),
+    ];
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture_root().join("target.yaml"), root.join("target.yaml")).unwrap();
+    let report = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    assert!(report.conflicts.is_empty() && report.refused.is_empty());
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert_eq!(
+        written,
+        [
+            "mappings/orders.yaml",
+            "operations/orders_orders_lookup.yaml"
+        ]
+    );
+    let read = std::fs::read_to_string(root.join("operations/orders_orders_lookup.yaml")).unwrap();
+    for secret in ["client_secret", "api_key", "access_token", "password"] {
+        let as_key = format!("{secret}:");
+        assert!(!read.contains(&as_key), "{secret} is a key of\n{read}");
+    }
+    assert!(
+        read.contains("order_id") && read.contains("reference"),
+        "{read}"
+    );
+    assert!(
+        read.contains("`client_secret`") && read.contains("`api_key`"),
+        "{read}"
+    );
+    // The sentence ends the description.
+    assert!(
+        read.contains("so that a secret is never an output"),
+        "{read}"
+    );
+    for file in [
+        "mappings/orders.yaml",
+        "operations/orders_orders_lookup.yaml",
+    ] {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(!text.contains(INVENTED), "{file}");
+    }
+    assert!(!root.join("operations/orders_orders_unlock.yaml").exists());
+    common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
+}

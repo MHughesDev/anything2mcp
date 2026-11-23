@@ -136,6 +136,8 @@ As built, the drafter writes the mapping entry for either kind of tool, and the 
 
 `spec.import` is to accept an upstream server's tool list as well as a published description; that is not built. As built, `spec.import` is a scout handed one file of the project's `sources` folder under the name `description`, and the only discoverer that reads that name is the HTTP pack's reader of an OpenAPI description ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)). An upstream server's tools are found today by the scout's discovery of an MCP surface. A server mapped with `purpose: discovery` is a discovery provider: its results are to be stored as findings at `inferred`, and its tools are never bound or called. As built, a binding to one of its tools does not compile (`mcp.discovery_bound`) and the driver refuses to call one; taking its results as findings is not built, and has no package of its own since package E6 was withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)).
 
+**A property named as a secret is never drafted as an input or an output.** The drafted read leaves out of its outputs each property of the tool's output schema whose name the compiler takes for a secret's, and the last sentence of the drafted description tells the names left out; an optional input so named is no input, and a tool with a required input so named is not drafted as a read ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Lint rules
 
 | Code | Level | Rule |

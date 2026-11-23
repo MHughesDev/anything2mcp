@@ -96,6 +96,8 @@ The first six are registered rules that look across files. The last four are rai
 
 Both also propose `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string, `free_text` is left as an open question: whether the server runs the string is not in its definition, and no read is drafted for it. An entry that holds a question is drafted into `mappings/{surface}_undecided.yaml`, apart from the settled entries in `mappings/{surface}.yaml`, so that it does not hold up the reads beside it.
 
+**A property named as a secret is never drafted as an input or an output.** The read rule asks the compiler's own test (`names_a_secret` in `a2m-files`) of each property of the tool's input schema and of its output schema, as the server writes the name and as the input or output name it becomes. An output so named is left out, and the last sentence of the drafted description tells the names left out; an optional input so named is no input; a tool with a required input so named is not drafted as a read ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Interface
 
 ```rust
