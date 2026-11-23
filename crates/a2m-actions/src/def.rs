@@ -88,6 +88,9 @@ pub enum Who {
     Any,
     /// The person the act belongs to, about their own delegations.
     Person,
+    /// An auditor or an administrator. The registry lets any viewer reach
+    /// the handler, and the handler asks the policy engine for either role.
+    AuditorOrAdmin,
 }
 
 impl Who {
@@ -101,7 +104,7 @@ impl Who {
                 _ => Role::Operator,
             },
             Self::LocalUser => Role::Admin,
-            Self::Any | Self::Person => Role::Viewer,
+            Self::Any | Self::Person | Self::AuditorOrAdmin => Role::Viewer,
         }
     }
 
@@ -120,6 +123,7 @@ impl Who {
             Self::LocalUser => "Local user",
             Self::Any => "Any",
             Self::Person => "The person",
+            Self::AuditorOrAdmin => "Auditor or Admin",
         }
     }
 }

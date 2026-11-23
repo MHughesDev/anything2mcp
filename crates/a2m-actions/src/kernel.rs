@@ -853,6 +853,38 @@ impl Kernel {
     }
 
     /// The environment an action that names none is decided in.
+    /// The toolset a decision names for a call that came through `named`
+    /// (decision 0399). A toolset the set in force defines is named as it
+    /// is, and narrows. One that the engine's own doors serve (`use`,
+    /// `build`, `admin`) and the set does not define is left out: it is a
+    /// list of what is shown up front and holds no permit, so a set that
+    /// begins to define toolsets does not stop the built-in ones. Any other
+    /// name is named as it is, and a set that defines toolsets refuses what
+    /// it does not define (unknown means stop). When the set in force
+    /// cannot be read, the name is kept, which narrows and never widens.
+    pub(crate) async fn toolset_for_decision(
+        &self,
+        named: Option<&a2m_policy::ToolsetName>,
+    ) -> Option<a2m_policy::ToolsetName> {
+        let named = named?;
+        if !matches!(named.as_str(), "use" | "build" | "admin") {
+            return Some(named.clone());
+        }
+        let (Some(policy), Ok(store)) = (self.policy().cloned(), self.store()) else {
+            return Some(named.clone());
+        };
+        let wanted = named.clone();
+        let defined = store
+            .read(move |tx| {
+                Ok(policy
+                    .layers_in_force(tx)
+                    .is_none_or(|layers| layers.toolsets.iter().any(|set| set.name == wanted)))
+            })
+            .await
+            .unwrap_or(true);
+        defined.then(|| named.clone())
+    }
+
     pub(crate) fn environment(&self) -> Environment {
         Environment::fixed("production")
     }

@@ -233,7 +233,10 @@ impl Control for InProcessControl {
             context.effect = question.effect;
             context.hazard = question.hazard;
             context.records = question.records;
-            context.toolset = self.caller.toolset.clone();
+            context.toolset = self
+                .kernel
+                .toolset_for_decision(self.caller.toolset.as_ref())
+                .await;
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
             let request = a2m_policy::Request {
@@ -435,7 +438,10 @@ impl Control for InProcessControl {
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
             context.hazard = hazard.unwrap_or(a2m_core::Hazard::None);
-            context.toolset = self.caller.toolset.clone();
+            context.toolset = self
+                .kernel
+                .toolset_for_decision(self.caller.toolset.as_ref())
+                .await;
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
             let known = hazard.is_some();

@@ -558,7 +558,7 @@ async fn held(kernel: &Kernel, call: &Call, work: &HeldWork<'_>, refused: Failur
     let caller = &call.caller;
     let mut context = Context::plain(caller.principal.workspace, work.environment.clone());
     context.effect = work.effect;
-    context.toolset = caller.toolset.clone();
+    context.toolset = kernel.toolset_for_decision(caller.toolset.as_ref()).await;
     context.caller_is_agent = caller.is_agent;
     context.acting_for = caller.principal.acting_for.clone();
     let decision = policy
@@ -1259,7 +1259,7 @@ impl Kernel {
         let mut context = Context::plain(caller.principal.workspace, row.environment.clone());
         context.effect = row.effect;
         context.hazard = hazard;
-        context.toolset = caller.toolset.clone();
+        context.toolset = self.toolset_for_decision(caller.toolset.as_ref()).await;
         context.caller_is_agent = caller.is_agent;
         context.acting_for = caller.principal.acting_for.clone();
         let decision = policy

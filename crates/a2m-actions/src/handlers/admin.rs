@@ -11,6 +11,48 @@ use super::handler;
 use crate::codes;
 use crate::dispatch::{Next, Output};
 
+/// Whether the caller holds the role of auditor or of administrator, asked
+/// of the policy engine as the dispatcher asks about a role, and recorded
+/// nowhere.
+async fn may_explain(
+    kernel: &crate::kernel::Kernel,
+    call: &crate::dispatch::Call,
+    policy: &a2m_policy::Policy,
+) -> Result<(), Failure> {
+    use a2m_policy::{ActionRef, Answer, Context, Question, Request, Resource, Role};
+    let name = a2m_policy::ActionName::new("policy.explain")?;
+    let (policy, principal) = (policy.clone(), call.caller.principal.principal.clone());
+    let context = Context::plain(call.caller.principal.workspace, kernel.environment());
+    let allowed = kernel
+        .store()?
+        .read(move |tx| {
+            Ok([Role::Auditor, Role::Admin].into_iter().any(|needs| {
+                let request = Request {
+                    principal: principal.clone(),
+                    question: Question::PerformAction,
+                    resource: Resource::Action(ActionRef {
+                        name: name.clone(),
+                        needs,
+                    }),
+                    context: context.clone(),
+                    run: None,
+                    diff_hash: None,
+                };
+                policy.would(tx, &request) == Answer::Allow
+            }))
+        })
+        .await?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(codes::policy(
+            a2m_policy::NOT_GRANTED,
+            "Policy did not allow this action.",
+            "Ask an administrator for the auditor or administrator role.",
+        ))
+    }
+}
+
 handler!(
     /// `policy.explain`: the recorded decision, the policy version, and the
     /// rules that made it.
@@ -33,6 +75,10 @@ handler!(
                 "Call `doctor.run` for the fix.",
             )
         })?;
+        // Only an auditor or an administrator may ask why. The registry lets
+        // any viewer reach this far, and the policy engine says who holds
+        // which role.
+        may_explain(kernel, &call, &policy).await?;
         // A decision of another workspace is not told apart from one that
         // does not exist.
         let workspace = call.caller.principal.workspace;

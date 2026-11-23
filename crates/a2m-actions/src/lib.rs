@@ -93,6 +93,7 @@ extern crate self as a2m_actions;
     reason = "tests; the helpers they share do not carry the test attribute"
 )]
 mod tests {
+    mod access;
     mod audit;
     mod authoring;
     mod guard;
@@ -100,6 +101,7 @@ mod tests {
     mod keys;
     mod net;
     mod pass_two;
+    mod reach;
     mod runs;
     mod second;
     mod watches;

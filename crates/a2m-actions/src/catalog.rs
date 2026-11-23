@@ -29,6 +29,12 @@ const PUBLISHER: Who = Who::Role(Role::Publisher);
 const ADMIN: Who = Who::Role(Role::Admin);
 const AUDITOR: Who = Who::Role(Role::Auditor);
 
+const MAPS: FieldType = FieldType::MapList;
+const TESTS_HELP: &str = "Rows the new version must pass, each a map of `name`, `principal`, `target`, `tool`, `effect`, `expect`, and optionally `agent`, `group`, `module`, `toolset`. The test table of the version in force is not carried over.";
+const REVIEWER_HELP: &str = "The second administrator's identifier, where the set in force asks for one; they are asked for proof of presence of their own.";
+const DRAFTED_HELP: &str =
+    "Who drafted the change, where that is known; the author cannot be the second administrator.";
+
 const TARGET: &str = "The target's name.";
 const RUN: &str = "The run's identifier, as an earlier result gave it.";
 const LIMIT: &str = "The most entries to return.";
@@ -40,6 +46,23 @@ fn text() -> JsonSchema {
 
 fn list_of(item: JsonSchema) -> JsonSchema {
     JsonSchema::list(item)
+}
+
+/// A reach as `reach.name` and `reach.list` show it.
+fn reach_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("label", text())
+        .required("stated", list_of(text()))
+        .required("in_force", JsonSchema::bool())
+        .required("look", list_of(any_map()))
+        .required("send", list_of(any_map()))
+}
+
+/// What a change to the policy set returns.
+fn changed() -> JsonSchema {
+    JsonSchema::object()
+        .required("version", text())
+        .required("changed", text())
 }
 
 fn any_map() -> JsonSchema {
@@ -754,39 +777,110 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .writes()
             .done(),
         // Administration.
-        act("toolset.create", "Create a toolset: which tools, which version, which identity mode.", ADMIN, No, "6", Change)
+        act("toolset.create", "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity mode of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.", ADMIN, No, "6", Change)
             .pos("name", TEXT, "The toolset's name.")
-            .req("tools", LIST, "The tools it holds, by name or pattern.")
+            .req("who", LIST, "Who may connect: `anyone`, `group:<name>`, or a principal's identifier.")
+            .req("tools", LIST, "The tools it selects, by name or pattern, `target:<name>`, or `module:<target>/<module>`.")
+            .req("max_effect", FieldType::Word(&["read", "write", "irreversible"]), "The highest effect class of its runs.")
+            .opt("identity_mode", FieldType::Word(&["per_user_token", "per_user_session", "per_user_device", "service_account"]), "The identity mode of its runs. `per_user_session` when left out.")
+            .opt("writes_without_person", BOOL, "Whether a rule may let a write through it go without a person. False when left out.")
+            .opt("tests", MAPS, TESTS_HELP)
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
             .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("toolset.update", "Change a toolset.", ADMIN, No, "6", Change)
+        act("toolset.update", "Change the fields given of a toolset. A person's act, published as a new version of the policy set.", ADMIN, No, "6", Change)
             .pos("name", TEXT, "The toolset's name.")
-            .opt("tools", LIST, "The tools it holds, by name or pattern.")
+            .opt("who", LIST, "Who may connect.")
+            .opt("tools", LIST, "The tools it selects.")
+            .opt("max_effect", FieldType::Word(&["read", "write", "irreversible"]), "The highest effect class of its runs.")
+            .opt("identity_mode", FieldType::Word(&["per_user_token", "per_user_session", "per_user_device", "service_account"]), "The identity mode of its runs.")
+            .opt("writes_without_person", BOOL, "Whether a rule may let a write through it go without a person.")
+            .opt("tests", MAPS, TESTS_HELP)
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
             .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("toolset.list", "The toolsets of the workspace.", ADMIN, No, "6", List)
+        act("toolset.remove", "Remove a toolset. A person's act, published as a new version of the policy set.", ADMIN, No, "6", Change)
+            .pos("name", TEXT, "The toolset's name.")
+            .opt("tests", MAPS, TESTS_HELP)
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("grant.add", "Grant a principal or a group the use of tools up to an effect class.", ADMIN, No, "6", Change)
-            .pos("who", TEXT, "The principal or group.")
-            .req("scope", TEXT, "The tools, by name or pattern.")
+        act("toolset.list", "The toolsets in force, each with the published tools it selects.", ADMIN, No, "6", List)
+            .opt_pos("name", TEXT, "One toolset's name.")
+            .output(JsonSchema::object().required("toolsets", list_of(any_map())))
+            .example("{}")
+            .done(),
+        act("grant.add", "Grant a principal or a group the use of tools up to an effect class. A person's act, published as a new version of the policy set.", ADMIN, No, "6", Change)
+            .pos("who", TEXT, "`anyone`, `group:<name>`, or a principal's identifier.")
+            .req("scope", TEXT, "The tools, by name or pattern, `target:<name>`, or `module:<target>/<module>`.")
             .req("max_effect", FieldType::Word(&["read", "write", "irreversible"]), "The highest effect class granted.")
+            .opt("identity_mode", FieldType::Word(&["per_user_token", "per_user_session", "per_user_device", "service_account"]), "The identity mode a run under it may use. `per_user_session` when left out.")
+            .opt("tests", MAPS, TESTS_HELP)
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
             .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("grant.remove", "Remove a grant.", ADMIN, No, "6", Change)
-            .pos("who", TEXT, "The principal or group.")
-            .req("scope", TEXT, "The tools, by name or pattern.")
+        act("grant.remove", "Remove a grant. A person's act, published as a new version of the policy set.", ADMIN, No, "6", Change)
+            .pos("who", TEXT, "`anyone`, `group:<name>`, or a principal's identifier.")
+            .req("scope", TEXT, "The tools, as the grant was written.")
+            .opt("max_effect", FieldType::Word(&["read", "write", "irreversible"]), "Which grant, when the set holds two for the same subject and scope.")
+            .opt("tests", MAPS, TESTS_HELP)
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
             .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("grant.list", "The grants of the workspace.", ADMIN, No, "6", List)
+        act("grant.list", "The grants, the grants of roles, and who holds which role, in the set in force.", ADMIN, No, "6", List)
+            .output(JsonSchema::object()
+                .required("grants", list_of(any_map()))
+                .required("role_grants", list_of(any_map()))
+                .required("roles", list_of(any_map()))
+                .required("second_admin_publish", JsonSchema::bool()))
+            .example("{}")
             .done(),
-        act("policy.publish", "Publish a policy set after its own tests pass.", ADMIN, No, "6", Change)
-            .pos("file", TEXT, "The policy set's path inside an allowed root.")
+        act("policy.publish", "Publish a policy file after its own tests pass. A person's act; where the set in force asks for a second administrator, the reviewer proves presence of their own.", ADMIN, No, "6", Change)
+            .pos("file", TEXT, "The policy file's relative path inside the project folder: JSON layers, with their test table as `tests`.")
+            .opt("reviewer", TEXT, REVIEWER_HELP)
+            .opt("drafted_by", TEXT, DRAFTED_HELP)
             .writes()
+            .person(PersonNeed::Presence)
+            .output(changed())
             .done(),
-        act("policy.test", "Run a policy set's decision table and report each failure.", ADMIN, No, "6", Inspect)
-            .pos("file", TEXT, "The policy set's path inside an allowed root.")
+        act("policy.test", "Run a policy file's decision table against its own layers and report each failure. Publishes nothing.", ADMIN, No, "6", Inspect)
+            .pos("file", TEXT, "The policy file's relative path inside the project folder.")
+            .output(JsonSchema::object()
+                .required("ok", JsonSchema::bool())
+                .required("passed", JsonSchema::int())
+                .required("failed", list_of(any_map())))
             .done(),
-        act("policy.explain", "Why a past call was allowed or denied: the decision, the policy version, and the rules that made it.", AUDITOR, No, "6", Trace)
+        act("policy.versions", "The history of published policy versions, oldest first, and which is in force.", ADMIN, No, "6", List)
+            .output(JsonSchema::object().required("versions", list_of(any_map())))
+            .example("{}")
+            .done(),
+        act("policy.tools_allowed", "Which published tools a principal may use, through a toolset where one is named. Records no decision.", ADMIN, No, "6", Inspect)
+            .pos("principal", TEXT, "The principal's identifier.")
+            .opt("toolset", TEXT, "The toolset the call would come through.")
+            .output(JsonSchema::object().required("tools", list_of(text())))
+            .done(),
+        act("policy.who_can", "Which of the principals named may use one published tool, through a toolset where one is named. Records no decision.", ADMIN, No, "6", Inspect)
+            .pos("tool", TEXT, "The tool's name.")
+            .req("candidates", LIST, "The principals' identifiers.")
+            .opt("toolset", TEXT, "The toolset the call would come through.")
+            .output(JsonSchema::object().required("who", list_of(text())))
+            .done(),
+        act("policy.explain", "Why a past call was allowed or denied: the decision, the policy version, and the rules that made it. For an auditor or an administrator.", Who::AuditorOrAdmin, No, "6", Trace)
             .pos("decision", TEXT, "The decision's identifier.")
             .output(JsonSchema::object()
                 .required("decision", text())
@@ -1016,6 +1110,33 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("default_routes", list_of(net_route()))
                 .optional("cut", net_cuts()))
             .example("{}")
+            .done(),
+        act("net.current", "Which facts of the network this machine is on were read, to recognize it again, and which were left out and why. Shows no digest and no address. Sends nothing.", Who::LocalUser, No, "2", Inspect)
+            .output(JsonSchema::object()
+                .required("stated", list_of(text()))
+                .required("left_out", JsonSchema::any())
+                .optional("interface", text())
+                .required("can_be_named", JsonSchema::bool()))
+            .example("{}")
+            .done(),
+        act("reach.name", "A person names the network this machine is on now, with the destinations that may be looked at and sent to, and the gateway names the person chooses. The network is read from the machine, never taken from the input. A person's act, never an agent's.", Who::Person, No, "N3", Change)
+            .pos("label", TEXT, "The person's own label for the network.")
+            .opt("look", LIST, "Destinations that may be looked at, each `destination` or `destination via gateway`.")
+            .opt("send", LIST, "Destinations that may be sent to, each `destination` or `destination via gateway`.")
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(reach_output())
+            .example(r#"{"label": "office", "send": ["app.example.com via office_gateway"]}"#)
+            .done(),
+        act("reach.list", "The reaches a person has named: each label, the names of the facts it states, whether it is in force on the network this machine is on now, and the entries the person wrote. Shows no digest.", Who::Person, No, "N3", List)
+            .output(JsonSchema::object().required("reaches", list_of(reach_output())))
+            .example("{}")
+            .done(),
+        act("reach.withdraw", "A person forgets one reach by its label.", Who::Person, No, "N3", Change)
+            .pos("label", TEXT, "The reach's label.")
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(JsonSchema::object().required("label", text()).required("withdrawn", JsonSchema::bool()))
             .done(),
         act("browser.install", "Fetch a pinned browser for the pack that drives one.", Who::LocalUser, No, "1", Change)
             .writes()

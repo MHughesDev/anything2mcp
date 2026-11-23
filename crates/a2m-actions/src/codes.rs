@@ -51,6 +51,9 @@ a2m_core::failure_codes! {
     REGISTRY_INVALID = Input, "action_registry_invalid",
         meaning "The registry of actions cannot be built: a duplicate name, or a provider's action outside its name space.",
         next "Give each action one name, starting with its provider's own name, then start again.";
+    NETWORK_NOT_RECOGNIZABLE = Input, "network_not_recognizable",
+        meaning "The network the machine is on states too few facts to be recognized again, so no reach can be named on it.",
+        next "Connect to a network with a default route and a gateway that answers, then name it again.";
     PERSON_REQUIRED = Policy, "person_required",
         meaning "A person's act was asked for by a caller that cannot give one.",
         next "Ask the person to do it themselves, through a program that acts for them.";
