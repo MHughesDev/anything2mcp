@@ -314,3 +314,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0315 | [Every declared output is in every result, on every path](0315-every-declared-output-is-in-every-result-on-every-path.md) | Accepted (design decision) |
 | 0329 | [The compiled file the engine runs is the compiled target](0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md) | Accepted (owner decision) |
 | 0318 | [A network is recognized by its gateway and subnet, and a forged one can recall a reach](0318-a-network-is-recognized-by-its-gateway-and-subnet-and-a-forged-one-can-recall-a-reach.md) | Accepted (design decision) |
+| 0319 | [A publication's mark that a call only reads is a published claim, and silence is not a read](0319-a-publications-mark-that-a-call-only-reads-is-a-published-claim-and-silence-is-not-a-read.md) | Accepted (design decision) |
