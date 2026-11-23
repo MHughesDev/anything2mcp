@@ -7,8 +7,12 @@
 //! safe, and nothing is written into a draft that the description does not
 //! state: what it leaves out is an open question for the developer.
 //!
-//! Accepted: OpenAPI 3.0 and 3.1, as JSON or YAML, with references inside
-//! the document. A reference to another file is not followed.
+//! Accepted: OpenAPI 3.0 and 3.1, and Swagger 2.0, as JSON or YAML, with
+//! references inside the document. A reference to another file is not
+//! followed. A 2.0 document is read from its own places (`definitions`,
+//! a response's `schema`, a parameter's own `type`, a body parameter) into
+//! the same values; its `basePath`, like an OpenAPI 3 `servers` entry, is
+//! not read: the path a surface's address ends in is the one prefix.
 //!
 //! A description is text the system supplies, so reading it is bounded:
 //! how deep a schema nests, how many steps the import takes, and how many
@@ -56,7 +60,7 @@ fn unreadable(why: &str) -> Failure {
     codes::failure(
         &codes::row::DESCRIPTION_UNREADABLE,
         format!("The description cannot be read as OpenAPI: {why}."),
-        "Give an OpenAPI 3.0 or 3.1 document, as JSON or YAML, that holds its own schemas.",
+        "Give an OpenAPI 3.0 or 3.1 document or a Swagger 2.0 document, as JSON or YAML, that holds its own schemas.",
     )
 }
 
@@ -134,6 +138,9 @@ struct Walk<'a> {
     /// does not require is then written `nullable` (decision 0297). A
     /// request's shape and a parameter's are drafted without it.
     optional_may_be_null: bool,
+    /// True for a Swagger 2.0 document, which states a body, a parameter's
+    /// type, and a shared schema in places of its own.
+    swagger: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -145,6 +152,7 @@ impl<'a> Walk<'a> {
             open: Vec::new(),
             seen: BTreeMap::new(),
             optional_may_be_null: false,
+            swagger: false,
         }
     }
 
@@ -363,18 +371,57 @@ impl<'a> Walk<'a> {
         Ok(Some(Json::Object(shape)))
     }
 
-    /// The JSON schema of one body of the description, as a shape.
-    fn body_shape(&mut self, holder: &'a Json) -> Result<Option<Json>, Failure> {
+    /// The JSON schema of one body of the description, as a shape. In a
+    /// Swagger 2.0 document the schema is the response's own `schema`, and
+    /// is JSON only when `json` says the operation speaks it.
+    fn body_shape(&mut self, holder: &'a Json, json: bool) -> Result<Option<Json>, Failure> {
         let Some(holder) = self.resolve(holder)? else {
             return Ok(None);
         };
-        let schema = holder
-            .get("content")
-            .and_then(|content| content.get("application/json"))
-            .and_then(|json| json.get("schema"));
+        let schema = if self.swagger {
+            holder.get("schema").filter(|_| json)
+        } else {
+            holder
+                .get("content")
+                .and_then(|content| content.get("application/json"))
+                .and_then(|json| json.get("schema"))
+        };
         match schema {
             Some(schema) => self.shape_of(schema, 0),
             None => Ok(None),
+        }
+    }
+
+    /// The request body of a Swagger 2.0 operation: the schema of its
+    /// `in: body` parameter, when the operation takes JSON. A form
+    /// (`in: formData`) is a body this pack cannot draft, as a 3.x body that
+    /// is not JSON is: it has no shape.
+    fn swagger_request(
+        &mut self,
+        of_path: Option<&'a Json>,
+        own: Option<&'a Json>,
+        json: bool,
+    ) -> Result<Option<Json>, Failure> {
+        let mut body = None;
+        for list in [of_path, own].into_iter().flatten() {
+            let Some(Json::List(items)) = self.resolve(list)? else {
+                continue;
+            };
+            for item in items {
+                self.step(1)?;
+                let Some(parameter) = self.resolve(item)? else {
+                    continue;
+                };
+                match parameter.get("in").and_then(Json::as_text) {
+                    Some("body") => body = Some(parameter),
+                    Some("formData") => return Ok(None),
+                    _ => {}
+                }
+            }
+        }
+        match body.and_then(|parameter| parameter.get("schema")) {
+            Some(schema) if json => self.shape_of(schema, 0),
+            _ => Ok(None),
         }
     }
 
@@ -405,9 +452,15 @@ impl<'a> Walk<'a> {
                 if !["path", "query", "header", "cookie"].contains(&place) {
                     continue;
                 }
-                let schema = match parameter.get("schema") {
-                    Some(schema) => self.shape_of(schema, 0)?,
-                    None => None,
+                // A 2.0 parameter states its type, format, enum and items in
+                // place, as a schema of its own.
+                let schema = if self.swagger {
+                    self.shape_of(parameter, 0)?
+                } else {
+                    match parameter.get("schema") {
+                        Some(schema) => self.shape_of(schema, 0)?,
+                        None => None,
+                    }
                 };
                 let kind = schema
                     .as_ref()
@@ -652,13 +705,21 @@ impl DescribedOperation {
 pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failure> {
     let root = document(bytes)?;
     let version = root.get("openapi").and_then(Json::scalar_text);
-    if !version.is_some_and(|version| version.starts_with("3.0") || version.starts_with("3.1")) {
-        return Err(unreadable("it does not state `openapi: 3.0` or `3.1`"));
+    let three = version
+        .as_ref()
+        .is_some_and(|version| version.starts_with("3.0") || version.starts_with("3.1"));
+    let swagger =
+        !three && root.get("swagger").and_then(Json::scalar_text).as_deref() == Some("2.0");
+    if !three && !swagger {
+        return Err(unreadable(
+            "it states neither `openapi: 3.0` or `3.1` nor `swagger: 2.0`",
+        ));
     }
     let Some(Json::Object(paths)) = root.get("paths") else {
         return Err(unreadable("it has no `paths`"));
     };
     let mut walk = Walk::new(&root);
+    walk.swagger = swagger;
     let mut found = Vec::new();
     for (path, item) in paths {
         walk.step(1)?;
@@ -677,6 +738,10 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
             let mut ok = Vec::new();
             let mut absent = Vec::new();
             let mut response = None;
+            // A 2.0 operation answers, and takes, JSON when its own list of
+            // types, or else the document's, names it or names none.
+            let speaks = |word: &str| speaks_json(operation.get(word).or_else(|| root.get(word)));
+            let (answers_json, takes_json) = (speaks("produces"), speaks("consumes"));
             if let Some(Json::Object(responses)) = operation.get("responses") {
                 for (status, body) in responses {
                     walk.step(1)?;
@@ -686,7 +751,7 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     if (200..300).contains(&status) {
                         if ok.is_empty() {
                             walk.optional_may_be_null = true;
-                            let drafted = walk.body_shape(body);
+                            let drafted = walk.body_shape(body, answers_json);
                             walk.optional_may_be_null = false;
                             response = drafted?;
                         }
@@ -696,9 +761,17 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     }
                 }
             }
-            let request = match operation.get("requestBody") {
-                Some(body) => walk.body_shape(body)?,
-                None => None,
+            let request = if swagger {
+                walk.swagger_request(
+                    item_parameters(resolved),
+                    operation.get("parameters"),
+                    takes_json,
+                )?
+            } else {
+                match operation.get("requestBody") {
+                    Some(body) => walk.body_shape(body, true)?,
+                    None => None,
+                }
             };
             let parameters =
                 walk.parameters(item_parameters(resolved), operation.get("parameters"))?;
@@ -724,6 +797,20 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
         }
     }
     Ok(found)
+}
+
+/// Whether a Swagger 2.0 list of media types (`produces`, `consumes`) lets
+/// an operation speak JSON: it names `application/json`, or lists nothing.
+fn speaks_json(list: Option<&Json>) -> bool {
+    match list {
+        Some(Json::List(types)) => {
+            types.is_empty()
+                || types
+                    .iter()
+                    .any(|word| word.as_text() == Some("application/json"))
+        }
+        _ => true,
+    }
 }
 
 /// Whether a `security` statement lets an operation be called with no
@@ -984,7 +1071,8 @@ mod tests {
     fn what_is_not_an_accepted_description_is_refused_by_name() {
         for bad in [
             &b"not a description: ["[..],
-            br#"{"swagger": "2.0", "paths": {}}"#,
+            br#"{"swagger": "1.2", "paths": {}}"#,
+            br#"{"swagger": "2.0"}"#,
             br#"{"openapi": "3.0.0"}"#,
             b"\xff\xfe",
         ] {
@@ -993,6 +1081,187 @@ mod tests {
         }
         let yaml = b"openapi: 3.1.0\npaths:\n  /orders:\n    get:\n      responses:\n        '200': {description: ok}\n";
         assert_eq!(operations(yaml).unwrap().len(), 1);
+    }
+
+    /// A Swagger 2.0 document, small, in the form the 2.0 specification
+    /// writes: `definitions`, a response's own `schema`, a parameter's own
+    /// type, a body parameter, and a form.
+    const SWAGGER: &str = r##"{
+      "swagger": "2.0",
+      "info": {"title": "Example order entry", "version": "1"},
+      "basePath": "/api",
+      "produces": ["application/json"],
+      "paths": {
+        "/orders/{orderId}": {
+          "parameters": [{"name": "orderId", "in": "path", "required": true, "type": "string"}],
+          "get": {
+            "operationId": "getOrder",
+            "parameters": [
+              {"name": "unit", "in": "query", "type": "integer", "format": "int32"},
+              {"name": "sort", "in": "query", "type": "array", "items": {"type": "string"}}],
+            "responses": {
+              "200": {"description": "ok", "schema": {"$ref": "#/definitions/Order"}},
+              "404": {"$ref": "#/responses/Missing"}
+            }
+          },
+          "put": {
+            "operationId": "putOrder",
+            "consumes": ["application/json"],
+            "parameters": [{"name": "body", "in": "body", "required": true,
+                            "schema": {"$ref": "#/definitions/Order"}}],
+            "responses": {"200": {"$ref": "#/responses/Done"}}
+          }
+        },
+        "/orders/{orderId}/upload": {
+          "post": {
+            "operationId": "uploadNote",
+            "consumes": ["multipart/form-data"],
+            "parameters": [{"name": "note", "in": "formData", "type": "string"}],
+            "responses": {"200": {"description": "ok"}}
+          }
+        },
+        "/report": {
+          "get": {
+            "produces": ["text/csv"],
+            "responses": {"200": {"description": "ok", "schema": {"type": "string"}}}
+          }
+        }
+      },
+      "definitions": {
+        "Order": {
+          "type": "object", "required": ["order_id"],
+          "properties": {
+            "order_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["draft", "submitted"]},
+            "items": {"type": "array", "items": {"$ref": "#/definitions/Item"}}
+          }},
+        "Item": {"type": "object", "properties": {"item_code": {"type": "string"}}}
+      },
+      "responses": {
+        "Missing": {"description": "No such order"},
+        "Done": {"description": "Done", "schema": {"$ref": "#/definitions/Item"}}
+      }
+    }"##;
+
+    #[test]
+    fn a_swagger_2_description_is_read_from_its_own_places_into_the_same_operations() {
+        let found = operations(SWAGGER.as_bytes()).unwrap();
+        assert_eq!(found.len(), 4);
+        let (get, put, upload, report) = (&found[0], &found[1], &found[2], &found[3]);
+        assert_eq!(get.name(), "get_order");
+        // `basePath` is not read: the path stays as the description writes it.
+        assert_eq!(get.path, "/orders/{orderId}");
+        assert_eq!(get.template_path().as_deref(), Some("/orders/{order_id}"));
+        // A shared response is followed, and a 404 is absent.
+        assert_eq!(
+            (get.ok.as_slice(), get.absent.as_slice()),
+            (&[200][..], &[404][..])
+        );
+        // A response's own `schema` is the answer, references into
+        // `definitions` followed, and decision 0297 applies as for 3.x.
+        let answer = get.response.as_ref().unwrap().to_text();
+        assert!(
+            answer.contains(r#""order_id":{"type":"string"}"#),
+            "{answer}"
+        );
+        assert!(
+            answer.contains(r#""status":{"type":"string","nullable":true"#),
+            "{answer}"
+        );
+        assert!(
+            answer.contains(r#""item_code":{"type":"string","nullable":true}"#),
+            "{answer}"
+        );
+        // A parameter states its type in place, the path item's and the
+        // operation's own.
+        let kinds: Vec<(&str, &str, bool)> = get
+            .parameters
+            .iter()
+            .map(|p| (p.name.as_str(), p.kind.as_str(), p.required))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("orderId", "string", true),
+                ("unit", "integer", false),
+                ("sort", "array", false)
+            ]
+        );
+        // A body parameter is the request, drafted without the answer rule.
+        let request = put.request.as_ref().unwrap().to_text();
+        assert!(
+            request.contains(r#""order_id""#) && !request.contains("nullable"),
+            "{request}"
+        );
+        assert!(!put.safe && get.safe);
+        // A shared response with a schema is an answer too.
+        assert!(put.response.is_some());
+        // A form is a body this pack cannot draft: no shape, as for a 3.x
+        // body that is not JSON.
+        assert!(upload.request.is_none() && upload.response.is_none());
+        // An answer the operation does not give as JSON has no shape.
+        assert!(report.response.is_none());
+        assert_eq!(
+            DescribedOperation::from_found(&get.found()).as_ref(),
+            Some(get)
+        );
+    }
+
+    #[test]
+    fn a_swagger_2_description_with_no_list_of_types_answers_json_and_yaml_is_read() {
+        let yaml = "swagger: '2.0'\npaths:\n  /orders:\n    get:\n      responses:\n        '200':\n          description: ok\n          schema: {type: object, properties: {id: {type: string}}}\n";
+        let found = operations(yaml.as_bytes()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].response.is_some());
+        let plain = "swagger: 2.0\npaths:\n  /orders:\n    get:\n      responses:\n        '200': {description: ok}\n";
+        assert_eq!(operations(plain.as_bytes()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_swagger_2_description_is_held_to_the_same_bounds() {
+        let swagger = |definitions: &str| {
+            format!(
+                r##"{{"swagger": "2.0", "paths": {{
+                  "/wide": {{"get": {{"responses": {{"200": {{"description": "ok",
+                    "schema": {{"$ref": "#/definitions/S0"}}}}}}}}}}
+                }}, "definitions": {{{definitions}}}}}"##
+            )
+        };
+        let doubling = |levels: usize| {
+            let mut all: Vec<String> = (0..levels)
+                .map(|level| {
+                    let next = level + 1;
+                    format!(
+                        r##""S{level}": {{"type": "object", "properties": {{
+                          "a": {{"$ref": "#/definitions/S{next}"}},
+                          "b": {{"$ref": "#/definitions/S{next}"}}}}}}"##
+                    )
+                })
+                .collect();
+            all.push(format!(r#""S{levels}": {{"type": "string"}}"#));
+            swagger(&all.join(","))
+        };
+        for levels in [20, 30] {
+            let failure = operations(doubling(levels).as_bytes()).unwrap_err();
+            assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE, "{levels}");
+        }
+        assert!(
+            operations(doubling(4).as_bytes()).unwrap()[0]
+                .response
+                .is_some()
+        );
+        let mut deep: Vec<String> = (0..40)
+            .map(|level| {
+                let next = level + 1;
+                format!(
+                    r##""S{level}": {{"type": "array", "items": {{"$ref": "#/definitions/S{next}"}}}}"##
+                )
+            })
+            .collect();
+        deep.push(r#""S40": {"type": "string"}"#.to_owned());
+        let failure = operations(swagger(&deep.join(",")).as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE);
+        assert!(failure.message().contains("32 levels"), "{failure}");
     }
 
     /// A description whose one operation answers with the schema `S0`.
