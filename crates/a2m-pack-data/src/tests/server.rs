@@ -1243,9 +1243,14 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
         .unwrap();
     // The statements file only: a column of a type the pack does not read
     // (a float, a moment with its zone) leaves a question in the record,
-    // and no read is drafted over it.
-    assert_eq!(report.written.len(), 1, "{report:?}");
-    let drafted = std::fs::read_to_string(root.join("statements").join("orders.yaml")).unwrap();
+    // and no read is drafted over it. A draft with an open question is
+    // written to the holding folder, and nothing is written in place.
+    assert!(report.written.is_empty(), "{report:?}");
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(held, ["held/statements/orders.yaml"], "{report:?}");
+    assert!(!root.join("statements").join("orders.yaml").exists());
+    let drafted =
+        std::fs::read_to_string(root.join("held").join("statements").join("orders.yaml")).unwrap();
     assert!(drafted.contains("form: \"table\""), "{drafted}");
     // The one statement text is the list's, of the catalog's own names.
     assert_eq!(drafted.matches("SELECT").count(), 1, "{drafted}");
