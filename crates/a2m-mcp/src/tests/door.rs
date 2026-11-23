@@ -728,12 +728,18 @@ async fn the_project_folder_is_what_the_mount_stated_and_nothing_a_caller_writes
     // folder, and finds no such target there.
     let mut http = Http::new(world.service("build", McpSettings::local()));
     http.project = Some(a2m_actions::ProjectFolder::new(&project));
+    // Lint fails when it lists an error, and the error it lists shows where
+    // it looked: the stated folder holds no such target.
     let reply = http.post(&lint).await;
     let result = &reply.only()["result"];
-    assert_eq!(result["isError"], false, "{result}");
-    assert_eq!(
-        result["structuredContent"]["problems"][0]["code"], "kernel.file_missing",
-        "{result}"
+    assert_eq!(result["isError"], true, "{result}");
+    let failure = text_of(reply.only());
+    assert_eq!(failure["code"], "lint_failed", "{failure}");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("kernel.file_missing")),
+        "{failure}"
     );
 
     // Not stated: the action says that it needs one. An argument that
