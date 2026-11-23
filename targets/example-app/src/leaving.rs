@@ -20,7 +20,8 @@
 //! - `/leaving/saved/...`: the form says "Saved." before anything is done.
 //! - `/leaving/loads/...`: the form loads an image and sends a `fetch` with
 //!   `GET` to the other name while it loads, as a page that loads from
-//!   another origin does (decision 0292).
+//!   another origin does (decision 0292). `/leaving/loads/orders/{order}` is
+//!   the order's page, with its table, that does the same.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -40,10 +41,12 @@ const OTHER: &str = "location.protocol + \"//\" + \
 const MOST: usize = 1 << 20;
 
 pub(crate) fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/leaving/{how}/orders/{order_id}/items/{item_code}",
-        get(leaving),
-    )
+    Router::new()
+        .route(
+            "/leaving/{how}/orders/{order_id}/items/{item_code}",
+            get(leaving),
+        )
+        .route("/leaving/loads/orders/{order_id}", get(order_that_loads))
 }
 
 /// The save, as the plain form's script sends it, in a block of its own so
@@ -95,6 +98,21 @@ async fn leaving(
         return StatusCode::NOT_FOUND.into_response();
     };
     let form = pages::item_form(state, Path((order_id, item_code))).await;
+    with_script(form, &script).await
+}
+
+/// The page of one order, as `/orders/{order}` shows it, loading an image
+/// and sending a `fetch` with `GET` to the other name while it loads: a page
+/// a scout reads a table from, that loads from another origin (package P3b).
+async fn order_that_loads(state: State<AppState>, Path(order_id): Path<String>) -> Response {
+    let Some(script) = added("loads") else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    with_script(pages::order_detail(state, Path(order_id)).await, &script).await
+}
+
+/// A page with a script added at the end of its body.
+async fn with_script(form: Response, script: &str) -> Response {
     let (parts, body) = form.into_parts();
     let Ok(bytes) = to_bytes(body, MOST).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

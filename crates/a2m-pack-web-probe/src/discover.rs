@@ -113,6 +113,53 @@ fn refused_note(refused: &[RequestShape]) -> Option<(LimitationCode, String)> {
     ))
 }
 
+/// The name, in a `screen` finding, of the origins the page tried to send a
+/// request to that the observing tab refused: the origins outside the
+/// surface's own, as the tab reported them (decision 0292). A finding holds
+/// the field only when there are some, each origin once, in order. The
+/// drafting rules of the web pack's drivers read it into the drafted
+/// operation's `permissions.destinations`, for a person to review.
+pub const REFUSED_ORIGINS: &str = "refused_origins";
+
+/// What an observing tab refused, taken apart: the origins outside its
+/// reach that its page tried to send to, each once and in order, and
+/// everything else it refused.
+fn outside_origins(refused: Vec<RequestShape>) -> (BTreeSet<String>, Vec<RequestShape>) {
+    let mut origins = BTreeSet::new();
+    let mut others = Vec::new();
+    for one in refused {
+        if one.method != a2m_pack_web_browser::OUTSIDE {
+            others.push(one);
+            continue;
+        }
+        // An address that does not read as one of `http` or `https` is not
+        // an origin a person could declare: it is counted with the rest.
+        match Place::parse(&one.address) {
+            Some(place) => {
+                origins.insert(place.origin);
+            }
+            None => others.push(one),
+        }
+    }
+    (origins, others)
+}
+
+/// The limitation that says which origins the page tried to send to.
+fn outside_note(origins: &BTreeSet<String>) -> Option<(LimitationCode, String)> {
+    if origins.is_empty() {
+        return None;
+    }
+    let listed: Vec<&str> = origins.iter().map(String::as_str).collect();
+    Some((
+        LimitationCode::NotExercised,
+        format!(
+            "The page tried to send requests to {} origin(s) outside the surface's own ({}). The observing tab refused them before they left the browser, so what they would have loaded was not seen. They are listed in the finding as `{REFUSED_ORIGINS}`.",
+            origins.len(),
+            listed.join(", ")
+        ),
+    ))
+}
+
 /// How long `web_capture` waits for the answers to the requests one page
 /// made by itself, at most.
 const PAGE_WAIT: Duration = Duration::from_secs(10);
@@ -529,12 +576,20 @@ impl WebSnapshot {
                     pages.add(target, depth + 1, false);
                 }
             }
-            limitations.extend(refused_note(&tab.blocked()));
-            seen.push((
-                arrival.ended,
-                screen::found(&snapshot, &arrival.title),
-                limitations,
-            ));
+            let (outside, others) = outside_origins(tab.blocked());
+            limitations.extend(refused_note(&others));
+            limitations.extend(outside_note(&outside));
+            let mut found = screen::found(&snapshot, &arrival.title);
+            if !outside.is_empty()
+                && let Json::Object(fields) = &mut found
+            {
+                fields.insert(
+                    REFUSED_ORIGINS.to_owned(),
+                    Json::Array(outside.iter().map(|one| Json::from(one.as_str())).collect()),
+                );
+                *fields = crate::shape::sorted(std::mem::take(fields));
+            }
+            seen.push((arrival.ended, found, limitations));
         }
         Self::give(core, kinds, scope, &seen, &mut out)?;
         Ok(pages.report)
@@ -566,6 +621,21 @@ impl WebSnapshot {
                 Some(group) => {
                     let first = &seen[group.pages[0]];
                     let mut fields = first.1.as_object().cloned().unwrap_or_default();
+                    // Every page of the group may have tried other origins.
+                    let refused: BTreeSet<&str> = group
+                        .pages
+                        .iter()
+                        .filter_map(|page| seen[*page].1.get(REFUSED_ORIGINS))
+                        .filter_map(Json::as_array)
+                        .flatten()
+                        .filter_map(Json::as_str)
+                        .collect();
+                    if !refused.is_empty() {
+                        fields.insert(
+                            REFUSED_ORIGINS.to_owned(),
+                            Json::Array(refused.into_iter().map(Json::from).collect()),
+                        );
+                    }
                     fields.insert(
                         "pages".to_owned(),
                         Json::Array(
