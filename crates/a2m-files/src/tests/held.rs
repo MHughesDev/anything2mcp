@@ -1,5 +1,6 @@
 //! Decision 0298: a draft with an open question waits in `held/`. The
-//! drafter writes it there, with every file of its finding; the loader does
+//! drafter writes it there, with each file of its finding that names what it
+//! defines, and leaves the rest of the finding in place; the loader does
 //! not read the folder, so the target's files, digest, and plan do not
 //! depend on it; the compiler is not changed.
 
@@ -105,9 +106,84 @@ impl DraftingRule for PairOperation {
             body: DraftValue::map(vec![
                 ("operation", DraftValue::text(&format!("example_{name}"))),
                 ("effect", DraftValue::text("read")),
+                // The read names the call it reads through.
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![(
+                        "call",
+                        DraftValue::text(name),
+                    )])]),
+                ),
             ]),
         }])
     }
+}
+
+/// A finding of the kind `graph_seen` states its files, `;` apart, each as
+/// `kind:name:ref:q`: the kind (`call` or `operation`), the name it defines,
+/// the name of another file it mentions (`-` for none), and `q` where the
+/// file holds an open question. One rule drafts the files of one kind.
+struct Graph(&'static str);
+
+impl DraftingRule for Graph {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("graph_seen").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new(self.0).unwrap()
+    }
+    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        let mut docs = Vec::new();
+        for item in finding.found().split(';') {
+            let parts: Vec<&str> = item.split(':').collect();
+            if parts[0] != self.0 {
+                continue;
+            }
+            let (name, mention, question) = (parts[1], parts[2], parts.get(3) == Some(&"q"));
+            let folder = if self.0 == "call" {
+                "calls"
+            } else {
+                "operations"
+            };
+            let mut pairs = vec![(self.0, DraftValue::text(name))];
+            pairs.push((
+                "effect",
+                if question {
+                    cx.open_question("Does it read or write?")
+                } else {
+                    DraftValue::text("read")
+                },
+            ));
+            if self.0 == "call" {
+                pairs.push(("path", DraftValue::text("/pair")));
+            }
+            if mention != "-" {
+                pairs.push(("mentions", DraftValue::text(mention)));
+            }
+            docs.push(DraftDoc {
+                path: RelPath::new(&format!("{folder}/{name}.yaml"))?,
+                body: DraftValue::map(pairs),
+            });
+        }
+        Ok(docs)
+    }
+}
+
+fn graph(found: &str) -> Finding {
+    Finding::about(
+        Subject::Address(Address::new("https://app.example.com", "/graph").unwrap()),
+        FindingKind::new("graph_seen").unwrap(),
+        found,
+        Source::LiveSystem,
+        ProducedBy {
+            provider: "stand".to_owned(),
+            version: "0.0.1".to_owned(),
+            component: None,
+        },
+        Timestamp::from_unix_millis(1_000),
+    )
+    .build()
+    .unwrap()
 }
 
 fn set() -> CompilerSet {
@@ -116,6 +192,12 @@ fn set() -> CompilerSet {
     builder.drafting_rule("stand", Arc::new(PairCall)).unwrap();
     builder
         .drafting_rule("seer", Arc::new(PairOperation))
+        .unwrap();
+    builder
+        .drafting_rule("stand", Arc::new(Graph("call")))
+        .unwrap();
+    builder
+        .drafting_rule("seer", Arc::new(Graph("operation")))
         .unwrap();
     builder.build()
 }
@@ -426,4 +508,107 @@ fn the_loader_does_not_read_the_holding_folder_and_the_compiler_is_as_it_was() {
     let problems = compile(&loaded, &set, CompileMode::Draft, DRAFT_VERSION).unwrap_err();
     assert!(problems.find("kernel.open_question").is_some());
     std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// Point 2 (decision 0298, narrowed): one finding, five files, one holding a
+/// question and four naming nothing of it. Only the one is held; the four
+/// are in place, and the target compiles with the held one beside it.
+#[test]
+fn a_file_of_a_finding_that_names_nothing_held_stays_in_place_and_compiles() {
+    let folder = scratch("narrow");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    let report = Drafter::new(&set, &root)
+        .draft(&[graph(
+            "call:one:-:q;call:two:-;call:three:-;call:four:-;call:five:-",
+        )])
+        .unwrap();
+    assert_eq!(paths(&report.held), ["held/calls/one.yaml"]);
+    assert_eq!(
+        paths(&report.written),
+        [
+            "calls/five.yaml",
+            "calls/four.yaml",
+            "calls/three.yaml",
+            "calls/two.yaml"
+        ]
+    );
+    assert!(!folder.join("calls/one.yaml").exists());
+    for stayed in ["five", "four", "three", "two"] {
+        assert!(folder.join(format!("calls/{stayed}.yaml")).is_file());
+        assert!(!folder.join(format!("held/calls/{stayed}.yaml")).exists());
+    }
+    assert!(report.kept_failing.is_empty(), "{:?}", report.kept_failing);
+    let loaded = load(&root, &set).unwrap();
+    compile(&loaded, &set, CompileMode::Draft, DRAFT_VERSION).unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// An endpoint with a question and the operation that names it are both
+/// held; an unrelated operation of the same finding stays in place.
+#[test]
+fn an_operation_that_names_a_held_call_is_held_and_an_unrelated_one_is_not() {
+    let folder = scratch("pair");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    let report = Drafter::new(&set, &root)
+        .draft(&[graph(
+            "call:alpha:-:q;operation:read_alpha:alpha;operation:read_other:-",
+        )])
+        .unwrap();
+    assert_eq!(
+        paths(&report.held),
+        ["held/calls/alpha.yaml", "held/operations/read_alpha.yaml"]
+    );
+    assert_eq!(paths(&report.written), ["operations/read_other.yaml"]);
+    assert!(!folder.join("operations/read_alpha.yaml").exists());
+    assert!(!folder.join("calls/alpha.yaml").exists());
+    assert!(!folder.join("held/operations/read_other.yaml").exists());
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// A chain inside one finding: A holds a question, B names A, C names B.
+/// All three are held, in whatever order the files are drafted; D names
+/// nothing and stays. A file of another finding is not reached by a name.
+#[test]
+fn a_chain_of_names_inside_one_finding_is_held_and_the_order_does_not_matter() {
+    let spec = ["call:a:-:q", "call:b:a", "call:c:b", "call:d:-"];
+    let mut results = Vec::new();
+    for (position, order) in [[0, 1, 2, 3], [2, 1, 3, 0], [3, 2, 1, 0], [1, 3, 0, 2]]
+        .iter()
+        .enumerate()
+    {
+        let folder = scratch(&format!("chain{position}"));
+        let root = TargetRoot::new(&folder);
+        let set = set();
+        let found = order
+            .iter()
+            .map(|index| spec[*index])
+            .collect::<Vec<_>>()
+            .join(";");
+        let report = Drafter::new(&set, &root)
+            .draft(&[graph(&found), graph("call:y:a")])
+            .unwrap();
+        assert_eq!(
+            paths(&report.held),
+            [
+                "held/calls/a.yaml",
+                "held/calls/b.yaml",
+                "held/calls/c.yaml"
+            ]
+        );
+        assert_eq!(paths(&report.written), ["calls/d.yaml", "calls/y.yaml"]);
+        results.push((
+            paths(&report.held)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            paths(&report.written)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        ));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+    assert!(results.windows(2).all(|pair| pair[0] == pair[1]));
 }

@@ -111,7 +111,6 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
         .collect();
     for expected in [
         "screens/example_order_values.yaml",
-        "screens/example_order_values_undecided.yaml",
         "screens/example_order_line_items.yaml",
         "operations/example_order_values_get.yaml",
         "operations/example_order_line_items_list.yaml",
@@ -121,7 +120,23 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
             "{expected} not in {written:?}; drafted from:\n{seen}"
         );
     }
-    assert_eq!(written.len(), 5, "{written:?}; drafted from:\n{seen}");
+    assert_eq!(written.len(), 4, "{written:?}; drafted from:\n{seen}");
+    // The one screen that holds a question waits in the holding folder and
+    // is not also in place; the four files that name nothing of it are in
+    // place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        held,
+        ["held/screens/example_order_values_undecided.yaml"],
+        "{report:?}"
+    );
+    assert!(
+        !root
+            .path()
+            .join("screens")
+            .join("example_order_values_undecided.yaml")
+            .exists()
+    );
     assert!(
         report.refused.is_empty() && report.conflicts.is_empty(),
         "{report:?}"
@@ -133,12 +148,9 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
         "{:?}",
         report.open_questions
     );
-    assert!(
-        report
-            .open_questions
-            .iter()
-            .all(|question| question.file.as_str() == "screens/example_order_values_undecided.yaml")
-    );
+    assert!(report.open_questions.iter().all(
+        |question| question.file.as_str() == "held/screens/example_order_values_undecided.yaml"
+    ));
     // Nothing drafted presses, types, or reads the password field.
     for (path, text) in every_file(root.path()) {
         for never in [
@@ -167,13 +179,15 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
     assert!(values.contains("untrusted_text"), "{values}");
     assert!(!values.contains("Reference"), "{values}");
 
-    // The file that holds a question is left out, and the rest compile.
-    std::fs::remove_file(
+    // The file that holds a question is in the holding folder, which the
+    // loader does not read, and the rest compile with it there.
+    assert!(
         root.path()
+            .join("held")
             .join("screens")
-            .join("example_order_values_undecided.yaml"),
-    )
-    .unwrap();
+            .join("example_order_values_undecided.yaml")
+            .is_file()
+    );
     scene.plan = match compile_at(&scene.registry, root.path()) {
         Ok(compiled) => compiled.plan,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),

@@ -201,10 +201,12 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
     // The settled entries, and apart from them those left with a question.
     // No read is drafted: of the tools still marked read-only, one answers
     // a list of records and the others take one string.
-    assert_eq!(
-        written,
-        ["mappings/orders.yaml", "mappings/orders_undecided.yaml"]
-    );
+    assert_eq!(written, ["mappings/orders.yaml"]);
+    // The file of the entries with a question waits in the holding folder
+    // and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(a2m_files::RelPath::as_str).collect();
+    assert_eq!(held, ["held/mappings/orders_undecided.yaml"]);
+    assert!(!root.join("mappings/orders_undecided.yaml").exists());
     let draft = std::fs::read_to_string(root.join("mappings").join("orders.yaml")).unwrap();
     let digest = tools["orders_list"]["digest"].as_str().unwrap();
     assert!(draft.contains(digest), "{draft}");
@@ -229,19 +231,19 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
         .filter(|question| question.contains("one string"))
         .count();
     assert_eq!(strings, 4, "{questions:#?}");
-    let undecided =
-        std::fs::read_to_string(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    let undecided = std::fs::read_to_string(
+        root.join("held")
+            .join("mappings")
+            .join("orders_undecided.yaml"),
+    )
+    .unwrap();
     for text in [&draft, &undecided] {
         assert!(!text.contains("free_text: true") && !text.contains("free_text: false"));
     }
-    // A draft with a question left in it is not a mapping yet: it does not
-    // compile until a person has answered.
-    assert!(
-        report
-            .kept_failing
-            .iter()
-            .any(|(path, _)| path.as_str() == "mappings/orders_undecided.yaml")
-    );
+    // A draft with a question left in it is not a mapping yet: it is held
+    // outside what the loader reads, so what is in place compiles whole and
+    // nothing in place fails.
+    assert!(report.kept_failing.is_empty(), "{:?}", report.kept_failing);
 
     let (handle, prepared) = port.into_parts();
     handle.release(prepared, false).await;
@@ -314,18 +316,22 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
         written,
         [
             "mappings/orders.yaml",
-            "mappings/orders_undecided.yaml",
             "operations/orders_orders_report.yaml",
         ]
     );
+    let held: Vec<&str> = report.held.iter().map(a2m_files::RelPath::as_str).collect();
+    assert_eq!(held, ["held/mappings/orders_undecided.yaml"]);
+    assert!(!root.join("mappings/orders_undecided.yaml").exists());
     let mut questioned: Vec<&str> = report
         .open_questions
         .iter()
         .map(|open| open.file.as_str())
         .collect();
     questioned.dedup();
-    assert_eq!(questioned, ["mappings/orders_undecided.yaml"]);
-    std::fs::remove_file(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    assert_eq!(questioned, ["held/mappings/orders_undecided.yaml"]);
+    // The loader does not read the holding folder, so the drafts compile
+    // with the file of questions there.
+    assert!(root.join(questioned[0]).is_file());
     let drafted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
         .plan;

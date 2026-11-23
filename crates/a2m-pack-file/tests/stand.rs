@@ -1587,11 +1587,22 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
         .collect();
     assert_eq!(
         written,
-        [
-            "documents/example_settings.yaml",
-            "documents/price_list_macro.yaml",
-            "documents/stock.yaml"
-        ]
+        ["documents/price_list_macro.yaml", "documents/stock.yaml"]
+    );
+    // The JSON file's key and types are questions, so its document waits
+    // in the holding folder and is not also in place (decision 0298).
+    let held: Vec<&str> = drafted
+        .held
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("held/documents/"))
+        .collect();
+    assert_eq!(held, ["held/documents/example_settings.yaml"]);
+    assert!(
+        !folder
+            .join("documents")
+            .join("example_settings.yaml")
+            .exists()
     );
     assert!(drafted.refused.is_empty());
     let questions = |file: &str| {
@@ -1603,7 +1614,7 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     };
     // Delimited text: no question. JSON: the key, and each value's type.
     assert_eq!(questions("documents/stock.yaml"), 0);
-    assert!(questions("documents/example_settings.yaml") > 0);
+    assert!(questions("held/documents/example_settings.yaml") > 0);
     // A question is the pack's own words. No header, table name, or file
     // name reaches it: text in a file may be written as an instruction.
     for question in &drafted.open_questions {
@@ -1706,12 +1717,23 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
         [
             "documents/adjustments.yaml",
             "documents/stock.yaml",
-            "operations/adjustments_get.yaml",
             "operations/adjustments_list.yaml",
-            "operations/stock_get.yaml",
             "operations/stock_list.yaml",
         ]
     );
+    // The reads by key hold the questions, so they wait in the holding
+    // folder, and are not also in place; the documents and the lists name
+    // nothing of them (decision 0298).
+    let held_reads: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        held_reads,
+        [
+            "held/operations/adjustments_get.yaml",
+            "held/operations/stock_get.yaml"
+        ]
+    );
+    assert!(!folder.join("operations/stock_get.yaml").exists());
+    assert!(!folder.join("operations/adjustments_get.yaml").exists());
     assert!(report.refused.is_empty(), "{report:?}");
     // The documents and the lists hold no question; the reads by key hold
     // every one: the key, and the type of each key field.
@@ -1724,8 +1746,8 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     assert_eq!(
         questioned,
         [
-            "operations/adjustments_get.yaml",
-            "operations/stock_get.yaml"
+            "held/operations/adjustments_get.yaml",
+            "held/operations/stock_get.yaml"
         ]
     );
     let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
@@ -1735,15 +1757,10 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     );
     assert!(!stock.contains("writable"), "{stock}");
 
-    // While a read by key holds its questions, nothing compiles, and the
-    // compiler names the file and the question.
-    let held = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
-    let question = held.find("kernel.open_question").unwrap();
-    assert!(question.at.file.as_str().ends_with("_get.yaml"), "{held:?}");
-    // Set aside, as the scout sets aside a draft that holds a question,
-    // the documents and the lists compile.
+    // The held reads are not read, so the documents and the lists compile
+    // with them there.
     for file in &questioned {
-        std::fs::remove_file(folder.join(file)).unwrap();
+        assert!(folder.join(file).is_file(), "{file}");
     }
     scene.plan = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))

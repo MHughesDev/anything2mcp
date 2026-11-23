@@ -8,9 +8,10 @@
 //! which file is each pack's drafting rule.
 //!
 //! A draft that holds an open question waits in the folder `held/` of the
-//! target, at the path it would have had outside, together with every file
-//! drafted from the same finding; the loader does not read that folder
-//! (decision 0298).
+//! target, at the path it would have had outside, together with each file
+//! drafted from the same finding that names something the held file
+//! defines; a file of the finding that names nothing held stays in place.
+//! The loader does not read that folder (decision 0298).
 //!
 //! A draft is written to a regular file inside the target folder and
 //! nowhere else. Every folder on the way is looked at without following a
@@ -337,12 +338,13 @@ impl<'a> DraftContext<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DraftReport {
     /// The drafts written where they belong, in order of path. A draft that
-    /// holds an open question, or that was made from a finding which gave
-    /// one, is in `held`, not here.
+    /// holds an open question, or that names what one defines, is in `held`,
+    /// not here.
     pub written: Vec<RelPath>,
     /// The drafts written to the holding folder, `held/` first, in order of
-    /// path: every file of a finding of which any file holds an open
-    /// question (decision 0298). The loader does not read them.
+    /// path: each file that holds an open question, and each file of the
+    /// same finding that names something a held file defines (decision
+    /// 0298). The loader does not read them.
     pub held: Vec<RelPath>,
     /// Drafts not written, because the file is there and is not a draft the
     /// drafter wrote and nobody changed since.
@@ -417,6 +419,8 @@ impl<'a> Drafter<'a> {
         let mut report = DraftReport::default();
         // Path to its documents and the findings they came from.
         let mut files: BTreeMap<RelPath, (Vec<DraftValue>, Vec<Digest>)> = BTreeMap::new();
+        // The kind of each file, for the names it defines.
+        let mut kinds: BTreeMap<RelPath, FileKindName> = BTreeMap::new();
         for finding in findings {
             let mut covered = false;
             for ((finding_kind, file_kind), rule) in &self.set.drafting_rules {
@@ -478,6 +482,9 @@ impl<'a> Drafter<'a> {
                         report.refused.push((doc.path, why));
                         continue;
                     }
+                    kinds
+                        .entry(doc.path.clone())
+                        .or_insert_with(|| file_kind.clone());
                     let entry = files.entry(doc.path).or_default();
                     entry.0.push(doc.body);
                     if !entry.1.contains(&finding.id()) {
@@ -490,28 +497,22 @@ impl<'a> Drafter<'a> {
             }
         }
 
-        // What one finding gave is held together: the files that share a
-        // finding stand or fall together (decision 0298). A group that
-        // holds an open question is held whole.
+        // What one finding gave is held by what names what: a draft that
+        // holds an open question is held, and with it each file of the same
+        // finding that names something a held file defines. A file of the
+        // finding that names nothing held stays in place (decision 0298).
         let groups = groups_of(&files);
         let odd_held = self.odd_held_entry();
         let mut skip: BTreeSet<RelPath> = BTreeSet::new();
         let mut held: BTreeSet<RelPath> = BTreeSet::new();
         for group in &groups {
-            let questioned = group.iter().any(|path| {
-                let mut questions = Vec::new();
-                files[path]
-                    .0
-                    .iter()
-                    .for_each(|doc| doc.questions(&mut questions));
-                !questions.is_empty()
-            });
+            let in_group = self.held_within(group, &files, &kinds);
             // One file of the finding that a person changed leaves every
             // file of it as it is, and the conflict is reported once.
             let mut conflict = None;
             'group: for path in group {
                 let beside = RelPath::new(&format!("{HELD_FOLDER}/{path}"))?;
-                let places = if questioned {
+                let places = if in_group.contains(path) {
                     [beside, path.clone()]
                 } else {
                     [path.clone(), beside]
@@ -528,9 +529,9 @@ impl<'a> Drafter<'a> {
                 skip.extend(group.iter().cloned());
                 continue;
             }
-            if questioned {
+            if !in_group.is_empty() {
                 if let Some(entry) = &odd_held {
-                    for path in group {
+                    for path in &in_group {
                         report.refused.push((
                             RelPath::new(&format!("{HELD_FOLDER}/{path}"))?,
                             format!(
@@ -542,7 +543,7 @@ impl<'a> Drafter<'a> {
                     skip.extend(group.iter().cloned());
                     continue;
                 }
-                held.extend(group.iter().cloned());
+                held.extend(in_group);
             }
         }
 
@@ -808,6 +809,20 @@ fn groups_of(files: &BTreeMap<RelPath, (Vec<DraftValue>, Vec<Digest>)>) -> Vec<V
     groups
 }
 
+/// Every text value in a document, keys not included.
+fn collect_texts(doc: &Located<crate::doc::Doc>, out: &mut BTreeSet<String>) {
+    match &doc.value {
+        crate::doc::Doc::Text(text) => {
+            out.insert(text.clone());
+        }
+        crate::doc::Doc::List(items) => items.iter().for_each(|item| collect_texts(item, out)),
+        crate::doc::Doc::Map(entries) => entries
+            .iter()
+            .for_each(|entry| collect_texts(&entry.value, out)),
+        _ => {}
+    }
+}
+
 /// What stands at the place of a draft.
 enum Stand {
     /// Nothing, or nothing a draft could be written over.
@@ -856,6 +871,100 @@ impl Drafter<'_> {
             Ok(_) => Ok(Stand::Other),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Stand::Absent),
             Err(error) => Err(error),
+        }
+    }
+
+    /// The files of one finding's group that are held: each that holds an
+    /// open question, and, to a fixed point, each that names, as a whole
+    /// scalar value, something a held file of the group defines. The names a
+    /// pack's file defines are what its file kind's `names` gives; the
+    /// kernel's kinds define the value of their naming key (`operation`,
+    /// `pipeline`, `template` in a sources file, `test`) and the entries
+    /// under `types:`. A value that merely equals a name holds a file it
+    /// need not: that is the safe direction.
+    fn held_within(
+        &self,
+        group: &[RelPath],
+        files: &BTreeMap<RelPath, (Vec<DraftValue>, Vec<Digest>)>,
+        kinds: &BTreeMap<RelPath, FileKindName>,
+    ) -> BTreeSet<RelPath> {
+        let mut defines: BTreeMap<&RelPath, BTreeSet<String>> = BTreeMap::new();
+        let mut scalars: BTreeMap<&RelPath, BTreeSet<String>> = BTreeMap::new();
+        let mut held: BTreeSet<RelPath> = BTreeSet::new();
+        for path in group {
+            let (docs, _) = &files[path];
+            let mut questions = Vec::new();
+            docs.iter().for_each(|doc| doc.questions(&mut questions));
+            if !questions.is_empty() {
+                held.insert(path.clone());
+            }
+            let text = render(docs, &[]);
+            let parsed = yaml::parse(path, &text).unwrap_or_default();
+            let mut names = BTreeSet::new();
+            let mut texts = BTreeSet::new();
+            for doc in &parsed {
+                collect_texts(doc, &mut texts);
+                if let Some(kind) = kinds.get(path) {
+                    self.defined_names(kind, doc, &mut names);
+                }
+            }
+            defines.insert(path, names);
+            scalars.insert(path, texts);
+        }
+        loop {
+            let named: BTreeSet<&String> = held
+                .iter()
+                .filter_map(|path| defines.get(path))
+                .flatten()
+                .collect();
+            let joining: Vec<RelPath> = group
+                .iter()
+                .filter(|path| !held.contains(*path))
+                .filter(|path| scalars[path].iter().any(|text| named.contains(text)))
+                .cloned()
+                .collect();
+            if joining.is_empty() {
+                return held;
+            }
+            held.extend(joining);
+        }
+    }
+
+    /// The names one document of a file of `kind` defines.
+    fn defined_names(
+        &self,
+        kind: &FileKindName,
+        doc: &Located<crate::doc::Doc>,
+        out: &mut BTreeSet<String>,
+    ) {
+        if KERNEL_FILE_KINDS.contains(&kind.as_str()) {
+            let key = match kind.as_str() {
+                "operation" => "operation",
+                "pipeline" => "pipeline",
+                "source" => "template",
+                "test" => "test",
+                _ => "",
+            };
+            if let Some(name) = doc.text(key).filter(|_| !key.is_empty()) {
+                out.insert(name.to_owned());
+            }
+            if kind.as_str() == "types"
+                && let Some(types) = doc.get("types")
+            {
+                out.extend(types.entries().iter().map(|entry| entry.key.value.clone()));
+            }
+            return;
+        }
+        for ((registered, _), owner) in &self.set.file_kinds {
+            if registered == kind {
+                out.extend(
+                    owner
+                        .item
+                        .names(doc)
+                        .into_iter()
+                        .map(|name| name.value.name),
+                );
+            }
         }
     }
 

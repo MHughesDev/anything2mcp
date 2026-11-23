@@ -132,8 +132,9 @@ fn files_of(folder: &Path) -> Vec<(RelPath, Vec<u8>)> {
     out
 }
 
-/// Compiles a target folder, leaving out each file that holds an open
-/// question, with `change` applied to the text of the file at `path`.
+/// Compiles a target folder, leaving out the holding folder `held/`, which
+/// the loader does not read and where each file that holds an open question
+/// waits, with `change` applied to the text of the file at `path`.
 fn compile_drafts(
     stand: &Stand,
     folder: &Folder,
@@ -143,8 +144,16 @@ fn compile_drafts(
 ) -> Result<Plan, Diagnostics> {
     let mut files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
-        .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
+        .filter(|(file, _)| !file.as_str().starts_with("held/"))
         .collect();
+    // Every file with a question is held, so none is in what compiles.
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .all(|open| open.file.as_str().starts_with("held/")),
+        "{report:?}"
+    );
     for (file, bytes) in &mut files {
         if file.as_str() == path {
             *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
@@ -370,13 +379,14 @@ fn a_form_is_never_drafted_and_a_table_that_cannot_be_told_apart_is_a_question()
     let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
     assert_eq!(
         written,
-        [
-            "operations/form_lines_list.yaml",
-            "screens/form_lines.yaml",
-            "screens/twice_lines.yaml",
-        ],
+        ["operations/form_lines_list.yaml", "screens/form_lines.yaml",],
         "{report:?}"
     );
+    // The two tables of one name are a question, so the screen file waits
+    // in the holding folder and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    assert_eq!(held, ["held/screens/twice_lines.yaml"]);
+    assert!(!folder.path().join("screens/twice_lines.yaml").exists());
     // The form drafts nothing of its own: no field, no action. The column
     // whose heading another shares is left out.
     let screen = std::fs::read_to_string(folder.path().join("screens/form_lines.yaml")).unwrap();
@@ -389,7 +399,7 @@ fn a_form_is_never_drafted_and_a_table_that_cannot_be_told_apart_is_a_question()
     assert_eq!(report.open_questions.len(), 1, "{report:?}");
     assert_eq!(
         report.open_questions[0].file.as_str(),
-        "screens/twice_lines.yaml"
+        "held/screens/twice_lines.yaml"
     );
     assert!(
         report.open_questions[0]
@@ -745,9 +755,19 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
         [
             "operations/order_values_get.yaml",
             "screens/order_values.yaml",
-            "screens/order_values_undecided.yaml",
         ],
         "{report:?}"
+    );
+    // The screen file of the label two terms share holds the question, so
+    // it waits in the holding folder and is not also in place; the read and
+    // the screen of the other values name nothing of it (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    assert_eq!(held, ["held/screens/order_values_undecided.yaml"]);
+    assert!(
+        !folder
+            .path()
+            .join("screens/order_values_undecided.yaml")
+            .exists()
     );
     let read =
         std::fs::read_to_string(folder.path().join("operations/order_values_get.yaml")).unwrap();
@@ -756,7 +776,7 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
         report
             .open_questions
             .iter()
-            .all(|open| open.file.as_str() == "screens/order_values_undecided.yaml")
+            .all(|open| open.file.as_str() == "held/screens/order_values_undecided.yaml")
     );
     // The label is the page's own words, quoted apart from the product's
     // sentence.
@@ -822,7 +842,7 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
             "{path:?}"
         );
         assert!(!text.contains(" now now"), "{path:?}: {text}");
-        if path.as_str() != "screens/order_values_undecided.yaml" {
+        if path.as_str() != "held/screens/order_values_undecided.yaml" {
             assert!(!text.contains("Ignore"), "{path:?}: {text}");
         }
     }
