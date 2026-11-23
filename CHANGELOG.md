@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- The publish page now states, for the device, stream, and data packs, that a tool starts no program and sets no variable, and where it sends: to its surface's address and no other, or to no address for a store in a local file ([decision 0399](docs/decisions/0399-the-device-stream-and-data-packs-state-where-their-tools-send.md)). The desktop pack still states nothing.
 - A provider package installed with pip is found through an entry in the group `anything2mcp.providers`, which is read as text: no package code is run or imported, and the search says where it looked. `anything2mcp.provider_site_folders()` names the folders. The engine does not list one yet.
 
 - Tests now check, through the real program, that a secret survives an engine restart, that a wrong passphrase stops with `vault_passphrase_mismatch`, and that no secret reaches a file.
