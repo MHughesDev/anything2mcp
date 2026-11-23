@@ -236,6 +236,8 @@ Shapes, not values, are stored ([section 218](../2-kernel/218-discovery-and-find
 
 The scout tries each drafted read five times. Opening a file for reading is a read the engine enforces.
 
+**A column named as a secret is never drafted as a field or an output.** The drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each header of delimited text, a workbook's table, or a JSON document, as the file writes it and as the field it becomes. Such a header is no field of the drafted document and no output of a drafted read, and the last sentence of the description of a drafted `list` and of a read by key names the fields left out. A settings value whose key names a secret was already withheld, by the pack's own words in `evidence.rs`. The compiler's refusal of a secret in a file does not change ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Failures
 
 | What goes wrong | Class | Code |

@@ -50,7 +50,9 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+};
 
 use crate::discover::{CellKind, ColumnFound, FILE_LAYOUT, LayoutFound, invalid};
 use crate::evidence::ValueShape;
@@ -134,6 +136,9 @@ struct KindDraft {
     place: (&'static str, DraftValue),
     /// Each field.
     fields: Vec<FieldDraft>,
+    /// The names of the columns left out because their names are a secret's,
+    /// as the fields they would have been (decision 0302).
+    secrets: Vec<String>,
 }
 
 impl KindDraft {
@@ -166,10 +171,21 @@ impl LayoutDraft {
                     columns: &[ColumnFound]| {
             let json = found.format == Format::Json;
             let mut taken = BTreeSet::new();
+            // A header named as a secret, as the file writes it or as the
+            // field it becomes, is never a field: no read gives its values.
+            let mut secrets = Vec::new();
             let fields = headers
                 .iter()
                 .enumerate()
                 .filter(|(_, header)| !header.is_empty())
+                .filter(|(_, header)| {
+                    let field = name_from(header, &mut BTreeSet::new());
+                    let secret = names_a_secret(header) || names_a_secret(&field);
+                    if secret {
+                        secrets.push(field);
+                    }
+                    !secret
+                })
                 .map(|(position, header)| {
                     let at = if json {
                         ("path", texts(std::slice::from_ref(header)))
@@ -191,6 +207,7 @@ impl LayoutDraft {
                 name,
                 place,
                 fields,
+                secrets,
             }
         };
         let mut taken = BTreeSet::new();
@@ -227,6 +244,7 @@ impl LayoutDraft {
                                     name,
                                     place: ("path", texts(above)),
                                     fields: Vec::new(),
+                                    secrets: Vec::new(),
                                 },
                                 BTreeSet::new(),
                             ));
@@ -403,6 +421,31 @@ fn left_out(kind: &KindDraft) -> &'static str {
     } else {
         ""
     }
+}
+
+/// The sentence that ends a drafted description when columns were left out
+/// for their names: the same form every pack uses (decision 0302).
+fn secrets_left_out(kind: &KindDraft) -> String {
+    const MOST_NAMED: usize = 8;
+    if kind.secrets.is_empty() {
+        return String::new();
+    }
+    let named: Vec<String> = kind
+        .secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = kind.secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
 }
 
 fn layout_of(finding: &Finding) -> Result<LayoutFound, Failure> {
@@ -612,10 +655,11 @@ impl DraftingRule for ReadsFromLayout {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Lists the rows of {} in the order the file holds them, as many as the list limit allows, {}{} Drafted by rule from the file's layout; its name is provisional.",
+                            "Lists the rows of {} in the order the file holds them, as many as the list limit allows, {}{} Drafted by rule from the file's layout; its name is provisional.{}",
                             layout.named(kind),
                             layout.values_read(kind),
                             left_out(kind),
+                            secrets_left_out(kind),
                         )),
                     ),
                 ]),
@@ -670,9 +714,10 @@ impl DraftingRule for ReadsFromLayout {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Reads one row of {} by its key, {} Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.",
+                            "Reads one row of {} by its key, {} Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.{}",
                             layout.named(kind),
                             layout.values_read(kind),
+                            secrets_left_out(kind),
                         )),
                     ),
                 ]),

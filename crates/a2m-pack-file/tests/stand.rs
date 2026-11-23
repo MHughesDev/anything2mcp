@@ -2986,3 +2986,68 @@ async fn a_drafted_workbook_list_reads_each_cell_as_stored_and_a_formula_as_its_
     assert_eq!(stopped.sent, Sent::NotSent);
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+#[tokio::test]
+async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
+    // Decision 0302: a header that names a secret, as the file writes it or
+    // as the field it becomes, is left out of the document and of every
+    // read, and the description says so. The value is invented.
+    const FILE: &str = "prices/accounts.csv";
+    const VALUE: &str = "example-not-a-secret-0001";
+    let mut scene = Scene::new();
+    std::fs::write(
+        scene.stand.path(FILE).unwrap(),
+        format!(
+            "label,Client-Secret,passwordHint\nfirst,{VALUE},{VALUE}\nsecond,{VALUE},{VALUE}\n"
+        ),
+    )
+    .unwrap();
+    let (folder, report) = drafted_from(&scene, "secret-headers", &[FILE]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let drafted = texts_below(&folder);
+    assert!(
+        drafted
+            .iter()
+            .any(|(path, _)| path.ends_with("accounts.yaml")),
+        "{drafted:?}"
+    );
+    for (path, text) in &drafted {
+        assert!(!text.contains(VALUE), "{path}: {text}");
+        // No field, output, or input has a secret's name; a header the
+        // document lists as the file's own words is not one of them.
+        for line in text.lines() {
+            let key = line.trim().split(':').next().unwrap_or("");
+            assert!(
+                !(a2m_files::names_a_secret(key) && line.trim().ends_with(':')),
+                "{path}: {line}"
+            );
+        }
+    }
+    let list = drafted
+        .iter()
+        .find(|(path, _)| path.ends_with("accounts_list.yaml"))
+        .map(|(_, text)| text.as_str())
+        .unwrap();
+    assert!(
+        list.contains("Left out because their names are a secret's, so that a secret is never an output: `client_secret`, `passwordhint`."),
+        "{list}"
+    );
+    // The drafted target compiles, and its read gives the plain column.
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let observed = scene
+        .read_operation("example_accounts_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(&scene.plan, "example_accounts_list", last_values(&observed));
+    assert!(result.get("client_secret").is_none() && result.get("passwordhint").is_none());
+    assert_eq!(
+        result.get("label").and_then(Value::as_list).unwrap().len(),
+        2
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
