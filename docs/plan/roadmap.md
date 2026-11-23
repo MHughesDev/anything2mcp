@@ -308,7 +308,7 @@ The product is run against existing software that the project runs itself, while
 | FT6 | The field test of a web application with a sign-in and no published description | None | E2, 2.3 | Reads drafted from a capture of a person's use run, and match the software's own database | held |
 | FT10 | The rule of [decision 0302](../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md) in every other pack that drafts by a name: a column, a tool's result, a field of a file, a control | The data, MCP, file, desktop, web, stream, device, and command packs | FT8 | In each pack's stand, a thing named as a secret is in no drafted input or output, and the target compiles | ready |
 | FT11 | A read the drafter does not draft is reported with its reason, and the report counts the properties left out by name (decision 0302, points 2 and 3): a drafting rule can say why it drafted nothing | `a2m-files`, `a2m-actions`, `a2m-pack-http` | FT8 | The read of the test application that needs a parameter named as a secret is in the report with that reason | ready |
-| GD1 | Guard's five checks, each held by a test, in the order of [decision 0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md); where the engine does not ask the session keeper at guard, it is made to | `a2m-engine` | None | Five tests, each failing when its check is removed; the first failing check names the stop | ready |
+| GD1 | Guard's five checks, each held by a test, in the order of [decision 0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md); where the engine does not ask the session keeper at guard, it is made to | `a2m-engine` | None | Five tests, each failing when its check is removed; the first failing check names the stop | done |
 
 ### Programs that run what their arguments name (decision 0299)
 
@@ -346,7 +346,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are 1.3, 1.4, 2.1, 3.3, 3.10, 4.5, 6.3, 9.1, F3, K4, N2b, W2d, X1, X5, X7, P2, P3b, FT4, FT7, FT10, FT11, GD1, S2, and V2 to V5: twenty-seven. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5; it is still held by package 1.4.
+Right now, the packages marked `ready` are 1.3, 1.4, 2.1, 3.3, 3.10, 4.5, 6.3, 9.1, F3, K4, N2b, W2d, X1, X5, X7, P2, P3b, FT4, FT7, FT10, FT11, S2, and V2 to V5: twenty-six. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5; it is still held by package 1.4.
 
 ## Rules for changing this document
 
