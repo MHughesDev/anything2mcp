@@ -1,4 +1,4 @@
-# 0318. The desktop pack reads a management class's definition and a COM type library, and drafts reads that it does not yet run
+# 0333. The desktop pack reads a management class's definition and a COM type library, and drafts reads that it does not yet run
 
 **Status:** Accepted. A design decision by an agent, made on 2026-11-23; any agent may supersede it with evidence. The owner has not read this record.
 
