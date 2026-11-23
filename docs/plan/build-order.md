@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 72 of 149 packages done, 48% (`python3 tools/progress.py`). **Done last:** X3 (decision 0333), X2 (decision 0332), X1 (decision 0331), FT7b (decision 0315), V2 (decision 0311), V4 (decision 0307), 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 73 of 149 packages done, 48% (`python3 tools/progress.py`). **Done last:** 1.5 (an MCP client reads what a command reads), X3 (decision 0333), X2 (decision 0332), X1 (decision 0331), FT7b (decision 0315), V2 (decision 0311), V4 (decision 0307), 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -111,7 +111,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 
 2.2: 1. One system at a time: Linux secret service, macOS keychain, Windows credential store. 2. A CI test where the runner offers the store; a named stop where it does not.
 
-5.2, 5.3, 1.4, 1.5: take the "not shown" items from each roadmap row, one test each.
+5.2, 5.3, 1.4: take the "not shown" items from each roadmap row, one test each. Package 1.5 is done; of 1.4 what is left is the shared browser, which waits for a launch count in the browser pack, and the first run on Windows and macOS.
 
 ## Stage 3: the web path
 
