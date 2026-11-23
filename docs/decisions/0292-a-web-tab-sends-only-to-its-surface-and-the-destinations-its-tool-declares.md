@@ -52,3 +52,7 @@ Added 2026-11-18, from the validation of the tree this record's work is in.
 - **The sign-in tab changed too, and point by point this record did not say so.** A frame's document inside a sign-in tab is now judged like any request, and one outside the application and the sign-in providers is refused. The person at the window is shown no named stop for it. Showing the refusal in the window is owed with the rest of the sign-in tab's work.
 - **Covered by reasoning and not by a test:** a subresource redirected to another origin, a beacon to another origin, a form posted into a frame, dedicated workers, WebTransport, an event source, a prefetch link, and the page's icon. **Not covered:** speculation rules, and a service worker woken with no tab attached.
 - **A paused request has no bound of its own.** Each is continued or failed by a call with a deadline; if that call is lost the request stays paused until its tab closes, which for a refused request means it is never sent.
+
+## Carried on
+
+The four items under "Not done (package P3b)" are taken up in [decision 0313](0313-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md): the first three are built, in part for the third; the fourth was measured and is still not held.

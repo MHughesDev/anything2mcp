@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Progress:** 60 of 147 packages done, 40% (`python3 tools/progress.py`). **Done last:** 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
+**Progress:** 61 of 147 packages done, 41% (`python3 tools/progress.py`). **Done last:** P3b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -128,7 +128,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 | E3 | Described against observed | The comparison, and the unknowns it raises | An endpoint described and never seen is reported as `inferred` |
 | E5 | The scout, the rest | Capture's findings flow into the scout's report | Scouting twice gives the same report, by hash |
 | 4.2 | Requests from inside the page | The `page_http` driver, with the page's own tokens | The anti-forgery case passes |
-| P3b | Destinations | Refused origins carried in findings and proposed as destinations | The roadmap's proof |
+| ~~P3b~~ | ~~Destinations~~ (done, [decision 0313](../decisions/0313-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md)) | Refused origins carried in findings and proposed as destinations | The roadmap's proof |
 | FT6 (new) | The web field test | A recipe for a web application with a sign-in | Reads drafted from a capture run and match the database |
 | 2.7 | A design review round | One lens over the web path | Findings fixed or recorded |
 
@@ -140,7 +140,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 4. E3 and E5: the comparison in `a2m-provider`, then the scout's stage for it.
 5. 2.4 to 2.6: one sign-in variant of the test application per pull request.
 6. 4.2: measure first. The first measurement did not show it faster than a screen read; keep it only if it is, or if a case needs it.
-7. P3b: the first slice named in the journal of 2026-11-18.
+7. ~~P3b~~, done: the first slice named in the journal of 2026-11-18.
 8. FT6: the recipe signs in through the sign-in window driven by the recipe as a person would be, captures three screens, and checks the drafted reads against the database.
 9. The answer lost on macOS without TLS, noted on 2026-11-18, is investigated here, because the web path meets it first.
 

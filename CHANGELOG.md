@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- A scout of a web page that loads from other origins names them in its `screen` finding (`refused_origins`), and the reads drafted from it declare them in `permissions.destinations` for a person to review. A web surface may list `refuse_quietly` origins: its tools' pages are refused them in the browser and the run goes on. The tab a person signs in in refuses what its page loads (a style, an image, a font, a script) from an origin that is neither the application's nor a declared identity provider's, and the sign-in stops with `origin_not_declared` ([decision 0313](docs/decisions/0313-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md)).
 - A tool in an MCP tool list names its target and version in its `_meta`, under `anything2mcp/target` and `anything2mcp/version`.
 - The benchmark suite measures a read that gains a request binding through shadow: it runs about 12 times faster than through its interface binding, with identical results (`promotion_speedup`).
 
