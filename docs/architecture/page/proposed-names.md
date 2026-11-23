@@ -407,7 +407,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Process Group | group | command-line | coined | The group in the Command Line view that holds Process Commands. |
 | Program Check | part | pack-command | coined | The check of the program's path, ownership, digest, and version before it is started. |
 | Progress and Long Runs | part | mcp-face | coined | The handling of a long action, which returns a run id and reports progress. |
-| Project Level | group | project | coined | The group in the Project view that holds Project Settings, Guidance File, Working Output, Sources Folder. |
+| Project Level | group | project | coined | The group in the Project view that holds Project Settings, Guidance File, Working Output, Handed Files. |
 | Project Settings | part | project | coined | The anything2mcp.toml file saying which targets and environments the project holds. |
 | Proof Before Verification | part | ledger-rules | coined | The ledger rule that a record reaches verified only with a value read from the system that equals the intended value after normalization. |
 | Proof Phase | group | http-driver | coined | The group in the HTTP Driver view that holds HTTP Read-Back. |
@@ -519,11 +519,12 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Site-Declared Tools | part | web-probe | coined | The tools a page registers for agents, read as untrusted findings. |
 | site_tools | part | web-ui | code: a2m-pack-web-ui: src/driver.rs | The web mode that calls tools a site registers in the browser, after checking the tool and its schema digest. |
 | Snapshot Findings | part | web-probe | coined | The probe step that turns a snapshot into findings of screens, fields, and actions. |
-| Source Mapping | part | sources | coined | The location of data in an input, filtering of rows, and turning them into fields as the source definition says. |
+| Source Mapping | part | sources | coined | The location of data in an input, filtering of rows, and turning them into fields as the Source Definitions say. |
 | Source Output | group | sources | coined | The group in the Sources view that holds Validated Records, Positioned Parse. |
 | Source Reading | group | sources | coined | The group in the Sources view that holds Content Check, Format Readers. |
 | Source Understanding | group | sources | coined | The group in the Sources view that holds Template Fingerprints, Source Mapping, Cell Typing. |
-| Sources Folder | part | project | coined | The folder of files a person hands in, such as a spreadsheet for a pipeline or a description for the scout. |
+| Source Files | group | project | coined | The group in the Project view that holds Source Definitions. |
+| Source Definitions | part | project | glossary | The files under a target's `sources/` folder: how a kind of handed file is read and mapped, compiled with the target (decision 0309). |
 | Span Patching | part | pack-file | coined | The building of new bytes by replacing only the spans of the named places. |
 | Spans and Metrics | part | telemetry | coined | The spans and counters with a closed set of attributes that cannot carry a value or a secret. |
 | Spreadsheet Import | group | sources | coined | The title of the numbered walk through the Sources view, told in 6 steps. |
@@ -616,3 +617,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Write Gate | group | ledger | coined | The group in the Ledger view that holds Intent Token, Ledger Rules. |
 | Write Path | part | engine-write, engine-loop | coined | The stage of a write that takes each record from lock to verified: lock, freshness check, intent, act, read back, compare. |
 | Write Sequence | group | engine-loop | coined | The group in the Engine Loop view that holds Preview, Approval Check, Write Path, Reconciliation. |
+| Field Build | part | pages | glossary | The second program, built from the product crate, that stands in for the person in a field test (decision 0304). |
+| Field Prompt | part | pages | glossary | The presence prompt of the Field Build; it passes only the approval whose hash the runner named (decision 0304). |
+| Handed Files | part | project | glossary | The files in the project's `sources` folder that a person gives a scout or a pipeline; never compiled (decision 0309). |
+| Waiting Reads | part | scout | glossary | The part of the scout's report that lists each read not sent because no one has signed in (decision 0303). |

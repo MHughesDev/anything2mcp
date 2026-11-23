@@ -452,7 +452,9 @@
       {
        "ids": [
         "pages-presence",
-        "pages-desk"
+        "pages-desk",
+        "pages-field-build",
+        "pages-field-prompt"
        ]
       }
      ]
@@ -504,6 +506,18 @@
      "pages-signin",
      "a request for a sign-in",
      "use"
+    ],
+    [
+     "pages-field-build",
+     "pages-field-prompt",
+     "the field build's own prompt",
+     "use"
+    ],
+    [
+     "pages-field-prompt",
+     "pages-desk",
+     "the prompt's result, for the one approval named",
+     "use"
     ]
    ],
    "steps": [
@@ -552,7 +566,9 @@
    ],
    "stepsTitle": "Approval Sequence",
    "decided": [
-    "Publishing keeps the presence prompt for every version, reads included. A proposal to drop it for read-only versions was reviewed and rejected: a trial runs in a sandbox with every guard against writing on, and a published read runs live with them off."
+    "Publishing keeps the presence prompt for every version, reads included. A proposal to drop it for read-only versions was reviewed and rejected: a trial runs in a sandbox with every guard against writing on, and a published read runs live with them off.",
+    "A field test signs in and approves through a field build, a second program that is never packaged, with its own field prompt. Not: a setting of the product that turns the presence prompt off (0304).",
+    "The publish page shows each gate as passed, failed or not built, and each tool's level, lowest first. Not: a page that lists only the gates that passed (0307)."
    ]
   },
   "registry": {
@@ -560,9 +576,10 @@
    "group": "Kernel",
    "where": "a2m-actions",
    "state": "p",
-   "text": "Every authoring and administration action is defined here once: its name, inputs, effect, and who may run it. Its command, MCP tool, REST route, and client method are generated, never written by hand. It asks the policy engine before anything happens, and it answers the engine loop's requests for plans, sessions, and the ledger. The actions for capture and for trying a write are not built.",
+   "text": "Every authoring and administration action is defined here once: its name, inputs, effect, and who may run it. Its command, MCP tool, REST route, and client method are generated, never written by hand. It asks the policy engine before anything happens, and it answers the engine loop's requests for plans, sessions, and the ledger. The actions for capture and for trying a write are not built. The toolset listing takes only built actions, in catalog order, to the cap.",
    "decided": [
-    "Lint now fails when it lists an error, as trying a tool already did."
+    "Lint now fails when it lists an error, as trying a tool already did.",
+    "An action with no handler is never listed up front in a toolset; it stays in the catalog and answers that it is not built. Not: raise the toolset's cap (0306)."
    ],
    "rows": [
     {
@@ -1348,7 +1365,7 @@
    ],
    "steps": [
     {
-     "text": "Guard: the plan hash is checked, the kernel must be healthy, policy must allow the call, and the surface must not be blocked.",
+     "text": "Guard: five checks in order. The plan hash is checked, the kernel must be healthy, the session must be in a state that allows the call, policy must allow the call, and the surface must not be blocked at its edge.",
      "at": [
       "engine-guard"
      ]
@@ -1720,7 +1737,8 @@
       {
        "title": "Reporting Stage",
        "ids": [
-        "scout-report"
+        "scout-report",
+        "scout-waiting"
        ]
       }
      ]
@@ -1812,6 +1830,12 @@
      "scout-ladder",
      "a read that earns executed",
      "use"
+    ],
+    [
+     "scout-report",
+     "scout-waiting",
+     "a read that waits for a sign-in",
+     "store"
     ]
    ],
    "steps": [
@@ -3606,6 +3630,12 @@
        ]
       },
       {
+       "title": "Source Files",
+       "ids": [
+        "proj-source-defs"
+       ]
+      },
+      {
        "title": "Held Drafts",
        "ids": [
         "proj-held"
@@ -3665,6 +3695,12 @@
      "proj-operations",
      "a finished draft, moved back",
      "use"
+    ],
+    [
+     "proj-source-defs",
+     "proj-pipelines",
+     "how a handed file is read and mapped",
+     "use"
     ]
    ],
    "steps": [
@@ -3704,7 +3740,7 @@
      ]
     },
     {
-     "text": "Files for a pipeline to read, and descriptions handed to the scout, go in sources/. Live sessions and the store are not in the project at all.",
+     "text": "Files for a pipeline to read, and descriptions handed to the scout, are the Handed Files, in the project's sources/ folder. A target's own sources/ folder holds the Source Definitions. Live sessions and the store are not in the project at all.",
      "at": [
       "proj-sources"
      ]
@@ -5706,11 +5742,14 @@
    "name": "Guard",
    "group": "Kernel",
    "state": "b",
-   "text": "Checks the plan against its hash, that the kernel is healthy (a write needs full health), that policy allowed this call, and that the surface has no block at its edge. It asks for the policy decision through Control and does not decide itself.",
+   "text": "Five checks, in this order, and the first to fail names the stop. The plan's hash against the published version; the engine checks it. The kernel's health, where a write needs full health; the engine checks it. The session's state for the call; the session keeper answers and the engine asks. The decision for this caller and this call; the policy engine decides and records it, and Guard asks through Control and does not decide. That the surface has no block at its edge, from what drivers reported; the engine checks it. A driver's own stop for a missing session stays as a second line. Package GD1 holds the code to this order.",
    "where": "a2m-engine: src/tool.rs, loaded.rs",
    "never": [
     "Run a plan whose hash does not match.",
     "Decide whether a call is allowed."
+   ],
+   "decided": [
+    "Guard checks five things, in this order, each with one owner: the plan's hash, the kernel's health, the session's state, the policy decision, and the edge block. Not: either document's old list of four (0309)."
    ]
   },
   "engine-choose": {
@@ -7053,7 +7092,10 @@
    "group": "Action Group",
    "state": "p",
    "text": "Add and probe a target, detect the sign-in, take a snapshot, read and write and lint and try drafts, run the tests, record a fixture, compare versions, request publication. Capture and endpoint inference are planned.",
-   "where": "a2m-actions"
+   "where": "a2m-actions",
+   "decided": [
+    "The add shortcut takes the description a person has, with a file option that puts it in the Handed Files, and ends at the report; each proven read in the report carries the call that reads it. Not: a new action that lists what can be tried (0306)."
+   ]
   },
   "reg-providers": {
    "name": "Provider Actions",
@@ -7067,7 +7109,10 @@
    "group": "Action Group",
    "state": "p",
    "text": "Publish a reviewed version, promote a binding on the evidence of its tests, activate, roll back, bundle and import. Publishing is a person's act, never an agent's.",
-   "where": "a2m-actions"
+   "where": "a2m-actions",
+   "decided": [
+    "A publish review shows which gates ran from the one table the gate runner holds; no document lists the gates a second time. Not: a second list in the documents (0307)."
+   ]
   },
   "reg-admin": {
    "name": "Admin Actions",
@@ -7127,13 +7172,17 @@
    "where": "a2m-actions: src/paths.rs"
   },
   "proj-sources": {
-   "name": "Sources Folder",
+   "name": "Handed Files",
    "group": "Project File",
    "state": "b",
-   "text": "Files handed in by a person: a spreadsheet for a pipeline to read, or a description the system publishes about itself for the scout. A path outside it, a hidden file or a link is refused.",
+   "text": "The files in the project's sources folder: what a person gives a scout or a pipeline, such as a spreadsheet for a pipeline to read or a description the system publishes about itself. Named from the project folder and never compiled. A path outside it, a hidden file or a link is refused. Not the Source Definitions, which are a target's own files.",
    "where": "a2m-files: src/source.rs",
    "never": [
     "Read a file outside the folder."
+   ],
+   "decided": [
+    "Handing the add shortcut a description puts the file here and gives it to the scout under the name description. Not: a separate way of giving a file to the scout (0306).",
+    "The project's sources folder is named Handed Files: what a person gives a scout or a pipeline, never compiled. The files under a target's sources folder are the Source Definitions. Neither folder is renamed on disk. Not: rename the project's folder (0309)."
    ]
   },
   "proj-target": {
@@ -7185,8 +7234,11 @@
    "name": "Tests and Fixtures",
    "group": "Project File",
    "state": "b",
-   "text": "Expected results per operation and recorded pages or responses for offline tests. Fixtures are synthetic or scrubbed.",
-   "where": "a2m-files: src/schema.rs"
+   "text": "Expected results per operation and recorded pages or responses for offline tests. Fixtures are synthetic or scrubbed. A fixture records whether it was written or recorded from a trial.",
+   "where": "a2m-files: src/schema.rs",
+   "decided": [
+    "A fixture says where it came from: trial, when the engine recorded it from a trial and signed it, and written otherwise; a builder's file cannot say trial. Not: trust the file's own claim (0307)."
+   ]
   },
   "proj-held": {
    "name": "Holding Folder",
@@ -7196,6 +7248,9 @@
    "where": "a2m-files: src/draft.rs",
    "never": [
     "Be read by the compiler."
+   ],
+   "decided": [
+    "Every draft from a capture waits here until a person answers its question. Not: write the drafts in place (0308)."
    ]
   },
   "plan-parse": {
@@ -7237,22 +7292,32 @@
    "name": "Plan Analysis",
    "group": "Compiler",
    "state": "b",
-   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails.",
-   "where": "a2m-files: src/compile.rs"
+   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails. A plan whose effect is a read and which holds a step that can change the system is refused.",
+   "where": "a2m-files: src/compile.rs",
+   "decided": [
+    "The kernel refuses a read plan that holds a step which can change the system, whichever pack lowered it; a pack says so where it registers a step kind. Not: leave the check to each pack (0307)."
+   ]
   },
   "plan-lint": {
    "name": "Linting",
    "group": "Compiler",
    "state": "b",
    "text": "Applies the kernel's lint rules and those packs register. Fixed sleeps, a suspected credential and others are errors.",
-   "where": "a2m-files: src/review.rs"
+   "where": "a2m-files: src/review.rs",
+   "decided": [
+    "The refusal of a secret in a file does not change; the HTTP drafter now asks the same function, so it never writes a file the compiler would refuse. Not: loosen the check for a path into an answer (0302)."
+   ]
   },
   "plan-describe": {
    "name": "Plan Description",
    "group": "Compiler",
    "state": "b",
    "text": "Generates each tool's name, description, input and output schemas and annotations. Two indistinguishable tools fail.",
-   "where": "a2m-files: src/compile.rs"
+   "where": "a2m-files: src/compile.rs",
+   "decided": [
+    "The output schema lists every output as required; the type of an output that may be absent also admits null. Not: no required list at all (0305). Not built yet.",
+    "A tool's description is plain text of at most 1,024 characters with no control characters, and the engine adds nothing to it. Not: unbounded text (0307)."
+   ]
   },
   "plan-emit": {
    "name": "Emission",
@@ -7265,8 +7330,11 @@
    "name": "Plan Contents",
    "group": "Plan",
    "state": "b",
-   "text": "A header, the target and its surfaces and environments, sign-in settings (never a credential), field types, one opaque section per pack file kind, operations with their steps in binding order, pipelines, parsed expressions, tool descriptions, permission manifests and tests.",
-   "where": "a2m-core: src/plan.rs"
+   "text": "A header, the target and its surfaces and environments, sign-in settings (never a credential), field types, one opaque section per pack file kind, operations with their steps in binding order, pipelines, parsed expressions, tool descriptions, permission manifests and tests. Each output also says whether it may be absent.",
+   "where": "a2m-core: src/plan.rs",
+   "decided": [
+    "Each output of an operation says whether it may be absent, set by the pack's lowering and not worked out by the kernel; an absent output is returned as null under its own name. Not: leave the key out of the result (0305). Not built yet; roadmap package FT7."
+   ]
   },
   "plan-hash": {
    "name": "Plan Hash",
@@ -7292,8 +7360,11 @@
    "name": "Drafts and Versions",
    "group": "Plan",
    "state": "b",
-   "text": "A draft compiles in memory and test rules are warnings. A published version compiles once in a clean mode, stores the plan, the source files and the gate evidence together and immutably, and gets a review summary ordered by risk. Nobody but a person publishes.",
-   "where": "a2m-files: src/compile.rs"
+   "text": "A draft compiles in memory and test rules are warnings. A published version compiles once in a clean mode, stores the plan, the source files and the gate evidence together and immutably, and gets a review summary ordered by risk. Nobody but a person publishes. The review also shows each tool's evidence and which gates ran.",
+   "where": "a2m-files: src/compile.rs",
+   "decided": [
+    "The review of a version shows each tool's evidence level, names every tool below executed first, and shows each gate as passed, failed or not built. Publishing a tool below executed stays the person's choice. Not: refuse to publish it (0307)."
+   ]
   },
   "scout-identify": {
    "name": "Identification",
@@ -7306,7 +7377,7 @@
    "name": "Discovery",
    "group": "Scout",
    "state": "p",
-   "text": "Runs the enabled discoverers for each surface as one discovery job inside the engine's sandbox. A discoverer can only read. A person may hand it files from the sources folder, which are checked when asked and again before use.",
+   "text": "Runs the enabled discoverers for each surface as one discovery job inside the engine's sandbox. A discoverer can only read. A person may hand it files from the Handed Files, which are checked when asked and again before use.",
    "where": "a2m-actions: src/handlers/scout.rs",
    "never": [
     "Write to the system."
@@ -7340,18 +7411,27 @@
    "name": "Trial",
    "group": "Scout",
    "state": "p",
-   "text": "Runs each read the scout may try, five times in the sandbox, and compares. A read is tried only if the engine enforces that it is safe (a read-only transaction, a file opened for reading) or the system's own contract says so. For a program it runs only the help and version forms the target declares.",
+   "text": "Runs each read the scout may try, five times in the sandbox, and compares. A read is tried only if the engine enforces that it is safe (a read-only transaction, a file opened for reading) or the system's own contract says so. For a program it runs only the help and version forms the target declares. A read that needs a sign-in nobody has made is not sent; it is reported as waiting, not as failed.",
    "where": "a2m-actions: src/handlers/drafts.rs",
    "never": [
     "Try a write, under any setting."
+   ],
+   "decided": [
+    "A read that waits for a sign-in is reported as waiting, and the trial's answer names the one action that signs in. Not: count it as failed (0303).",
+    "A trial's answer states that it ran in the sandbox and that nothing is published, and says that a published tool is called with tool.call. Not: leave the answer to read as a live result (0306)."
    ]
   },
   "scout-report": {
    "name": "Scout Report",
    "group": "Scout",
    "state": "p",
-   "text": "One report: found, drafted, proven, held, open, and what to look at first. Its hash leaves out run identifiers, and the system's own words are kept apart. The answer carries counts and the first 20 of each list; scout.report reads the rest in pages, because a real system's report was too large for one answer.",
-   "where": "a2m-actions: src/handlers/scout_report.rs"
+   "text": "One report: found, drafted, proven, held, open, and what to look at first. Its hash leaves out run identifiers, and the system's own words are kept apart. The answer carries counts and the first 20 of each list; scout.report reads the rest in pages, because a real system's report was too large for one answer. Reads that wait for a sign-in are listed apart, as Waiting Reads.",
+   "where": "a2m-actions: src/handlers/scout_report.rs",
+   "decided": [
+    "The report counts the properties left out because their names are a secret's. Not built yet; roadmap packages FT10 and FT11. Not: leave them out unmentioned (0302).",
+    "The report lists reads that wait for a sign-in apart from proven and failed ones, and its counts add up: drafted is proven, waiting, failed and held. Not: a third value that sends a credential when there is one (0303).",
+    "Each proven read in the report carries the call that reads it, with the target, the tool and an accepted input, for an agent to copy. Not: a third list of what can be tried (0306)."
+   ]
   },
   "scout-findings": {
    "name": "Scout Findings",
@@ -7372,7 +7452,10 @@
    "group": "Scout",
    "state": "p",
    "text": "A draft with an open question waits in held/, so one doubtful draft does not stop every other tool being tried. Asking to try or publish a held tool is refused by name with its question. An open question outside held/ is still an error. Releasing a draft by action is not built yet.",
-   "where": "a2m-files: src/draft.rs"
+   "where": "a2m-files: src/draft.rs",
+   "decided": [
+    "Every draft from a capture goes to the holding folder with the question whether the read is one the software means to be called this way. Not: write the drafts in place (0308)."
+   ]
   },
   "scout-ladder": {
    "name": "Evidence Levels",
@@ -7485,6 +7568,9 @@
       "ladder-approved"
      ]
     }
+   ],
+   "decided": [
+    "The evidence level informs a person and decides nothing in a run; a finding may still not claim more than its source can give. Not: let a level gate a call (0307)."
    ]
   },
   "scout-bounds": {
@@ -7672,10 +7758,14 @@
    "name": "Tool List",
    "group": "Front Door",
    "state": "b",
-   "text": "The use toolset lists twelve control tools; the build toolset adds the authoring ones. A target's pipelines fill the rest of a short list (19 by default). Single operations are reached by a2m_tool_search and a2m_tool_call. Names and descriptions come from published files; text from a target never reaches a tool's name or description.",
+   "text": "The use toolset lists twelve control tools; the build toolset adds the authoring ones. A target's pipelines fill the rest of a short list (19 by default). Single operations are reached by a2m_tool_search and a2m_tool_call. Names and descriptions come from published files; text from a target never reaches a tool's name or description. An action with no handler is never listed up front, so the build toolset's list holds only actions that run. Each tool carries, in its _meta, the target's name, the version, and whether its description was drafted by rule or written by a builder.",
    "where": "a2m-mcp: src/tools.rs",
    "never": [
     "Let text from a target into a tool name."
+   ],
+   "decided": [
+    "Only a built action is listed up front in a toolset. Not: a higher cap on the list (0306).",
+    "With each tool the MCP door sends the target's name, the version, and whether the description was drafted by rule or written by a builder, in the tool's _meta. Not: a client told nothing of whose words they are (0307)."
    ]
   },
   "mcp-call": {
@@ -7803,6 +7893,9 @@
    "where": "a2m-local: src/presence.rs",
    "never": [
     "Accept a press from the page alone."
+   ],
+   "decided": [
+    "The product's presence prompt is the one door an approval rests on and has no setting that opens it; a field test uses the field prompt of the field build instead. Not: a setting that turns this prompt off (0304)."
    ]
   },
   "pages-desk": {
@@ -8219,6 +8312,9 @@
    "never": [
     "Press, type or submit.",
     "Enter a surface the target did not declare."
+   ],
+   "decided": [
+    "The capture package needs the sign-in window and not every sign-in provider. Writes from a capture wait for the first verified web write. Not: wait for every provider (0308)."
    ]
   },
   "probe-identify": {
@@ -8245,15 +8341,21 @@
    "name": "Traffic Capture",
    "group": "Web Pack",
    "state": "t",
-   "text": "Records the exchanges seen while a scenario runs or a person uses the system, as shapes, attributed to scenario steps. Started only by the person whose use it records. Not built.",
-   "where": "a2m-pack-web-probe: src/infer.rs"
+   "text": "Records the exchanges seen while a scenario runs or a person uses the system, as shapes, attributed to scenario steps. Started only by the person whose use it records. Not built. The first capture records reads only, in the engine's own browser, and sets no proxy between another program and the network.",
+   "where": "a2m-pack-web-probe: src/infer.rs",
+   "decided": [
+    "The first capture runs only in the engine's own observing tab, records a request's method, path template, parameter names and answer shape with values scrubbed, and a credential header as present only. Not: a proxy that records any program's traffic (0308)."
+   ]
   },
   "probe-infer": {
    "name": "Endpoint Inference",
    "group": "Web Pack",
    "state": "p",
-   "text": "Groups exchanges into endpoints, templates paths in two tiers, infers request and response shapes and the dependencies between requests, by comparing digests so no value is stored. Everything inferred stays at the inferred level. The scout drafts endpoints from them through the HTTP pack.",
-   "where": "a2m-pack-web-probe: src/infer.rs"
+   "text": "Groups exchanges into endpoints, templates paths in two tiers, infers request and response shapes and the dependencies between requests, by comparing digests so no value is stored. Everything inferred stays at the inferred level. The scout drafts endpoints from them through the HTTP pack. The first inference drafts reads only, each to the holding folder.",
+   "where": "a2m-pack-web-probe: src/infer.rs",
+   "decided": [
+    "The first inference drafts a read only for a GET answered with success and a structured body, seen at least twice with one shape; a placeholder in a path comes only from two requests that differ in that one part. Every draft goes to the holding folder at the inferred level. Not: draft writes from what a person did (0308)."
+   ]
   },
   "probe-site-tools": {
    "name": "Site-Declared Tools",
@@ -8446,7 +8548,10 @@
    "group": "Web Pack",
    "state": "b",
    "text": "One browser process per profile, shared by many tabs. A tab has a fixed environment and a posture: one that may act, or one that may only observe. Observing tabs fail every request that could write.",
-   "where": "a2m-pack-web-browser: src/tab.rs"
+   "where": "a2m-pack-web-browser: src/tab.rs",
+   "decided": [
+    "A capture is taken in an observing tab only, on a surface the target declares. Not: capture in a person's everyday browser (0308)."
+   ]
   },
   "wb-locate": {
    "name": "Web Locator",
@@ -8601,7 +8706,7 @@
    ],
    "steps": [
     {
-     "text": "The description arrives as a file the person put in the sources folder, or is fetched from the surface by a read-only request.",
+     "text": "The description arrives as a file the person put among the Handed Files, or is fetched from the surface by a read-only request.",
      "at": [
       "hd-source"
      ]
@@ -8636,7 +8741,7 @@
    "name": "Description Source",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Takes a description given as a file from the project's sources folder, or asks the surface for it with GET, HEAD or OPTIONS only. The discoverer is handed a read client that can build nothing else.",
+   "text": "Takes a description given as a file from the Handed Files, or asks the surface for it with GET, HEAD or OPTIONS only. The discoverer is handed a read client that can build nothing else.",
    "where": "a2m-pack-http: src/discover.rs",
    "never": [
     "Send anything that could write."
@@ -8761,9 +8866,13 @@
    "group": "HTTP Pack",
    "where": "a2m-pack-http: src/draft.rs",
    "state": "b",
-   "text": "Turns findings into endpoint entries and one read for each safe method, tied to a surface only when exactly one fits. A property the description does not require is drafted as possibly null. A draft with an open question goes to the holding folder.",
+   "text": "Turns findings into endpoint entries and one read for each safe method, tied to a surface only when exactly one fits. A property the description does not require is drafted as possibly null. A draft with an open question goes to the holding folder. A property or parameter named as a secret is left out of the draft, never drafted as an output or an input; a read whose required parameter is such a one is not drafted and is reported. The compiler's refusal stays as the guarantee. A sign-in the description declares is kept; a read is never sent without a credential to find out whether the system answers anyway.",
    "never": [
     "Draft a write."
+   ],
+   "decided": [
+    "A property whose name is a secret's is never drafted as an output or as an input, and the read says so in its description. Not: draft it and let the compiler refuse the whole target (0302).",
+    "An endpoint is drafted without a credential only where the description says the operation takes none; a person who knows better writes that line by hand. Not: try each read with no credential first (0303)."
    ]
   },
   "hdr-safe": {
@@ -8794,8 +8903,11 @@
    "name": "Nullable Rule",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Decision 0297: a property not under required is written nullable, at any depth. It applies to an answer's shape only, not to request bodies or parameters. The check does not change. A gap remains: the tool's output schema does not yet say beforehand that such an output may be absent.",
-   "where": "a2m-pack-http: src/openapi.rs"
+   "text": "Decision 0297: a property not under required is written nullable, at any depth. It applies to an answer's shape only, not to request bodies or parameters. The check does not change. The plan's output will say beforehand that such an output may be absent, and the output schema will admit null for it (decision 0305, roadmap package FT7); this is not built yet.",
+   "where": "a2m-pack-http: src/openapi.rs",
+   "decided": [
+    "In the HTTP pack an output may be absent exactly when its extract path is not certain in the answer's shape; a person may declare it by hand with may_be_absent. Not: mark every output as possibly absent (0305)."
+   ]
   },
   "hdr-names": {
    "name": "Unique Names",
@@ -9617,7 +9729,10 @@
    "group": "Kernel",
    "state": "b",
    "text": "The compiled plan and its steps as immutable data, their one encoding as canonical JSON, and the check of a plan's hash. The compiler that makes one is elsewhere.",
-   "where": "a2m-core: src/plan.rs"
+   "where": "a2m-core: src/plan.rs",
+   "decided": [
+    "The plan's output carries a may-be-absent flag, set by the pack's lowering. A null in an output that may not be absent stops the run. Not: mark every output as possibly absent (0305). Not built yet."
+   ]
   },
   "core-secret": {
    "name": "Secret",
@@ -9780,10 +9895,13 @@
    "name": "Source Mapping",
    "group": "Kernel",
    "state": "b",
-   "text": "Locates the data in the input, filters rows, and turns them into fields as the source definition says.",
+   "text": "Locates the data in the input, filters rows, and turns them into fields as the Source Definitions say.",
    "where": "a2m-sources: src/locate.rs",
    "never": [
     "Guess which column is which."
+   ],
+   "decided": [
+    "The mapping comes from the Source Definitions, a target's own files, and not from the Handed Files. Not: one name for both folders (0309)."
    ]
   },
   "src-typing": {
@@ -9853,6 +9971,61 @@
    "state": "b",
    "text": "The normalizer for each field-type base: decimals with their places and rounding, dates, text case and whitespace. The engine uses them on both sides before comparing.",
    "where": "a2m-expr: src/normalize.rs"
+  },
+  "scout-waiting": {
+   "name": "Waiting Reads",
+   "group": "Scout",
+   "where": "a2m-actions: src/handlers/scout_report.rs",
+   "state": "t",
+   "text": "The part of the report that lists each drafted read not sent because its endpoint takes a session's credential and no one has signed in. Each entry names the surface to sign in to and the one action that does it. A waiting read is not a failed read. Not built; roadmap package FT9.",
+   "never": [
+    "Send a read without the credential its description declares."
+   ],
+   "decided": [
+    "A read that waits for a sign-in is listed apart from proven and failed reads, with the one action that signs in. Not: count it as failed (0303)."
+   ]
+  },
+  "pages-field-build": {
+   "name": "Field Build",
+   "group": "Person Surface",
+   "where": "a new crate with publish = false, built from the product crate's library",
+   "state": "t",
+   "text": "A second program that is the product in every part but one: its presence prompt is the Field Prompt. It stands in for the person in a field test. It starts only with a home folder that holds the runner's marker file, and it serves only targets whose every address is on this machine. It is never packaged, and the packaging check fails when a wheel or an npm package holds a file named for it. Not built; roadmap packages FT4 and FT9.",
+   "never": [
+    "Start outside a field test.",
+    "Be packaged.",
+    "Serve a target with an address off this machine."
+   ],
+   "decided": [
+    "The runner signs in by posting an invented credential to the engine's own page, as a person's browser would; nothing new is added to the product for it. Not: an action that takes a credential (0304).",
+    "One field build runs every step of a recipe that runs the product, so a read and a write of one recipe are the same build. Not: the product for some steps and the field build for others (0304)."
+   ]
+  },
+  "pages-field-prompt": {
+   "name": "Field Prompt",
+   "group": "Person Surface",
+   "where": "the field build crate",
+   "state": "t",
+   "text": "The presence prompt of the Field Build. It passes only an approval whose own hash the runner wrote to a file in the field build's home folder, and removes the file. Anything else is refused, so a field test still approves one stated change, and a run with no such file rests as the product does. Not built; roadmap package FT4.",
+   "never": [
+    "Pass an approval the runner did not name."
+   ],
+   "decided": [
+    "The prompt passes only the one approval whose hash the runner named. Not: a prompt that passes any approval (0304)."
+   ]
+  },
+  "proj-source-defs": {
+   "name": "Source Definitions",
+   "group": "Project File",
+   "where": "a2m-files and a2m-sources",
+   "state": "p",
+   "text": "The files under a target's sources/ folder: how a kind of handed file is read and mapped, with readers, template fingerprints and mappings. They are compiled with the target. Not the Handed Files, which are in the project's own sources folder and are never compiled.",
+   "never": [
+    "Be mistaken for the Handed Files."
+   ],
+   "decided": [
+    "The two folders each have a proper name and neither is renamed on disk. Not: rename the project's folder (0309)."
+   ]
   }
  }
 }
