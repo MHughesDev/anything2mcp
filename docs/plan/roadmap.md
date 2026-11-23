@@ -225,7 +225,7 @@ Phase 9, the real systems, and version 1.0.
 | 9.2 | The audit chain, alerts, backup, and upgrades | `a2m-ledger`, `a2m-actions` | 6.1 | A broken chain is detected; a restored backup resumes a stopped run | held |
 | 9.3 | Every failure of spec section 224 as a fault test; the manipulation suite of spec section 502 | All kernel crates | 7.2 | Each named failure and each named attack has a test that fails when the defence is removed | held |
 | 9.4 | The cluster profile | `a2m-sched`, `a2m-api` | 7.2 | A control plane node is lost and no run is | held |
-| 9.5 | Real systems, with the owner: a read, then a write to a declared test record, on a few systems of different kinds | None in this repository | 9.3 | Five identical runs each; nothing about any system is committed here | owner |
+| 9.5 | Systems the project does not run, with the owner: a read, then a write to a declared test record, on a few systems of different kinds. Software the project runs itself is met earlier, by the field tests below ([decision 0293](../decisions/0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md)) | None in this repository | 9.3 | Five identical runs each; nothing about any system is committed here | owner |
 | 9.6 | An outside security review, and its findings closed | As found | 9.3 | The review's report, and a test for every finding | owner |
 | R2 | Release 1.0 | The release workflow | 9.5, 9.6 | Every milestone's exit test passes on the commit released | held |
 
@@ -290,6 +290,42 @@ Every crate declares each failure code once, with its meaning, its next step, an
 | --- | --- | --- | --- | --- | --- |
 | FC1 | The `failure_codes!` form in `a2m-core`, the code book, the generator's two new columns, and twenty crates in the form, `a2m-core` among them, as `MIGRATED` in `tools/failure_codes.py` lists them | `a2m-core`, `tools/`, and each crate moved | None | One code declared with two classes is refused (`a_book_refuses_one_code_with_two_classes` in `crates/a2m-core/src/code_book.rs`); a moved crate that declares a code anywhere else is a finding of the documentation audit, which runs the generator's check | done |
 | FC2 | The crates still outside the form, as `python3 tools/failure_codes.py --list` named them: `a2m-actions`, `a2m-local`, `a2m-pack-desktop`, `a2m-pack-web-browser`, `a2m-pack-web-ui`, then `a2m-pack-file`, which the list missed because its manifest gave every code a class; and the generator reading the one form alone, with no `MIGRATED` list. A failure is made from its code's row (`codes::row::NAME`, `CodeEntry::failure`) in every crate whose helpers took a class and a code apart, so a call site there cannot state a class ([decision 0289](../decisions/0289-a-failure-is-made-from-its-codes-row.md)) | Those crates, `a2m-core`, `tools/` | FC1 | The generator reads only `failure_codes!` tables and manifests, and a code declared anywhere else is a finding of the documentation audit (`test_a_code_declared_outside_a_table_is_a_fault` in `tools/test_docs_audit.py`); each crate whose helpers changed holds that every failure it makes takes its class from a table (`every_failure_takes_its_class_from_a_table`) | done |
+
+### Field tests (decisions 0293 and 0295)
+
+The product is run against existing software that the project runs itself, while it is built. The runner is `tools/field_test.py`; recipes are kept outside this repository; results are in [the field test results](../reviews/field-tests.md).
+
+| # | Package | Crates | Needs | Proof | State |
+| --- | --- | --- | --- | --- | --- |
+| FT1 | The runner, and the first field test: a request service with a published description, reads only | None; `tools/field_test.py` | None | The recipe runs three times with the same result, and the software's own database confirms the seeded data | done |
+| FT2 | Close findings 1, 2, 4, 5, and 6 of field test 1, each first as a case in the test application | `a2m-pack-http`, `a2m-actions`, `a2m-files` | FT1 | Each `gap` step of the recipe fails, and is changed to expect the right behaviour; the stand's new cases pass on three operating systems | ready |
+| FT3 | Decide and build what a read does when a described object is absent (finding 7) | `a2m-pack-http`; a decision record | FT1 | The two reads of field test 1 return the stored values, and a value of a kind the description does not allow still stops | ready |
+| FT4 | Faults on purpose: a proxy between the product and the software that drops, delays, or cuts a connection, and the first verified write of a field test through it | None; `tools/` | FT2, FT3 | A write whose answer is lost is reconciled, and the software's own database holds it once | held |
+| FT5 | A field test for each other kind of system: a page in a browser, an existing MCP server, a command-line program, a database, files, a desktop application, a broker, a device's protocol | None | FT4 | One recipe for each kind, and its findings written down | held |
+| FT7 | A tool's output schema says which outputs may be absent, from the uncertain paths the endpoint's shape already knows ([decision 0297](../decisions/0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md), point 5) | `a2m-core`, `a2m-files`, `a2m-pack-http` | FT3 | A drafted tool whose output reads through a property that may be null declares that output as optional, and a client that validates the result accepts an absent one | ready |
+| FT6 | The field test of a web application with a sign-in and no published description | None | E2, 2.3 | Reads drafted from a capture of a person's use run, and match the software's own database | held |
+
+### Programs that run what their arguments name (decision 0299)
+
+| # | Package | Crates | Needs | Proof | State |
+| --- | --- | --- | --- | --- | --- |
+| L1 | The commands of a launcher, a version manager, and a container runner that run no code but the program's own, by a closed list for each kind | `a2m-pack-command`, `a2m-provider` | D3 | A listed subcommand runs against the stand; one not listed is refused by name | held |
+| L2 | A launcher with the file it loads pinned by digest, as rows of the table of interpreter forms | `a2m-pack-command`, `a2m-provider` | L1 | A changed file is refused at start; each row has its test on three operating systems | held |
+| L3 | The MCP pack starts a local server through a launcher of the table with its entry file pinned; a package runner is refused with what to do instead; the publish review names the code nothing pins | `a2m-pack-mcp`, `a2m-actions` | L2 | The stand's server, started through a launcher, is wrapped and a write through it is verified; a server named by a package runner is refused | held |
+
+### The short path (decision 0296)
+
+A read-only tool is to take about three commands. The order of these and of every other package is in [the build plan](build-plan.md).
+
+| # | Package | Crates | Needs | Proof | State |
+| --- | --- | --- | --- | --- | --- |
+| S1 | Decided by [decision 0300](../decisions/0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md): every publish needs a person; no lighter publish is built | None | FT2, FT3 | The record | done |
+| S2 | `add` carries a system to drafted reads that passed their trial and reports them; an agent with the build toolset calls any of them through the trial action, in the sandbox posture | `a2m-actions`, `anything2mcp` | FT2 | From an empty folder, `init`, `add`, and `connect`, and an agent reads a value through a trial with no person and no publish; the time is measured | ready |
+| V1 | Something reads the evidence level to decide, or the documents stop saying it decides | `a2m-core`, `a2m-actions`, documents | None | A test that fails when a tool below the needed level is listed, or the corrected documents | ready |
+| V2 | The publish gates say which are built; a gate a builder cannot satisfy alone is built | `a2m-actions` | S2 | A version whose only evidence is fixtures its builder wrote is told apart at review | held |
+| V3 | A web read binding that sets a field or invokes a control not lowered as a commit is refused by the compiler | `a2m-pack-web-ui`, `a2m-files` | None | Such a binding fails to compile, with a test | ready |
+| V4 | The help of `tool.call` and the code agree on which environment a call runs in when none is named | `a2m-actions` | None | One sentence, and a test of the default | ready |
+| V5 | What a published tool's description may hold, and that a client is told who wrote it | A decision record; `a2m-mcp` | None | The record, then its test | held |
 
 ## What can run at once
 

@@ -16570,6 +16570,35 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "limit": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+         },
+         "offset": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+         },
+         "part": {
+          "enum": [
+           "surfaces",
+           "found",
+           "compared.differs",
+           "compared.would_draft",
+           "compared.not_covered",
+           "drafted.written",
+           "drafted.held_back",
+           "drafted.conflicts",
+           "drafted.refused",
+           "checked.problems",
+           "checked.tools",
+           "tried.tools",
+           "tried.left_out",
+           "open",
+           "not_looked_at"
+          ]
+         },
          "target": {
           "type": "string"
          }
@@ -16739,7 +16768,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The last scout's report on a target: found, drafted, proven, open, and what to look at first.",
+    "summary": "The last scout's report on a target: found, drafted, proven, open, and what to look at first. Each list is counted and shows its first entries; `part` reads one whole, in pages.",
     "x-action": "scout.report"
    }
   },

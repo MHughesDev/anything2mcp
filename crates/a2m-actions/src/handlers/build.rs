@@ -471,11 +471,14 @@ handler!(
                 }))
                 .then(publish_next(kernel, &call, &target, ready).await)
             }
+            // The answer is the failure `draft.try` gives for the same
+            // drafts, `lint_failed`, and it still carries every problem.
             Err(problems) => Output::ok(json!({
                 "target": target.as_str(),
                 "ok": false,
                 "problems": problems_json(&problems),
             }))
+            .failed(Failure::from(problems))
             .then(Next::new(
                 "draft.lint",
                 json!({"target": target.as_str()}),

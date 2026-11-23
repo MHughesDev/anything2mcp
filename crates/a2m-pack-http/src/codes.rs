@@ -66,7 +66,7 @@ a2m_core::failure_codes! {
         next "Use a provider that places a header or a cookie, such as `api_key`, `bearer_static`, or `http_basic`.";
     DESCRIPTION_UNREADABLE = Input, "description_unreadable",
         meaning "A published description that cannot be read.",
-        next "Give an OpenAPI 3.0 or 3.1 document, as JSON or YAML, that holds its own schemas.";
+        next "Give an OpenAPI 3.0 or 3.1 document or a Swagger 2.0 document, as JSON or YAML, that holds its own schemas.";
     DESCRIPTION_TOO_LARGE = Input, "description_too_large",
         meaning "A published description that is larger, deeper, or wider once its references are followed than the import reads.",
         next "Give a description of the part of the service the tools need, with fewer or smaller schemas.";

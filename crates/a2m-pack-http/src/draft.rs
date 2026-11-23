@@ -17,29 +17,13 @@ use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::json::Json;
-use crate::openapi::{DescribedOperation, Parameter, snake};
+use crate::openapi::{DescribedOperation, Parameter, object_words, snake};
 
 /// Named values of a draft, in order.
 type Pairs = Vec<(String, DraftValue)>;
 
 /// The kernel's file kind for operations.
 const OPERATION: FileKindName = FileKindName::fixed("operation");
-
-/// The part of a tool's name made from the description's path: its last
-/// two plain words, lowercase. `None` when the path has no plain word.
-fn object_words(path: &str) -> Option<String> {
-    let words: Vec<String> = path
-        .split('/')
-        .filter(|part| !part.starts_with('{'))
-        .map(snake)
-        .filter(|word| word.starts_with(|c: char| c.is_ascii_lowercase()))
-        .collect();
-    match words.as_slice() {
-        [] => None,
-        [only] => Some(only.clone()),
-        [.., module, object] => Some(format!("{module}_{object}")),
-    }
-}
 
 /// The field type of a plain value of the answer, from the kind its shape
 /// states. Text the system gives is untrusted. `None` for a value that is
@@ -81,28 +65,42 @@ fn example_of(parameter: &Parameter) -> Option<DraftValue> {
     }
 }
 
+/// The plain properties of a record's shape: for each, the name it has as
+/// an output, the property as the description writes it, and its kind.
+/// A property whose name holds a dot or a star cannot be named in
+/// `extract`; one whose name gives no output name, or one already taken,
+/// or one that is not one plain value, is left out.
+fn plain_outputs(shape: &Json) -> Vec<(String, &str, &str)> {
+    let mut found: Vec<(String, &str, &str)> = Vec::new();
+    let Some(Json::Object(properties)) = shape.get("properties") else {
+        return found;
+    };
+    for (property, inner) in properties {
+        if property.contains(['.', '*']) {
+            continue;
+        }
+        let name = snake(property);
+        if !name.starts_with(|c: char| c.is_ascii_lowercase())
+            || found.iter().any(|(known, _, _)| *known == name)
+        {
+            continue;
+        }
+        let kind = inner.get("type").and_then(Json::as_text).unwrap_or("any");
+        if !matches!(kind, "string" | "integer" | "number" | "boolean" | "any") {
+            continue;
+        }
+        found.push((name, property.as_str(), kind));
+    }
+    found
+}
+
 /// The outputs of a read: each plain property of `shape`, named in the
 /// form target files use, with where it is in the answer when the name
 /// differs or the answer is a list.
 fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) {
     let mut outputs: Pairs = Vec::new();
     let mut extract = Vec::new();
-    let Some(Json::Object(properties)) = shape.get("properties") else {
-        return (outputs, extract);
-    };
-    for (property, inner) in properties {
-        // A property whose name holds a dot or a star cannot be named in
-        // `extract`; one whose name gives no output name is left out.
-        if property.contains(['.', '*']) {
-            continue;
-        }
-        let name = snake(property);
-        if !name.starts_with(|c: char| c.is_ascii_lowercase())
-            || outputs.iter().any(|(known, _)| *known == name)
-        {
-            continue;
-        }
-        let kind = inner.get("type").and_then(Json::as_text).unwrap_or("any");
+    for (name, property, kind) in plain_outputs(shape) {
         let Some(ty) = output_type(kind, &name, cx) else {
             continue;
         };
@@ -110,13 +108,70 @@ fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) 
         if listed {
             output.push(("list", DraftValue::Bool(true)));
             extract.push((name.clone(), DraftValue::text(&format!("*.{property}"))));
-        } else if name != *property {
+        } else if name != property {
             extract.push((name.clone(), DraftValue::text(property)));
         }
         outputs.push((name, DraftValue::map(output)));
     }
     (outputs, extract)
 }
+
+/// The placeholders of a read's path, in order, each with what the
+/// description says of it. `None` when one has no parameter stated, or the
+/// read needs a parameter outside the path (a query value, a header, a
+/// cookie, a body, or a form): the read is the developer's.
+fn placeholders_of(operation: &DescribedOperation) -> Option<Vec<(String, &Parameter)>> {
+    let mut placeholders = Vec::new();
+    for part in operation.path.split('/') {
+        let Some(name) = part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) else {
+            continue;
+        };
+        let parameter = operation
+            .parameters
+            .iter()
+            .find(|known| known.place == "path" && known.name == name)?;
+        placeholders.push((snake(name), parameter));
+    }
+    if operation
+        .parameters
+        .iter()
+        .any(|parameter| parameter.required && parameter.place != "path")
+    {
+        return None;
+    }
+    Some(placeholders)
+}
+
+/// The record of an answer, and whether the answer is a list of them.
+fn record_of(shape: &Json) -> Option<(&Json, bool)> {
+    if shape.get("type").and_then(Json::as_text) == Some("array") {
+        shape.get("items").map(|items| (items, true))
+    } else {
+        Some((shape, false))
+    }
+}
+
+/// Whether the rule drafts a read operation for this description's
+/// operation, whatever the target is named. The conditions are those
+/// `draft` goes by; the import asks it, so that a read the rule leaves to
+/// the developer does not make another read's name longer.
+pub(crate) fn would_draft(operation: &DescribedOperation) -> bool {
+    operation.safe
+        && operation.method == "GET"
+        && operation.template_path().is_some()
+        && object_words(&operation.path).is_some()
+        && placeholders_of(operation).is_some()
+        && operation
+            .response
+            .as_ref()
+            .and_then(record_of)
+            .is_some_and(|(record, _)| !plain_outputs(record).is_empty())
+}
+
+/// What a read that was given no name is asked.
+const NAME_SHARED: &str = "Two or more reads of the description would share one tool name, so none was given by rule. What is this read's tool name?";
+const NAME_ENDPOINT_SHARED: &str = "Two or more operations of the description would share one endpoint name, so none was given by rule. Which endpoint does this read bind?";
+const NAME_TOO_LONG: &str = "The tool name made from this read's path is longer than a tool name may be, so none was given by rule. What is this read's tool name?";
 
 fn unreadable() -> Failure {
     a2m_core::codes::row::FINDING_INVALID.failure(
@@ -145,59 +200,63 @@ impl DraftingRule for DescribedReadRule {
         let Some(target) = cx.target() else {
             return Ok(Vec::new());
         };
-        if !operation.safe || operation.method != "GET" {
+        if !would_draft(&operation) {
             return Ok(Vec::new());
         }
-        let (Some(path), Some(shape), Some(object)) = (
+        let (Some(path), Some(shape), Some(placeholders)) = (
             operation.template_path(),
             operation.response.as_ref(),
-            object_words(&operation.path),
+            placeholders_of(&operation),
         ) else {
             return Ok(Vec::new());
         };
-        // The placeholders, in the order of the path, each with what the
-        // description says of it. A required parameter outside the path is
-        // a value the rule has no place for: the read is the developer's.
-        let mut placeholders = Vec::new();
-        for part in operation.path.split('/') {
-            let Some(name) = part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) else {
-                continue;
-            };
-            let Some(parameter) = operation
-                .parameters
-                .iter()
-                .find(|known| known.place == "path" && known.name == name)
-            else {
-                return Ok(Vec::new());
-            };
-            placeholders.push((snake(name), parameter));
-        }
-        if operation
-            .parameters
-            .iter()
-            .any(|parameter| parameter.required && parameter.place != "path")
-        {
+        let Some((record, listed)) = record_of(shape) else {
             return Ok(Vec::new());
-        }
-        let listed = shape.get("type").and_then(Json::as_text) == Some("array");
-        let record = if listed {
-            match shape.get("items") {
-                Some(items) => items,
-                None => return Ok(Vec::new()),
-            }
-        } else {
-            shape
         };
         let (outputs, extract) = outputs(record, listed, cx);
-        if outputs.is_empty() {
+        if outputs.is_empty() || path.is_empty() {
             return Ok(Vec::new());
         }
         let verb = if listed { "list" } else { "get" };
+        // A read whose name is shared with another's, or is too long, is
+        // drafted with its name as an open question, in a file of its own.
+        let object = operation
+            .object
+            .clone()
+            .or_else(|| object_words(&operation.path))
+            .unwrap_or_default();
         let name = format!("{}_{object}_{verb}", target.as_str());
-        if OperationName::new(&name).is_err() || path.is_empty() {
-            return Ok(Vec::new());
-        }
-        let endpoint = operation.name();
+        let why = if operation.shared {
+            Some(NAME_SHARED)
+        } else if OperationName::new(&name).is_err() {
+            Some(NAME_TOO_LONG)
+        } else {
+            None
+        };
+        let (name_value, file) = match why {
+            Some(why) => (
+                cx.open_question(why),
+                format!(
+                    "operations/held_{}.yaml",
+                    operation
+                        .stem
+                        .clone()
+                        .unwrap_or_else(|| crate::openapi::path_stem(
+                            &operation.method,
+                            &operation.path
+                        ))
+                ),
+            ),
+            None => (
+                DraftValue::text(&name),
+                format!("operations/{object}_{verb}.yaml"),
+            ),
+        };
+        let endpoint = if operation.endpoint_shared {
+            "(a name not yet given)".to_owned()
+        } else {
+            operation.name()
+        };
         let inputs: Vec<(String, DraftValue)> = placeholders
             .iter()
             .map(|(name, parameter)| {
@@ -213,13 +272,20 @@ impl DraftingRule for DescribedReadRule {
                 "verb",
                 DraftValue::text(if listed { "list" } else { "read" }),
             ),
-            ("endpoint", DraftValue::text(&endpoint)),
+            (
+                "endpoint",
+                if operation.endpoint_shared {
+                    cx.open_question(NAME_ENDPOINT_SHARED)
+                } else {
+                    DraftValue::text(&endpoint)
+                },
+            ),
         ];
         if !extract.is_empty() {
             binding.push(("extract", DraftValue::Map(extract)));
         }
         let mut doc = vec![
-            ("operation", DraftValue::text(&name)),
+            ("operation", name_value),
             ("effect", DraftValue::text("read")),
         ];
         match placeholders.as_slice() {
@@ -259,7 +325,7 @@ impl DraftingRule for DescribedReadRule {
             doc.push(("examples", DraftValue::List(vec![DraftValue::Map(example)])));
         }
         Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("operations/{object}_{verb}.yaml"))?,
+            path: RelPath::new(&file)?,
             body: DraftValue::map(doc),
         }])
     }

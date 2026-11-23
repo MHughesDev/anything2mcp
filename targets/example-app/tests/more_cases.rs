@@ -397,6 +397,7 @@ async fn case_30_the_served_description_matches_the_routes() -> Outcome {
         "GET /api/orders/{order_id}",
         "GET /api/orders/{order_id}/delivery",
         "GET /api/orders/{order_id}/items/{item_code}",
+        "GET /api/orders/{order_id}/shipment",
         "GET /api/orders/{order_id}/totals",
         "GET /api/stock/{item_code}",
         "PUT /api/orders/{order_id}/delivery",

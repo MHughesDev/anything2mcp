@@ -7,8 +7,12 @@
 //! safe, and nothing is written into a draft that the description does not
 //! state: what it leaves out is an open question for the developer.
 //!
-//! Accepted: OpenAPI 3.0 and 3.1, as JSON or YAML, with references inside
-//! the document. A reference to another file is not followed.
+//! Accepted: OpenAPI 3.0 and 3.1, and Swagger 2.0, as JSON or YAML, with
+//! references inside the document. A reference to another file is not
+//! followed. A 2.0 document is read from its own places (`definitions`,
+//! a response's `schema`, a parameter's own `type`, a body parameter) into
+//! the same values; its `basePath`, like an OpenAPI 3 `servers` entry, is
+//! not added to a path: the surface's address carries the prefix, and the drafter ties an endpoint to a surface only when the two agree.
 //!
 //! A description is text the system supplies, so reading it is bounded:
 //! how deep a schema nests, how many steps the import takes, and how many
@@ -21,6 +25,7 @@ use a2m_core::{Failure, FileKindName, Finding, FindingKind, Redact};
 use a2m_files::{Doc, DraftContext, DraftDoc, DraftValue, DraftingRule, Located, RelPath};
 
 use crate::codes;
+use crate::draft::would_draft;
 use crate::endpoints::{ENDPOINT_KIND, HTTP_SURFACE};
 use crate::json::Json;
 use crate::template::parse_path;
@@ -56,7 +61,7 @@ fn unreadable(why: &str) -> Failure {
     codes::failure(
         &codes::row::DESCRIPTION_UNREADABLE,
         format!("The description cannot be read as OpenAPI: {why}."),
-        "Give an OpenAPI 3.0 or 3.1 document, as JSON or YAML, that holds its own schemas.",
+        "Give an OpenAPI 3.0 or 3.1 document or a Swagger 2.0 document, as JSON or YAML, that holds its own schemas.",
     )
 }
 
@@ -130,6 +135,13 @@ struct Walk<'a> {
     /// Where each reference seen so far leads, so that each is looked up
     /// once.
     seen: BTreeMap<&'a str, Option<&'a Json>>,
+    /// True while an answer's shape is drafted: a property the description
+    /// does not require is then written `nullable` (decision 0297). A
+    /// request's shape and a parameter's are drafted without it.
+    optional_may_be_null: bool,
+    /// True for a Swagger 2.0 document, which states a body, a parameter's
+    /// type, and a shared schema in places of its own.
+    swagger: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -140,6 +152,8 @@ impl<'a> Walk<'a> {
             bytes: MOST_SHAPE_BYTES,
             open: Vec::new(),
             seen: BTreeMap::new(),
+            optional_may_be_null: false,
+            swagger: false,
         }
     }
 
@@ -290,12 +304,27 @@ impl<'a> Walk<'a> {
                 if let Some(Json::Object(properties)) = schema.get("properties") {
                     let mut converted = Vec::new();
                     let mut names = BTreeSet::new();
+                    // A property the description does not list as required
+                    // may be answered as `null`, in an answer's shape.
+                    let listed: BTreeSet<&str> = match schema.get("required") {
+                        Some(Json::List(listed)) if self.optional_may_be_null => {
+                            listed.iter().filter_map(Json::as_text).collect()
+                        }
+                        _ => BTreeSet::new(),
+                    };
                     for (name, property) in properties {
                         self.step(1)?;
                         self.write(length(name))?;
-                        let Some(inner) = self.shape_of(property, depth + 1)? else {
+                        let Some(mut inner) = self.shape_of(property, depth + 1)? else {
                             return Ok(None);
                         };
+                        if self.optional_may_be_null
+                            && !listed.contains(name.as_str())
+                            && let Json::Object(parts) = &mut inner
+                            && !parts.iter().any(|(word, _)| word == "nullable")
+                        {
+                            parts.insert(1, ("nullable".to_owned(), Json::Bool(true)));
+                        }
                         names.insert(name.as_str());
                         converted.push((name.clone(), inner));
                     }
@@ -343,18 +372,76 @@ impl<'a> Walk<'a> {
         Ok(Some(Json::Object(shape)))
     }
 
-    /// The JSON schema of one body of the description, as a shape.
-    fn body_shape(&mut self, holder: &'a Json) -> Result<Option<Json>, Failure> {
+    /// The JSON schema of one body of the description, as a shape. In a
+    /// Swagger 2.0 document the schema is the response's own `schema`, and
+    /// is JSON only when `json` says the operation speaks it.
+    fn body_shape(&mut self, holder: &'a Json, json: bool) -> Result<Option<Json>, Failure> {
         let Some(holder) = self.resolve(holder)? else {
             return Ok(None);
         };
-        let schema = holder
-            .get("content")
-            .and_then(|content| content.get("application/json"))
-            .and_then(|json| json.get("schema"));
+        let schema = if self.swagger {
+            holder.get("schema").filter(|_| json)
+        } else {
+            holder
+                .get("content")
+                .and_then(|content| content.get("application/json"))
+                .and_then(|json| json.get("schema"))
+        };
         match schema {
             Some(schema) => self.shape_of(schema, 0),
             None => Ok(None),
+        }
+    }
+
+    /// Whether a Swagger 2.0 list of media types (`produces`, `consumes`)
+    /// lets an operation speak JSON. Only an absent word takes the default;
+    /// a word that is not a list of text, or a list that does not name
+    /// `application/json` (an empty one included), does not. Each entry
+    /// examined is a step.
+    fn speaks(&mut self, list: Option<&Json>) -> Result<bool, Failure> {
+        match list {
+            None => Ok(true),
+            Some(Json::List(types)) => {
+                self.step(u64::try_from(types.len()).unwrap_or(u64::MAX))?;
+                Ok(types.iter().all(|word| matches!(word, Json::Text(_)))
+                    && types
+                        .iter()
+                        .any(|word| word.as_text() == Some("application/json")))
+            }
+            Some(_) => Ok(false),
+        }
+    }
+
+    /// The request body of a Swagger 2.0 operation: the schema of its
+    /// `in: body` parameter, when the operation takes JSON. A form
+    /// (`in: formData`) is a body this pack cannot draft, as a 3.x body that
+    /// is not JSON is: it has no shape.
+    fn swagger_request(
+        &mut self,
+        of_path: Option<&'a Json>,
+        own: Option<&'a Json>,
+        json: bool,
+    ) -> Result<Option<Json>, Failure> {
+        let mut body = None;
+        for list in [of_path, own].into_iter().flatten() {
+            let Some(Json::List(items)) = self.resolve(list)? else {
+                continue;
+            };
+            for item in items {
+                self.step(1)?;
+                let Some(parameter) = self.resolve(item)? else {
+                    continue;
+                };
+                match parameter.get("in").and_then(Json::as_text) {
+                    Some("body") => body = Some(parameter),
+                    Some("formData") => return Ok(None),
+                    _ => {}
+                }
+            }
+        }
+        match body.and_then(|parameter| parameter.get("schema")) {
+            Some(schema) if json => self.shape_of(schema, 0),
+            _ => Ok(None),
         }
     }
 
@@ -382,12 +469,23 @@ impl<'a> Walk<'a> {
                 ) else {
                     continue;
                 };
-                if !["path", "query", "header", "cookie"].contains(&place) {
+                // A 2.0 body or form is a parameter too: a read that needs one
+                // is not one the rule drafts.
+                let body_like = self.swagger && ["body", "formData"].contains(&place);
+                if !body_like && !["path", "query", "header", "cookie"].contains(&place) {
                     continue;
                 }
-                let schema = match parameter.get("schema") {
-                    Some(schema) => self.shape_of(schema, 0)?,
-                    None => None,
+                // A 2.0 parameter states its type, format, enum and items in
+                // place, as a schema of its own.
+                let schema = if body_like {
+                    None
+                } else if self.swagger {
+                    self.shape_of(parameter, 0)?
+                } else {
+                    match parameter.get("schema") {
+                        Some(schema) => self.shape_of(schema, 0)?,
+                        None => None,
+                    }
                 };
                 let kind = schema
                     .as_ref()
@@ -517,6 +615,28 @@ pub(crate) struct DescribedOperation {
     /// an empty one, or one that allows no scheme. A finding of format 1
     /// does not say, and is read as needing one.
     pub open: bool,
+    /// The part of the tool's name made from the path, when the read is
+    /// one the drafter may draft: unique among the description's reads
+    /// ([`assign_objects`]). A finding that states none is named from its
+    /// path alone.
+    pub object: Option<String>,
+    /// True for a read the rule would draft whose name is still shared with
+    /// another read's once every name is made: it is given no name.
+    pub shared: bool,
+    /// A name for the file of a read the rule would draft, from its method
+    /// and path, the same in every run and the same for no other read: the
+    /// file it takes when it is given no tool name.
+    pub stem: Option<String>,
+    /// The name of the endpoint entry, when the import has made every
+    /// operation's name and this one's is its own alone ([`assign_endpoints`]).
+    /// A finding that states none is named by [`Self::base_name`].
+    pub endpoint: Option<String>,
+    /// True when every name the operation could take is another's: it takes
+    /// none, and its endpoint is drafted with its name as an open question.
+    pub endpoint_shared: bool,
+    /// The base path a 2.0 description states, when it states one that is
+    /// not the root: leading slash, no trailing one.
+    pub base_path: Option<String>,
 }
 
 impl DescribedOperation {
@@ -548,6 +668,27 @@ impl DescribedOperation {
                 Json::List(self.parameters.iter().map(Parameter::to_json).collect()),
             ),
             ("open".to_owned(), Json::Bool(self.open)),
+            (
+                "object".to_owned(),
+                self.object.as_deref().map_or(Json::Null, text),
+            ),
+            ("shared".to_owned(), Json::Bool(self.shared)),
+            (
+                "stem".to_owned(),
+                self.stem.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "endpoint".to_owned(),
+                self.endpoint.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "endpoint_shared".to_owned(),
+                Json::Bool(self.endpoint_shared),
+            ),
+            (
+                "base_path".to_owned(),
+                self.base_path.as_deref().map_or(Json::Null, text),
+            ),
         ])
         .to_text()
     }
@@ -590,18 +731,49 @@ impl DescribedOperation {
             response: optional("response_schema"),
             parameters,
             open: json.get("open") == Some(&Json::Bool(true)),
+            object: json
+                .get("object")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
+            shared: json.get("shared") == Some(&Json::Bool(true)),
+            stem: json.get("stem").and_then(Json::as_text).map(str::to_owned),
+            endpoint: json
+                .get("endpoint")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
+            endpoint_shared: json.get("endpoint_shared") == Some(&Json::Bool(true)),
+            base_path: json
+                .get("base_path")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
         })
     }
 
-    /// The name of the endpoint entry drafted for the operation.
+    /// The name of the endpoint entry drafted for the operation: the one
+    /// the import gave it, or, for a finding that states none, the name its
+    /// own words make.
     pub(crate) fn name(&self) -> String {
+        self.endpoint.clone().unwrap_or_else(|| self.base_name())
+    }
+
+    /// The name from the operation's `operationId`, when it makes one that
+    /// begins with a lowercase letter; else the one from its method and path.
+    pub(crate) fn base_name(&self) -> String {
+        self.id_name().unwrap_or_else(|| self.path_name())
+    }
+
+    fn id_name(&self) -> Option<String> {
         let from_id = self.operation_id.as_deref().map(snake).unwrap_or_default();
-        let name = if from_id.starts_with(|c: char| c.is_ascii_lowercase()) {
-            from_id
-        } else {
-            snake(&format!("{} {}", self.method, self.path))
-        };
-        name.chars().take(60).collect()
+        from_id
+            .starts_with(|c: char| c.is_ascii_lowercase())
+            .then(|| from_id.chars().take(60).collect())
+    }
+
+    fn path_name(&self) -> String {
+        snake(&format!("{} {}", self.method, self.path))
+            .chars()
+            .take(60)
+            .collect()
     }
 
     /// The path as a template of this pack: each placeholder a lowercase
@@ -632,13 +804,30 @@ impl DescribedOperation {
 pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failure> {
     let root = document(bytes)?;
     let version = root.get("openapi").and_then(Json::scalar_text);
-    if !version.is_some_and(|version| version.starts_with("3.0") || version.starts_with("3.1")) {
-        return Err(unreadable("it does not state `openapi: 3.0` or `3.1`"));
+    let three = version
+        .as_ref()
+        .is_some_and(|version| version.starts_with("3.0") || version.starts_with("3.1"));
+    let swagger =
+        !three && root.get("swagger").and_then(Json::scalar_text).as_deref() == Some("2.0");
+    if !three && !swagger {
+        return Err(unreadable(
+            "it states neither `openapi: 3.0` or `3.1` nor `swagger: 2.0`",
+        ));
     }
     let Some(Json::Object(paths)) = root.get("paths") else {
         return Err(unreadable("it has no `paths`"));
     };
     let mut walk = Walk::new(&root);
+    walk.swagger = swagger;
+    // The document's own lists, read once.
+    let document_produces = walk.speaks(root.get("produces"))?;
+    let document_consumes = walk.speaks(root.get("consumes"))?;
+    let base_path = root
+        .get("basePath")
+        .filter(|_| swagger)
+        .and_then(Json::as_text)
+        .map(|word| format!("/{}", word.trim_matches('/')))
+        .filter(|word| word != "/");
     let mut found = Vec::new();
     for (path, item) in paths {
         walk.step(1)?;
@@ -657,6 +846,22 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
             let mut ok = Vec::new();
             let mut absent = Vec::new();
             let mut response = None;
+            // A 2.0 operation answers, and takes, JSON when its own list of
+            // types, or else the document's, names it or names none.
+            let (answers_json, takes_json) = if swagger {
+                (
+                    match operation.get("produces") {
+                        Some(own) => walk.speaks(Some(own))?,
+                        None => document_produces,
+                    },
+                    match operation.get("consumes") {
+                        Some(own) => walk.speaks(Some(own))?,
+                        None => document_consumes,
+                    },
+                )
+            } else {
+                (true, true)
+            };
             if let Some(Json::Object(responses)) = operation.get("responses") {
                 for (status, body) in responses {
                     walk.step(1)?;
@@ -665,7 +870,10 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     };
                     if (200..300).contains(&status) {
                         if ok.is_empty() {
-                            response = walk.body_shape(body)?;
+                            walk.optional_may_be_null = true;
+                            let drafted = walk.body_shape(body, answers_json);
+                            walk.optional_may_be_null = false;
+                            response = drafted?;
                         }
                         ok.push(status);
                     } else if status == 404 {
@@ -673,12 +881,36 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     }
                 }
             }
-            let request = match operation.get("requestBody") {
-                Some(body) => walk.body_shape(body)?,
-                None => None,
+            let request = if swagger {
+                walk.swagger_request(
+                    item_parameters(resolved),
+                    operation.get("parameters"),
+                    takes_json,
+                )?
+            } else {
+                match operation.get("requestBody") {
+                    Some(body) => walk.body_shape(body, true)?,
+                    None => None,
+                }
             };
-            let parameters =
+            let mut parameters =
                 walk.parameters(item_parameters(resolved), operation.get("parameters"))?;
+            // A 3.x request body that is required is a parameter the read
+            // needs, as a 2.0 `in: body` one is: the same check refuses it.
+            if !swagger && let Some(body) = operation.get("requestBody") {
+                walk.step(1)?;
+                if walk.resolve(body)?.and_then(|body| body.get("required"))
+                    == Some(&Json::Bool(true))
+                {
+                    parameters.push(Parameter {
+                        name: "body".to_owned(),
+                        place: "body".to_owned(),
+                        required: true,
+                        kind: "any".to_owned(),
+                        example: None,
+                    });
+                }
+            }
             walk.write(length(path))?;
             found.push(DescribedOperation {
                 method: method.to_ascii_uppercase(),
@@ -697,10 +929,287 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 open: needs_no_credential(
                     operation.get("security").or_else(|| root.get("security")),
                 ),
+                object: None,
+                shared: false,
+                stem: None,
+                endpoint: None,
+                endpoint_shared: false,
+                base_path: base_path.clone(),
             });
         }
     }
+    assign_objects(&mut found, &mut walk)?;
+    assign_endpoints(&mut found, &mut walk)?;
     Ok(found)
+}
+
+/// The part of a tool's name made from the description's path: its last
+/// two plain words, lowercase. `None` when the path has no plain word.
+pub(crate) fn object_words(path: &str) -> Option<String> {
+    let words: Vec<String> = path
+        .split('/')
+        .filter(|part| !part.starts_with('{'))
+        .map(snake)
+        .filter(|word| word.starts_with(|c: char| c.is_ascii_lowercase()))
+        .collect();
+    match words.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        [.., module, object] => Some(format!("{module}_{object}")),
+    }
+}
+
+/// A word of a path for telling two paths apart: a plain word as
+/// [`object_words`] takes it, or a placeholder as `by_` and its name.
+fn path_tokens(path: &str) -> Vec<(String, bool)> {
+    path.split('/')
+        .filter_map(|part| {
+            if let Some(name) = part.strip_prefix('{') {
+                let name = snake(name.trim_end_matches('}'));
+                let word = if name.is_empty() {
+                    "by".to_owned()
+                } else {
+                    format!("by_{name}")
+                };
+                return Some((word, false));
+            }
+            let word = snake(part);
+            word.starts_with(|c: char| c.is_ascii_lowercase())
+                .then_some((word, true))
+        })
+        .collect()
+}
+
+/// A short name, the same in every run, made from a path alone.
+fn path_digest(path: &str) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in path.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{hash:08x}")
+}
+
+/// Whether a read of the description is one the drafter drafts an operation
+/// for, as far as its name is concerned, and the kind of verb it has.
+fn read_verb(operation: &DescribedOperation) -> Option<(String, bool)> {
+    if !operation.safe || operation.method != "GET" || operation.template_path().is_none() {
+        return None;
+    }
+    let shape = operation.response.as_ref()?;
+    let listed = shape.get("type").and_then(Json::as_text) == Some("array");
+    Some((object_words(&operation.path)?, listed))
+}
+
+/// A short name, the same in every run, made from a method and a path.
+pub(crate) fn path_stem(method: &str, path: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in method.bytes().chain(*b" ").chain(path.bytes()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Gives each read the rule would draft the part of its tool's name that
+/// its path makes, and gives no two the same; a read whose name would still
+/// be shared is given none.
+///
+/// A read is named from its path's last two plain words. Two reads that
+/// would get one name and one verb are told apart by the path's nearest
+/// words that differ: the name is made again from the shortest end of each
+/// path, placeholders included as `by_` and their name, that no other has
+/// the same, and one more word is added to each that still has. Only reads
+/// the rule would draft count, so one the developer must write does not
+/// make another's name longer. Nothing here depends on the order of the
+/// description: the names are a function of the set of paths. Paths that
+/// no word tells apart (`/Orders` and `/orders`) are told apart by a short
+/// digest of the path itself. When every name is made, each is checked
+/// against every other of its verb, across groups; a read whose name is
+/// still another's is marked `shared`, takes no name, and is drafted with
+/// its name as an open question, in a file named for its path. The work is
+/// counted as steps.
+///
+/// # Errors
+///
+/// `input`/`description_too_large` past the step bound.
+fn assign_objects(
+    operations: &mut [DescribedOperation],
+    walk: &mut Walk<'_>,
+) -> Result<(), Failure> {
+    let mut groups: BTreeMap<(String, bool), Vec<usize>> = BTreeMap::new();
+    let mut verbs: BTreeMap<usize, bool> = BTreeMap::new();
+    for (index, operation) in operations.iter().enumerate() {
+        let properties = operation
+            .response
+            .as_ref()
+            .and_then(|shape| shape.get("properties"))
+            .map_or(0, entries);
+        walk.step(
+            length(&operation.path)
+                .saturating_add(properties)
+                .saturating_add(u64::try_from(operation.parameters.len()).unwrap_or(u64::MAX)),
+        )?;
+        if !would_draft(operation) {
+            continue;
+        }
+        if let Some((object, listed)) = read_verb(operation) {
+            verbs.insert(index, listed);
+            groups.entry((object, listed)).or_default().push(index);
+        }
+    }
+    for ((object, _), members) in groups {
+        if let [only] = members.as_slice() {
+            operations[*only].object = Some(object);
+            continue;
+        }
+        let tokens: Vec<Vec<(String, bool)>> = members
+            .iter()
+            .map(|index| path_tokens(&operations[*index].path))
+            .collect();
+        // The shortest end of each path that holds two plain words, or all
+        // of it when it has fewer.
+        let mut take: Vec<usize> = tokens
+            .iter()
+            .map(|words| {
+                let (mut plain, mut length) = (0, 0);
+                for (_, is_plain) in words.iter().rev() {
+                    if plain == 2 {
+                        break;
+                    }
+                    length += 1;
+                    plain += usize::from(*is_plain);
+                }
+                length
+            })
+            .collect();
+        let mut names: Vec<String>;
+        loop {
+            names = tokens
+                .iter()
+                .zip(&take)
+                .map(|(words, length)| {
+                    words[words.len() - length..]
+                        .iter()
+                        .map(|(word, _)| word.as_str())
+                        .collect::<Vec<_>>()
+                        .join("_")
+                })
+                .collect();
+            walk.step(names.iter().map(|name| length(name)).sum::<u64>())?;
+            let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+            for name in &names {
+                *counts.entry(name.as_str()).or_default() += 1;
+            }
+            let colliding: Vec<usize> = (0..names.len())
+                .filter(|index| counts[names[*index].as_str()] > 1)
+                .collect();
+            if colliding.is_empty() {
+                break;
+            }
+            let mut grew = false;
+            for index in colliding.iter().copied() {
+                if take[index] < tokens[index].len() {
+                    take[index] += 1;
+                    grew = true;
+                }
+            }
+            if !grew {
+                for index in colliding {
+                    let digest = path_digest(&operations[members[index]].path);
+                    names[index] = format!("{}_{digest}", names[index]);
+                }
+                break;
+            }
+        }
+        for (index, name) in members.iter().zip(names) {
+            operations[*index].object = Some(name);
+        }
+    }
+    // Every name against every other of its verb, across the groups.
+    let mut named: BTreeMap<(String, bool), Vec<usize>> = BTreeMap::new();
+    for (index, listed) in &verbs {
+        walk.step(1)?;
+        if let Some(object) = operations[*index].object.clone() {
+            named.entry((object, *listed)).or_default().push(*index);
+        }
+    }
+    for indexes in named.values().filter(|indexes| indexes.len() > 1) {
+        for index in indexes {
+            operations[*index].object = None;
+            operations[*index].shared = true;
+        }
+    }
+    // The file of each read that may need one: no two the same.
+    let mut order: Vec<usize> = verbs.keys().copied().collect();
+    order.sort_by(|a, b| operations[*a].path.cmp(&operations[*b].path));
+    let mut taken: BTreeSet<String> = BTreeSet::new();
+    for index in order {
+        walk.step(1)?;
+        let base = path_stem(&operations[index].method, &operations[index].path);
+        let mut stem = base.clone();
+        let mut next = 2_u32;
+        while !taken.insert(stem.clone()) {
+            stem = format!("{base}_{next}");
+            next += 1;
+        }
+        operations[index].stem = Some(stem);
+    }
+    Ok(())
+}
+
+/// Gives each operation the name of its endpoint entry, and gives no two the
+/// same, so that no two files of `endpoints/` are one.
+///
+/// An operation is named from its `operationId`, or from its method and
+/// path where that makes no name. Operations that would share a name over
+/// the whole description do not take it: each that has an `operationId`
+/// falls back to the name its method and path make, and once every name is
+/// made, those still shared are marked `endpoint_shared`, take none, and are
+/// drafted with the name as an open question in a file named for their
+/// method and path. No operation is dropped and none takes another's name.
+/// The names are a function of the set of operations, never of their order.
+/// The work is counted as steps.
+///
+/// # Errors
+///
+/// `input`/`description_too_large` past the step bound.
+fn assign_endpoints(
+    operations: &mut [DescribedOperation],
+    walk: &mut Walk<'_>,
+) -> Result<(), Failure> {
+    fn shared_names(names: &[String]) -> BTreeSet<String> {
+        let mut seen = BTreeSet::new();
+        let mut shared = BTreeSet::new();
+        for name in names {
+            if !seen.insert(name.clone()) {
+                shared.insert(name.clone());
+            }
+        }
+        shared
+    }
+    let mut names: Vec<String> = Vec::with_capacity(operations.len());
+    for operation in operations.iter() {
+        let name = operation.base_name();
+        walk.step(length(&name).saturating_add(1))?;
+        names.push(name);
+    }
+    let shared = shared_names(&names);
+    for (operation, name) in operations.iter().zip(names.iter_mut()) {
+        if shared.contains(name.as_str()) && operation.id_name().is_some() {
+            *name = operation.path_name();
+        }
+    }
+    walk.step(u64::try_from(names.len()).unwrap_or(u64::MAX))?;
+    let shared = shared_names(&names);
+    for (operation, name) in operations.iter_mut().zip(names) {
+        if shared.contains(&name) {
+            operation.endpoint_shared = true;
+        } else {
+            operation.endpoint = Some(name);
+        }
+    }
+    Ok(())
 }
 
 /// Whether a `security` statement lets an operation be called with no
@@ -759,6 +1268,9 @@ pub(crate) struct DescribedOperationRule {
     pub(crate) kind: FindingKind,
 }
 
+/// What an endpoint that was given no name is asked.
+const NAME_SHARED: &str = "Two or more operations of the description would share one endpoint name, so none was given by rule. What is this endpoint's name?";
+
 impl DraftingRule for DescribedOperationRule {
     fn finding_kind(&self) -> FindingKind {
         self.kind.clone()
@@ -775,37 +1287,69 @@ impl DraftingRule for DescribedOperationRule {
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));
         };
-        let name = operation.name();
-        // The surface is the one whose address the description was read
-        // for, when the target already declares it.
-        let origin = match finding.subject() {
-            a2m_core::Subject::Address(address) => Some(address.origin()),
-            _ => None,
+        // An operation whose name is another's takes none: its name is an
+        // open question, in a file named for its method and path.
+        let name = if operation.endpoint_shared {
+            "(a name not yet given)".to_owned()
+        } else {
+            operation.name()
         };
-        let surface = cx
-            .existing()
-            .and_then(|sources| sources.file("target.yaml"))
-            .and_then(|file| file.docs.first())
-            .and_then(|target| target.get("surfaces"))
-            .and_then(|surfaces| {
-                surfaces.entries().iter().find(|entry| {
-                    entry.value.text("kind") == Some(HTTP_SURFACE.as_str())
-                        && origin.is_some_and(|origin| {
-                            entry
-                                .value
-                                .text(crate::ADDRESS_KEY)
-                                .is_some_and(|base| base.trim_end_matches('/') == origin)
-                        })
-                })
-            })
-            .map_or_else(
-                || {
-                    cx.open_question(&format!(
-                        "Which `http` surface does the endpoint `{name}` live on?"
-                    ))
-                },
-                |entry| DraftValue::text(&entry.key.value),
-            );
+        // The surface is the one the description was read for, and it is
+        // named only when it is certain. A surface of the target that
+        // takes it is of kind `http`, at the finding's origin, with an
+        // address whose path begins the finding's own, by whole segments.
+        // With one such surface it is that; with none, or several (the
+        // longer path is not preferred), the question stays open.
+        let (origin, at) = match finding.subject() {
+            a2m_core::Subject::Address(address) => (Some(address.origin()), address.path()),
+            _ => (None, "/"),
+        };
+        let at = at.trim_end_matches('/');
+        let mut taking: Vec<(&str, String)> = Vec::new();
+        if let (Some(origin), Some(surfaces)) = (
+            origin,
+            cx.existing()
+                .and_then(|sources| sources.file("target.yaml"))
+                .and_then(|file| file.docs.first())
+                .and_then(|target| target.get("surfaces")),
+        ) {
+            for entry in surfaces.entries() {
+                if entry.value.text("kind") != Some(HTTP_SURFACE.as_str()) {
+                    continue;
+                }
+                let Some(Ok(base)) = entry
+                    .value
+                    .text(crate::ADDRESS_KEY)
+                    .map(crate::driver::Origin::of)
+                else {
+                    continue;
+                };
+                let within = base.prefix.is_empty()
+                    || at == base.prefix
+                    || at.starts_with(&format!("{}/", base.prefix));
+                if base.text == origin && within {
+                    taking.push((entry.key.value.as_str(), base.prefix));
+                }
+            }
+        }
+        let unknown = || {
+            cx.open_question(&format!(
+                "Which `http` surface does the endpoint `{name}` live on?"
+            ))
+        };
+        let surface = match taking.as_slice() {
+            [(surface, prefix)] => match &operation.base_path {
+                // A 2.0 description states the path its operations are
+                // under; a surface whose address ends in another path is
+                // not the one it was written for.
+                Some(base_path) if base_path != prefix => cx.open_question_quoting(
+                    "The base path the description states, quoted, and the path the address of the only `http` surface that takes it ends in, are not the same, so the endpoint is not tied to that surface. Which surface does the endpoint live on?",
+                    &[base_path],
+                ),
+                _ => DraftValue::text(surface),
+            },
+            _ => unknown(),
+        };
         let path = operation.template_path().map_or_else(
             || {
                 cx.open_question(&format!(
@@ -829,7 +1373,14 @@ impl DraftingRule for DescribedOperationRule {
             responses.push(("absent", statuses(&operation.absent)));
         }
         let mut entry = vec![
-            ("endpoint", DraftValue::text(&name)),
+            (
+                "endpoint",
+                if operation.endpoint_shared {
+                    cx.open_question(NAME_SHARED)
+                } else {
+                    DraftValue::text(&name)
+                },
+            ),
             ("surface", surface),
             ("method", DraftValue::text(&operation.method)),
             ("path", path),
@@ -866,7 +1417,14 @@ impl DraftingRule for DescribedOperationRule {
             entry.push(("responses", DraftValue::map(responses)));
         }
         Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("endpoints/{name}.yaml"))?,
+            path: RelPath::new(&if operation.endpoint_shared {
+                format!(
+                    "endpoints/held_{}.yaml",
+                    path_stem(&operation.method, &operation.path)
+                )
+            } else {
+                format!("endpoints/{name}.yaml")
+            })?,
             body: DraftValue::map(entry),
         }])
     }
@@ -874,8 +1432,9 @@ impl DraftingRule for DescribedOperationRule {
 
 #[cfg(test)]
 mod tests {
-    use super::{DescribedOperation, operations, snake};
+    use super::{DescribedOperation, operations, path_digest, snake};
     use crate::codes;
+    use crate::draft::would_draft;
 
     pub(crate) const DESCRIPTION: &str = r##"{
       "openapi": "3.0.3",
@@ -932,7 +1491,18 @@ mod tests {
         // does not check is left out of the shape.
         let response = get.response.as_ref().unwrap().to_text();
         assert!(
-            response.contains(r#""items":{"type":"array","items":{"type":"object""#),
+            response
+                .contains(r#""items":{"type":"array","nullable":true,"items":{"type":"object""#),
+            "{response}"
+        );
+        // `order_id` is required and stays as written; `status` is not, and
+        // may be answered as `null` (decision 0297).
+        assert!(
+            response.contains(r#""order_id":{"type":"string"}"#),
+            "{response}"
+        );
+        assert!(
+            response.contains(r#""status":{"type":"string","nullable":true"#),
             "{response}"
         );
         assert!(response.contains(r#""nullable":true"#), "{response}");
@@ -950,7 +1520,8 @@ mod tests {
     fn what_is_not_an_accepted_description_is_refused_by_name() {
         for bad in [
             &b"not a description: ["[..],
-            br#"{"swagger": "2.0", "paths": {}}"#,
+            br#"{"swagger": "1.2", "paths": {}}"#,
+            br#"{"swagger": "2.0"}"#,
             br#"{"openapi": "3.0.0"}"#,
             b"\xff\xfe",
         ] {
@@ -959,6 +1530,574 @@ mod tests {
         }
         let yaml = b"openapi: 3.1.0\npaths:\n  /orders:\n    get:\n      responses:\n        '200': {description: ok}\n";
         assert_eq!(operations(yaml).unwrap().len(), 1);
+    }
+
+    /// A description of reads, each answering a list of records with one
+    /// plain property, at the given paths. Each placeholder is a stated
+    /// path parameter, so the rule would draft each read.
+    fn reads_at(paths: &[&str]) -> String {
+        let items: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                let parameters: Vec<String> = path
+                    .split('/')
+                    .filter_map(|part| part.strip_prefix('{').and_then(|p| p.strip_suffix('}')))
+                    .map(|name| {
+                        format!(r#"{{"name": "{name}", "in": "path", "required": true, "schema": {{"type": "string"}}}}"#)
+                    })
+                    .collect();
+                format!(
+                    r##""{path}": {{"get": {{"parameters": [{}], "responses": {{"200": {{"content": {{"application/json": {{"schema": {{
+                      "type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}"##,
+                    parameters.join(",")
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            items.join(",")
+        )
+    }
+
+    /// The object of each path, by path; `-` for a read given no name.
+    fn objects(paths: &[&str]) -> std::collections::BTreeMap<String, String> {
+        operations(reads_at(paths).as_bytes())
+            .unwrap()
+            .into_iter()
+            .map(|operation| {
+                (
+                    operation.path,
+                    operation.object.unwrap_or_else(|| "-".to_owned()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_reads_that_would_share_a_tool_name_are_told_apart_by_the_nearest_word_that_differs() {
+        let paths = [
+            "/repos/{owner}/issues/comments",
+            "/repos/{owner}/issues/{number}/comments",
+            "/repos/{owner}/pulls/{number}/comments",
+            "/repos/{owner}/issues",
+        ];
+        let forward = objects(&paths);
+        // The path with no placeholder keeps the name its words make; the
+        // other is told apart by the placeholder between them; a read that
+        // collides with nothing is named as before.
+        assert_eq!(forward["/repos/{owner}/issues/comments"], "issues_comments");
+        assert_eq!(
+            forward["/repos/{owner}/issues/{number}/comments"],
+            "issues_by_number_comments"
+        );
+        assert_eq!(
+            forward["/repos/{owner}/pulls/{number}/comments"],
+            "pulls_comments"
+        );
+        assert_eq!(forward["/repos/{owner}/issues"], "repos_issues");
+        // The same names in any order of reading.
+        let mut reversed = paths;
+        reversed.reverse();
+        assert_eq!(objects(&reversed), forward);
+
+        // Where the last two words are the same and the words before them
+        // tell them apart, one more word is added to each that still
+        // collides; and where no word does, a digest of the path does.
+        let deeper = objects(&["/a/x/{id}/notes", "/b/x/{id}/notes", "/x/notes"]);
+        assert_eq!(deeper["/x/notes"], "x_notes");
+        assert_eq!(deeper["/a/x/{id}/notes"], "a_x_by_id_notes");
+        assert_eq!(deeper["/b/x/{id}/notes"], "b_x_by_id_notes");
+        let alike = objects(&["/Notes/items", "/notes/items"]);
+        assert_ne!(alike["/Notes/items"], alike["/notes/items"]);
+        assert_eq!(alike, objects(&["/notes/items", "/Notes/items"]));
+    }
+
+    #[test]
+    fn a_read_whose_name_is_still_another_reads_after_every_name_is_made_is_given_none() {
+        // (a) A grown name that is another group's own name.
+        let a = [
+            "/issues/comments",
+            "/issues/{number}/comments",
+            "/issues_by_number/comments",
+        ];
+        let named = objects(&a);
+        assert_eq!(named["/issues/comments"], "issues_comments");
+        assert_eq!(named["/issues/{number}/comments"], "-");
+        assert_eq!(named["/issues_by_number/comments"], "-");
+        let mut reversed = a;
+        reversed.reverse();
+        assert_eq!(objects(&reversed), named);
+        // (b) A path whose words are another's name with its digest.
+        let digest = path_digest("/Notes/items");
+        let tricky = format!("/notes/items_{digest}");
+        let named = objects(&["/Notes/items", "/notes/items", &tricky]);
+        assert_eq!(named.values().filter(|name| *name == "-").count(), 2);
+        // Each read that may need a file has one of its own.
+        let found = operations(reads_at(&a).as_bytes()).unwrap();
+        let stems: std::collections::BTreeSet<_> = found
+            .iter()
+            .map(|read| read.stem.clone().unwrap())
+            .collect();
+        assert_eq!(stems.len(), found.len());
+        assert_eq!(found.iter().filter(|read| read.shared).count(), 2);
+        // The marks read back from a finding.
+        for read in &found {
+            assert_eq!(
+                DescribedOperation::from_found(&read.found()).as_ref(),
+                Some(read)
+            );
+        }
+        // (c) A path written twice is refused with the document, so no two
+        // reads share a path and a file.
+        let read = |property: &str| {
+            format!(
+                r#""/a/b": {{"get": {{"responses": {{"200": {{"content": {{"application/json": {{"schema": {{"type": "array", "items": {{"type": "object", "properties": {{"{property}": {{"type": "string"}}{}"#,
+                "}".repeat(9)
+            )
+        };
+        let twice = format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{},{}}}}}"#,
+            read("id"),
+            read("x")
+        );
+        let failure = operations(twice.as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &codes::DESCRIPTION_UNREADABLE);
+    }
+
+    #[test]
+    fn only_a_read_the_rule_would_draft_makes_another_reads_name_longer() {
+        // The first needs a required query value, so it is the developer's
+        // and does not rename the second.
+        let found = operations(
+            br##"{"openapi": "3.0.3", "paths": {
+              "/orgs/{org}/x/y": {"get": {"parameters": [
+                  {"name": "org", "in": "path", "required": true, "schema": {"type": "string"}},
+                  {"name": "q", "in": "query", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"content": {"application/json": {"schema": {
+                  "type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}},
+              "/x/y": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                  "type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}}}}"##,
+        )
+        .unwrap();
+        assert_eq!(found[0].object, None);
+        assert!(!found[0].shared);
+        assert_eq!(found[1].object.as_deref(), Some("x_y"));
+        // A read with no plain output is not drafted either.
+        let found = operations(
+            br##"{"openapi": "3.0.3", "paths": {
+              "/orgs/{org}/x/y": {"get": {"parameters": [
+                  {"name": "org", "in": "path", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"content": {"application/json": {"schema": {
+                  "type": "array", "items": {"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}}}}}}}}}},
+              "/x/y": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                  "type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}}}}"##,
+        )
+        .unwrap();
+        assert_eq!(found[1].object.as_deref(), Some("x_y"));
+    }
+
+    #[test]
+    fn a_collision_of_names_is_between_reads_of_one_verb_only() {
+        // A list and a read by key at one path's words are not told apart:
+        // their verbs differ, so their names already do.
+        let found = operations(
+            br##"{"openapi": "3.0.3", "paths": {
+              "/orders": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}},
+              "/orders/{id}": {"get": {"parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"id": {"type": "string"}}}}}}}}}}}"##,
+        )
+        .unwrap();
+        assert!(
+            found
+                .iter()
+                .all(|read| read.object.as_deref() == Some("orders"))
+        );
+    }
+
+    #[test]
+    fn a_swagger_2_read_with_a_required_body_or_form_is_not_a_read_the_rule_drafts() {
+        let read = |parameter: &str| {
+            format!(
+                r##"{{"swagger": "2.0", "paths": {{"/a/b": {{"get": {{
+                  "parameters": [{parameter}],
+                  "responses": {{"200": {{"description": "ok", "schema": {{
+                    "type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}"##
+            )
+        };
+        let body = r#"{"name": "b", "in": "body", "required": true, "schema": {"type": "object"}}"#;
+        let form = r#"{"name": "f", "in": "formData", "required": true, "type": "string"}"#;
+        let optional = r#"{"name": "f", "in": "formData", "type": "string"}"#;
+        for (parameter, drafted) in [(body, false), (form, false), (optional, true)] {
+            let found = operations(read(parameter).as_bytes()).unwrap();
+            assert_eq!(would_draft(&found[0]), drafted, "{parameter}");
+        }
+    }
+
+    #[test]
+    fn a_3_read_with_a_required_body_is_not_a_read_the_rule_drafts() {
+        let read = |body: &str| {
+            format!(
+                r##"{{"openapi": "3.0.3", "paths": {{"/a/b": {{"get": {{
+                  {body}
+                  "responses": {{"200": {{"description": "ok", "content": {{"application/json": {{"schema": {{
+                    "type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}}}}}"##
+            )
+        };
+        let content = r#""content": {"application/json": {"schema": {"type": "object"}}}"#;
+        for (body, drafted) in [
+            (
+                format!(r#""requestBody": {{"required": true, {content}}},"#),
+                false,
+            ),
+            (
+                format!(r#""requestBody": {{"required": false, {content}}},"#),
+                true,
+            ),
+            (format!(r#""requestBody": {{{content}}},"#), true),
+            (String::new(), true),
+        ] {
+            let found = operations(read(&body).as_bytes()).unwrap();
+            assert_eq!(would_draft(&found[0]), drafted, "{body}");
+        }
+    }
+
+    /// A description of GETs, each `(path, operationId)`, in the order given.
+    fn with_ids(operations: &[(&str, Option<&str>)]) -> Vec<DescribedOperation> {
+        let reads: Vec<String> = operations
+            .iter()
+            .map(|(path, id)| {
+                let id = id.map_or_else(String::new, |id| format!(r#""operationId": "{id}","#));
+                format!(
+                    r#""{path}": {{"get": {{{id} "responses": {{"200": {{"description": "ok"}}}}}}}}"#
+                )
+            })
+            .collect();
+        let text = format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            reads.join(",")
+        );
+        super::operations(text.as_bytes()).unwrap()
+    }
+
+    fn endpoint_names(found: &[DescribedOperation]) -> std::collections::BTreeMap<String, String> {
+        found
+            .iter()
+            .map(|read| {
+                (
+                    read.path.clone(),
+                    read.endpoint.clone().unwrap_or_else(|| "(held)".to_owned()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_operations_with_one_operation_id_take_two_endpoint_names_in_any_order() {
+        let forward = with_ids(&[
+            ("/a", Some("list")),
+            ("/b", Some("list")),
+            ("/c", Some("one")),
+        ]);
+        let reversed = with_ids(&[
+            ("/c", Some("one")),
+            ("/b", Some("list")),
+            ("/a", Some("list")),
+        ]);
+        let names = endpoint_names(&forward);
+        assert_eq!(names["/a"], "get_a");
+        assert_eq!(names["/b"], "get_b");
+        assert_eq!(names["/c"], "one");
+        assert!(forward.iter().all(|read| !read.endpoint_shared));
+        assert_eq!(names, endpoint_names(&reversed));
+    }
+
+    #[test]
+    fn operations_whose_fallback_name_collides_too_are_each_held_and_none_is_merged() {
+        // `/a/b`, `/a_b`, and `/a.b` all make `get_a_b` from method and path.
+        let forward = with_ids(&[("/a/b", Some("x")), ("/a_b", Some("x")), ("/a.b", None)]);
+        let reversed = with_ids(&[("/a.b", None), ("/a_b", Some("x")), ("/a/b", Some("x"))]);
+        for found in [&forward, &reversed] {
+            assert_eq!(found.len(), 3);
+            assert!(found.iter().all(|read| read.endpoint_shared));
+            assert!(found.iter().all(|read| read.endpoint.is_none()));
+        }
+        // An operation with a name of its own is not held by another's trouble.
+        let mixed = with_ids(&[("/a/b", Some("x")), ("/a_b", Some("x")), ("/c", Some("y"))]);
+        assert_eq!(endpoint_names(&mixed)["/c"], "y");
+    }
+
+    #[test]
+    fn a_fallback_name_that_is_another_operations_is_held_for_both() {
+        // `/d` falls back to `get_d`, which `/e` has by its own id.
+        let found = with_ids(&[
+            ("/d", Some("dup")),
+            ("/f", Some("dup")),
+            ("/e", Some("get_d")),
+        ]);
+        let names = endpoint_names(&found);
+        assert_eq!(names["/d"], "(held)");
+        assert_eq!(names["/e"], "(held)");
+        assert_eq!(names["/f"], "get_f");
+    }
+
+    #[test]
+    fn a_list_of_media_types_that_is_not_a_list_of_text_naming_json_is_not_json() {
+        let with = |produces: &str| {
+            format!(
+                r##"{{"swagger": "2.0", "paths": {{"/a": {{"get": {{{produces}
+                  "responses": {{"200": {{"description": "ok", "schema": {{"type": "string"}}}}}}}}}}}}}}"##
+            )
+        };
+        let answered = |produces: &str| {
+            operations(with(produces).as_bytes()).unwrap()[0]
+                .response
+                .is_some()
+        };
+        assert!(answered(""));
+        assert!(answered(r#""produces": ["application/json"],"#));
+        assert!(!answered(r#""produces": "application/json","#));
+        assert!(!answered(r#""produces": {"application/json": true},"#));
+        assert!(!answered(r#""produces": [],"#));
+        assert!(!answered(r#""produces": ["application/json", 5],"#));
+        // An empty list of the operation replaces the document's.
+        let replaced = r##"{"swagger": "2.0", "produces": ["application/json"], "paths": {"/a": {"get": {
+          "produces": [], "responses": {"200": {"description": "ok", "schema": {"type": "string"}}}}}}}"##;
+        assert!(
+            operations(replaced.as_bytes()).unwrap()[0]
+                .response
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn lists_of_media_types_and_names_of_many_reads_are_counted_as_work() {
+        // A document-level list of many entries, with many operations: read
+        // once, so the work stays inside the bound.
+        let many = vec![r#""text/plain""#; 5000].join(",");
+        let paths: Vec<String> = (0..300)
+            .map(|index| {
+                format!(
+                    r#""/p{index}": {{"get": {{"responses": {{"200": {{"description": "ok", "schema": {{"type": "string"}}}}}}}}}}"#
+                )
+            })
+            .collect();
+        let document = format!(
+            r#"{{"swagger": "2.0", "produces": [{many}], "paths": {{{}}}}}"#,
+            paths.join(",")
+        );
+        match operations(document.as_bytes()) {
+            Ok(found) => assert_eq!(found.len(), 300),
+            Err(failure) => assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE),
+        }
+        // Each operation's own list is charged for each entry.
+        let own: Vec<String> = (0..300)
+            .map(|index| {
+                format!(
+                    r#""/p{index}": {{"get": {{"produces": [{many}], "responses": {{"200": {{"description": "ok", "schema": {{"type": "string"}}}}}}}}}}"#
+                )
+            })
+            .collect();
+        let document = format!(r#"{{"swagger": "2.0", "paths": {{{}}}}}"#, own.join(","));
+        match operations(document.as_bytes()) {
+            Ok(found) => assert_eq!(found.len(), 300),
+            Err(failure) => assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE),
+        }
+        // Many reads whose names all collide, grown one word at a time.
+        let reads: Vec<String> = (0..2000).map(|index| format!("/a{index}/x/y")).collect();
+        let reads: Vec<&str> = reads.iter().map(String::as_str).collect();
+        match operations(reads_at(&reads).as_bytes()) {
+            Ok(found) => {
+                let names: std::collections::BTreeSet<_> = found
+                    .iter()
+                    .filter_map(|read| read.object.clone())
+                    .collect();
+                assert_eq!(names.len(), found.len());
+            }
+            Err(failure) => assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE),
+        }
+    }
+
+    /// A Swagger 2.0 document, small, in the form the 2.0 specification
+    /// writes: `definitions`, a response's own `schema`, a parameter's own
+    /// type, a body parameter, and a form.
+    const SWAGGER: &str = r##"{
+      "swagger": "2.0",
+      "info": {"title": "Example order entry", "version": "1"},
+      "basePath": "/api",
+      "produces": ["application/json"],
+      "paths": {
+        "/orders/{orderId}": {
+          "parameters": [{"name": "orderId", "in": "path", "required": true, "type": "string"}],
+          "get": {
+            "operationId": "getOrder",
+            "parameters": [
+              {"name": "unit", "in": "query", "type": "integer", "format": "int32"},
+              {"name": "sort", "in": "query", "type": "array", "items": {"type": "string"}}],
+            "responses": {
+              "200": {"description": "ok", "schema": {"$ref": "#/definitions/Order"}},
+              "404": {"$ref": "#/responses/Missing"}
+            }
+          },
+          "put": {
+            "operationId": "putOrder",
+            "consumes": ["application/json"],
+            "parameters": [{"name": "body", "in": "body", "required": true,
+                            "schema": {"$ref": "#/definitions/Order"}}],
+            "responses": {"200": {"$ref": "#/responses/Done"}}
+          }
+        },
+        "/orders/{orderId}/upload": {
+          "post": {
+            "operationId": "uploadNote",
+            "consumes": ["multipart/form-data"],
+            "parameters": [{"name": "note", "in": "formData", "type": "string"}],
+            "responses": {"200": {"description": "ok"}}
+          }
+        },
+        "/report": {
+          "get": {
+            "produces": ["text/csv"],
+            "responses": {"200": {"description": "ok", "schema": {"type": "string"}}}
+          }
+        }
+      },
+      "definitions": {
+        "Order": {
+          "type": "object", "required": ["order_id"],
+          "properties": {
+            "order_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["draft", "submitted"]},
+            "items": {"type": "array", "items": {"$ref": "#/definitions/Item"}}
+          }},
+        "Item": {"type": "object", "properties": {"item_code": {"type": "string"}}}
+      },
+      "responses": {
+        "Missing": {"description": "No such order"},
+        "Done": {"description": "Done", "schema": {"$ref": "#/definitions/Item"}}
+      }
+    }"##;
+
+    #[test]
+    fn a_swagger_2_description_is_read_from_its_own_places_into_the_same_operations() {
+        let found = operations(SWAGGER.as_bytes()).unwrap();
+        assert_eq!(found.len(), 4);
+        let (get, put, upload, report) = (&found[0], &found[1], &found[2], &found[3]);
+        assert_eq!(get.name(), "get_order");
+        // `basePath` is not read: the path stays as the description writes it.
+        assert_eq!(get.path, "/orders/{orderId}");
+        assert_eq!(get.template_path().as_deref(), Some("/orders/{order_id}"));
+        // A shared response is followed, and a 404 is absent.
+        assert_eq!(
+            (get.ok.as_slice(), get.absent.as_slice()),
+            (&[200][..], &[404][..])
+        );
+        // A response's own `schema` is the answer, references into
+        // `definitions` followed, and decision 0297 applies as for 3.x.
+        let answer = get.response.as_ref().unwrap().to_text();
+        assert!(
+            answer.contains(r#""order_id":{"type":"string"}"#),
+            "{answer}"
+        );
+        assert!(
+            answer.contains(r#""status":{"type":"string","nullable":true"#),
+            "{answer}"
+        );
+        assert!(
+            answer.contains(r#""item_code":{"type":"string","nullable":true}"#),
+            "{answer}"
+        );
+        // A parameter states its type in place, the path item's and the
+        // operation's own.
+        let kinds: Vec<(&str, &str, bool)> = get
+            .parameters
+            .iter()
+            .map(|p| (p.name.as_str(), p.kind.as_str(), p.required))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("orderId", "string", true),
+                ("unit", "integer", false),
+                ("sort", "array", false)
+            ]
+        );
+        // A body parameter is the request, drafted without the answer rule.
+        let request = put.request.as_ref().unwrap().to_text();
+        assert!(
+            request.contains(r#""order_id""#) && !request.contains("nullable"),
+            "{request}"
+        );
+        assert!(!put.safe && get.safe);
+        // A shared response with a schema is an answer too.
+        assert!(put.response.is_some());
+        // A form is a body this pack cannot draft: no shape, as for a 3.x
+        // body that is not JSON.
+        assert!(upload.request.is_none() && upload.response.is_none());
+        // An answer the operation does not give as JSON has no shape.
+        assert!(report.response.is_none());
+        assert_eq!(
+            DescribedOperation::from_found(&get.found()).as_ref(),
+            Some(get)
+        );
+    }
+
+    #[test]
+    fn a_swagger_2_description_with_no_list_of_types_answers_json_and_yaml_is_read() {
+        let yaml = "swagger: '2.0'\npaths:\n  /orders:\n    get:\n      responses:\n        '200':\n          description: ok\n          schema: {type: object, properties: {id: {type: string}}}\n";
+        let found = operations(yaml.as_bytes()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].response.is_some());
+        let plain = "swagger: 2.0\npaths:\n  /orders:\n    get:\n      responses:\n        '200': {description: ok}\n";
+        assert_eq!(operations(plain.as_bytes()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_swagger_2_description_is_held_to_the_same_bounds() {
+        let swagger = |definitions: &str| {
+            format!(
+                r##"{{"swagger": "2.0", "paths": {{
+                  "/wide": {{"get": {{"responses": {{"200": {{"description": "ok",
+                    "schema": {{"$ref": "#/definitions/S0"}}}}}}}}}}
+                }}, "definitions": {{{definitions}}}}}"##
+            )
+        };
+        let doubling = |levels: usize| {
+            let mut all: Vec<String> = (0..levels)
+                .map(|level| {
+                    let next = level + 1;
+                    format!(
+                        r##""S{level}": {{"type": "object", "properties": {{
+                          "a": {{"$ref": "#/definitions/S{next}"}},
+                          "b": {{"$ref": "#/definitions/S{next}"}}}}}}"##
+                    )
+                })
+                .collect();
+            all.push(format!(r#""S{levels}": {{"type": "string"}}"#));
+            swagger(&all.join(","))
+        };
+        for levels in [20, 30] {
+            let failure = operations(doubling(levels).as_bytes()).unwrap_err();
+            assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE, "{levels}");
+        }
+        assert!(
+            operations(doubling(4).as_bytes()).unwrap()[0]
+                .response
+                .is_some()
+        );
+        let mut deep: Vec<String> = (0..40)
+            .map(|level| {
+                let next = level + 1;
+                format!(
+                    r##""S{level}": {{"type": "array", "items": {{"$ref": "#/definitions/S{next}"}}}}"##
+                )
+            })
+            .collect();
+        deep.push(r#""S40": {"type": "string"}"#.to_owned());
+        let failure = operations(swagger(&deep.join(",")).as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &codes::DESCRIPTION_TOO_LARGE);
+        assert!(failure.message().contains("32 levels"), "{failure}");
     }
 
     /// A description whose one operation answers with the schema `S0`.
@@ -1080,6 +2219,98 @@ mod tests {
             .unwrap();
         let read = DescribedOperation::from_found(&first).unwrap();
         assert!(read.parameters.is_empty() && !read.open);
+    }
+
+    /// The answer shape of a description whose one operation answers `S0`.
+    fn answer_of(schemas: &str) -> String {
+        let found = operations(described(schemas).as_bytes()).unwrap();
+        found[1].response.as_ref().unwrap().to_text()
+    }
+
+    #[test]
+    fn a_property_the_description_does_not_require_is_drafted_as_possibly_null() {
+        let shape = answer_of(
+            r##""S0": {"type": "object", "required": ["id", "tag"], "properties": {
+              "id": {"type": "string"},
+              "tag": {"type": "string", "nullable": true},
+              "owner": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"},
+                "nick": {"type": "string"},
+                "address": {"type": "object", "properties": {"city": {"type": "string"}}}}},
+              "labels": {"type": "array", "items": {"type": "string"}},
+              "note": {"type": "string"}}}"##,
+        );
+        // Required, not nullable: as drafted before. Required and nullable
+        // keeps it.
+        assert!(shape.contains(r#""id":{"type":"string"}"#), "{shape}");
+        assert!(
+            shape.contains(r#""tag":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        // Not required, of each kind, at depth 1.
+        assert!(
+            shape.contains(r#""owner":{"type":"object","nullable":true,"required":["name"]"#),
+            "{shape}"
+        );
+        assert!(
+            shape
+                .contains(r#""labels":{"type":"array","nullable":true,"items":{"type":"string"}}"#),
+            "{shape}"
+        );
+        assert!(
+            shape.contains(r#""note":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        // Nested: a required name stays; the others are possibly null.
+        assert!(shape.contains(r#""name":{"type":"string"}"#), "{shape}");
+        assert!(
+            shape.contains(r#""nick":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        assert!(
+            shape.contains(r#""address":{"type":"object","nullable":true,"properties":{"city":{"type":"string","nullable":true}}}"#),
+            "{shape}"
+        );
+    }
+
+    /// What the drafted shape then says of an answer, and of a path an output
+    /// is taken from: through a property the description does not require,
+    /// the value is not certain to be there, so the output may be absent.
+    #[test]
+    fn a_drafted_shape_takes_null_and_missing_for_an_optional_property_and_not_a_wrong_kind() {
+        use crate::json::Json;
+        use crate::shape::Shape;
+        let drafted = answer_of(
+            r##""S0": {"type": "object", "required": ["id"], "properties": {
+              "id": {"type": "string"},
+              "owner": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}}}}}"##,
+        );
+        let docs = a2m_files::parse_yaml(
+            &a2m_files::RelPath::new("endpoints/x.yaml").unwrap(),
+            &drafted,
+        )
+        .unwrap();
+        let shape = Shape::from_doc(&docs[0]).unwrap();
+        let path = |text: &str| -> Vec<String> { text.split('.').map(str::to_owned).collect() };
+        assert!(shape.at_path(&path("id")).unwrap().1);
+        assert!(!shape.at_path(&path("owner")).unwrap().1);
+        // `name` is required of an owner, yet the owner may be null.
+        assert!(!shape.at_path(&path("owner.name")).unwrap().1);
+        let fits = |text: &str| shape.check(&Json::parse(text.as_bytes()).unwrap());
+        assert_eq!(fits(r#"{"id":"a","owner":{"name":"n"}}"#), Ok(()));
+        assert_eq!(fits(r#"{"id":"a","owner":null}"#), Ok(()));
+        assert_eq!(fits(r#"{"id":"a"}"#), Ok(()));
+        assert!(fits(r#"{"id":"a","owner":"text"}"#).is_err());
+        assert!(fits(r#"{"id":null,"owner":null}"#).is_err());
+        assert!(fits(r#"{"id":"a","owner":{"name":null}}"#).is_err());
+    }
+
+    #[test]
+    fn a_request_body_and_a_parameter_are_drafted_without_the_answer_rule() {
+        let found = operations(DESCRIPTION.as_bytes()).unwrap();
+        let request = found[1].request.as_ref().unwrap().to_text();
+        assert!(!request.contains("nullable"), "{request}");
     }
 
     #[test]

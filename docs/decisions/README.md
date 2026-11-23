@@ -284,3 +284,11 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0289 | [A failure is made from its code's row, so the place that makes it cannot give it another class](0289-a-failure-is-made-from-its-codes-row.md) | Accepted (design decision) |
 | 0291 | [A watch ends when its condition holds on a check's own result](0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md) | Accepted (design decision) |
 | 0292 | [A web tab sends only to its surface and the destinations its tool declares, and the publish page says so](0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md) | Accepted (design decision) |
+| 0293 | [Existing software that we run ourselves is tested against during the build, and may be written to](0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md) | Accepted (owner decision) |
+| 0294 | [The owner hands the open questions, and the deciding, to the agents](0294-the-owner-hands-the-open-questions-to-the-agents.md) | Accepted (owner decision) |
+| 0295 | [A field test is run from a recipe kept outside the repository, by a runner that names no software](0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | Accepted (design decision) |
+| 0296 | [The build is ordered by what the next field test needs, in eight stages](0296-the-build-is-ordered-by-what-the-next-field-test-needs.md) | Accepted (design decision) |
+| 0297 | [A property a description does not require is drafted as possibly null](0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md) | Accepted (design decision) |
+| 0298 | [A draft with an open question waits in a holding folder, and the target compiles whole](0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md) | Accepted (design decision) |
+| 0299 | [Programs that run what their arguments name are reached in two steps, and a server started through a launcher starts with its file pinned](0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) | Accepted (design decision; decides 0282) |
+| 0300 | [Publishing always needs a person, and the short path to a working read is the sandbox](0300-publishing-always-needs-a-person-and-the-short-path-is-the-sandbox.md) | Accepted (design decision) |

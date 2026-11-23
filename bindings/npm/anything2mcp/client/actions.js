@@ -634,7 +634,8 @@ class Actions {
 
   /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
-   * at first. The engine action is `scout.report`.
+   * at first. Each list is counted and shows its first entries; `part` reads one whole,
+   * in pages. The engine action is `scout.report`.
    */
   scoutReport(input, options = {}) {
     return this.call("scout.report", input, options);

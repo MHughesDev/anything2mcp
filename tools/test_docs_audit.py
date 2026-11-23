@@ -190,7 +190,7 @@ class AuditCatches(unittest.TestCase):
     def test_a_wrong_count_of_review_documents_is_refused(self):
         index = self.root / "docs" / "README.md"
         text = index.read_text(encoding="utf-8")
-        changed = text.replace("lists them | 4 |", "lists them | 40 |", 1)
+        changed = text.replace("lists them | 5 |", "lists them | 50 |", 1)
         self.assertNotEqual(text, changed)
         index.write_text(changed, encoding="utf-8")
         self.assert_finding("counts", "for review documents")

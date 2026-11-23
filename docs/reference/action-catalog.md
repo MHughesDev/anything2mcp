@@ -75,7 +75,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
 | `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E |
 | `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable. `files` hands its discoverers files of the project's `sources` folder, as for `discover.run`, and a resumed scout hands the same ones | Builder | build | Stage E |
-| `scout.report` | The last scout's report: found, drafted, proven, open, and what to look at first | Builder | build | Stage E |
+| `scout.report` | The last scout's report: found, drafted, proven, open, and what to look at first; each list counted and cut to its first entries, one read whole in pages with `part`, `limit`, `offset` | Builder | build | Stage E |
 
 ## Publishing and versions
 

@@ -46,6 +46,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Exclusive resource | Something only one job may hold at a time, such as a person's screen or a device link, named by a key. The scheduler hands out no job while another job holds one of its keys |
 | Extension point | One of the fixed kinds of thing a provider can supply: driver, auth provider, source reader, widget driver, discoverer |
 | Failure class | The category of a stop, which alone decides what happens next |
+| Field test | One run of the product against one copy of existing software that the project runs itself, holding invented data, started and checked as a recipe says; the software's own store is the proof ([decision 0295](../decisions/0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md)). Not a trial, which is one draft run in the sandbox |
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
 | First binding | The first binding of an operation, drafted as `draft`; `binding.promote` makes it able to act once the operation's offline tests pass and a scout proved it, and for a write a person does it ([decision 0189](../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)) |
 | Fixed place | A record that is one place and has no key: one record of a JSON document at a path, one section or dictionary of a settings file, or a named cell. An operation writes it with `identity: {strategy: natural, place: fixed}` and no identity input, where the pack's file kind lists the place as fixed ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
@@ -108,6 +109,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Quarantine | The wait after a lost lease before the run's records may be touched |
 | Quarantined | Said of a record lock that is kept, not released, because its record is in doubt. Only its own run, under a new lease, can confirm it |
 | Read-back | Reading a value from the system after writing it |
+| Recipe | The file a field test is run from: the software's image pinned by digest, the invented data, each command, and what each must show. It names real software, so it is kept outside this repository |
 | Reconcile | Reading doubtful records back to learn whether their writes landed |
 | Record | One item in the system that a run reads or writes, identified by a key. A ledger row is a commit point, which usually carries one record but can carry several, or part of one |
 | Registered name | A word whose values arrive with packs and crates, checked for shape and registered by whoever brings it: a mode, a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name, a failure code |

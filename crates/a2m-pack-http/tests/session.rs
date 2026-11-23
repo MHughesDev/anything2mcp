@@ -575,7 +575,7 @@ async fn discovery_observes_and_cannot_write() {
                 }
             }
             ("http_description", Ok(findings)) => {
-                assert_eq!(findings.len(), 8);
+                assert_eq!(findings.len(), 9);
                 for finding in findings {
                     assert_eq!(finding.level(), EvidenceLevel::Inferred);
                     assert_eq!(finding.source(), Source::PublishedDescription);
@@ -746,7 +746,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .filter(|(name, _)| name == "http_description")
         .flat_map(|(_, result)| result.unwrap())
         .collect();
-    assert_eq!(findings.len(), 8, "{findings:?}");
+    assert_eq!(findings.len(), 9, "{findings:?}");
 
     let folder = Folder::new("drafted-reads");
     let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
@@ -776,6 +776,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             "operations/api_stock_get.yaml",
             "operations/orders_delivery_get.yaml",
             "operations/orders_items_get.yaml",
+            "operations/orders_shipment_get.yaml",
             "operations/orders_totals_get.yaml",
         ]
     );
@@ -878,6 +879,97 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
     handle.release(prepared, false).await;
 
     // The application was read, and nothing in it was written.
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
+/// Case 35: the application's optional `carrier`, which its description
+/// lists as not required and does not call nullable. A read drafted from
+/// that description returns when the property is `null` and when it is
+/// missing, and stops as `response_schema_mismatch` when it is a text.
+#[tokio::test]
+async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optional_property() {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-optional");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    Drafter::new(set, &root).draft(&findings).unwrap();
+    // The property is written as possibly null, though the description
+    // never says `nullable`.
+    let endpoint =
+        std::fs::read_to_string(folder.path().join("endpoints").join("get_shipment.yaml")).unwrap();
+    assert!(endpoint.contains("nullable"), "{endpoint}");
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    let reading = Scene::over(
+        Folder::new("drafted-optional-run"),
+        common::registry(
+            &Folder::new("drafted-optional-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let inputs = Values::new().with("order_id", "A-100");
+    for answer in [
+        CarrierAnswer::Object,
+        CarrierAnswer::Null,
+        CarrierAnswer::Missing,
+    ] {
+        app.set_carrier(answer).await.unwrap();
+        let ran = reading
+            .read(
+                &handle,
+                &mut prepared,
+                "example_orders_shipment_get",
+                &inputs,
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("{answer:?}: {failure:?}"));
+        assert_eq!(
+            ran.values.get("order_id").and_then(Value::as_text),
+            Some("A-100"),
+            "{answer:?}"
+        );
+    }
+    app.set_carrier(CarrierAnswer::Text).await.unwrap();
+    let failure = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_shipment_get",
+            &inputs,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    handle.release(prepared, false).await;
     assert!(app.writes().await.unwrap().is_empty());
 }
 
@@ -988,5 +1080,376 @@ async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_ma
             .seen()
             .iter()
             .all(|(line, _)| !line.contains("openapi")),
+    );
+}
+
+/// The findings a discovery of the surface at `address` makes from the
+/// test application's description, handed in as a file.
+async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding> {
+    let description = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    findings_from_description(description, address).await
+}
+
+/// The same, from a description of the test's own.
+async fn findings_from_description(description: String, address: &str) -> Vec<Finding> {
+    let folder = Folder::new("handed-file");
+    std::fs::write(folder.path().join("example-openapi.json"), description).unwrap();
+    let root = RootName::new("sources").unwrap();
+    let mut roots = Roots::none();
+    roots
+        .add(root.clone(), folder.path(), Access::Read)
+        .unwrap();
+    let mut paths = CheckedPaths::none();
+    paths.insert(
+        a2m_pack_http::DESCRIPTION_FILE,
+        roots
+            .check(&root, "example-openapi.json", Access::Read)
+            .unwrap(),
+    );
+    let scene = Scene::new("example", address);
+    discover_with(&scene, &Values::new(), &paths, &a2m_core::NoSecrets)
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_for() {
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let draft_into = |target_text: String, findings: &[Finding]| {
+        let folder = Folder::new("handed-draft");
+        std::fs::write(folder.path().join("target.yaml"), target_text).unwrap();
+        let scene = Scene::new("example", &base);
+        let root = TargetRoot::new(folder.path());
+        let report = Drafter::new(scene.registry.compiler_set(), &root)
+            .draft(findings)
+            .unwrap();
+        (folder, root, scene, report)
+    };
+
+    // One `http` surface, whose address ends in a path: the findings carry
+    // the origin and that path, and the surface is not an open question.
+    let prefixed = format!("{base}/v1");
+    let findings = findings_from_handed_file(&app, &prefixed).await;
+    assert_eq!(findings.len(), 9);
+    let one = target.replace("http://127.0.0.1:4010", &prefixed);
+    let (_folder, root, scene, report) = draft_into(one, &findings);
+    assert!(
+        report.kept_failing.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let set = scene.registry.compiler_set();
+    let sources = a2m_files::load(&root, set).unwrap();
+    let compiled = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap();
+    assert!(!compiled.plan.operations.is_empty());
+
+    // One `http` surface, and a second surface of another kind: the one of
+    // kind `http` is still the only one to name.
+    let with_other = target.replace("http://127.0.0.1:4010", &base).replace(
+        "environments:",
+        "  files:\n    kind: files\n    base: \"/tmp\"\nenvironments:",
+    );
+    let findings = findings_from_handed_file(&app, &base).await;
+    let (folder, _, _, report) = draft_into(with_other, &findings);
+    assert!(report.open_questions.is_empty(), "{report:?}");
+    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    assert!(entry.contains("surface: \"api\""), "{entry}");
+
+    // Several `http` surfaces: the path the address ends in tells which
+    // the discovery was for; two at one address cannot be told apart, and
+    // the question stays.
+    let two = |second: &str| {
+        target
+            .replace("http://127.0.0.1:4010", &format!("{base}/v1"))
+            .replace(
+                "environments:",
+                &format!("  other:\n    kind: http\n    base: \"{second}\"\nenvironments:"),
+            )
+    };
+    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
+    assert!(report.open_questions.is_empty(), "{report:?}");
+    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    assert!(entry.contains("surface: \"api\""), "{entry}");
+    let (_folder, _, _, report) = draft_into(two(&prefixed), &findings);
+    assert!(!report.open_questions.is_empty(), "{report:?}");
+}
+
+/// A target folder that holds `target_text`, drafted into from `findings`.
+fn drafted_into(target_text: &str, findings: &[Finding]) -> (Folder, a2m_files::DraftReport) {
+    let folder = Folder::new("drafted-into");
+    std::fs::write(folder.path().join("target.yaml"), target_text).unwrap();
+    let scene = Scene::new("example", "http://127.0.0.1:1");
+    let root = TargetRoot::new(folder.path());
+    let report = Drafter::new(scene.registry.compiler_set(), &root)
+        .draft(findings)
+        .unwrap();
+    (folder, report)
+}
+
+/// One GET at `path`, with its placeholders stated, answering a list of
+/// records with one plain property.
+fn read_at(path: &str) -> String {
+    let parameters: Vec<String> = path
+        .split('/')
+        .filter_map(|part| part.strip_prefix('{').and_then(|p| p.strip_suffix('}')))
+        .map(|name| {
+            format!(r#"{{"name": "{name}", "in": "path", "required": true, "schema": {{"type": "string"}}}}"#)
+        })
+        .collect();
+    format!(
+        r#""{path}": {{"get": {{"parameters": [{}], "responses": {{"200": {{"content": {{"application/json": {{"schema": {{"type": "array", "items": {{"type": "object", "properties": {{"id": {{"type": "string"}}}}}}}}}}}}}}}}}}}}"#,
+        parameters.join(",")
+    )
+}
+
+fn described(paths: &[&str]) -> String {
+    let reads: Vec<String> = paths.iter().map(|path| read_at(path)).collect();
+    format!(
+        r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+        reads.join(",")
+    )
+}
+
+fn with_surfaces(target: &str, surfaces: &[(&str, &str)]) -> String {
+    let text: String = surfaces
+        .iter()
+        .map(|(name, base)| format!("  {name}:\n    kind: http\n    base: \"{base}\"\n"))
+        .collect();
+    let (head, tail) = target.split_once("surfaces:\n").unwrap();
+    let (_, rest) = tail.split_once("environments:").unwrap();
+    format!("{head}surfaces:\n{text}environments:{rest}")
+}
+
+fn surface_of(folder: &Folder, file: &str) -> String {
+    std::fs::read_to_string(folder.path().join("endpoints").join(file)).unwrap()
+}
+
+#[tokio::test]
+async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let description = || described(&["/orders/{id}"]);
+
+    // Nested prefixes: both surfaces take `/v1/orders/{id}`, so the longer
+    // is not preferred and the question stays.
+    let findings = findings_from_description(description(), &format!("{base}/v1")).await;
+    let nested = with_surfaces(
+        &target,
+        &[
+            ("api", &format!("{base}/v1")),
+            ("orders", &format!("{base}/v1/orders")),
+        ],
+    );
+    let (folder, report) = drafted_into(&nested, &findings);
+    let entry = surface_of(&folder, "get_orders_id.yaml");
+    assert!(
+        !entry.contains("surface: \"api\"") && !entry.contains("surface: \"orders\""),
+        "{entry}"
+    );
+    assert!(!report.open_questions.is_empty());
+
+    // A whole segment is compared, not characters: `/v1` does not take
+    // `/v10/orders/{id}`.
+    let findings = findings_from_description(description(), &format!("{base}/v10")).await;
+    let near = with_surfaces(&target, &[("api", &format!("{base}/v1"))]);
+    let (folder, _) = drafted_into(&near, &findings);
+    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+
+    // The only `http` surface of the target, at another origin: not taken.
+    let findings = findings_from_description(description(), &base).await;
+    let elsewhere = with_surfaces(&target, &[("api", "http://127.0.0.1:1")]);
+    let (folder, report) = drafted_into(&elsewhere, &findings);
+    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!report.open_questions.is_empty());
+
+    // The only one, at the origin and a trailing slash: taken.
+    let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
+    let (folder, _) = drafted_into(&slash, &findings);
+    assert!(surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+}
+
+#[tokio::test]
+async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let swagger = r#"{"swagger": "2.0", "basePath": "/api/", "paths": {"/orders": {"get": {
+      "responses": {"200": {"description": "ok", "schema": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}}}}}"#;
+    // The surface's address ends in another path: not tied, and the
+    // question says the two disagree.
+    let findings = findings_from_description(swagger.to_owned(), &format!("{base}/v1")).await;
+    let (folder, report) = drafted_into(
+        &with_surfaces(&target, &[("api", &format!("{base}/v1"))]),
+        &findings,
+    );
+    assert!(!surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    let question = report
+        .open_questions
+        .iter()
+        .find(|question| question.file.as_str() == "endpoints/get_orders.yaml")
+        .unwrap();
+    assert!(question.question.contains("not the same"), "{question:?}");
+    // The same path, with a trailing slash ignored: tied.
+    let findings = findings_from_description(swagger.to_owned(), &format!("{base}/api")).await;
+    let (folder, _) = drafted_into(
+        &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
+        &findings,
+    );
+    assert!(surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+}
+
+#[tokio::test]
+async fn a_read_with_no_name_to_give_is_drafted_with_an_open_question_and_a_file_of_its_own() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let target = target.replace("target: example", "target: example_store");
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let operations = |report: &a2m_files::DraftReport| -> Vec<String> {
+        report
+            .written
+            .iter()
+            .map(|path| path.as_str().to_owned())
+            .filter(|path| path.starts_with("operations/"))
+            .collect()
+    };
+
+    // A grown name too long for a tool name: reported, not dropped.
+    let findings = findings_from_description(
+        described(&[
+            "/orgs/{organization_id}/pull_requests/review_comments",
+            "/pull_requests/review_comments",
+        ]),
+        &base,
+    )
+    .await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let written = operations(&report);
+    assert_eq!(written.len(), 2, "{written:?}");
+    assert!(written.contains(&"operations/pull_requests_review_comments_list.yaml".to_owned()));
+    let held: Vec<&String> = written
+        .iter()
+        .filter(|file| file.contains("held_"))
+        .collect();
+    assert_eq!(held.len(), 1, "{written:?}");
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .any(|question| question.file.as_str() == held[0].as_str()
+                && question.question.contains("longer than a tool name may be")),
+        "{report:?}"
+    );
+
+    // Two reads whose names are still shared once all are made: each has
+    // no name and a file of its own; the third keeps its own.
+    let findings = findings_from_description(
+        described(&[
+            "/issues/comments",
+            "/issues/{number}/comments",
+            "/issues_by_number/comments",
+        ]),
+        &base,
+    )
+    .await;
+    let (folder, report) = drafted_into(&target, &findings);
+    let written = operations(&report);
+    assert_eq!(written.len(), 3, "{written:?}");
+    assert_eq!(
+        written.iter().filter(|file| file.contains("held_")).count(),
+        2
+    );
+    let names: Vec<String> = written
+        .iter()
+        .map(|file| std::fs::read_to_string(folder.path().join(file)).unwrap())
+        .filter_map(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("operation: ").map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(
+        names.iter().filter(|name| name.starts_with('"')).count(),
+        1,
+        "{names:?}"
+    );
+    assert_eq!(
+        report
+            .open_questions
+            .iter()
+            .filter(|question| question.question.contains("share one tool name"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files() {
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    let app = TestApp::start().await.unwrap();
+    let base = app.url("");
+    let operation = |path: &str, id: &str| {
+        format!(
+            r#""{path}": {{"get": {{"operationId": "{id}", "responses": {{"200": {{"description": "ok"}}}}}}}}"#
+        )
+    };
+    let endpoints = |report: &a2m_files::DraftReport| -> Vec<String> {
+        report
+            .written
+            .iter()
+            .map(|path| path.as_str().to_owned())
+            .filter(|path| path.starts_with("endpoints/"))
+            .collect()
+    };
+    let drafted = |ids: &[(&str, &str)]| {
+        let reads: Vec<String> = ids.iter().map(|(p, i)| operation(p, i)).collect();
+        format!(
+            r#"{{"openapi": "3.0.3", "paths": {{{}}}}}"#,
+            reads.join(",")
+        )
+    };
+
+    // One id twice: each falls back to its method and path.
+    let findings =
+        findings_from_description(drafted(&[("/a", "list"), ("/b", "list")]), &base).await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let mut written = endpoints(&report);
+    written.sort();
+    assert_eq!(written, ["endpoints/get_a.yaml", "endpoints/get_b.yaml"]);
+
+    // The fallback collides too: two files, each held, none merged.
+    let findings = findings_from_description(drafted(&[("/a/b", "x"), ("/a_b", "x")]), &base).await;
+    let (_folder, report) = drafted_into(&target, &findings);
+    let written = endpoints(&report);
+    assert_eq!(written.len(), 2, "{written:?}");
+    assert!(
+        written.iter().all(|file| file.contains("held_")),
+        "{written:?}"
+    );
+    assert_eq!(
+        report
+            .open_questions
+            .iter()
+            .filter(|question| question.question.contains("share one endpoint name"))
+            .count(),
+        2
     );
 }

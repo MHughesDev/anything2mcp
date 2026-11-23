@@ -63,6 +63,8 @@ pub(crate) struct Inner {
     /// The method and path of every request the application received, outside
     /// the control interface, oldest first, up to [`SEEN_KEPT`].
     pub(crate) seen: Vec<String>,
+    /// Case 35: how the shipment's optional `carrier` is answered.
+    pub(crate) carrier: answers::CarrierAnswer,
 }
 
 /// How many requests the application remembers having received.
@@ -79,6 +81,7 @@ impl Default for Inner {
             trap_writes: BTreeMap::new(),
             notes: forgery::seeded(),
             seen: Vec::new(),
+            carrier: answers::CarrierAnswer::default(),
         }
     }
 }

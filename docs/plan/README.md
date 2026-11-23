@@ -4,7 +4,8 @@ This folder holds four kinds of document. The [roadmap](roadmap.md) is the order
 
 | Kind | Document | What it holds |
 | --- | --- | --- |
-| The order of the build | [roadmap.md](roadmap.md) | Every work package to version 1.0: what it builds, what it needs, what proves it, and its state |
+| The order of the build | [build-plan.md](build-plan.md) | What is left, in eight stages, at three levels: what a person can do at each stage, the packages in order, and the tasks inside each. The file to work from |
+| | [roadmap.md](roadmap.md) | Every work package to version 1.0: what it builds, what it needs, what proves it, and its state |
 | Plans outside the build | [adoption.md](adoption.md) | How the product is to be found, tried, and trusted; its packages enter the roadmap when taken up |
 | | [network-awareness.md](network-awareness.md) | The design proposal for owner decision 0222, at its first round; not in force |
 | How work is done | [working-method.md](working-method.md) | The loop every slice follows, and the kinds of change to the design |

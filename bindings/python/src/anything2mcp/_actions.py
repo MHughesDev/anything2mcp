@@ -1112,14 +1112,27 @@ class Actions:
         self,
         *,
         target: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The last scout's report on a target: found, drafted, proven, open, and
-        what to look at first.
+        what to look at first. Each list is counted and shows its first entries;
+        `part` reads one whole, in pages.
 
         The engine action is ``scout.report``.
         """
-        return self._action("scout.report", {"target": target}, idempotency_key)
+        return self._action(
+            "scout.report",
+            {
+                "target": target,
+                "limit": limit,
+                "offset": offset,
+                "part": part,
+            },
+            idempotency_key,
+        )
 
     def scout_run(
         self,

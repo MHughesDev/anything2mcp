@@ -693,8 +693,11 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("files", MAP, "Files of the project's `sources` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `sources/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
             .long_running()
             .done(),
-        act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first.", BUILDER, Build, "Stage E", Inspect)
+        act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first. Each list is counted and shows its first entries; `part` reads one whole, in pages.", BUILDER, Build, "Stage E", Inspect)
             .pos("target", TEXT, TARGET)
+            .opt("part", FieldType::Word(crate::handlers::scout_report::PARTS), "One list of the report to read whole, by its path in the report's content, such as `drafted.written`. The report with each list cut to its first entries when left out.")
+            .opt("limit", COUNT, LIMIT)
+            .opt("offset", OFFSET, OFFSET_HELP)
             .done(),
         // Publishing and versions.
         act("version.publish", "Publish a target's drafts as an immutable version, compiled to a plan. A person's act, never an agent's.", PUBLISHER, No, "5", Change)

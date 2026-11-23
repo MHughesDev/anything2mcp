@@ -833,7 +833,13 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
     let missing = world
         .call(&agent, "draft.lint", json!({"target": "nowhere"}))
         .await;
-    assert_eq!(missing.result.unwrap()["ok"], false);
+    // A problem at the level of an error is the failure `draft.try` gives,
+    // with every problem still in the result.
+    assert!(!missing.ok);
+    assert_eq!(missing.error.as_ref().unwrap().code, "lint_failed");
+    let missing = missing.result.unwrap();
+    assert_eq!(missing["ok"], false);
+    assert_eq!(missing["problems"][0]["level"], "error");
     let outside = world
         .kernel
         .dispatch(Request::new(

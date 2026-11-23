@@ -93,6 +93,11 @@ fn document() -> Value {
                 "parameters": [item],
                 "responses": {"200": answer("Stock", "Stock"), "503": answer("Every third call fails", "Refusal")}
             }},
+            "/api/orders/{order_id}/shipment": {"get": {
+                "operationId": "get_shipment",
+                "parameters": [order],
+                "responses": {"200": answer("The shipment; its carrier is optional", "Shipment"), "404": not_found}
+            }},
             "/api/orders/{order_id}/delivery": {
                 "get": {
                     "operationId": "get_delivery",
@@ -137,6 +142,10 @@ fn document() -> Value {
                     "length_in": {"type": "string"}, "version": {"type": "integer", "description": "Required on an update; left out on a create"}}},
                 "Totals": {"type": "object", "required": ["order_id", "lines", "total_quantity", "total_length_in"], "properties": {
                     "order_id": {"type": "string"}, "lines": {"type": "integer"}, "total_quantity": {"type": "integer"}, "total_length_in": {"type": "string"}}},
+                "Shipment": {"type": "object", "required": ["order_id"], "properties": {
+                    "order_id": {"type": "string"},
+                    "carrier": {"type": "object", "required": ["name", "tracking"], "properties": {
+                        "name": {"type": "string"}, "tracking": {"type": "string"}}}}},
                 "Stock": {"type": "object", "required": ["item_code", "in_stock"], "properties": {
                     "item_code": {"type": "string"}, "in_stock": {"type": "integer"}}},
                 "Delivery": {"type": "object", "required": ["order_id", "shipping", "gift_wrap", "priority", "deliver_on", "notes", "version"], "properties": {

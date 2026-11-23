@@ -4267,11 +4267,25 @@ fn key_names(key: &str) -> Option<(KeyNames, bool)> {
         "pin",
         "bearer",
     ];
+    // Words of a key split at `_`, `-`, `.`, and a change from lower case
+    // to upper case, so `pinCode` and `X-Auth-Token` have the words `pin`
+    // and `token`; `spinner_count` and `tokenizer_mode` have neither.
+    let mut spaced = String::with_capacity(key.len() + 4);
+    let mut before: Option<char> = None;
+    for c in key.chars() {
+        if c.is_ascii_uppercase() && before.is_some_and(|b| b.is_ascii_lowercase()) {
+            spaced.push('_');
+        }
+        spaced.push(c);
+        before = Some(c);
+    }
+    let words = spaced.to_ascii_lowercase().replace('-', "_");
     let key = key.to_ascii_lowercase().replace('-', "_");
     if SECRET.iter().any(|word| key.contains(word)) {
         return Some((KeyNames::Secret, SECRET.contains(&key.as_str())));
     }
-    key.split(['_', '.'])
+    words
+        .split(['_', '.'])
         .any(|part| PERHAPS.contains(&part))
         .then(|| (KeyNames::PerhapsSecret, PERHAPS.contains(&key.as_str())))
 }
@@ -4342,6 +4356,19 @@ pub(crate) fn recorded_credential(text: &str) -> Option<(u32, &'static str)> {
     None
 }
 
+/// Whether `text` is a path into an answer, as an output map writes one:
+/// names joined by dots, where a part may also be `*` for every item, such
+/// as `*.pin_order` or `body.items.*.id`. It names a place a value is taken
+/// from, and holds no value, so it is a name for the credential lint. At
+/// least one part is a name, and a bare `*` is not a path.
+fn is_extract_path(text: &str) -> bool {
+    text.contains('*')
+        && text.split('.').any(|part| part != "*")
+        && text
+            .split('.')
+            .all(|part| part == "*" || crate::schema::is_dotted_name(part))
+}
+
 /// Finds the values the credential lint knows: a value under a key whose
 /// name says it is a secret, or may be one, that is not a vault reference;
 /// and text in the shape of a token, under any key. Each is reported by the
@@ -4351,7 +4378,7 @@ fn credentials(key: Option<&str>, doc: &Located<Doc>, found: &mut Vec<Suspect>) 
     match &doc.value {
         Doc::Text(text) => {
             let vaulted = text.starts_with("vault://");
-            let reads_as_name = crate::schema::is_dotted_name(text);
+            let reads_as_name = crate::schema::is_dotted_name(text) || is_extract_path(text);
             let long_enough = text.chars().count() >= 4;
             let (what, certain) = match (named, credential_shape(text)) {
                 _ if vaulted => (None, false),
