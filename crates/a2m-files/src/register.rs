@@ -432,6 +432,11 @@ pub struct ProgramField {
     pub digest_key: Option<String>,
 }
 
+/// The rank of a mode whose provider gave none: the manifest's own default
+/// (`a2m-provider`), so that a mode the compiler is not told of sorts as
+/// it would there.
+pub const DEFAULT_MODE_RANK: u32 = 100;
+
 /// One registered thing, and the pack that registered it.
 #[derive(Clone)]
 pub(crate) struct Registered<T> {
@@ -448,6 +453,9 @@ pub struct CompilerSet {
     pub(crate) folders: BTreeMap<String, FileKindName>,
     pub(crate) lowerings: BTreeMap<(Mode, Verb), Registered<Arc<dyn Lowering>>>,
     pub(crate) default_verbs: BTreeMap<Mode, Verb>,
+    /// Each mode's rank in its provider's manifest, where the provider gave
+    /// one (see [`CompilerSet::mode_rank`]).
+    pub(crate) mode_ranks: BTreeMap<Mode, Registered<u32>>,
     pub(crate) lint_rules: BTreeMap<LintCode, Registered<Arc<dyn LintRule>>>,
     pub(crate) drafting_rules:
         BTreeMap<(FindingKind, FileKindName), Registered<Arc<dyn DraftingRule>>>,
@@ -564,6 +572,18 @@ impl CompilerSet {
                 })
             })
             .collect()
+    }
+
+    /// A mode's rank: its default place in the order of an operation's
+    /// bindings, lower first ([section 201](../../docs/spec/2-kernel/201-archetypes-and-modes.md)).
+    /// It is the rank its provider's manifest states, as given to
+    /// [`CompilerSetBuilder::mode_rank`], and [`DEFAULT_MODE_RANK`], the
+    /// manifest's own default, for a mode that was given none.
+    #[must_use]
+    pub fn mode_rank(&self, mode: &Mode) -> u32 {
+        self.mode_ranks
+            .get(mode)
+            .map_or(DEFAULT_MODE_RANK, |given| given.item)
     }
 
     /// The modes that have a lowering, in order of name.
@@ -827,6 +847,32 @@ impl CompilerSetBuilder {
             );
         }
         self.set.folders.insert(folder, name);
+        Ok(self)
+    }
+
+    /// Registers a mode's rank, as its provider's manifest states it. The
+    /// compiler orders an operation's bindings by it where the operation
+    /// does not state `binding_order: listed`.
+    ///
+    /// # Errors
+    ///
+    /// `registration_conflict` when the mode already has a rank, from this
+    /// pack or another.
+    pub fn mode_rank(&mut self, pack: &str, mode: Mode, rank: u32) -> Result<&mut Self, Failure> {
+        check_pack(pack)?;
+        if let Some(first) = self.set.mode_ranks.get(&mode) {
+            return Err(conflict(format!(
+                "The mode `{mode}` has a rank from `{}` and again from `{pack}`.",
+                first.pack
+            )));
+        }
+        self.set.mode_ranks.insert(
+            mode,
+            Registered {
+                pack: pack.to_owned(),
+                item: rank,
+            },
+        );
         Ok(self)
     }
 

@@ -416,6 +416,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.description_unbounded",
+            Case::Edit(
+                ORDER_GET,
+                "description: >\n  Reads the status, the total, and the note of one order.\n  Prefer example_order_sheet_enter to enter a whole sheet.\n",
+                "description: \"Reads the status of one order.\\u0007\"\n",
+            ),
+        ),
+        (
             "kernel.output_not_marked",
             Case::Edit(ORDER_GET, "note: {type: note}", "note: {type: text}"),
         ),
@@ -2664,4 +2672,306 @@ impl Lowering for Unmarked {
     fn lower(&self, _: &ResolvedBinding<'_>, _: &LowerContext<'_>) -> Result<Lowered, Diagnostics> {
         unreachable!("the tests never register it")
     }
+}
+
+/// The example's operation file with its description set to `text` (a YAML
+/// double-quoted string's content), and the line `description_by: by`
+/// after it when given.
+fn described(text: &str, by: Option<&str>) -> Vec<(RelPath, Vec<u8>)> {
+    let mut files = example_files();
+    let file = files
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == ORDER_GET)
+        .unwrap();
+    let old = String::from_utf8(file.1.clone()).unwrap();
+    let at = old.find("description: >").unwrap();
+    let mut new = old[..at].to_owned();
+    new.push_str(&format!("description: \"{text}\"\n"));
+    if let Some(by) = by {
+        new.push_str(&format!("description_by: {by}\n"));
+    }
+    file.1 = new.into_bytes();
+    files
+}
+
+#[test]
+fn a_description_of_1024_characters_compiles_and_one_of_1025_or_with_a_control_character_is_refused()
+ {
+    let set = stand_set().unwrap();
+    let under = |text: &str| problems_with(&described(text, None), &set, CompileMode::Publish);
+    let fits = under(&"a".repeat(1024));
+    assert!(
+        fits.find("kernel.description_unbounded").is_none(),
+        "{fits}"
+    );
+    // The count is of characters, not bytes: 1,024 of a two-byte letter fit.
+    let wide = under(&"é".repeat(1024));
+    assert!(
+        wide.find("kernel.description_unbounded").is_none(),
+        "{wide}"
+    );
+    let long = under(&"a".repeat(1025));
+    let found = long.find("kernel.description_unbounded").unwrap();
+    assert_eq!(found.level, Level::Error);
+    assert!(!found.fix.is_empty());
+    for control in ["\\u0007", "\\n", "\\u001b", "\\t", "\\u0085"] {
+        let problems = under(&format!("Reads one order.{control} Then stops."));
+        assert!(
+            problems.find("kernel.description_unbounded").is_some(),
+            "{control}\n{problems}"
+        );
+    }
+    // A pipeline's description is held to the same bound.
+    let mut files = example_files();
+    let file = files
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == SHEET)
+        .unwrap();
+    let old = String::from_utf8(file.1.clone()).unwrap();
+    let start = old.find("description: >").unwrap();
+    let end = old.find("effect: write").unwrap();
+    file.1 = format!(
+        "{}description: \"{}\"\n{}",
+        &old[..start],
+        "a".repeat(1025),
+        &old[end..]
+    )
+    .into_bytes();
+    let problems = problems_with(&files, &set, CompileMode::Publish);
+    assert!(
+        problems.find("kernel.description_unbounded").is_some(),
+        "{problems}"
+    );
+}
+
+#[test]
+fn the_compiler_puts_who_wrote_a_description_in_the_plan_and_a_plan_without_it_keeps_its_bytes() {
+    use a2m_core::DescriptionBy;
+    let set = stand_set().unwrap();
+    let compile_files = |files: Vec<(RelPath, Vec<u8>)>| {
+        let sources = load_files(&TargetRoot::new("example"), &files, &set)
+            .unwrap_or_else(|problems| panic!("{problems}"));
+        compile(&sources, &set, CompileMode::Publish, VERSION)
+            .unwrap_or_else(|problems| panic!("{problems}"))
+    };
+    let by_of = |compiled: &Compiled, name: &str| {
+        compiled
+            .plan
+            .tools
+            .iter()
+            .find(|tool| tool.name.as_str() == name)
+            .unwrap()
+            .description_by
+    };
+    let said = "Reads the status of one order, and nothing else.";
+    for (by, expected) in [
+        (None, DescriptionBy::Builder),
+        (Some("builder"), DescriptionBy::Builder),
+        (Some("rule"), DescriptionBy::Rule),
+    ] {
+        let compiled = compile_files(described(said, by));
+        assert_eq!(by_of(&compiled, "example_order_get"), expected, "{by:?}");
+        // Another tool is not touched by it.
+        assert_eq!(
+            by_of(&compiled, "example_order_sheet_enter"),
+            DescriptionBy::Builder
+        );
+    }
+    // A file that states nothing gives the bytes it gave before the field
+    // existed: the field is not in the plan at all.
+    let plain = compiled();
+    assert!(!String::from_utf8_lossy(&plain.encoded.bytes).contains("description_by"));
+    let ruled = compile_files(described(said, Some("rule")));
+    assert!(String::from_utf8_lossy(&ruled.encoded.bytes).contains("\"description_by\":\"rule\""));
+    assert_ne!(ruled.encoded.hash, plain.encoded.hash);
+    // Any other word is refused.
+    let wrong = problems_with(
+        &described(said, Some("machine")),
+        &set,
+        CompileMode::Publish,
+    );
+    assert!(wrong.find("kernel.unknown_value").is_some(), "{wrong}");
+}
+
+/// The stand pack, and beside it the same lowering as a second mode,
+/// `stand_fast`, with the ranks the manifest of a pack would state: the
+/// second is tried first.
+fn ranked_set() -> CompilerSet {
+    let mut builder = CompilerSet::builder();
+    crate::testing::register_stand(&mut builder).unwrap();
+    builder
+        .lowering(
+            "stand",
+            crate::testing::lowering_as(Mode::new("stand_fast").unwrap()),
+        )
+        .unwrap();
+    builder
+        .mode_rank("stand", Mode::new("stand").unwrap(), 60)
+        .unwrap();
+    builder
+        .mode_rank("stand", Mode::new("stand_fast").unwrap(), 20)
+        .unwrap();
+    builder.build()
+}
+
+/// The example with `order_get` bound twice, the slower mode first in its
+/// file, and `extra` after the bindings (an operation key, or nothing).
+fn bound_twice(extra: &str) -> Vec<(RelPath, Vec<u8>)> {
+    let mut files = example_files();
+    let file = files
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == ORDER_GET)
+        .unwrap();
+    let text = String::from_utf8(file.1.clone()).unwrap();
+    let from = "    status: verified\n    call: order_get\n";
+    assert!(text.contains(from));
+    file.1 = text
+        .replacen(
+            from,
+            &format!(
+                "{from}  - mode: stand_fast\n    status: verified\n    call: order_get\n{extra}"
+            ),
+            1,
+        )
+        .into_bytes();
+    files
+}
+
+fn compile_with(set: &CompilerSet, files: &[(RelPath, Vec<u8>)]) -> Compiled {
+    let sources = load_files(&TargetRoot::new("example"), files, set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    compile(&sources, set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"))
+}
+
+fn modes_of(compiled: &Compiled) -> Vec<String> {
+    compiled
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap()
+        .bindings
+        .iter()
+        .map(|binding| binding.mode.to_string())
+        .collect()
+}
+
+#[test]
+fn bindings_are_ordered_by_the_ranks_of_their_modes_unless_the_operation_says_listed() {
+    let ranked = ranked_set();
+    // Where the operation states none, the mode of the lower rank is first,
+    // however the file lists them, and the review lists them so too.
+    let compiled = compile_with(&ranked, &bound_twice(""));
+    assert_eq!(modes_of(&compiled), ["stand_fast", "stand"]);
+    let item = compiled
+        .review
+        .items
+        .iter()
+        .find(|item| item.tool.as_str() == "example_order_get")
+        .unwrap();
+    assert_eq!(item.bindings.len(), 2);
+    // `binding_order: listed` keeps the file's order.
+    let mut files = bound_twice("");
+    let file = files
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == ORDER_GET)
+        .unwrap();
+    let text = String::from_utf8(file.1.clone()).unwrap();
+    file.1 = text
+        .replacen("bindings:\n", "binding_order: listed\nbindings:\n", 1)
+        .into_bytes();
+    assert_eq!(
+        modes_of(&compile_with(&ranked, &files)),
+        ["stand", "stand_fast"]
+    );
+    // With no rank given to either mode the order is the file's, and it
+    // is the same plan as before ranks existed.
+    let unranked = {
+        let mut builder = CompilerSet::builder();
+        crate::testing::register_stand(&mut builder).unwrap();
+        builder
+            .lowering(
+                "stand",
+                crate::testing::lowering_as(Mode::new("stand_fast").unwrap()),
+            )
+            .unwrap();
+        builder.build()
+    };
+    let kept = compile_with(&unranked, &bound_twice(""));
+    assert_eq!(modes_of(&kept), ["stand", "stand_fast"]);
+    assert_eq!(unranked.mode_rank(&Mode::new("stand").unwrap()), 100);
+    // The same bindings in the other order in the file give one plan.
+    let mut flipped = bound_twice("");
+    let file = flipped
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == ORDER_GET)
+        .unwrap();
+    let text = String::from_utf8(file.1.clone()).unwrap();
+    file.1 = text
+        .replacen(
+            "  - mode: stand\n    status: verified\n    call: order_get\n  - mode: stand_fast\n    status: verified\n    call: order_get\n",
+            "  - mode: stand_fast\n    status: verified\n    call: order_get\n  - mode: stand\n    status: verified\n    call: order_get\n",
+            1,
+        )
+        .into_bytes();
+    let by_rank = compile_with(&ranked, &flipped);
+    assert_eq!(modes_of(&by_rank), ["stand_fast", "stand"]);
+    // Whatever order the file lists them in, the plan's operation is one.
+    let first = compile_with(&ranked, &bound_twice(""));
+    assert_eq!(first.plan.operations, by_rank.plan.operations);
+}
+
+#[test]
+fn a_test_counts_binding_positions_in_the_file_and_keeps_the_place_in_the_plan() {
+    let ranked = ranked_set();
+    let named = |mode: &str, position: u32| {
+        let mut files = bound_twice("");
+        let file = files
+            .iter_mut()
+            .find(|(known, _)| known.as_str() == "tests/order_get.yaml")
+            .unwrap();
+        let text = String::from_utf8(file.1.clone()).unwrap();
+        file.1 = text
+            .replacen(
+                "kind: offline",
+                &format!("kind: offline\nbinding: {{mode: {mode}, position: {position}}}"),
+                1,
+            )
+            .into_bytes();
+        files
+    };
+    // In the file `stand` is first and `stand_fast` second; in the plan
+    // the other way about, and a test keeps the plan's place.
+    let by_file = compile_with(&ranked, &named("stand", 1));
+    assert_eq!(
+        by_file.test_bindings.iter().flatten().collect::<Vec<_>>(),
+        [&1]
+    );
+    let fast = compile_with(&ranked, &named("stand_fast", 2));
+    assert_eq!(
+        fast.test_bindings.iter().flatten().collect::<Vec<_>>(),
+        [&0]
+    );
+    // The plan's place is not the file's: a position that is only true of
+    // the plan is refused.
+    let sources = load_files(
+        &TargetRoot::new("example"),
+        &named("stand_fast", 1),
+        &ranked,
+    )
+    .unwrap_or_else(|problems| panic!("{problems}"));
+    let refused = compile(&sources, &ranked, CompileMode::Publish, VERSION)
+        .err()
+        .unwrap();
+    assert!(refused.find("kernel.test_binding_unknown").is_some());
+}
+
+#[test]
+fn a_mode_has_one_rank() {
+    let mut builder = CompilerSet::builder();
+    let mode = Mode::new("stand").unwrap();
+    builder.mode_rank("stand", mode.clone(), 60).unwrap();
+    let again = builder.mode_rank("other", mode, 20).err().unwrap();
+    assert_eq!(again.code().as_str(), "registration_conflict");
 }

@@ -312,7 +312,7 @@ The views are read-only.
 | `OperationView` | Through a binding or a `ResolvedView` | `name()`, `effect()`, `hazard()`, `strategy()`, `key()`, `inputs()`, `input(name)`, `outputs()`, `doc()` |
 | `LowerContext` | `Lowering::lower` | `target()`, `operation()`, `expr(doc, expected)`, `expr_at(text, place, expected)`, `expr_type(index)`, `section(kind, surface_kind)` for the pack's own compiled sections, `entries(kind, surface_kind)` and `section_index(kind, surface_kind)` for a kind it owns or declared in `reads` |
 | `ResolvedView` | `LintRule::check` | `target()`, `mode()`, `sources()`, `operations()`, `entries(kind, surface_kind)` |
-| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)`, `open_question_quoting(sentence, words)`: the product's sentence and the system's words kept apart (`Quoting`, `OpenQuestion::quoting`), the words redacted by the drafter's redactor (`Drafter::with_redact`), cleaned, at most 4 parts of 64 characters; `OpenQuestion::stored` and `StoredQuestion::read` keep them apart in the unknowns ledger's one text, and an older text reads whole (decision 0193) |
+| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)`, `open_question_quoting(sentence, words)`: the product's sentence and the system's words kept apart (`Quoting`, `OpenQuestion::quoting`), the words redacted by the drafter's redactor (`Drafter::with_redact`), cleaned, at most 4 parts of 64 characters; `OpenQuestion::stored` and `StoredQuestion::read` keep them apart in the unknowns ledger's one text, and an older text reads whole (decision 0193); `not_drafted(reason)` says why the rule drafted nothing for this finding, in the pack's own words, and `left_out_as_secret(count)` how many properties it left out for a secret's name, which `DraftReport` lists and adds up ([decision 0399](../../decisions/0399-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md)) |
 
 A lowering sees its own binding, the operation's inputs and key, the field types, and its own pack's compiled sections. Of another pack's kinds it sees only those it declared in `reads`, as validated entries, never as that pack's compiled section or code. It makes expressions only through the context, which type-checks them and returns the plan's `ExprIndex`.
 
@@ -328,8 +328,11 @@ pub struct DraftDoc { pub path: RelPath, pub body: DraftValue }
 pub enum DraftValue { Null, Bool(bool), Int(i64), Text(String), List(Vec<DraftValue>), Map(Vec<(String, DraftValue)>), OpenQuestion(String) }
 pub struct DraftReport {
     pub written: Vec<RelPath>, pub conflicts: Vec<RelPath>, pub refused: Vec<(RelPath, String)>,
-    pub kept_failing: Vec<(RelPath, Diagnostics)>, pub open_questions: Vec<OpenQuestion>, pub not_covered: Vec<Digest>,
+    pub kept_failing: Vec<(RelPath, Diagnostics)>, pub open_questions: Vec<OpenQuestion>,
+    pub not_drafted: Vec<NotDrafted>, pub left_out_as_secret: usize, pub not_covered: Vec<Digest>,
 }
+/// A finding a rule covers and drafted nothing from, with the pack and the reason the rule gave (empty where it gave none).
+pub struct NotDrafted { pub finding: Digest, pub pack: String, pub reason: String }
 pub struct OpenQuestion { pub file: RelPath, pub question: String, pub findings: Vec<Digest> }
 ```
 
@@ -430,7 +433,7 @@ Not built, in any step:
 
 - `lint_one` compiles the whole target again; nothing is reused by file digest.
 - An operation's outputs by reference to a pack's schema, and nested records.
-- Binding order from each mode's rank in its provider's manifest; bindings are a list and keep their order.
+- The provider registry's call of `CompilerSetBuilder::mode_rank` for each mode of each manifest. The compiler orders an operation's bindings by rank unless it states `binding_order: listed` ([decision 0399](../../decisions/0399-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md)), but until the registry gives ranks every mode has the default and the file's order stands.
 - The `stands` rule for surfaces that may sit under an application. The plan carries where a surface stands; refusing a write on a surface that does not say is the rule of the pack whose kind needs it, and no such pack is built.
 - Lint rules that are errors only on a server.
 - The count of an operation's examples below one: an operation may have none.

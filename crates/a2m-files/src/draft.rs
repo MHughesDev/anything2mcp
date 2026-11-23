@@ -27,7 +27,8 @@ use std::io::{self, Write as _};
 use std::path::Path;
 
 use a2m_core::{
-    Digest, EvidenceLevel, Failure, FailureClass, FileKindName, Finding, Redact, TargetName,
+    DescriptionBy, Digest, EvidenceLevel, Failure, FailureClass, FileKindName, Finding, Redact,
+    TargetName,
 };
 
 use crate::compile::{DRAFT_VERSION, compile};
@@ -286,6 +287,16 @@ pub struct DraftContext<'a> {
     target: Option<&'a TargetName>,
     existing: Option<&'a Sources>,
     redact: Option<&'a dyn Redact>,
+    /// What the rule being run has said of its finding, taken by the
+    /// drafter when the rule returns.
+    notes: std::sync::Mutex<RuleNotes>,
+}
+
+/// What a rule says of the finding it drafts from, beside the documents.
+#[derive(Debug, Default)]
+struct RuleNotes {
+    not_drafted: Option<String>,
+    left_out_as_secret: usize,
 }
 
 impl<'a> DraftContext<'a> {
@@ -299,6 +310,33 @@ impl<'a> DraftContext<'a> {
     #[must_use]
     pub fn existing(&self) -> Option<&'a Sources> {
         self.existing
+    }
+
+    /// Says that the rule drafts nothing for this finding, and why: the
+    /// report lists it with the reason (roadmap package FT11). The reason is
+    /// the pack's own sentence and quotes none of the system's words. A rule
+    /// that returns no document without saying why is reported with none.
+    pub fn not_drafted(&self, reason: &str) {
+        if let Ok(mut notes) = self.notes.lock() {
+            notes.not_drafted = Some(reason.to_owned());
+        }
+    }
+
+    /// Says how many properties, columns, or fields of this finding the
+    /// rule left out of its draft because their names are a secret's
+    /// (decision 0302). The report adds them up.
+    pub fn left_out_as_secret(&self, count: usize) {
+        if let Ok(mut notes) = self.notes.lock() {
+            notes.left_out_as_secret = notes.left_out_as_secret.saturating_add(count);
+        }
+    }
+
+    /// What the rule said, taken, so that the next rule starts clean.
+    fn take_notes(&self) -> RuleNotes {
+        self.notes
+            .lock()
+            .map(|mut notes| std::mem::take(&mut *notes))
+            .unwrap_or_default()
     }
 
     /// The value to write where the finding does not state one: a unit, a
@@ -357,8 +395,29 @@ pub struct DraftReport {
     pub kept_failing: Vec<(RelPath, Diagnostics)>,
     /// What the system did not state, for the unknowns ledger.
     pub open_questions: Vec<OpenQuestion>,
+    /// The findings a rule covers and drafted nothing from, each with the
+    /// reason the rule gave, in the order of the findings (roadmap package
+    /// FT11). A rule that drafted nothing and gave no reason is here with an
+    /// empty one. Distinct from `not_covered`, which no rule reads, and from
+    /// `refused`, which a rule drafted and the drafter would not write.
+    pub not_drafted: Vec<NotDrafted>,
+    /// How many properties, columns, or fields the rules left out of drafts
+    /// because their names are a secret's (decision 0302), over every
+    /// finding: the number the scout's report shows.
+    pub left_out_as_secret: usize,
     /// The findings no registered rule covers.
     pub not_covered: Vec<Digest>,
+}
+
+/// A finding a rule covers and drafted nothing from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotDrafted {
+    /// The finding.
+    pub finding: Digest,
+    /// The rule's pack.
+    pub pack: String,
+    /// Why, in the pack's own words; empty when the rule gave none.
+    pub reason: String,
 }
 
 /// Writes draft files from findings, by the rules packs registered.
@@ -414,6 +473,7 @@ impl<'a> Drafter<'a> {
             target: target.as_ref(),
             existing: existing.as_ref(),
             redact: self.redact,
+            notes: std::sync::Mutex::default(),
         };
         let surfaces = self.surfaces(existing.as_ref());
         let mut report = DraftReport::default();
@@ -444,7 +504,19 @@ impl<'a> Drafter<'a> {
                         "Correct the provider's drafting rule.",
                     ));
                 }
-                for doc in rule.item.draft(finding, &cx)? {
+                let docs = rule.item.draft(finding, &cx)?;
+                let notes = cx.take_notes();
+                report.left_out_as_secret = report
+                    .left_out_as_secret
+                    .saturating_add(notes.left_out_as_secret);
+                if docs.is_empty() {
+                    report.not_drafted.push(NotDrafted {
+                        finding: finding.id(),
+                        pack: rule.pack.clone(),
+                        reason: notes.not_drafted.unwrap_or_default(),
+                    });
+                }
+                for doc in docs {
                     let folder = KERNEL_FOLDER_KINDS
                         .iter()
                         .find(|(_, kind)| *kind == file_kind.as_str())
@@ -1132,6 +1204,8 @@ fn render(docs: &[DraftValue], from: &[Digest]) -> String {
         if position > 0 {
             body.push_str("---\n");
         }
+        let marked = rule_described(doc);
+        let doc = marked.as_ref().unwrap_or(doc);
         match doc {
             DraftValue::Map(pairs) if !pairs.is_empty() => write_map(pairs, 0, &mut body),
             DraftValue::List(items) if !items.is_empty() => write_list(items, 0, &mut body),
@@ -1142,6 +1216,36 @@ fn render(docs: &[DraftValue], from: &[Digest]) -> String {
         }
     }
     format!("{MARKER}{}\n{body}", Digest::of(body.as_bytes()))
+}
+
+/// The name of the field that says who wrote a tool's description (file
+/// formats, `operations/*.yaml`).
+const DESCRIPTION_BY: &str = "description_by";
+
+/// An operation's or a pipeline's document with the field that says a rule
+/// wrote its description, put right after the description. `None` for any
+/// other document, and for one that already has the field. A person or an
+/// agent who rewrites the description removes the line.
+fn rule_described(doc: &DraftValue) -> Option<DraftValue> {
+    let DraftValue::Map(pairs) = doc else {
+        return None;
+    };
+    let names_a_tool = pairs
+        .first()
+        .is_some_and(|(key, _)| key == "operation" || key == "pipeline");
+    let at = pairs.iter().position(|(key, _)| key == "description")?;
+    if !names_a_tool || pairs.iter().any(|(key, _)| key == DESCRIPTION_BY) {
+        return None;
+    }
+    let mut marked = pairs.clone();
+    marked.insert(
+        at + 1,
+        (
+            DESCRIPTION_BY.to_owned(),
+            DraftValue::Text(DescriptionBy::Rule.as_str().to_owned()),
+        ),
+    );
+    Some(DraftValue::Map(marked))
 }
 
 fn pad(indent: usize, out: &mut String) {
@@ -1320,5 +1424,54 @@ mod tests {
         assert!(!is_untouched_draft(&text.replace("count: 3", "count: 4")));
         assert!(!is_untouched_draft("operation: example_order_get\n"));
         assert!(!is_untouched_draft(""));
+    }
+
+    #[test]
+    fn a_draft_of_an_operation_or_a_pipeline_says_a_rule_wrote_its_description() {
+        let file = RelPath::new("operations/order_get.yaml").unwrap();
+        let tool = |first: &str| {
+            DraftValue::map(vec![
+                (first, DraftValue::text("example_order_get")),
+                ("effect", DraftValue::text("read")),
+                ("description", DraftValue::text("Reads one order.")),
+                ("bindings", DraftValue::List(vec![])),
+            ])
+        };
+        for first in ["operation", "pipeline"] {
+            let text = render(&[tool(first)], &[]);
+            let json = parse(&file, &text).unwrap()[0].to_json();
+            assert_eq!(json["description_by"], "rule", "{first}");
+            // It follows the description.
+            let at = text.find("description:").unwrap();
+            assert!(
+                text[at..]
+                    .lines()
+                    .nth(1)
+                    .unwrap()
+                    .starts_with("description_by: \"rule\""),
+                "{text}"
+            );
+        }
+        // A document that is not a tool's, or has no description, or has
+        // the field already, is left as it is.
+        let other = |pairs: Vec<(&str, DraftValue)>| render(&[DraftValue::map(pairs)], &[]);
+        assert!(
+            !other(vec![
+                ("endpoint", DraftValue::text("order_get")),
+                ("description", DraftValue::text("Reads one order.")),
+            ])
+            .contains("description_by")
+        );
+        assert!(
+            !other(vec![("operation", DraftValue::text("example_order_get"))])
+                .contains("description_by")
+        );
+        let stated = other(vec![
+            ("operation", DraftValue::text("example_order_get")),
+            ("description", DraftValue::text("Reads one order.")),
+            ("description_by", DraftValue::text("builder")),
+        ]);
+        assert_eq!(stated.matches("description_by").count(), 1);
+        assert!(stated.contains("description_by: \"builder\""));
     }
 }

@@ -241,7 +241,9 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `title` | Name shown to people; the operation's name unless given |
 | `hazard` | What the operation could damage beyond its record ([spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md)); `none` unless given. Any other hazard requires the effect `irreversible` |
 | `bindings` (required) | One or more bindings (below) |
-| `description` (required) | What it does, when to prefer something else, side effects, limits |
+| `description` (required) | What it does, when to prefer something else, side effects, limits. Plain text of at most 1,024 characters, with no control character (a tab or a line end is allowed); the compiler refuses more as `kernel.description_unbounded` ([decision 0307](../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md), point 6) |
+| `binding_order` | `listed` keeps the bindings in the order of the file. Without it the compiler orders them by each mode's `rank` in its provider's manifest, lower first, and by place in the file among equal ranks ([decision 0399](../decisions/0399-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md)). A test's `binding` `position` counts places in this file whatever order the compiler gives the plan |
+| `description_by` | Who wrote the description: `rule` or `builder`; a builder's unless given. A drafter writes the first, right after the description; a person or an agent who rewrites a drafted description removes the line or writes the second. The compiler puts it in the plan, and the MCP door sends it with the tool |
 | `examples` | One to three example inputs, each a map from an input's name to a value of its type |
 | `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use. A destination is one exact address: a host name or an address, with a port or a scheme where needed, and no wildcard, range, path, or user information. For a web tool it is an origin its pages may load from or send to, and needs its scheme, such as `https://assets.example.com`; one without a scheme gives the tool's tab nothing ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)). An upload or a download is one name |
 | `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
@@ -267,6 +269,7 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | --- | --- |
 | `pipeline` (required) | The tool name, for its outcome |
 | `description` (required) | As for operations |
+| `description_by` | As for operations |
 | `title` | Name shown to people |
 | `effect` | Derived by the compiler; may be declared higher |
 | `inputs` | As for operations |

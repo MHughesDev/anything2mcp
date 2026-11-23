@@ -1358,6 +1358,7 @@ fn tool(name: &OperationName, runs: ToolRuns) -> ToolPlan {
         module: None,
         title: name.to_string(),
         description: String::new(),
+        description_by: a2m_core::DescriptionBy::Builder,
         input_schema: CanonicalJson::none(),
         output_schema: CanonicalJson::none(),
         annotations: ToolAnnotations {

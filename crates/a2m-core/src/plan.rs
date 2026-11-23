@@ -126,6 +126,30 @@ vocabulary! {
 }
 
 vocabulary! {
+    /// Who wrote a tool's description (file formats, `description_by`;
+    /// decision 0307, point 6). A client is told it with the tool, so that
+    /// it can weigh a description a rule drafted differently from one a
+    /// builder wrote. A file that states nothing is a builder's.
+    #[derive(Default)]
+    pub enum DescriptionBy: "description author" {
+        /// A drafter's rule, from what the system stated.
+        Rule => "rule",
+        /// A builder, a person or an agent.
+        #[default]
+        Builder => "builder",
+    }
+}
+
+impl DescriptionBy {
+    /// Whether this is the default, a builder's. A plan leaves the field
+    /// out then, so that a plan made before the field keeps its bytes.
+    #[must_use]
+    pub const fn is_builder(&self) -> bool {
+        matches!(self, Self::Builder)
+    }
+}
+
+vocabulary! {
     /// How a sign-in comes to exist (spec section 215).
     pub enum SignInMode: "sign-in mode" {
         /// What the device already has.
@@ -1028,6 +1052,9 @@ pub struct ToolPlan {
     /// What it does, when to prefer another tool, its side effects and
     /// limits.
     pub description: String,
+    /// Who wrote the description. Absent in a plan means a builder.
+    #[serde(default, skip_serializing_if = "DescriptionBy::is_builder")]
+    pub description_by: DescriptionBy,
     /// The JSON Schema of its input.
     pub input_schema: CanonicalJson,
     /// The JSON Schema of its result.
@@ -1893,6 +1920,7 @@ mod tests {
                     module: Some("order".to_owned()),
                     title: "Update an order".to_owned(),
                     description: "Sets the total of one order. Naïve text: \"quoted\", ünïcode, and a\nline end.".to_owned(),
+                    description_by: DescriptionBy::Builder,
                     input_schema: payload("object"),
                     output_schema: payload("object"),
                     annotations: ToolAnnotations {
@@ -1908,6 +1936,7 @@ mod tests {
                     module: None,
                     title: "Import orders".to_owned(),
                     description: "Updates every order in a sheet.".to_owned(),
+                    description_by: DescriptionBy::Builder,
                     input_schema: payload("object"),
                     output_schema: payload("object"),
                     annotations: ToolAnnotations::default(),
@@ -1950,6 +1979,27 @@ mod tests {
         assert_eq!(first.hash.to_string(), SAMPLE_HASH);
         assert!(first.bytes.starts_with(b"anything2mcp-plan 1\n{"));
         assert!(!first.bytes.contains(&b'\r'));
+    }
+
+    #[test]
+    fn who_wrote_a_description_is_in_the_plan_only_when_a_rule_did() {
+        let mut plan = sample();
+        let plain = plan.encode().unwrap();
+        assert!(!String::from_utf8_lossy(&plain.bytes).contains("description_by"));
+        plan.tools[1].description_by = DescriptionBy::Rule;
+        let ruled = plan.encode().unwrap();
+        assert!(String::from_utf8_lossy(&ruled.bytes).contains("\"description_by\":\"rule\""));
+        assert_ne!(ruled.hash, plain.hash);
+        let back = Plan::decode(&ruled.bytes, &ruled.hash).unwrap();
+        assert_eq!(back.tools[1].description_by, DescriptionBy::Rule);
+        assert_eq!(back.tools[0].description_by, DescriptionBy::Builder);
+        // A plan made before the field decodes as a builder's.
+        let old = Plan::decode(&plain.bytes, &plain.hash).unwrap();
+        assert!(
+            old.tools
+                .iter()
+                .all(|tool| tool.description_by.is_builder())
+        );
     }
 
     #[test]
