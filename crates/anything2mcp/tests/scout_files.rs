@@ -153,7 +153,7 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
             &files("description", DESCRIPTION_FILE),
         ])
         .await;
-    assert_eq!(read["by_kind"]["described_operation"], 8, "{read}");
+    assert_eq!(read["by_kind"]["described_operation"], 9, "{read}");
 
     // The scout, handed the file, drafts from what it describes.
     let scouted = world
@@ -169,7 +169,7 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
     assert!(scouted["report_hash"].is_string(), "{scouted}");
     assert_eq!(
         found_by_kind(&scouted),
-        json!({"described_operation": {"inferred": 8}, "endpoint": {"discovered": 2}}),
+        json!({"described_operation": {"inferred": 9}, "endpoint": {"discovered": 2}}),
         "{scouted}"
     );
     let written = drafted(&scouted);
@@ -255,7 +255,7 @@ async fn spec_import_drafts_from_a_file_as_the_scout_does() {
     );
     assert_eq!(
         found_by_kind(&imported)["described_operation"],
-        json!({"inferred": 8}),
+        json!({"inferred": 9}),
         "{imported}"
     );
     let written = drafted(&imported);
