@@ -130,6 +130,10 @@ struct Walk<'a> {
     /// Where each reference seen so far leads, so that each is looked up
     /// once.
     seen: BTreeMap<&'a str, Option<&'a Json>>,
+    /// True while an answer's shape is drafted: a property the description
+    /// does not require is then written `nullable` (decision 0297). A
+    /// request's shape and a parameter's are drafted without it.
+    optional_may_be_null: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -140,6 +144,7 @@ impl<'a> Walk<'a> {
             bytes: MOST_SHAPE_BYTES,
             open: Vec::new(),
             seen: BTreeMap::new(),
+            optional_may_be_null: false,
         }
     }
 
@@ -290,12 +295,27 @@ impl<'a> Walk<'a> {
                 if let Some(Json::Object(properties)) = schema.get("properties") {
                     let mut converted = Vec::new();
                     let mut names = BTreeSet::new();
+                    // A property the description does not list as required
+                    // may be answered as `null`, in an answer's shape.
+                    let listed: BTreeSet<&str> = match schema.get("required") {
+                        Some(Json::List(listed)) if self.optional_may_be_null => {
+                            listed.iter().filter_map(Json::as_text).collect()
+                        }
+                        _ => BTreeSet::new(),
+                    };
                     for (name, property) in properties {
                         self.step(1)?;
                         self.write(length(name))?;
-                        let Some(inner) = self.shape_of(property, depth + 1)? else {
+                        let Some(mut inner) = self.shape_of(property, depth + 1)? else {
                             return Ok(None);
                         };
+                        if self.optional_may_be_null
+                            && !listed.contains(name.as_str())
+                            && let Json::Object(parts) = &mut inner
+                            && !parts.iter().any(|(word, _)| word == "nullable")
+                        {
+                            parts.insert(1, ("nullable".to_owned(), Json::Bool(true)));
+                        }
                         names.insert(name.as_str());
                         converted.push((name.clone(), inner));
                     }
@@ -665,7 +685,10 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     };
                     if (200..300).contains(&status) {
                         if ok.is_empty() {
-                            response = walk.body_shape(body)?;
+                            walk.optional_may_be_null = true;
+                            let drafted = walk.body_shape(body);
+                            walk.optional_may_be_null = false;
+                            response = drafted?;
                         }
                         ok.push(status);
                     } else if status == 404 {
@@ -932,7 +955,18 @@ mod tests {
         // does not check is left out of the shape.
         let response = get.response.as_ref().unwrap().to_text();
         assert!(
-            response.contains(r#""items":{"type":"array","items":{"type":"object""#),
+            response
+                .contains(r#""items":{"type":"array","nullable":true,"items":{"type":"object""#),
+            "{response}"
+        );
+        // `order_id` is required and stays as written; `status` is not, and
+        // may be answered as `null` (decision 0297).
+        assert!(
+            response.contains(r#""order_id":{"type":"string"}"#),
+            "{response}"
+        );
+        assert!(
+            response.contains(r#""status":{"type":"string","nullable":true"#),
             "{response}"
         );
         assert!(response.contains(r#""nullable":true"#), "{response}");
@@ -1080,6 +1114,98 @@ mod tests {
             .unwrap();
         let read = DescribedOperation::from_found(&first).unwrap();
         assert!(read.parameters.is_empty() && !read.open);
+    }
+
+    /// The answer shape of a description whose one operation answers `S0`.
+    fn answer_of(schemas: &str) -> String {
+        let found = operations(described(schemas).as_bytes()).unwrap();
+        found[1].response.as_ref().unwrap().to_text()
+    }
+
+    #[test]
+    fn a_property_the_description_does_not_require_is_drafted_as_possibly_null() {
+        let shape = answer_of(
+            r##""S0": {"type": "object", "required": ["id", "tag"], "properties": {
+              "id": {"type": "string"},
+              "tag": {"type": "string", "nullable": true},
+              "owner": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"},
+                "nick": {"type": "string"},
+                "address": {"type": "object", "properties": {"city": {"type": "string"}}}}},
+              "labels": {"type": "array", "items": {"type": "string"}},
+              "note": {"type": "string"}}}"##,
+        );
+        // Required, not nullable: as drafted before. Required and nullable
+        // keeps it.
+        assert!(shape.contains(r#""id":{"type":"string"}"#), "{shape}");
+        assert!(
+            shape.contains(r#""tag":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        // Not required, of each kind, at depth 1.
+        assert!(
+            shape.contains(r#""owner":{"type":"object","nullable":true,"required":["name"]"#),
+            "{shape}"
+        );
+        assert!(
+            shape
+                .contains(r#""labels":{"type":"array","nullable":true,"items":{"type":"string"}}"#),
+            "{shape}"
+        );
+        assert!(
+            shape.contains(r#""note":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        // Nested: a required name stays; the others are possibly null.
+        assert!(shape.contains(r#""name":{"type":"string"}"#), "{shape}");
+        assert!(
+            shape.contains(r#""nick":{"type":"string","nullable":true}"#),
+            "{shape}"
+        );
+        assert!(
+            shape.contains(r#""address":{"type":"object","nullable":true,"properties":{"city":{"type":"string","nullable":true}}}"#),
+            "{shape}"
+        );
+    }
+
+    /// What the drafted shape then says of an answer, and of a path an output
+    /// is taken from: through a property the description does not require,
+    /// the value is not certain to be there, so the output may be absent.
+    #[test]
+    fn a_drafted_shape_takes_null_and_missing_for_an_optional_property_and_not_a_wrong_kind() {
+        use crate::json::Json;
+        use crate::shape::Shape;
+        let drafted = answer_of(
+            r##""S0": {"type": "object", "required": ["id"], "properties": {
+              "id": {"type": "string"},
+              "owner": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string"}}}}}"##,
+        );
+        let docs = a2m_files::parse_yaml(
+            &a2m_files::RelPath::new("endpoints/x.yaml").unwrap(),
+            &drafted,
+        )
+        .unwrap();
+        let shape = Shape::from_doc(&docs[0]).unwrap();
+        let path = |text: &str| -> Vec<String> { text.split('.').map(str::to_owned).collect() };
+        assert!(shape.at_path(&path("id")).unwrap().1);
+        assert!(!shape.at_path(&path("owner")).unwrap().1);
+        // `name` is required of an owner, yet the owner may be null.
+        assert!(!shape.at_path(&path("owner.name")).unwrap().1);
+        let fits = |text: &str| shape.check(&Json::parse(text.as_bytes()).unwrap());
+        assert_eq!(fits(r#"{"id":"a","owner":{"name":"n"}}"#), Ok(()));
+        assert_eq!(fits(r#"{"id":"a","owner":null}"#), Ok(()));
+        assert_eq!(fits(r#"{"id":"a"}"#), Ok(()));
+        assert!(fits(r#"{"id":"a","owner":"text"}"#).is_err());
+        assert!(fits(r#"{"id":null,"owner":null}"#).is_err());
+        assert!(fits(r#"{"id":"a","owner":{"name":null}}"#).is_err());
+    }
+
+    #[test]
+    fn a_request_body_and_a_parameter_are_drafted_without_the_answer_rule() {
+        let found = operations(DESCRIPTION.as_bytes()).unwrap();
+        let request = found[1].request.as_ref().unwrap().to_text();
+        assert!(!request.contains("nullable"), "{request}");
     }
 
     #[test]

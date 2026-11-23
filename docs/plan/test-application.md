@@ -61,6 +61,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 32 | Has pages that write by themselves: on load, from a worker, over a WebSocket, and behind links that look like actions | That discovery never writes | 5 |
 | 33 | Uses the browser's own controls: a select, a check box, a radio group, a date field, a text area, a confirmation dialog before saving, and a button disabled until a field is valid | One widget driver each for the native controls | 1 |
 | 34 | Redirects to another host name | A redirect off the target stops; no input changes where a request goes | 2 |
+| 35 | Answers an optional object property as an object, as `null`, as missing, or as a text, when told to; its description lists the property as not required and not nullable | A property the description does not require is drafted as possibly null; a value of another kind still stops ([decision 0297](../decisions/0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md)) | 2 |
 
 ## The driver conformance suite
 
@@ -105,6 +106,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 32 | The `/leaving/{how}/orders/{order}/items/{item}` pages for the interface driver ([decision 0144](../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)): the line-item form that moves itself to the other loopback name on load (`load`), after Save (`click`), or opens a window on it (`window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`), or loads an image and a `fetch` from the other name (`loads`). Every move aims at a trap route that counts what arrives. And `/escapes/loads`, a page that loads an image, a script, a style, two `fetch` requests, and a socket from an origin it is given, optionally from inside a frame of another origin, for the proof that a tab sends nothing outside its reach ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)) | |
 | 33 | The delivery-details page and its JSON routes | No automated test drives the page's script: the interface driver exists, and none of its tests uses this page yet |
 | 34 | A redirect to the other loopback name on the same port | |
+| 35 | `GET /api/orders/{order}/shipment`, described by the schema `Shipment`; `POST /__control/shipment` with `{"answer": "object" \| "null" \| "missing" \| "text"}` sets how its `carrier` is answered until the next reset | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
 
