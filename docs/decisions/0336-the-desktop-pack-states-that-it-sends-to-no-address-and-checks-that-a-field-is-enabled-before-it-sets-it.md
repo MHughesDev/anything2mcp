@@ -1,4 +1,4 @@
-# 0399. The desktop pack states that it sends to no address, and checks that a field is enabled before it sets it
+# 0336. The desktop pack states that it sends to no address, and checks that a field is enabled before it sets it
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. It departs in one point from what [decision 0334](0334-the-device-stream-and-data-packs-state-where-their-tools-send.md) wrote down for this pack, and says why.
 
