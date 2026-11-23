@@ -36,6 +36,18 @@ and `note`:
     "replace": {"glob", "pattern", "with"}   a hand edit of the project's files
     "sqlite":  {"file", "query"}      a read of a database file under the
                                       system's data folder, opened read-only
+    "fault":   {"method", "path", "do", "times", "seconds", "bytes"}
+                                      (needs the proxy) the next `times` requests
+                                      (default 1) of that method whose path matches
+                                      the regular expression `path` meet `do`: pass,
+                                      delay (`seconds`), refuse, drop_request,
+                                      drop_response, or cut_response (`bytes`); see
+                                      tools/field_proxy.py. `"fault": "clear"` clears
+                                      the rules and the proxy's record
+    "proxied": {}                     (needs the proxy) shows the proxy's record, one
+                                      line per request: `METHOD path -> rule-or-none ->
+                                      status-or-none`, so `contains` and `lacks` can
+                                      expect that a request was or was not sent
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
 command), `status` (of a request), `contains` and `lacks` (text in the output), and
@@ -45,10 +57,21 @@ step failing means the gap has closed and the recipe is to be updated.
 
 Text in `{braces}` is filled in: `{base}` the system's address, `{port}` its
 port, `{project}` the project folder, `{data}` the system's data folder,
-`{recipe}` the recipe folder.
+`{recipe}` the recipe folder, `{direct}` the system's own address.
+
+A recipe may say `"proxy": true` under `"system"`. The runner then starts a fault proxy
+(tools/field_proxy.py) in front of the system's published port, on a background thread
+with its own event loop, and stops it in the same `finally` that removes the container.
+`{base}` is then the proxy's address in the steps that carry the product's own traffic
+(`a2m`, `replace`), so the product reaches the system through the proxy. Steps that talk
+straight to the system (`http`, `sqlite`, `exec`, `python`) have `{base}` filled with the
+system's own address, so that seeding and checking never go through the proxy; `{direct}`
+is that address in every step. Without `"proxy": true` nothing changes and `{direct}`
+equals `{base}`.
 """
 
 import argparse
+import asyncio
 import base64
 import glob
 import json
@@ -59,9 +82,12 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+
+import field_proxy
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -126,13 +152,53 @@ def first_json(text):
     return None
 
 
-def do_step(step, names, env, container):
+class ProxyThread:
+    """A fault proxy on a background thread with its own event loop."""
+
+    def __init__(self, upstream_port):
+        self.proxy = field_proxy.FaultProxy("127.0.0.1", upstream_port)
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+        self.thread.start()
+        self.port = self._call(self.proxy.start())
+
+    def _call(self, coroutine):
+        return asyncio.run_coroutine_threadsafe(coroutine, self.loop).result(30)
+
+    def stop(self):
+        try:
+            self._call(self.proxy.close())
+        finally:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join()
+            self.loop.close()
+
+
+def do_step(step, names, env, container, proxy=None):
     """Carry one step out. Returns what it showed, as a dict."""
+    if "fault" in step or "proxied" in step:
+        if proxy is None:
+            raise CannotRun('A fault or proxied step needs `"proxy": true` under `"system"`.')
+        if "proxied" in step:
+            return {"ok": True, "output": field_proxy.render_record(proxy.proxy.record())}
+        spec = step["fault"]
+        if spec == "clear":
+            proxy.proxy.reset()
+            return {"ok": True, "output": "cleared"}
+        proxy.proxy.add_rule(
+            spec.get("method", "GET"),
+            spec["path"],
+            spec["do"],
+            times=spec.get("times", 1),
+            seconds=spec.get("seconds", 1),
+            nbytes=spec.get("bytes", 0),
+        )
+        return {"ok": True, "output": f"{spec['do']}: the next {spec.get('times', 1)} {spec.get('method', 'GET')} {spec['path']}"}
     if "exec" in step:
         code, out, err = run(["docker", "exec", *step.get("as", []), container, *step["exec"]])
         return {"ok": code == 0, "output": (out + err)[-2000:]}
     if "http" in step:
-        status, body = request(names["base"], step["http"])
+        status, body = request(names["direct"], step["http"])
         return {"ok": 200 <= status < 300, "status": status, "output": body[:2000]}
     if "a2m" in step:
         code, out, err = run([env["A2M_BINARY"], *step["a2m"]], env=env, cwd=names["project"])
@@ -234,7 +300,8 @@ def main():
         "data": os.path.join(run_dir, "data"),
         "port": str(free_port()),
     }
-    names["base"] = f"http://127.0.0.1:{names['port']}"
+    names["direct"] = f"http://127.0.0.1:{names['port']}"
+    names["base"] = names["direct"]
     for folder in (names["project"], names["data"]):
         os.makedirs(folder)
     env = dict(os.environ)
@@ -253,16 +320,21 @@ def main():
         start += ["-e", f"{key}={value}"]
     start.append(system["image"])
 
+    proxy = None
     report = {"field_test": recipe["name"], "image": system["image"], "steps": []}
     failed = 0
     try:
         code, _, err = run(start)
         if code != 0:
             raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
-        wait_ready(names["base"], system["ready"])
+        wait_ready(names["direct"], system["ready"])
+        if system.get("proxy"):
+            proxy = ProxyThread(int(names["port"]))
+            names["base"] = f"http://127.0.0.1:{proxy.port}"
         for number, raw in enumerate(recipe["steps"], 1):
-            step = fill(raw, names)
-            shown = do_step(step, names, env, container)
+            straight = any(kind in raw for kind in ("http", "sqlite", "exec", "python"))
+            step = fill(raw, {**names, "base": names["direct"]} if straight else names)
+            shown = do_step(step, names, env, container, proxy)
             why = met(step.get("expect", {"ok": True}), shown)
             entry = {
                 "step": number,
@@ -283,6 +355,8 @@ def main():
         report["could_not_run"] = str(stop)
         failed = -1
     finally:
+        if proxy is not None:
+            proxy.stop()
         if os.path.isdir(env["A2M_HOME"]):
             run([args.binary, "engine", "stop"], env=env, cwd=names["project"], seconds=60)
         if not args.keep:
