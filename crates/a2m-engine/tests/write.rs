@@ -595,3 +595,110 @@ async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_c
     );
     assert!(line.not_read_back());
 }
+
+// ---- decision 0313: every declared output is in a write's result ----
+
+/// The line-item upsert with one more output, `batch`, which neither its
+/// save nor its read-back observes.
+fn with_batch(may_be_absent: bool) -> impl FnOnce(&mut a2m_core::Plan) {
+    move |plan| {
+        let operation = plan
+            .operations
+            .iter_mut()
+            .find(|operation| operation.name.as_str() == ITEM_UPSERT)
+            .unwrap();
+        operation.outputs.push(a2m_core::OutputPlan {
+            name: "batch".to_owned(),
+            ty: a2m_core::ValueType::Text,
+            field_type: None,
+            may_be_absent,
+        });
+    }
+}
+
+#[tokio::test]
+async fn a_write_whose_read_back_does_not_observe_an_output_gives_null_or_stops() {
+    // An output that may be absent and was not observed is in the result,
+    // as `null`.
+    let scene = Scene::new(ITEM_UPSERT, with_batch(true)).await;
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    approved(&scene, ITEM_UPSERT, &input).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let result = scene.last_result();
+    assert_eq!(result.get("batch"), Some(&Value::Null), "{result:?}");
+    assert_eq!(result.get("version"), Some(&Value::from(1_i64)));
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // One that may not be absent stops the run with the engine's own code:
+    // the result would not hold what its schema requires.
+    let scene = Scene::new(ITEM_UPSERT, with_batch(false)).await;
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    approved(&scene, ITEM_UPSERT, &input).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    let failure = outcome.failure().expect("a missing output stops the run");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+    assert!(failure.message().contains("`batch`"), "{failure:?}");
+    // The write itself landed once, and the ledger says so.
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+    assert_eq!(scene.record_states().await, [RecordState::Verified]);
+}
+
+#[tokio::test]
+async fn a_record_found_unchanged_gives_every_output_and_on_resume_is_read_again() {
+    // What the test application is seeded with: the record is found
+    // unchanged, nothing is written, and its result holds every output.
+    let input = item("A-100", "L-101", "Left rail", 2, "150.5");
+    let scene = Scene::new(ITEM_UPSERT, with_batch(true)).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.record_states().await, [RecordState::Unchanged]);
+    let result = scene.last_result();
+    assert_eq!(result.get("batch"), Some(&Value::Null), "{result:?}");
+    assert_eq!(result.get("version"), Some(&Value::from(1_i64)));
+    assert!(scene.app.writes().await.unwrap().is_empty());
+
+    // A sheet of one row the system holds already and one it does not.
+    // The preview finds the first unchanged and stores no outputs for it;
+    // the approved execute resumes from the snapshot and reads it once
+    // more, and its outputs are worked out by the same rule.
+    let rows = || {
+        std::sync::Arc::new(common::sheet(&[
+            ("L-101", "Left rail", "2", "150.5"),
+            ("L-900", "Spare rail", "1", "60"),
+        ]))
+    };
+    let order = a2m_core::Values::new().with("order_id", "A-100");
+    let scene = Scene::new(common::SHEET_ENTER, with_batch(true)).await;
+    *scene.source.lock().unwrap() = Some(rows());
+    let outcome = scene
+        .work(JobKind::Preview, common::SHEET_ENTER, order.clone())
+        .await;
+    assert!(waits(&outcome), "{outcome:?}");
+    assert_eq!(
+        scene.record_states().await,
+        [RecordState::Unchanged, RecordState::Planned]
+    );
+    let diff = scene.run_row().await.diff_hash.expect("a stored diff");
+    scene.control.approve(diff).await;
+    let before = scene.hooks.count("get_item");
+    let outcome = scene
+        .work(JobKind::Execute, common::SHEET_ENTER, order.clone())
+        .await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert!(scene.hooks.count("get_item") > before);
+    assert_eq!(scene.app.write_count("A-100", "L-900").await.unwrap(), 1);
+    assert_eq!(scene.app.write_count("A-100", "L-101").await.unwrap(), 0);
+
+    // An output that may not be absent and that the record does not give
+    // stops the run where it is first worked out, before anything is
+    // written.
+    let scene = Scene::new(common::SHEET_ENTER, with_batch(false)).await;
+    *scene.source.lock().unwrap() = Some(rows());
+    let outcome = scene
+        .work(JobKind::Preview, common::SHEET_ENTER, order)
+        .await;
+    let failure = outcome.failure().expect("a missing output stops the run");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
