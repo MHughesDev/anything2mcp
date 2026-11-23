@@ -110,6 +110,14 @@ pub(crate) enum AxError {
     /// the application's.
     #[cfg(target_os = "linux")]
     Replaced,
+    /// The service the surface names has no owner on the session bus. Never
+    /// started.
+    #[cfg(target_os = "linux")]
+    ServiceNotRunning,
+    /// A property of a service holds a value that is not text, a flag, a
+    /// number, or a path.
+    #[cfg(target_os = "linux")]
+    NotText,
     /// A control that holds a secret was asked for its value.
     #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     Secret,
@@ -202,6 +210,18 @@ impl AxError {
                     "Before acting, the application is no longer the process of the program `{program}` that was proven when the run began, or the element is not that application's. Nothing was sent."
                 ),
                 "Check which program shows the window, then run the tool again.",
+            ),
+            #[cfg(target_os = "linux")]
+            Self::ServiceNotRunning => codes::failure(
+                &codes::row::SERVICE_NOT_RUNNING,
+                "No connection owns the bus name the surface states as its service. The pack starts nothing, whatever a `.service` file says.".to_owned(),
+                "Start the application as you normally do, then run the tool again.",
+            ),
+            #[cfg(target_os = "linux")]
+            Self::NotText => codes::failure(
+                &codes::row::PROPERTY_NOT_TEXT,
+                "The property holds a value that is not text, a flag, a number, or an object path, which are the forms the pack gives.".to_owned(),
+                "Read another property.",
             ),
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Secret => codes::failure(

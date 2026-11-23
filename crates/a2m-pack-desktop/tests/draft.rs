@@ -73,7 +73,9 @@ async fn a_snapshot_is_the_windows_shape_and_changes_nothing() {
             address: scene.surface.surface.address.clone(),
             facts: a2m_core::Values::new(),
         })
-        .remove(0)
+        .into_iter()
+        .find(|found| found.declared().name.as_str() == "desktop_snapshot")
+        .unwrap()
         .describe(&findings, DescribeForm::Full);
     assert!(
         description.text.contains("1 windows"),

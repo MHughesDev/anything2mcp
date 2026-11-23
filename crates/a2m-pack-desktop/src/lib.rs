@@ -43,13 +43,16 @@
 
 mod backend;
 pub mod codes;
+mod dbus;
 mod discover;
 mod draft;
 mod driver;
 mod lower;
 mod model;
+mod propose;
 mod roles;
 mod screens;
+mod service;
 mod tree;
 
 use std::sync::Arc;
@@ -60,7 +63,7 @@ use a2m_provider::{
     CompilerRegistrations, DiscovererName, Pack, PackContext, Registrar, RegistryBuilder,
 };
 
-pub use lower::{GOTO, INVOKE, READ, SET, SNAPSHOT, WAIT};
+pub use lower::{GOTO, INTROSPECT, INVOKE, PROPERTY, READ, SET, SNAPSHOT, WAIT};
 pub use screens::{CONTROLS, DESKTOP_SURFACE, PACK, SCREEN_KIND};
 
 /// The name of the mode this pack drives.
@@ -70,8 +73,13 @@ pub const DESKTOP_MODE: &str = "desktop";
 /// application's program, by its absolute path.
 pub const ADDRESS_KEY: &str = "program";
 
-/// The name of the pack's discoverer.
+/// The name of the pack's discoverer of windows.
 pub const SNAPSHOT_DISCOVERER: &str = "desktop_snapshot";
+
+/// The name of the pack's discoverer of a service on the session bus.
+pub const SERVICE_DISCOVERER: &str = "desktop_service";
+
+pub use service::{INTERFACE_FILE, SERVICE_FILE};
 
 const MANIFEST: &str = include_str!("anything2mcp-provider.toml");
 
@@ -111,6 +119,7 @@ fn surface_fields() -> JsonSchema {
         .required(ADDRESS_KEY, JsonSchema::text())
         .required("application", JsonSchema::text())
         .optional("digest", JsonSchema::text())
+        .optional("service", JsonSchema::text())
 }
 
 fn setting(cx: &PackContext, key: &str) -> Option<usize> {
@@ -152,6 +161,7 @@ impl Pack for DesktopPack {
             Arc::new(driver::DesktopDriver::new(self.session.clone(), limits)),
         )?;
         let window = FindingKind::new(discover::WINDOW_FINDING)?;
+        let service_kind = FindingKind::new(service::SERVICE_FINDING)?;
         let mut compiler = CompilerRegistrations::new()
             .surface_kind(
                 SurfaceKindSpec::new(DESKTOP_SURFACE, ADDRESS_KEY, surface_fields())
@@ -164,6 +174,9 @@ impl Pack for DesktopPack {
             }))
             .drafting_rule(Arc::new(draft::WindowReadRule {
                 kind: window.clone(),
+            }))
+            .drafting_rule(Arc::new(propose::PropertyReadRule {
+                kind: service_kind.clone(),
             }));
         for control in CONTROLS {
             compiler = compiler.control(ControlName::new(control)?);
@@ -177,6 +190,15 @@ impl Pack for DesktopPack {
                 clock: cx.telemetry().clock(),
             }),
             Arc::new(discover::DesktopDescriber { kind: window }),
+        )?;
+        to.discoverer(
+            Arc::new(service::DesktopService {
+                name: DiscovererName::new(SERVICE_DISCOVERER)?,
+                kind: service_kind.clone(),
+                version: version(),
+                clock: cx.telemetry().clock(),
+            }),
+            Arc::new(service::ServiceDescriber { kind: service_kind }),
         )
     }
 }

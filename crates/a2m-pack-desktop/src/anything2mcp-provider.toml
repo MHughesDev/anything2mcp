@@ -15,7 +15,9 @@ publisher = "Anything2MCP"
 kind = "pack"
 
 # Reads (decision 0198) and, on Linux, `update` and `upsert` (decision
-# 0218). `snapshot` is sent by the discoverer only; no lowering gives it.
+# 0218). `snapshot` and `introspect` are sent by the discoverers only; no
+# lowering gives them. `property` reads one property of the surface's
+# service (decision 0316).
 # No kind of step always saves: an `invoke` saves when its action is
 # declared to, and the lowering refuses a `commits` mark on any other kind.
 # A write holds the person's screen alone: two runs never type into one
@@ -24,7 +26,7 @@ kind = "pack"
 name = "desktop"
 archetype = "interface"
 verbs = ["read", "list", "update", "upsert"]
-steps = ["goto", "wait", "read", "set", "invoke", "snapshot"]
+steps = ["goto", "wait", "read", "set", "invoke", "snapshot", "introspect", "property"]
 commit_steps = []
 rank = 60
 session_reads = 1
@@ -38,7 +40,7 @@ session = false
 
 [points]
 driver = ["desktop"]
-discoverer = ["desktop_snapshot"]
+discoverer = ["desktop_snapshot", "desktop_service"]
 
 [[discoverers]]
 name = "desktop_snapshot"
@@ -49,6 +51,19 @@ sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 1048576, depth = 32 }
 
+# Asks the service the surface names what it publishes, with the flag that
+# forbids the bus to start it, and reads a `.service` file and an interface
+# description a person hands it, as text and never run (decision 0316).
+[[discoverers]]
+name = "desktop_service"
+archetype = "interface"
+surface_kinds = ["desktop"]
+kinds = ["dbus_service"]
+sources = ["live_system", "artifact"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 1048576, depth = 12 }
+files = ["service_file", "interface_file"]
+
 [[file_kinds]]
 name = "screen"
 directory = "screens/"
@@ -56,6 +71,10 @@ surface_kinds = ["desktop"]
 
 [[finding_kinds]]
 name = "window"
+surface_kinds = ["desktop"]
+
+[[finding_kinds]]
+name = "dbus_service"
 surface_kinds = ["desktop"]
 
 # From a window's shape: a screen and a `get` read of the values it labels,
@@ -66,6 +85,12 @@ file_kind = "screen"
 
 [[drafting_rules]]
 finding_kind = "window"
+file_kind = "operation"
+
+# From a service's property that states it can only be read: a read of it.
+# Never a write, and nothing for a property that states otherwise.
+[[drafting_rules]]
+finding_kind = "dbus_service"
 file_kind = "operation"
 
 [[controls]]
@@ -122,6 +147,14 @@ code = "application_not_owned"
 [[failure_codes]]
 class = "busy"
 code = "system_not_built"
+
+[[failure_codes]]
+class = "busy"
+code = "service_not_running"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "property_not_text"
 
 [[failure_codes]]
 class = "input"

@@ -38,8 +38,10 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, KEY_ARG, READ, SET, SNAPSHOT, WAIT};
-use crate::model::{Cond, PAYLOAD_FORMAT, ReadStep, Screen, ScreenSection, SurfaceFields};
+use crate::lower::{GOTO, INTROSPECT, INVOKE, KEY_ARG, PROPERTY, READ, SET, SNAPSHOT, WAIT};
+use crate::model::{
+    Cond, PAYLOAD_FORMAT, PropertyStep, ReadStep, Screen, ScreenSection, SurfaceFields,
+};
 use crate::screens::{PACK, SCREEN_KIND};
 use crate::tree::{El, Miss, Node, Tree};
 
@@ -76,6 +78,9 @@ struct Held {
     look: Look,
     app: App,
     program: String,
+    /// The name the surface says the application's service has on the
+    /// session bus.
+    service: Option<String>,
     sections: BTreeMap<usize, ScreenSection>,
     /// The window the last `goto` found.
     window: Option<El>,
@@ -866,6 +871,94 @@ impl Held {
         ))
     }
 
+    /// What the surface's service says of itself: the introspection of each
+    /// of its objects, asked of a service that is running and never of one
+    /// that is not (decision 0316). A service no connection owns is an
+    /// answer, `running: false`, and not a failure.
+    #[cfg(target_os = "linux")]
+    async fn introspect(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
+        let service = self
+            .service
+            .as_deref()
+            .ok_or_else(|| codes::not_usable("the surface names no `service`"))?;
+        let shape = match self.look.introspect(service, deadline).await {
+            Ok(walk) => json!({
+                "format": SNAPSHOT_FORMAT,
+                "running": true,
+                "cut": walk.cut,
+                "objects": walk
+                    .objects
+                    .iter()
+                    .map(|(path, xml)| json!({"path": path, "xml": xml}))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(AxError::ServiceNotRunning) => json!({
+                "format": SNAPSHOT_FORMAT,
+                "running": false,
+                "cut": null,
+                "objects": [],
+            }),
+            Err(error) => return Err(unsent(&error, &self.program)),
+        };
+        Ok(Observed {
+            values: Values::new().with("shape", shape.to_string()),
+            ..Observed::default()
+        })
+    }
+
+    /// One property of one object of the surface's service, as text. A
+    /// service that is not running is a named stop, nothing started.
+    #[cfg(target_os = "linux")]
+    async fn property(&self, step: &Step) -> Result<Observed, StepFailure> {
+        let payload: PropertyStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let service = self
+            .service
+            .as_deref()
+            .ok_or_else(|| codes::not_usable("the surface names no `service`"))?;
+        let text = self
+            .look
+            .property_text(
+                service,
+                &payload.path,
+                &payload.interface,
+                &payload.name,
+                &self.limits,
+            )
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let mut values = Values::new();
+        values.insert(payload.output, text);
+        Ok(Observed {
+            values,
+            ..Observed::default()
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Linux, where it asks the bus"
+    )]
+    async fn introspect(&self, _deadline: Deadline) -> Result<Observed, StepFailure> {
+        Err(codes::service_not_built())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Linux, where it asks the bus"
+    )]
+    async fn property(&self, step: &Step) -> Result<Observed, StepFailure> {
+        let _: PropertyStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        Err(codes::service_not_built())
+    }
+
     /// The shape of every window of the application.
     async fn snapshot(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
         let windows = self
@@ -1028,6 +1121,7 @@ impl Driver for DesktopDriver {
                 look,
                 app,
                 program,
+                service: fields.service.clone(),
                 sections,
                 window: None,
                 limits: self.limits,
@@ -1061,6 +1155,10 @@ impl Driver for DesktopDriver {
                 held.read(step, deadline).await?
             } else if step.kind == SNAPSHOT {
                 held.snapshot(deadline).await?
+            } else if step.kind == INTROSPECT {
+                held.introspect(deadline).await?
+            } else if step.kind == PROPERTY {
+                held.property(step).await?
             } else if step.kind == SET {
                 held.set(step, input).await?
             } else if step.kind == INVOKE {

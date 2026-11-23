@@ -102,8 +102,11 @@ A desktop application's own sign-in lives inside the application, in the runner'
 | --- | --- | --- |
 | `desktop_probe` | The program, its version and digest, and how many controls have no name | A surface, with a support tier |
 | `desktop_snapshot` | The window's accessibility tree | Screens, fields, actions |
+| `desktop_service` | On Linux, the introspection of the service the surface's `service` names on the session bus, a `.service` file, and an interface description | The service's interfaces: methods, signals, and each property with the access its document states |
 
 Both read the tree and never invoke, expand, or focus anything. What is hidden behind a collapsed node is a limitation, `not_exercised`. They run as discovery jobs inside the engine's sandbox ([section 218](../2-kernel/218-discovery-and-findings.md)), for `target.probe`, `screen.snapshot`, and `discover.run`.
+
+`desktop_service` asks a running service for its introspection, with the bus's flag that forbids it to start the service on every message, and calls no method of it. A service that no connection owns is reported as not running and is never started. A `.service` file and an interface description a person hands the scout (`service_file`, `interface_file`) are read as text and never run. Its findings are `dbus_service`: the live service's at `discovered`, a file's at `inferred`. From a running service's finding the pack drafts a `read` of each property whose document states `access="read"`, as a binding `property: {surface, path, interface, name}`; a property that states `readwrite` or `write`, a method, and a signal are never drafted ([decision 0331](../../decisions/0331-the-desktop-pack-reads-a-running-services-introspection-and-drafts-reads-of-its-read-only-properties.md)).
 
 The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions.
 
@@ -142,6 +145,8 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited. A resume reads the stored value before it writes again |
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it; or another write of the engine held the desktop past the step's deadline |
 | `busy` | `runner_unavailable` | No interactive desktop session |
+| `busy` | `service_not_running` | The service the surface names has no owner on the session bus when a property is read; nothing was started (decision 0316) |
+| `unknown_variant` | `property_not_text` | A service's property holds a value that is not text, a flag, a number, or an object path |
 | `busy` | `application_not_running`, `accessibility_off`, `system_not_built` | The application the surface names is not running; it runs and publishes nothing while the session's accessibility switch is off, or on macOS the person has not allowed the program that started the engine to use the accessibility interface, and the message says where in System Settings to allow it (decision 0244); the pack has no back end for this system (decision 0198) |
 | `busy` | `target_elevated` | On Windows, the application runs at a higher level than the engine, as administrator ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) |
 | `policy` | `password_read_refused` | A step would read a control that holds a secret |

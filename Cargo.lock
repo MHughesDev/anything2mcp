@@ -295,6 +295,7 @@ dependencies = [
  "libc",
  "objc2-application-services",
  "objc2-core-foundation",
+ "quick-xml",
  "serde",
  "serde_json",
  "sha2",

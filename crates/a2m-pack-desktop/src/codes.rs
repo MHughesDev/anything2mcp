@@ -58,6 +58,13 @@ a2m_core::failure_codes! {
         meaning "This pack has no back end for the operating system it runs on.",
         next "Run the target on Linux, Windows, or macOS.",
         passes not_by_itself;
+    SERVICE_NOT_RUNNING = Busy, "service_not_running",
+        meaning "No connection owns the bus name the surface states as its service (Linux). The pack starts nothing, whatever a `.service` file says.",
+        next "Start the application as you normally do, then run the tool again.",
+        passes not_by_itself;
+    PROPERTY_NOT_TEXT = UnknownVariant, "property_not_text",
+        meaning "A service's property holds a value that is not text, a flag, a number, or an object path. The pack gives no other form.",
+        next "Read another property.";
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
         next "Compile the target again with the version of the desktop pack that is enabled.";
@@ -120,6 +127,20 @@ pub(crate) fn writes_not_built() -> StepFailure {
             std::env::consts::OS
         ),
         "Run the write on Linux. On this system the pack reads only.",
+    ))
+}
+
+/// A service of the session bus asked on a system other than Linux. Nothing
+/// was sent.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn service_not_built() -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::SYSTEM_NOT_BUILT,
+        format!(
+            "The desktop pack reads the services of the session bus only on Linux in this version; this system is {}. Nothing was sent.",
+            std::env::consts::OS
+        ),
+        "Run the target on Linux.",
     ))
 }
 

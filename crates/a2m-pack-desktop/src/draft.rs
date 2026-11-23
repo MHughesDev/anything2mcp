@@ -48,7 +48,7 @@ struct Element {
 
 /// Whether an application's words may stand in a drafted screen: plain,
 /// bounded, and with nothing that hides or reorders text.
-fn plain_words(text: &str) -> bool {
+pub(crate) fn plain_words(text: &str) -> bool {
     !text.trim().is_empty()
         && text.chars().count() <= LONGEST_WORDS
         && !text
@@ -59,12 +59,12 @@ fn plain_words(text: &str) -> bool {
 /// Whether the compiler takes a heading or a control's name for a secret's,
 /// as the window writes it or as the output name it becomes (decision
 /// 0302).
-fn named_as_secret(words: &str, name: &str) -> bool {
+pub(crate) fn named_as_secret(words: &str, name: &str) -> bool {
     names_a_secret(words) || names_a_secret(name)
 }
 
 /// A name in the form target files use.
-fn snake(text: &str) -> String {
+pub(crate) fn snake(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         if c.is_ascii_alphanumeric() {
@@ -76,7 +76,7 @@ fn snake(text: &str) -> String {
     out.trim_end_matches('_').to_owned()
 }
 
-fn is_name(text: &str) -> bool {
+pub(crate) fn is_name(text: &str) -> bool {
     let mut chars = text.chars();
     text.len() <= LONGEST
         && chars.next().is_some_and(|c| c.is_ascii_lowercase())
@@ -131,7 +131,7 @@ fn shape(found: &str) -> Result<Option<Shape>, Failure> {
 
 /// The target's one surface of the kind `desktop` whose program is this
 /// one.
-fn surface(cx: &DraftContext<'_>, program: &str) -> Option<String> {
+pub(crate) fn surface(cx: &DraftContext<'_>, program: &str) -> Option<String> {
     let target = cx.existing()?.docs_of("target").next()?;
     let mut found = target
         .get("surfaces")?

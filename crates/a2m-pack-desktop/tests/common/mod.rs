@@ -164,7 +164,22 @@ impl Scene {
         Self::with(name, false).await
     }
 
+    /// The same, with the surface naming `service` as its service on the
+    /// session bus instead of the fixture's own.
+    pub async fn with_service(name: &str, service: &str) -> Option<Self> {
+        let copy = Folder::new("service-target");
+        let service = service.to_owned();
+        fixture_copy(copy.path(), "target.yaml", move |text| {
+            text.replace("service: org.example.Desk", &format!("service: {service}"))
+        });
+        Self::build(name, true, copy.path()).await
+    }
+
     async fn with(name: &str, application: bool) -> Option<Self> {
+        Self::build(name, application, &fixture()).await
+    }
+
+    async fn build(name: &str, application: bool, target: &Path) -> Option<Self> {
         let Some(session) = Session::start().unwrap() else {
             eprintln!(
                 "skipped: this machine cannot give the desktop stand a session (on Linux a session bus and an accessibility bus, on Windows an interactive desktop, on macOS this program's permission to use the accessibility interface)"
@@ -178,7 +193,7 @@ impl Scene {
             None
         };
         let registry = registry(folder.path(), session.bus());
-        let plan = match compile_at(&registry, &fixture()) {
+        let plan = match compile_at(&registry, target) {
             Ok(compiled) => compiled.plan,
             Err(problems) => panic!("{}", shown(&problems)),
         };
@@ -285,7 +300,14 @@ impl Scene {
             address: self.surface.surface.address.clone(),
             facts: Values::new(),
         };
-        let discoverer = self.registry.discoverers_for(&description).remove(0);
+        // The window's: the pack has another, of services, which a test of
+        // its own runs.
+        let discoverer = self
+            .registry
+            .discoverers_for(&description)
+            .into_iter()
+            .find(|found| found.declared().name.as_str() == "desktop_snapshot")
+            .expect("the pack registers a discoverer of windows");
         let (handle, prepared) = self
             .prepare(a2m_provider::Posture::Discovery)
             .await

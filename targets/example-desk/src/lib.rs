@@ -42,14 +42,21 @@ mod win;
 
 #[cfg(target_os = "linux")]
 mod app;
+#[cfg(target_os = "linux")]
+mod bus_service;
 
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[cfg(target_os = "linux")]
+pub use bus_service::{
+    ADMIN_PASSWORD, CHILD, Calls, IDLE_NAME, LABEL, NAME as SERVICE_NAME, NUMBER, ORDER, ORDERS,
+    ROOT, Service, TOTAL,
+};
 #[cfg(any(windows, target_os = "macos"))]
 pub use child::{CHILD_TEST, Session};
 #[cfg(not(any(windows, target_os = "macos")))]
-pub use session::Session;
+pub use session::{IdleService, Session};
 
 /// Declares, in a test binary, what serves the stand: on Windows and macOS
 /// the stand's process is this test binary, copied and started again with
