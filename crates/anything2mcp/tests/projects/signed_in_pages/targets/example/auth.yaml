@@ -1,0 +1,23 @@
+# A sign-in through the application's own sign-in page (decision 0245),
+# with the username and the password the person types on the engine's own
+# page. Every part of the sign-in page is named from its screen model; no
+# locator is here, and no secret.
+auth:
+  - surfaces: [app]
+    mode: custom
+    provider: form_login
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: sign_in
+      user_field: username
+      pass_field: password
+      submit: sign_in
+      refused: refused
+      blocked: locked
+      wait_ms: 20000
+    credentials:
+      user: "vault://example/app/user"
+      password: "vault://example/app/password"
+    attempt_limit: 1

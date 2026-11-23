@@ -1,0 +1,5 @@
+test: example_account_get
+kind: offline
+fixture: account_get
+inputs: {}
+expect: {signed_in_as: "Signed in as an invented person."}

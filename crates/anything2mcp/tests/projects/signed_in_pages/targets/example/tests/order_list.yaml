@@ -1,0 +1,5 @@
+test: example_order_list
+kind: offline
+fixture: order_list
+inputs: {}
+expect: {order_ids: ["X-1", "X-2"], customers: ["Invented Customer One", "Invented Customer Two"]}
