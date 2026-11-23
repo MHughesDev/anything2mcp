@@ -111,9 +111,14 @@ When a canary or a run reports `drift`:
    - the last snapshot of the same screen or surface from a verified run or a fixture;
    - the differences between the two;
    - the file involved: in the web pack a screen model, an endpoint, or a platform-profile rule; in another pack, the file of its kind that holds the knowledge that drifted.
+   - where the pack has one, a ranked list of candidate elements from the failure snapshot, each with its score by property, made by the pack's deterministic repair proposer under fixed weights the pack declares. The proposer proposes nothing, and the failure stays `locator_ambiguous`, when the top two candidates are closer than the margin the pack declares. A score is evidence for the repairing agent and the reviewer; it applies nothing ([decision 0323](../../decisions/0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md)).
 3. The agent proposes a file change: a new locator, a fingerprint update, a schema update, a new rule. It never touches a live run. Repair is building work, done by an agent at authoring time, never at run time.
 4. The change runs through the publish gates against the test environment and the fixtures ([section 403](../4-building-tools/403-testing-and-publish-gates.md)).
 5. A person approves the diff, and it is published as a new version.
+
+A repair never applies at run time, whatever its score. A false repair, a locator that matches the wrong element and passes, is the failure this loop exists to prevent: open tools that heal by similarity document exactly that failure ([research note 37](../../research/37-locator-drift-and-repair.md)). What holds it here is the fingerprint, the rule that a locator matches exactly one element, and a person's approval of the diff.
+
+**Drifting, before drift.** A canary reports `drifting`, not `drift`, when a field or action still passes but the locator that matched it is not the first in its list. A `drifting` tool stays available; it is shown in the drift metrics and in the engine's health, and it does not stop a run. A second sign, a fingerprint score below the one it had at the last verified run, needs the matched element's reference from that run, which the screen model does not yet keep (decision 0323).
 
 ## Fixtures from traces
 

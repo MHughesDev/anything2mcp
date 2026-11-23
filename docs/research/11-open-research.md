@@ -25,7 +25,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 17 | Remote sign-in to a server-hosted browser | Phase 7 | 16 |
 | 18 | Deployment and scaling patterns | Phase 7 | 23 |
 | 19 | Desktop accessibility automation. Answered by note 19 | Phase 8 | 6 |
-| 20 | Selector repair and drift | Phase 9 | 28 |
+| 20 | Selector repair and drift. Partly answered by note 37 | Phase 9 | 28 |
 | 21 | Lessons from RPA products | Phase 3 | 8, 10, 31 |
 | 22 | Reproducibility and observability | Phase 9 | 28, 29 |
 | 23 | Vendor APIs and terms of use | Before the first real target | 34 |
@@ -85,7 +85,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **19. Desktop accessibility automation.** (Answered by [note 19](19-desktop-accessibility-base.md) and [decision 0120](../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md). The brief stays so that references to it resolve.) The state of UI Automation, the macOS Accessibility API, and AT-SPI from Rust; `xa11y` maturity; Java Access Bridge and SAP GUI scripting; whether desktop automation can run in a service session or needs an interactive one; how stable element identifiers are.
 
-**20. Selector repair and drift.** Healenium and similar tools; LLM-based locator repair; fallback locators and element fingerprints; the failure mode where healing picks the wrong element; how mature systems keep repair safe.
+**20. Selector repair and drift.** (Partly answered by [note 37](37-locator-drift-and-repair.md) and [decision 0323](../decisions/0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md). What remains: the papers' figures read from the papers, and a measurement of which locator kinds survive, which hypothesis H-49 is to give.) Healenium and similar tools; LLM-based locator repair; fallback locators and element fingerprints; the failure mode where healing picks the wrong element; how mature systems keep repair safe.
 
 **21. Lessons from RPA products.** UiPath's object repository, selectors, queues, and exception-handling framework; Power Automate Desktop; the documented causes of bot failure and maintenance cost; how RPA vendors now combine agents with deterministic bots.
 

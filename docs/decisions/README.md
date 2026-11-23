@@ -318,3 +318,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0320 | [What is kept and shown of other people's devices on a network](0320-what-is-kept-and-shown-of-other-peoples-devices-on-a-network.md) | Proposed (would change owner decision 0226) |
 | 0321 | [A sign-in method is found from addresses, and a passkey or a mailed link is the person's](0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md) | Accepted (design decision) |
 | 0322 | [A capture never infers `required`, and types a parameter from every value](0322-a-capture-never-infers-required-and-types-a-parameter-from-every-value.md) | Accepted (design decision) |
+| 0323 | [A repair is proposed by a fixed scorer, and drifting is seen before drift](0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md) | Accepted (design decision) |
