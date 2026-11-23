@@ -321,3 +321,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0323 | [A repair is proposed by a fixed scorer, and drifting is seen before drift](0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md) | Accepted (design decision) |
 | 0324 | [An idempotency key is an addition to the read-back, and holds only inside its window](0324-an-idempotency-key-is-an-addition-to-the-read-back-and-holds-only-inside-its-window.md) | Accepted (design decision) |
 | 0325 | [What a browser can reach, and what a tool's definition may hold](0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md) | Accepted (design decision) |
+| 0330 | [Every name says what the part is, in plain words](0330-every-name-says-what-the-part-is-in-plain-words.md) | Accepted (owner decision; the names are design decisions) |
