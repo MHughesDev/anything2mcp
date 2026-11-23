@@ -19,7 +19,9 @@ Field test 1 met this twice ([results](../reviews/field-tests.md)). With a small
 3. **The loader does not read the holding folder.** The compiler never sees it. A target compiles whole or not at all, exactly as before, and its plan and hash depend on the files outside the holding folder only.
 4. **Nothing is hidden.** `draft.lint` lists every held draft with its question. The scout's report counts them and lists them. Asking to try or publish a tool whose draft is held is refused by name, with its question as the next step.
 5. **A person releases a held draft by answering its question and moving the file out.** The action `draft.release` does it: it refuses a file that still holds a question, moves the file to its place, and lints the target. Until that action is built a person moves the file by hand.
-6. **An open question outside the holding folder is an error, as it always was.** So is a file that names something held. The first cannot be made by the drafter after this decision; the second fails the whole target and says which held draft it names.
+6. **An open question outside the holding folder is an error to the compiler, as it always was.** So is a file that names something held: the target fails, and the answer says that held drafts exist and that lint lists them. It does not try to say which held draft was meant, because working that out from an error's words can name the wrong file. The scout's own trial step still leaves out a file outside the holding folder that holds a question, as it did before ([decision 0180](0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)), so a target drafted before this decision behaves as it did.
+7. **A finding with a file a person changed is left alone.** Nothing drafted from it is moved or rewritten; the conflict is reported.
+8. **`held` is a reserved folder name.** No pack registers a kind of file there.
 
 ## Why this is better than compiling around the questions
 
