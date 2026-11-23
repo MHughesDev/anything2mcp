@@ -11,7 +11,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 3 | Locators and hard widgets on the DevTools protocol | Phase 1 | 13, technical reference |
 | 4 | Session persistence and Entra session rules | Phase 2 | 15, 16 |
 | 5 | Vault design per operating system | Phase 2 | 15, 19 |
-| 6 | Web sign-in methods and auto-detection | Phase 2 | 15 |
+| 6 | Web sign-in methods and auto-detection. Partly answered by note 35 | Phase 2 | 15 |
 | 7 | Durable execution and idempotency | Phase 3 | 10 |
 | 8 | Human approval patterns | Phase 3 | 18 |
 | 9 | Network channel practice and endpoint inference | Phase 4 | 6, 26 |
@@ -35,7 +35,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 27 | Operating-system user-presence checks. Answered by note 20 | Phase 3 | 18, 39 |
 | 28 | Wheel and npm packaging, verified hands-on. Answered by note 21 | Phase 1 | 41 |
 | 29 | Command-line design for agents | Phase 5 | 40 |
-| 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
+| 30 | Sign-in in engine-owned profiles, and device-bound sessions. Partly answered by note 35 | Phase 2 | 44 |
 | 31 | Cedar spike. Answered by decision 0082 | Phase 3 | 45 |
 | 32 | First standard wire protocol of the stream pack. Answered by note 22 | Milestone 8, packages J2 and J3 | 309 |
 | 33 | Client crates for a server database beside the embedded one. Answered by note 23 | Milestone 8 package G3; milestone 9 package 6.1 | 307, 208 |
@@ -57,7 +57,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **5. Vault design per operating system.** (Partly answered by [note 15](15-traces-and-key-stores.md); the design is in spec section 216.) Windows DPAPI and Credential Manager, macOS Keychain, Linux Secret Service; Rust crates for each; envelope encryption of profile directories; how Chromium encrypts cookies on each OS, including app-bound encryption on Windows, and whether a copied profile still works; options on servers and in containers; keeping secrets out of logs and traces.
 
-**6. Web sign-in methods and auto-detection.** For OIDC and SAML redirects, pop-up sign-in, form login, HTTP Basic and Digest, NTLM and Kerberos, client certificates, and passkeys: what Chromium supports under automation, the pitfalls, and how to detect each method from a URL and detect expiry mid-run.
+**6. Web sign-in methods and auto-detection.** (Partly answered by [note 35](35-web-sign-in-methods-and-engine-owned-profiles.md), from search summaries only, and [decision 0321](../decisions/0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md). What remains: what Chromium supports under automation for each method, checked against primary pages, and detection tried against the test application.) For OIDC and SAML redirects, pop-up sign-in, form login, HTTP Basic and Digest, NTLM and Kerberos, client certificates, and passkeys: what Chromium supports under automation, the pitfalls, and how to detect each method from a URL and detect expiry mid-run.
 
 **7. Durable execution and idempotency.** (Partly answered by [note 13](13-ledger-leases-and-runner-links.md); check the design in spec section 208 against primary sources.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
 
@@ -105,7 +105,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **29. Command-line design for agents.** How current coding agents discover and use commands; output formats that cost the least context; evidence on `--json` conventions, exit codes, and paging; how guidance files and skills are loaded by the main agents today; measured comparisons of commands and MCP tools for the same task.
 
-**30. Sign-in in engine-owned profiles, and device-bound sessions.** On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
+**30. Sign-in in engine-owned profiles, and device-bound sessions.** (Partly answered by [note 35](35-web-sign-in-methods-and-engine-owned-profiles.md), from search summaries only. What remains, as a run: Chrome and Edge on Windows and macOS against a site that opts in to device-bound sessions, with a fresh data directory, an in-memory context, and a virtual machine without a hardware key store, recording whether a bound session is made, whether the debugging protocol reports it, and what an exported cookie does at its next renewal.) On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
 
 **31. Cedar spike.** (Answered by [decision 0082](../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which ran the spike and chose the policy crate's own evaluator. The brief stays so that references to it resolve.) Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Anything2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.
 

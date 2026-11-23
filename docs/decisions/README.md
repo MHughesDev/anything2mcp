@@ -316,3 +316,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0318 | [A network is recognized by its gateway and subnet, and a forged one can recall a reach](0318-a-network-is-recognized-by-its-gateway-and-subnet-and-a-forged-one-can-recall-a-reach.md) | Accepted (design decision) |
 | 0319 | [A publication's mark that a call only reads is a published claim, and silence is not a read](0319-a-publications-mark-that-a-call-only-reads-is-a-published-claim-and-silence-is-not-a-read.md) | Accepted (design decision) |
 | 0320 | [What is kept and shown of other people's devices on a network](0320-what-is-kept-and-shown-of-other-peoples-devices-on-a-network.md) | Proposed (would change owner decision 0226) |
+| 0321 | [A sign-in method is found from addresses, and a passkey or a mailed link is the person's](0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md) | Accepted (design decision) |
