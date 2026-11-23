@@ -753,7 +753,8 @@ async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
     // A folder of the user's own is taken: the action looks in it, and
     // finds no such target there.
     let looked = lint(Some(ProjectFolder::new(&good))).await;
-    assert!(looked.ok, "{looked:?}");
+    assert!(!looked.ok, "{looked:?}");
+    assert_eq!(looked.error.as_ref().unwrap().code, "lint_failed");
     assert_eq!(
         looked.result.unwrap()["problems"][0]["code"],
         "kernel.file_missing"
@@ -989,10 +990,10 @@ async fn a_project_file_the_engine_does_not_apply_is_named_in_the_warnings() {
     let set = world.project("strict");
     std::fs::write(set.join("anything2mcp.toml"), strict).unwrap();
     let quiet = lint(&world, &plain).await;
-    assert!(quiet.ok, "{quiet:?}");
+    assert!(!quiet.ok, "{quiet:?}");
     assert_eq!(differ(&quiet), None, "{quiet:?}");
     let told = lint(&world, &set).await;
-    assert!(told.ok, "{told:?}");
+    assert!(!told.ok, "{told:?}");
     let warning = differ(&told).expect("the warning");
     assert!(
         warning.contains("`authoring.scout.try_reads`")

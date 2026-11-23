@@ -61,7 +61,13 @@ pub(crate) fn discovery_report_json(report: &Result<DiscoveryReport, Failure>) -
             "dropped": report.dropped,
         }),
         Err(failure) => json!({
-            "failure": {"class": failure.class().as_str(), "code": failure.code().as_str()},
+            "failure": {
+                "class": failure.class().as_str(),
+                "code": failure.code().as_str(),
+                // The fix the failure's own table declares, never what a
+                // system said.
+                "fix": failure.next_step(),
+            },
         }),
     }
 }
