@@ -897,3 +897,125 @@ async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_e
     assert_eq!(ended.code, 0, "{ended:?}");
     lock_comes_free(&machine).await;
 }
+
+/// A read through the served engine leaves one run row and the events of
+/// that run: the engine's own record, read back by the commands that
+/// ask for it (roadmap package 1.4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_leaves_one_run_row_and_its_events() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+    let without_key = |args: &[&str]| {
+        let mut command = machine.program(args);
+        command.env_remove(PASSPHRASE_VARIABLE);
+        command
+    };
+
+    let read = output(without_key(&[
+        "tool", "call", ORDER_GET, "--input", READ_INPUT,
+    ]))
+    .await;
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    let result = object(&read)["result"].clone();
+    assert_eq!(result["status"], "completed");
+    let run = result["run_id"].as_str().unwrap().to_owned();
+
+    // The row: this run, completed, with the value the read returned.
+    let row = output(without_key(&["run", "get", &run])).await;
+    assert_eq!(row.status.code(), Some(0), "{row:?}");
+    let row = object(&row)["result"].clone();
+    assert_eq!(row["run_id"], run.as_str());
+    assert_eq!(row["status"], "completed");
+    assert_eq!(row["result"], result["result"]);
+
+    // Exactly one row for the one read.
+    let listed = output(without_key(&["run", "list"])).await;
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+    let listed = object(&listed)["result"]["runs"].clone();
+    let listed = listed.as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["run_id"], run.as_str());
+
+    // Its events, in order, ending on the state change to completed.
+    let trace = output(without_key(&["trace", "show", &run])).await;
+    assert_eq!(trace.status.code(), Some(0), "{trace:?}");
+    let trace = object(&trace)["result"].clone();
+    let kinds: Vec<&str> = trace["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"binding_chosen"), "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"state_changed"), "{kinds:?}");
+
+    let stop = output(without_key(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    let (code, printed) = served.ended();
+    assert_eq!(code, Some(0), "{printed}");
+}
+
+/// An MCP client, through `bridge`, reads what a command reads, and the
+/// tool list it is shown is the registry's built-in tools and the
+/// published tools of the machine, and nothing hand-written (roadmap
+/// package 1.5; the MCP part of the parity check of spec section 220).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_registrys() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+
+    // The command's read.
+    let mut command = machine.program(&["tool", "call", ORDER_GET, "--input", READ_INPUT]);
+    command.env_remove(PASSPHRASE_VARIABLE);
+    let done = output(command).await;
+    assert_eq!(done.status.code(), Some(0), "{done:?}");
+    let by_command = object(&done)["result"]["result"].clone();
+
+    // The same read, by an MCP client.
+    let mut bridge = Bridge::start(&machine, &["bridge"]);
+    let called = bridge.ask(&stateless(
+        1,
+        "tools/call",
+        json!({"name": ORDER_GET, "arguments": {"order_id": "A-100"}}),
+    ));
+    assert_ne!(called["result"]["isError"], true, "{called}");
+    assert_eq!(
+        called["result"]["structuredContent"]["result"], by_command,
+        "{called}"
+    );
+
+    // The tool list: every built-in tool is the face of an action in the
+    // registry, with that face's description and input schema, and the
+    // others are the machine's published tools, each named for its target.
+    let registry = anything2mcp::action_registry().unwrap();
+    let faces = a2m_actions::mcp_tools(&registry, a2m_actions::BuiltInToolset::Use);
+    let listed = bridge.ask(&stateless(2, "tools/list", json!({})));
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        if let Some(face) = faces.iter().find(|face| face.name == name) {
+            assert_eq!(tool["description"], face.description.as_str(), "{name}");
+            assert_eq!(tool["inputSchema"], face.input_schema, "{name}");
+        } else {
+            assert!(
+                !name.starts_with("a2m_") && name.starts_with("example_"),
+                "a tool the registry does not describe: {name}"
+            );
+        }
+    }
+    for face in &faces {
+        assert!(
+            tools.iter().any(|tool| tool["name"] == face.name.as_str()),
+            "the registry's tool is not listed: {}",
+            face.name
+        );
+    }
+
+    let (code, _, said) = bridge.close();
+    assert_eq!(code, Some(0), "{said}");
+    let stop = output(machine.program(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(served.ended().0, Some(0));
+}
