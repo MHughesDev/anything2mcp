@@ -2355,6 +2355,11 @@ impl Page {
     /// (decision 0292). Then an observing tab refuses what could write.
     fn judge_request(&self, paused: &RequestPaused) -> Verdict {
         let request = &paused.request;
+        // An origin the tool declares as refused is failed all the same, and
+        // reports nothing: the run goes on without it.
+        if self.origins.refused_quietly_reported(&request.url) {
+            return Verdict::Refuse(None);
+        }
         if !self.origins.reaches_reported(&request.url) {
             return Verdict::Refuse(Some(OUTSIDE.to_owned()));
         }
@@ -2918,15 +2923,33 @@ fn fetch_everything() -> FetchEnable<'static> {
     }
 }
 
-/// Only the requests of documents: what a tab that may act holds, to keep
-/// itself on its origins.
-fn fetch_documents() -> FetchEnable<'static> {
+/// The requests of documents, and of what a page loads and no body goes
+/// with: what a sign-in tab holds (decision 0313). A style, an image, a
+/// media file, a font, a script, and the rest the browser files as `Other`
+/// carry no body of the person's. A `fetch`, an `XHR`, and a beacon do, and
+/// are not held, because the password a person types would cross into the
+/// engine's process in them (decision 0254). The kinds this browser's
+/// interception filter does not name (measured: `TextTrack`, `Prefetch`,
+/// `Manifest`) are not held either.
+fn fetch_documents_and_loads() -> FetchEnable<'static> {
+    const LOADS: [&str; 7] = [
+        "Document",
+        "Stylesheet",
+        "Image",
+        "Media",
+        "Font",
+        "Script",
+        "Other",
+    ];
     FetchEnable {
-        patterns: vec![RequestPattern {
-            url_pattern: "*",
-            resource_type: Some("Document"),
-            request_stage: "Request",
-        }],
+        patterns: LOADS
+            .iter()
+            .map(|kind| RequestPattern {
+                url_pattern: "*",
+                resource_type: Some(kind),
+                request_stage: "Request",
+            })
+            .collect(),
     }
 }
 
@@ -3233,9 +3256,12 @@ async fn prepare(
         )
         .await?;
     } else if page.quiet {
-        // A tab a person signs in in holds the requests of documents, as a
-        // tab that may act does, and hears no network event at all.
-        page.call(&fetch_documents(), deadline).await?;
+        // A tab a person signs in in holds the requests of documents and
+        // of what the page loads with no body, to its origins and the
+        // providers' (decision 0313), and hears no network event at all. A
+        // `fetch`, an `XHR`, or a beacon of its page is not held: what the
+        // person types would cross in it.
+        page.call(&fetch_documents_and_loads(), deadline).await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     } else {
         // A tab that may act holds every request, as an observing tab does,

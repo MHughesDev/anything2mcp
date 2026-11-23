@@ -82,6 +82,139 @@ async fn refused(blocked: impl Fn() -> Vec<RequestShape>, word: &str) -> Vec<Req
 }
 
 /// The same, until one refusal carries `word` for exactly `address`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_origin_refused_quietly_is_failed_in_the_browser_in_both_postures_and_reports_nothing() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("quiet_refusal");
+    let browser = stand.open(&profile("clerk")).await;
+    let page = at(&app.url("/escapes/loads"));
+    // The other name is declared as a place to send to, and also as one to
+    // refuse quietly: the refusal wins, so a person cannot reach by one list
+    // what another list refuses.
+    let origins = reaching_the_other_name(&app).and_refused_quietly([&at(&other(&app, "/"))]);
+    let others = |seen: &[RequestShape]| {
+        seen.iter()
+            .filter(|one| one.method != "WEBSOCKET")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let acting = must(browser.acting_tab(&environment(), &origins).await);
+    must(acting.goto(&page, soon()).await);
+    must(
+        acting
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    // The socket is held by a script in the page, which names what it
+    // refuses; every request interception holds is failed and not named.
+    let seen = refused(|| acting.blocked(), "WEBSOCKET").await;
+    assert_eq!(others(&seen), []);
+    drop(acting);
+    let observing = observing_with(&stand, "scout", &origins).await;
+    must(observing.goto(&page, soon()).await);
+    must(
+        observing
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let seen = refused(|| observing.blocked(), "WEBSOCKET").await;
+    assert_eq!(others(&seen), []);
+    drop(observing);
+    // The stand's count: nothing of either page arrived.
+    assert_eq!(loads_arrived(&app).await, BTreeMap::new());
+    drop(browser);
+    stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_tab_loads_nothing_from_an_origin_it_was_not_given_and_what_it_was_given_arrives()
+{
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("sign_in_loads");
+    let browser = stand.open(&profile("person")).await;
+    let page = at(&app.url("/escapes/loads"));
+    let elsewhere = |name: &str| other(&app, &format!("{WRITE}/loads-{name}"));
+
+    // The sign-in page loads an image, a script, and a style from the other
+    // name, and sends a `fetch` and a POST there. Given the application's
+    // origin alone, the tab fails every load before it leaves the browser and
+    // reports each with its address. The `fetch` and the POST are the page's
+    // own script's, which may carry what the person types and which a sign-in
+    // tab does not hold (decision 0254): they arrive. That is the stated
+    // limit of this tab, held by this test so that it cannot change unseen.
+    // Nor does it hold a socket, which is not a subresource: that too
+    // arrives.
+    let tab = must(
+        browser
+            .sign_in_tab(&environment(), &only(&app), &Origins::default())
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&Primitive::Visible(css("#tried")), soon()).await);
+    let seen = refused(|| tab.blocked(), crate::OUTSIDE).await;
+    let mut outside: Vec<String> = seen
+        .iter()
+        .filter(|one| one.method == crate::OUTSIDE)
+        .map(|one| one.address.clone())
+        .collect();
+    outside.sort();
+    let mut expected: Vec<String> = ["image", "script", "style"]
+        .iter()
+        .map(|name| elsewhere(name))
+        .collect();
+    expected.sort();
+    assert_eq!(outside, expected);
+    let started = std::time::Instant::now();
+    while loads_arrived(&app).await.len() < 3 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            loads_arrived(&app).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        loads(&["fetch", "post", "socket"])
+    );
+    drop(tab);
+
+    // Given as the origin of a provider the tab passes through, the other
+    // name is sent the loads too.
+    app.reset().await.unwrap();
+    let passing = Origins::of([&at(&other(&app, "/"))]);
+    let tab = must(
+        browser
+            .sign_in_tab(&environment(), &only(&app), &passing)
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&Primitive::Visible(css("#tried")), soon()).await);
+    let started = std::time::Instant::now();
+    while loads_arrived(&app).await.len() < 6 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            loads_arrived(&app).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        loads(&["fetch", "image", "post", "script", "socket", "style"])
+    );
+    assert_eq!(
+        tab.blocked()
+            .into_iter()
+            .filter(|one| one.method == crate::OUTSIDE)
+            .count(),
+        0
+    );
+    drop(tab);
+    drop(browser);
+    stand.end().await;
+}
+
 async fn refused_at(
     blocked: impl Fn() -> Vec<RequestShape>,
     word: &str,
