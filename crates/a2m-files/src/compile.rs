@@ -3895,14 +3895,18 @@ impl<'a> Compiler<'a> {
         at: &Place,
     ) -> Option<ToolPlan> {
         let length = description.trim().chars().count();
-        if length > MOST_DESCRIPTION_CHARACTERS || description.trim().chars().any(char::is_control)
+        if length > MOST_DESCRIPTION_CHARACTERS
+            || description
+                .trim()
+                .chars()
+                .any(|c| c.is_control() && c != '\n')
         {
             self.problems.push(Diagnostic::error(
                 kernel(codes::DESCRIPTION_UNBOUNDED),
                 Stage::Lint,
                 at,
-                format!("The description of `{name}` has {length} characters or a control character; a description is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters, with no control character."),
-                "Shorten the description and take out any control character; a client reads it as plain text.",
+                format!("The description of `{name}` has {length} characters or a control character; a description is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters, with no control character but a line end."),
+                "Shorten the description and take out any control character but a line end; a client reads it as plain text.",
             ));
         } else if length < 20 {
             self.problems.push(

@@ -2714,13 +2714,19 @@ fn a_description_of_1024_characters_compiles_and_one_of_1025_or_with_a_control_c
     let found = long.find("kernel.description_unbounded").unwrap();
     assert_eq!(found.level, Level::Error);
     assert!(!found.fix.is_empty());
-    for control in ["\\u0007", "\\n", "\\u001b", "\\t", "\\u0085"] {
+    for control in ["\\u0007", "\\r", "\\u001b", "\\t", "\\u0085"] {
         let problems = under(&format!("Reads one order.{control} Then stops."));
         assert!(
             problems.find("kernel.description_unbounded").is_some(),
             "{control}\n{problems}"
         );
     }
+    // A line end is plain text: a description of several lines compiles.
+    let lines = under("Reads one order.\\nThen stops.");
+    assert!(
+        lines.find("kernel.description_unbounded").is_none(),
+        "{lines}"
+    );
     // A pipeline's description is held to the same bound.
     let mut files = example_files();
     let file = files
