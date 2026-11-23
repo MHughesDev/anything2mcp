@@ -1,4 +1,4 @@
-# 0399. The access actions, the built-in toolsets, and where a reach is kept
+# 0339. The access actions, the built-in toolsets, and where a reach is kept
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Builds the `a2m-actions` half of slices N3 and 6.3, on [decision 0327](0327-a-reach-is-a-record-in-force-only-on-the-network-it-was-named-on-and-via-gateway-is-derived-from-it.md) and [decision 0328](0328-a-toolset-only-narrows-a-role-is-a-bundle-of-grants-and-a-second-administrator-is-a-named-check.md).
 
