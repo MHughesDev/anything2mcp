@@ -754,6 +754,17 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         // Guard: a write needs a kernel that is `ok`.
         run.may_write()?;
     }
+    // Guard: the session's state allows the call. The steps the call is
+    // sure to run are the ones asked about: a step under a condition or run
+    // for each row may not run at all, and is left to choose.
+    let sure: Vec<&OperationPlan> = steps
+        .iter()
+        .filter(|step| step.when.is_none() && step.for_each.is_none())
+        .map(|step| operation(&loaded, step.operation))
+        .collect::<Result<_, _>>()?;
+    for found in &sure {
+        run.guard_sessions(found)?;
+    }
     if run.job.snapshot.is_none() {
         run.moved(RunState::Validating).await?;
     }
@@ -778,6 +789,10 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
             records: writing.then_some(rows.max(1)),
         })
         .await?;
+    // Guard: the surface has no edge block.
+    for found in &sure {
+        run.guard_edge(found)?;
+    }
     if let Some(longest) = limits.max_duration_ms {
         run.time_limit = Some(run.engine.deps.clock.elapsed() + Duration::from_millis(longest));
     }

@@ -1256,6 +1256,93 @@ impl<'a> Run<'a> {
             )),
         }
     }
+
+    /// The surfaces of the bindings of an operation that choose could pick
+    /// for this job, in the plan's order: the pin, the named binding, and
+    /// the status are held to as choose holds them. Only the surface is
+    /// asked of here; a driver's readiness and a precondition are choose's.
+    fn guarded_surfaces(&self, operation: &OperationPlan) -> Vec<a2m_core::SurfaceName> {
+        let named = self
+            .job
+            .binding
+            .as_ref()
+            .filter(|pin| pin.operation == operation.name);
+        let plan = &self.loaded.plan;
+        operation
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(position, binding)| {
+                self.job.pin.as_ref().is_none_or(|pin| pin == &binding.mode)
+                    && named.is_none_or(|pin| pin.position == *position)
+                    && if self.replay.is_some() {
+                        binding.status != BindingStatus::Retired
+                    } else {
+                        status_qualifies(binding.status, self.posture)
+                    }
+            })
+            .filter_map(|(_, binding)| plan.surface(binding.surface).map(|s| s.name.clone()))
+            .collect()
+    }
+
+    fn session_ended_on(&self, surface: &a2m_core::SurfaceName) -> bool {
+        self.job
+            .conditions
+            .sessions
+            .iter()
+            .any(|(name, state)| name == surface && !session_usable(*state))
+    }
+
+    /// Guard's third check: the session's state allows the call. The
+    /// session keeper's answer is the job's `conditions.sessions`, which
+    /// the control plane fills from the keeper when the job is claimed; the
+    /// engine asks it, and never signs in or renews. An operation the call
+    /// is sure to run, all of whose bindings that could be chosen act on a
+    /// surface whose session has ended, stops the call here, before the
+    /// policy engine is asked (decision 0309). An operation with no such
+    /// binding at all is left to choose, which names it `no_binding`.
+    pub fn guard_sessions(&self, operation: &OperationPlan) -> Result<(), Failure> {
+        let surfaces = self.guarded_surfaces(operation);
+        if let Some(first) = surfaces.first()
+            && surfaces
+                .iter()
+                .all(|surface| self.session_ended_on(surface))
+        {
+            return Err(codes::fail(
+                &codes::row::NEEDS_LOGIN,
+                format!(
+                    "The session of the surface `{first}` has ended, and `{}` has no binding elsewhere.",
+                    operation.name
+                ),
+                "Sign in again with `anything2mcp session login`, then resume the run.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Guard's fifth check: the surface has no edge block. An operation the
+    /// call is sure to run, every binding of which that could be chosen and
+    /// that has a usable session acts on a surface blocked at the edge,
+    /// stops the call here, after the policy decision (decision 0309).
+    pub fn guard_edge(&self, operation: &OperationPlan) -> Result<(), Failure> {
+        let surfaces: Vec<_> = self
+            .guarded_surfaces(operation)
+            .into_iter()
+            .filter(|surface| !self.session_ended_on(surface))
+            .collect();
+        if let Some(first) = surfaces.first()
+            && surfaces
+                .iter()
+                .all(|surface| self.job.conditions.edge_blocked.contains(surface))
+        {
+            return Err(codes::fail(
+                &codes::row::EDGE_BLOCKED,
+                format!("The surface `{first}` is blocked at the edge."),
+                "Wait for the block to end; the engine does not go around it.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Merges what a step observed into what the pass has observed so far, and
