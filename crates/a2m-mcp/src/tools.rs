@@ -45,6 +45,10 @@ const EVENTS: u32 = 50;
 
 /// The key of the warnings in a result's `_meta`.
 pub(crate) const WARNINGS_KEY: &str = "anything2mcp/warnings";
+/// The key of a published tool's target in the tool's `_meta`.
+pub(crate) const TOOL_TARGET_KEY: &str = "anything2mcp/target";
+/// The key of a published tool's version in the tool's `_meta`.
+pub(crate) const TOOL_VERSION_KEY: &str = "anything2mcp/version";
 
 /// What an endpoint works with.
 pub(crate) struct Core {
@@ -80,6 +84,9 @@ pub(crate) struct ToolEntry {
     pub(crate) description: String,
     pub(crate) input_schema: Map<String, Json>,
     pub(crate) annotations: ToolAnnotationsFace,
+    /// What the tool's `_meta` carries: for a published tool, its target and
+    /// version under this product's own prefix; empty for a control tool.
+    pub(crate) meta: Map<String, Json>,
 }
 
 /// A tool list, and what it had to leave to the search tool.
@@ -289,6 +296,7 @@ impl Core {
                 description: face.description,
                 input_schema: object(face.input_schema),
                 annotations: face.annotations,
+                meta: Map::new(),
             })
             .collect();
         let limit = match self.settings.listing {
@@ -622,8 +630,18 @@ fn without_wait(input: &Json) -> Json {
 fn entry(name: &str, tool: &Json) -> ToolEntry {
     let hint = |key: &str| tool["annotations"][key].as_bool().unwrap_or(false);
     let title = tool["title"].as_str().unwrap_or(name).to_owned();
+    // The target and the version, as the plan the tool was published in
+    // states them. Who wrote the description is not sent: a published tool
+    // does not carry it yet (decision 0307, point 6).
+    let mut meta = Map::new();
+    for (key, field) in [(TOOL_TARGET_KEY, "target"), (TOOL_VERSION_KEY, "version")] {
+        if let Some(text) = tool[field].as_str() {
+            meta.insert(key.to_owned(), json!(text));
+        }
+    }
     ToolEntry {
         name: name.to_owned(),
+        meta,
         // A list never holds a tool with nothing to choose it by.
         description: tool["description"]
             .as_str()

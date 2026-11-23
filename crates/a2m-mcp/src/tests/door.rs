@@ -3,7 +3,7 @@
 
 use serde_json::{Value as Json, json};
 
-use super::engine::{ITEM_UPSERT, ORDER_GET};
+use super::engine::{ITEM_UPSERT, ORDER_FILL, ORDER_GET};
 use super::wire::{H, Http, M, Stdio, h, m, m_at};
 use super::world::World;
 use crate::{McpPeer, McpSettings, Revision};
@@ -1024,4 +1024,47 @@ async fn a_call_made_again_with_its_key_is_the_same_run_and_one_write() {
         ))
         .await;
     assert_eq!(code(bad.only()), -32602);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listed_tool_says_its_target_and_version_in_its_meta_and_no_client_changes_the_list() {
+    let world = World::ready().await;
+    let http = Http::new(world.service("use", McpSettings::local()));
+    let list = |client: &str| {
+        let mut asked = m(1, "tools/list", json!({}));
+        asked["params"]["_meta"]["io.modelcontextprotocol/clientInfo"] =
+            json!({"name": client, "version": "9"});
+        asked
+    };
+    let tools = http.post(&list("one")).await.only()["result"]["tools"].clone();
+    let tools = tools.as_array().unwrap();
+
+    // A published tool carries its target and its version, under the
+    // product's own prefix, and nothing else.
+    let published = tools
+        .iter()
+        .find(|tool| tool["name"] == ORDER_FILL)
+        .unwrap();
+    let meta = published["_meta"].as_object().unwrap();
+    assert_eq!(meta["anything2mcp/target"], "example", "{published}");
+    assert!(
+        meta["anything2mcp/version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty()),
+        "{published}"
+    );
+    assert_eq!(meta.len(), 2, "{published}");
+    // The description is the plan's own words, as published.
+    assert!(!published["description"].as_str().unwrap().is_empty());
+    // A control tool belongs to no target and carries no `_meta`.
+    let control = tools
+        .iter()
+        .find(|tool| tool["name"] == "a2m_tool_search")
+        .unwrap();
+    assert!(control.get("_meta").is_none(), "{control}");
+
+    // No client is special: a second client, named differently, is
+    // listed the same tools, byte for byte.
+    let other = http.post(&list("another")).await.only()["result"]["tools"].clone();
+    assert_eq!(other.as_array().unwrap(), tools);
 }
