@@ -20,6 +20,12 @@
 //!   label "Problem"       text field, not editable, hidden but while the application refuses a value
 //! ```
 //!
+//! Every value field, the ones that are not editable too, says it is a
+//! text field (`AXTextField`), as the read-only edits of the Windows stand
+//! and the read-only entries of the Linux stand say they are entries: left
+//! to AppKit, a text field that is not editable says it is a static text
+//! (decision 0999).
+//!
 //! A value a client sets into a field (`setAccessibilityValue:`) is kept in
 //! the book with its window and its label, shown by the field, and not
 //! stored until Save; the fields labelled `Customer` and `Status` show what
@@ -57,14 +63,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAccessibility, NSAccessibilityLayoutChangedNotification, NSAccessibilityPostNotification,
-    NSAccessibilityUnignoredDescendant, NSAccessibilityValueChangedNotification, NSApplication,
-    NSApplicationActivationPolicy, NSBackingStoreType, NSButton, NSControl,
-    NSControlTextEditingDelegate, NSResponder, NSScrollView, NSSecureTextField, NSTableColumn,
-    NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTextField, NSView, NSWindow,
-    NSWindowStyleMask,
+    NSAccessibilityTextFieldRole, NSAccessibilityUnignoredDescendant,
+    NSAccessibilityValueChangedNotification, NSApplication, NSApplicationActivationPolicy,
+    NSBackingStoreType, NSButton, NSControl, NSControlTextEditingDelegate, NSResponder,
+    NSScrollView, NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource,
+    NSTableViewDelegate, NSTextField, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSInteger, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
@@ -136,6 +142,20 @@ define_class!(
     struct ValueField;
 
     impl ValueField {
+        /// The field's role: a text field, whether it is editable or not.
+        /// AppKit's own answer for a text field that is not editable is a
+        /// static text's, which would make `Message` and `Problem`, and a
+        /// field the read-only fault locks, a label here where the Linux
+        /// and Windows stands show a read-only entry, and the one screen
+        /// model the three share could find none of them (decision 0999).
+        /// Whether a client may set its value is still answered below.
+        #[unsafe(method_id(accessibilityRole))]
+        fn accessibility_role(&self) -> Option<Retained<NSString>> {
+            // SAFETY: AppKit's own constant, which lives as long as the
+            // process and is never written.
+            Some(unsafe { NSAccessibilityTextFieldRole }.retain())
+        }
+
         #[unsafe(method_id(accessibilityValue))]
         fn accessibility_value(&self) -> Option<Retained<AnyObject>> {
             count(&format!("edit:{}.AXValue", self.ivars().counted));
