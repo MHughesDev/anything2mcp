@@ -395,3 +395,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |
 | 0402 | [The rename sweep renames every name, and keeps what is stored](0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |
 | 0403 | [A renewal opens the saved state first when its runner holds nothing](0403-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md) | Accepted (design decision) |
+| 0999 | [One closed shape of a body in the provider contract, and the stricter refusal where the two copies differed](0999-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md) | Accepted (design decision) |

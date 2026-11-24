@@ -26,6 +26,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 - The plug-in host, and the plug-in protocol's message list and version.
 - The search for provider packages: `find_python_providers` reads the `anything2mcp.providers` entries of the installed packages in the site folders it is given, and each package's manifest, as text; it starts no Python and imports nothing, states where it looked (`EntryPointSearch::statement`), and gives each package it finds to `RegistryBuilder::add_plugin`, which lists it as present and not enabled. `PythonProvider::launch_spec` gives the supervisor the package's program, by its declared digest ([decision 0314](../../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md)).
 - The availability check of section 203, which inspects the machine and starts nothing.
+- The closed **shape** of a body, the module `shape`: the seven words of JSON Schema a target file may write a body's shape in (`type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`), its reading from a located document (`Shape::from_doc`), and one check of a value against it (`Shape::check`, through `ShapeValue`, giving a `Misfit` that holds no value). The HTTP pack's endpoint entries and the web pack's page requests read their shapes here; the browser base will check a page's body against it ([decision 0394](../../decisions/0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md), point 1; [decision 0999](../../decisions/0999-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md)).
 
 It must never: decide whether something may happen; sign in or renew; write a ledger row; open the vault; retry a step; hold a list of modes or name a pack; let a caller's input choose a program, a file, or a destination.
 
@@ -508,6 +509,36 @@ Contracts the signatures do not show:
 - **A write and a removal never go through a link.** `write` and `remove_file` act on the final name in its folder. Where a link stands at that name they refuse, `input`, `path_not_allowed`, whether the link was there when the path was made or was put there since. `write` makes its new file under a name of 128 random bits from the operating system, only if nothing stands at that name, and without following a link; the name the file then takes is replaced and never followed. `create_dir` makes one folder and fails when anything is at the name.
 - **The moment of use.** On Linux and macOS `write`, `remove_file`, `create_dir`, `open`, `read`, and `entry_kind` reach the folder by opening each folder from the root down without following a link, and act on the name relative to that handle. A link put on the way after the check is refused, also one that stays inside the root, and nothing done to the path meanwhile leads the work elsewhere. On Windows, where the standard library cannot open a name relative to a folder's handle, `open` and `read` hold every folder from the root down while they open, each opened with no link followed and not shared for removal, so that none of them can be moved, removed, or replaced while the file is opened, and they refuse a link at the name; a `HeldFolder` holds the same chain for as long as it lives, and each of its calls names the entry by its path through the held folders ([decision 0272](../../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)). The other methods (`exists`, `is_dir`, `size`, `list`, `create_dir_all`), and on Windows also `write`, `remove_file`, `create_dir`, and `entry_kind`, look again that the path resolves inside the root and then use it by name: a link swapped in between those two moments is followed. Making one needs the right to write in a folder of the root. `as_path` handed to a program is outside all of this.
 
+### The shape of a body
+
+```rust
+pub mod shape {
+    pub enum Kind { Any, Null, Boolean, Integer, Number, String, Array, Object }   // the words of `type`
+    impl Kind { pub const WORDS: &[&str]; pub fn from_word(&str) -> Option<Kind>; pub const fn word(self) -> &'static str; }
+    pub struct Shape {                                    // serialized into a pack's payload as written here
+        pub kind: Kind, pub nullable: bool,
+        pub properties: BTreeMap<String, Shape>, pub required: Vec<String>,
+        pub closed: bool,                                 // `additionalProperties: false`
+        pub items: Option<Box<Shape>>, pub one_of: Vec<String>,   // `enum`, for a string
+    }
+    impl Shape {
+        pub fn of(kind: Kind) -> Shape;
+        pub fn from_doc(doc: &Located<Doc>) -> Result<Shape, ShapeProblem>;   // the first problem, at its place
+        pub fn at_path(&self, path: &[String]) -> Option<(&Shape, bool)>;     // `*` steps into items; whether certain
+        pub fn check<V: ShapeValue>(&self, value: &V) -> Result<(), Misfit>;
+    }
+    pub struct ShapeProblem { pub at: Place, pub message: String }
+    pub trait ShapeValue { fn view(&self) -> ValueView<'_, Self>; }          // implemented for serde_json::Value
+    pub enum ValueView<'a, V> { Null, Boolean, Number(Cow<'a, str>), Text(&'a str), List(&'a [V]), Object(Vec<(&'a str, &'a V)>) }
+    pub struct Misfit { pub path: Vec<PathStep>, pub kind: MisfitKind }      // never the value
+    pub enum PathStep { Name(String), Item(usize) }
+    pub enum MisfitKind { Kind { found: &'static str, declared: Kind }, NotOneOf, Lacks(String), Undeclared }
+    impl Misfit { pub fn path_from(&self, root: &str) -> String; }            // `the body.lines[1].n`
+}
+```
+
+A word other than the seven, or one the shape's `type` does not take (`properties` and `required` beside `object`, `items` beside `array`, `enum` beside `string`), is refused where it is written, and so is a value of the wrong form under a word: `properties` that is not a map, `required` or `enum` that is not a list, `nullable` or `additionalProperties` that is not true or false. A required name the shape does not list under `properties` is refused at the name. An integer is a number with no fraction and no exponent, not `-0`, within 64 bits, whichever reader made the value: a reader that keeps a number's text and `serde_json` agree on each. A caller words a `Misfit` in its own terms. A pack may take fewer of the seven words than the module does, and refuses the others under its own code; it takes no other. The shape is written into a pack's payload by `serde`, so a change to `Shape`'s fields changes compiled targets ([decision 0999](../../decisions/0999-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md)).
+
 ### A pack, whole
 
 ```rust
@@ -714,7 +745,7 @@ The host supports the current and previous version. A method the plug-in does no
 | `a2m-engine` | `Registry::driver`, `DriverHandle`, `archetype`, `mode_defaults`, `source_reader`; implements `SandboxPort`, or uses `ReadOnlyPort` |
 | `a2m-actions` | `listing`, `discoverers_for` when it submits a discovery job, `auth_providers`, `compiler_set`, `action` for its dispatcher, `Roots::check` for the kernel's own reads, `supervisor` for `doctor.run` |
 | A runner | `discoverers_for` and `Discoverer::discover`, inside the engine's sandbox, for a discovery job |
-| Packs | `Pack`, `PackContext`, `Registrar`, `CompilerRegistrations`, the traits, `PrepareContext`, `CheckedPath`, `ScopedSupervisor` to start their programs |
+| Packs | `Pack`, `PackContext`, `Registrar`, `CompilerRegistrations`, the traits, `PrepareContext`, `CheckedPath`, `ScopedSupervisor` to start their programs; `shape`, in the HTTP pack and the web pack |
 | `a2m-sched` | Nothing. Mode defaults reach it as data in a job's requirements |
 
 It calls: `a2m-files` to accept compiler registrations; the pack objects it holds. It emits no spans of its own yet.
@@ -796,6 +827,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 14. Done in part ([decision 0327](../../decisions/0327-a-reach-is-a-record-in-force-only-on-the-network-it-was-named-on-and-via-gateway-is-derived-from-it.md), slice N3): `Reach`, `ReachEntry`, `GatewayName`, `PlacedInReach`, and `NetworkPlace::of_in_reach`, which gives `via_gateway` only where a reach in force names a gateway for the destination, and so the place of a destination now depends on the network the machine is on. A reach is in force only where its fingerprint (`a2m-netstate`) is recognized as the current one. Tests: `reach.rs`. Not built: the protected store of reaches and the person's actions to name, list, and withdraw one, which are `a2m-actions`'.
 17. Done ([decision 0391](../../decisions/0391-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md), package E2): `points.traffic_capture`, `CaptureSource`, `TrafficCapture`, `CapturedTraffic`, `CapturedRequest`, `take_capture`, `kept_by_structure`, `Registrar::traffic_capture`, `Registry::captures_for`, `CaptureHandle`, `Capturing`. Tests: `tests/capture.rs`. No action handler opens a capture through the registry yet.
 16. Done ([decision 0343](../../decisions/0343-the-decompiling-engine-is-a-discoverer-of-the-provider-contract-that-starts-only-a-pinned-program-and-reads-one-form.md), package X6): the module `decompiler`: `Decompiler` (the place the person named and the digests the product pins; `identify` looks at the program and starts nothing; `decompile` is handed a `CheckedPath` of a regular file and never a process), `DecompilerSpec`, `DecompilerDiscoverer`, and `DecompilerDescriber`; the codes `decompiler_not_installed`, `decompiler_not_pinned`, `decompiler_spec_invalid`, `decompiler_failed`, and `decompiler_output_unknown`; the stand `targets/example-decompiler`. The findings are `artifact`, `inferred`, and carry the engine's digest. Not built: the settings and the pack that register it, and the first engine's adapter and pinned digests.
+18. Done ([decision 0999](../../decisions/0999-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md), package E7a): the module `shape`, moved from the HTTP pack, which used it alone, and from the web pack's private copy; both packs read and check their shapes through it. Where the two copies refused different things, the stricter refusal holds in both, each with a test in `src/shape.rs`. Not built: its use by the browser base (package E7b).
 
 ## Open points
 
