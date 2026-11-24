@@ -1411,13 +1411,34 @@ fn compile_file(
         } == shared
     });
     let index = u32::try_from(same.unwrap_or(section.programs.len())).unwrap_or(u32::MAX);
+    let mut compiled_here = Vec::new();
     for entry in doc
         .get("commands")
         .map(Located::entries)
         .unwrap_or_default()
     {
         if let Some(compiled) = command(&entry.key.value, &entry.value, index, &shared, cx, found) {
+            compiled_here.push((entry.key.value.clone(), compiled.clone()));
             section.commands.insert(entry.key.value.clone(), compiled);
+        }
+    }
+    // A program the name list refuses that has commands which run no code
+    // but its own: each of this file's argument lists is one of them
+    // (decision 0299, step one). A file that declares an interpreter is
+    // held to the rules of a pair instead.
+    if shared.interpreter.is_none()
+        && let Some(row) = a2m_provider::runs_its_own_code(surface.address)
+    {
+        let commands = compiled_here
+            .iter()
+            .map(|(name, command)| (name.as_str(), command));
+        if let Some(why) = crate::own_code::refusal(row, surface.address, &shared, commands) {
+            found.bad(
+                "shell_program",
+                &block.at,
+                why,
+                "Give the program only the commands of it that run no code but its own, in their exact form, each declared `read`, with no variable and no help form; any other command of it is never started.",
+            );
         }
     }
     if same.is_none() {

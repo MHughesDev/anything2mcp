@@ -417,8 +417,45 @@ impl CliDriver {
             && on_surface
                 .iter()
                 .all(|program| program.interpreter.is_some());
+        // A program of the provider's closed list of programs whose listed
+        // commands run no code but their own is started only in those
+        // forms: every argument list its files give it, by the row of its
+        // declared name and by the row of the file its path leads to, is
+        // one of them (decision 0299, step one). The plan is not taken at
+        // its word.
+        let own_code =
+            !interprets && a2m_provider::runs_its_own_code(&path.to_string_lossy()).is_some();
+        if own_code {
+            let real = std::fs::canonicalize(&path).ok();
+            for name in std::iter::once(path.clone()).chain(real) {
+                let shown_name = shown(&name.display().to_string());
+                let Some(row) = a2m_provider::runs_its_own_code(&name.to_string_lossy()) else {
+                    return Err(refused(&Refused::Script, &name));
+                };
+                for (index, program) in section.programs.iter().enumerate() {
+                    if program.surface != surface {
+                        continue;
+                    }
+                    let commands = section
+                        .commands
+                        .iter()
+                        .filter(|(_, command)| command.program as usize == index)
+                        .map(|(name, command)| (name.as_str(), command));
+                    if let Some(why) = crate::own_code::refusal(row, &shown_name, program, commands)
+                    {
+                        return Err(not_sent(
+                            &codes::row::PROGRAM_PATH_UNSAFE,
+                            why,
+                            "Give the program only the commands of it that run no code but its own, in their exact form, and publish.",
+                        ));
+                    }
+                }
+            }
+        }
         let role = if interprets {
             Role::Interpreter
+        } else if own_code {
+            Role::OwnCode
         } else {
             Role::Program
         };

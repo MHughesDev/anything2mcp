@@ -29,6 +29,7 @@ mod manual;
 mod metadata;
 mod model;
 mod output;
+mod own_code;
 mod pattern;
 mod powershell;
 mod psd1;
