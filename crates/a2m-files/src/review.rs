@@ -23,6 +23,9 @@ pub const NOT_STATED: &str = "this kind of tool does not state what it runs";
 /// What the summary says beside a script a target keeps (decision 0216).
 pub const SCRIPT_NOTICE: &str =
     "runs a script this target keeps: the digest pins its bytes; it does not make it safe";
+/// What the summary says beside a program started through a launcher
+/// (decision 0398).
+pub const LAUNCHER_NOTICE: &str = "starts a program through a launcher: the digests pin the launcher and its entry file; whatever the entry file loads, and whatever that starts, is not pinned and is not shown here";
 /// What the summary says of a tool's reach when a binding's pack does not
 /// state where it sends requests.
 pub const REACH_NOT_STATED: &str = "where this kind of tool sends requests is not stated: only the addresses shown are known, and it may reach others";
@@ -108,6 +111,22 @@ pub enum ProgramRun {
         script: String,
         /// The digest of the script's bytes.
         script_digest: Digest,
+    },
+    /// A program started through a launcher: the launcher, the arguments it
+    /// is always given, and the entry file an installer put on the machine,
+    /// run where it lies (decision 0398). Nothing the entry file loads is
+    /// pinned.
+    Launcher {
+        /// The launcher's absolute path.
+        launcher: String,
+        /// The digests the launcher is pinned to; empty where none.
+        launcher_digests: Vec<Digest>,
+        /// The arguments it is always given before the entry file's path.
+        arguments: Vec<String>,
+        /// The entry file's path as it lies on the machine.
+        entry: String,
+        /// The digest of the entry file's bytes.
+        entry_digest: Digest,
     },
 }
 
@@ -221,12 +240,14 @@ pub enum BindingStates {
     },
 }
 
-/// A program a binding starts, with the fixed notice a script carries.
+/// A program a binding starts, with the fixed notice a script or a launcher
+/// carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunReview {
     /// The program.
     pub run: ProgramRun,
-    /// [`SCRIPT_NOTICE`] for a script the target keeps; none for a program.
+    /// [`SCRIPT_NOTICE`] for a script the target keeps, [`LAUNCHER_NOTICE`]
+    /// for a launcher; none for a program.
     pub notice: Option<&'static str>,
 }
 
@@ -407,6 +428,19 @@ impl ReviewSummary {
                 arguments: all(arguments),
                 script: f(script),
                 script_digest: *script_digest,
+            },
+            ProgramRun::Launcher {
+                launcher,
+                launcher_digests,
+                arguments,
+                entry,
+                entry_digest,
+            } => ProgramRun::Launcher {
+                launcher: f(launcher),
+                launcher_digests: launcher_digests.clone(),
+                arguments: all(arguments),
+                entry: f(entry),
+                entry_digest: *entry_digest,
             },
         };
         let items = self
@@ -705,8 +739,11 @@ pub(crate) fn review_of(
                                 .iter()
                                 .map(|run| RunReview {
                                     run: run.clone(),
-                                    notice: matches!(run, ProgramRun::Script { .. })
-                                        .then_some(SCRIPT_NOTICE),
+                                    notice: match run {
+                                        ProgramRun::Script { .. } => Some(SCRIPT_NOTICE),
+                                        ProgramRun::Launcher { .. } => Some(LAUNCHER_NOTICE),
+                                        ProgramRun::Program { .. } => None,
+                                    },
                                 })
                                 .collect(),
                             environment: stated.environment.clone(),
@@ -847,7 +884,7 @@ pub(crate) fn review_of(
 
 /// What a tool exposes beyond its effect, for the order of the summary:
 /// first where it sends (unknown, then off this machine), then what it
-/// starts (unknown or a script, then a program).
+/// starts (unknown, a script, or a launcher, then a program).
 fn exposure(item: &ReviewItem) -> (u8, u8) {
     let reach = match &item.reach {
         Reach::Partly { .. } => 2,
@@ -865,7 +902,7 @@ fn exposure(item: &ReviewItem) -> (u8, u8) {
             BindingStates::Stated { runs, .. } => runs
                 .iter()
                 .map(|run| match run.run {
-                    ProgramRun::Script { .. } => 2,
+                    ProgramRun::Script { .. } | ProgramRun::Launcher { .. } => 2,
                     ProgramRun::Program { .. } => 1,
                 })
                 .max()

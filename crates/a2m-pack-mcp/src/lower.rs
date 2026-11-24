@@ -470,9 +470,9 @@ impl Lowering for McpLowering {
                     })
                 }),
         );
-        // A launcher and the entry file it runs are the fixed pair the
-        // review shows for a script: the launcher, its fixed arguments, and
-        // the file with its digest (decision 0371).
+        // A launcher and the entry file it runs are shown as a launcher: the
+        // launcher, its fixed arguments, and the entry file with its digest;
+        // nothing the entry file loads is pinned (decisions 0371, 0398).
         let run = match (
             surface.doc.text(crate::mapping::ENTRY),
             surface
@@ -480,9 +480,9 @@ impl Lowering for McpLowering {
                 .text(crate::mapping::ENTRY_DIGEST)
                 .and_then(parse_digest),
         ) {
-            (Some(entry), Some(script_digest)) => ProgramRun::Script {
-                interpreter: path.to_owned(),
-                interpreter_digests: digests,
+            (Some(entry), Some(entry_digest)) => ProgramRun::Launcher {
+                launcher: path.to_owned(),
+                launcher_digests: digests,
                 arguments: surface
                     .doc
                     .get(crate::mapping::LAUNCHER_ARGS)
@@ -491,8 +491,8 @@ impl Lowering for McpLowering {
                     .iter()
                     .filter_map(|item| item.as_text().map(str::to_owned))
                     .collect(),
-                script: entry.to_owned(),
-                script_digest,
+                entry: entry.to_owned(),
+                entry_digest,
             },
             (Some(_), None) => return Statement::NotStated,
             (None, _) => ProgramRun::Program {

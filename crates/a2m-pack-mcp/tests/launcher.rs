@@ -364,14 +364,15 @@ fn the_review_shows_the_launcher_and_the_entry_file_it_runs() {
     };
     assert_eq!(
         runs[0].run,
-        a2m_files::ProgramRun::Script {
-            interpreter: node.to_string_lossy().into_owned(),
-            interpreter_digests: vec![digest_of(&node)[7..].parse().unwrap()],
+        a2m_files::ProgramRun::Launcher {
+            launcher: node.to_string_lossy().into_owned(),
+            launcher_digests: vec![digest_of(&node)[7..].parse().unwrap()],
             arguments: Vec::new(),
-            script: entry.to_string_lossy().into_owned(),
-            script_digest: digest[7..].parse().unwrap(),
+            entry: entry.to_string_lossy().into_owned(),
+            entry_digest: digest[7..].parse().unwrap(),
         }
     );
+    assert_eq!(runs[0].notice, Some(a2m_files::LAUNCHER_NOTICE));
     // Both files are programs the compiled target declares for the surface.
     let declared = &item.bindings[0].surface_programs;
     assert!(

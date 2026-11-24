@@ -7,8 +7,8 @@ use super::example::example_files;
 use crate::testing::{self, stand_set};
 use crate::{
     BindingStatement, BindingStates, CompileMode, Compiled, CompilerSet, DRAFT_VERSION,
-    Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, Lowered, Lowering, NOT_STATED,
-    PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
+    Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, LAUNCHER_NOTICE, Lowered, Lowering,
+    NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
     REACH_NOT_STATED, Reach, ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE,
     SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot,
     VariableValue, compile, lint_one, load_files,
@@ -261,6 +261,13 @@ impl Lowering for Stating {
                         path: "/opt/example/bin/helper".to_owned(),
                         digests: Vec::new(),
                     },
+                    ProgramRun::Launcher {
+                        launcher: "/usr/bin/example-launcher".to_owned(),
+                        launcher_digests: vec![digest(4)],
+                        arguments: vec!["--fixed".to_owned()],
+                        entry: "/opt/example/lib/server.example".to_owned(),
+                        entry_digest: digest(5),
+                    },
                 ],
                 environment: vec![
                     EnvironmentVariable {
@@ -365,6 +372,16 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
     };
     assert_eq!(runs[0].notice, Some(SCRIPT_NOTICE));
     assert_eq!(runs[1].notice, None);
+    // A server started through a launcher is its own kind, with its own
+    // notice, and is never worded as a script the target keeps.
+    assert!(matches!(runs[2].run, ProgramRun::Launcher { .. }));
+    assert_eq!(runs[2].notice, Some(LAUNCHER_NOTICE));
+    assert_ne!(LAUNCHER_NOTICE, SCRIPT_NOTICE);
+    assert!(
+        serde_json::to_string(&runs[2].run)
+            .unwrap()
+            .contains(r#""kind":"launcher""#)
+    );
     assert_eq!(environment.len(), 3);
     assert_eq!(
         upsert.reach,
@@ -453,6 +470,8 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
     let after = serde_json::to_string(&mapped).unwrap();
     for text in [
         "/usr/bin/example-interpreter",
+        "/usr/bin/example-launcher",
+        "/opt/example/lib/server.example",
         "\"-I\"",
         "scripts/put.example",
         "/opt/example/bin/helper",
@@ -468,6 +487,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
     }
     for kept in [
         SCRIPT_NOTICE,
+        LAUNCHER_NOTICE,
         REACH_NOT_STATED,
         r#""value":{"kind":"secret"}"#,
         "example_line_item_upsert",

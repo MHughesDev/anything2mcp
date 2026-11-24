@@ -985,6 +985,20 @@ pub(crate) mod review_shown {
                 code(script),
                 code(&script_digest.to_string()),
             ),
+            ProgramRun::Launcher {
+                launcher,
+                launcher_digests,
+                arguments,
+                entry,
+                entry_digest,
+            } => format!(
+                "Starts the launcher {}, {}, with the fixed arguments {}, on the entry file {}, pinned to the digest {}.",
+                code(launcher),
+                digests(launcher_digests),
+                codes(arguments),
+                code(entry),
+                code(&entry_digest.to_string()),
+            ),
         };
         if let Some(notice) = notice {
             let _ = write!(out, " <strong>{}</strong>.", escape(notice));
