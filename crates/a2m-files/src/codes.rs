@@ -92,6 +92,10 @@ kernel_codes! {
     DESCRIPTION_UNBOUNDED = "description_unbounded": "A description is plain text of at most 1,024 characters, with no control character.",
     FIELD_TEXT_UNBOUNDED = "field_text_unbounded": "A field description, an enum label, or a text default of a tool's definition is plain text of at most 1,024 characters, with no control, bidirectional, or invisible character but a newline and a tab.",
     DEFINITION_UNBOUNDED = "definition_unbounded": "A tool's definition holds at most 8,192 characters of free text in all.",
+    DESCRIPTION_INSTRUCTS_THE_READER = "description_instructs_the_reader": "A tool's description and its inputs' descriptions hold none of the phrases or markers of an instruction to the model that reads them, which the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_NAMES_AN_UNPUBLISHED_TOOL = "description_names_an_unpublished_tool": "A tool's description and its inputs' descriptions name no tool this version does not publish, by the forms the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_NAMES_A_PLACE_OUTSIDE = "description_names_a_place_outside": "A tool's description and its inputs' descriptions name no address the target does not reach and no file of the machine, by the forms the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_ASKS_TO_HIDE = "description_asks_to_hide": "A tool's description and its inputs' descriptions hold none of the phrases of a request to keep something from the person, which the module `addressed` lists; it is always a warning.",
     OUTPUT_NOT_MARKED = "output_not_marked": "Free text that came from the system is of a field type marked untrusted.",
     // Stage 8: describe.
     TOOL_INDISTINGUISHABLE = "tool_indistinguishable": "No two tools have the same description and the same inputs.",

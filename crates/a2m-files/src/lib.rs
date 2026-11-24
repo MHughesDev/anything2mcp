@@ -13,6 +13,7 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: `a2m-core` and `a2m-expr`.
 
+mod addressed;
 pub mod codes;
 mod compile;
 mod diag;

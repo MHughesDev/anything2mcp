@@ -3910,6 +3910,7 @@ impl<'a> Compiler<'a> {
             tools.extend(tool);
             places.push(at);
         }
+        self.lint_what_addresses_the_reader(&tools, &places);
         // Two tools a caller cannot tell apart, and names that differ only
         // by a suffix.
         for (later, tool) in tools.iter().enumerate() {
@@ -4153,6 +4154,104 @@ impl<'a> Compiler<'a> {
                 format!("The definition of `{name}` holds {total} characters of text; it holds at most {MOST_DEFINITION_CHARACTERS} in all."),
                 "Shorten the descriptions of its fields, or split the tool in two.",
             ));
+        }
+    }
+
+    /// The lint for a description that addresses its reader (section 502;
+    /// the rules and their patterns are in the module `addressed`): a
+    /// warning for each finding in a tool's description and in the
+    /// description of each of its inputs.
+    fn lint_what_addresses_the_reader(&mut self, tools: &[CompiledTool], places: &[Place]) {
+        let mut known = crate::addressed::Known {
+            target: self.model.target.as_ref().map(ToString::to_string),
+            ..Default::default()
+        };
+        for tool in tools {
+            known.tools.insert(tool.name.to_string());
+            for schema in [&tool.input_schema, &tool.output_schema] {
+                let schema: serde_json::Value = schema.decode().unwrap_or_default();
+                if let Some(properties) = schema
+                    .get("properties")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    known.fields.extend(properties.keys().cloned());
+                }
+            }
+        }
+        for surface in &self.model.surfaces {
+            known
+                .hosts
+                .insert(crate::addressed::host_of(&surface.compiled.address));
+        }
+        for environment in &self.environments {
+            for address in &environment.addresses {
+                known
+                    .hosts
+                    .insert(crate::addressed::host_of(&address.address));
+            }
+        }
+        for (operation, _, _) in &self.compiled_ops {
+            for destination in &operation.manifest.destinations {
+                known.hosts.insert(crate::addressed::host_of(destination));
+            }
+        }
+        for (tool, at) in tools.iter().zip(places) {
+            let mut texts = vec![tool.description.clone()];
+            let input_schema: serde_json::Value = tool.input_schema.decode().unwrap_or_default();
+            if let Some(properties) = input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+            {
+                texts.extend(
+                    properties
+                        .values()
+                        .filter_map(|field| field.get("description"))
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            let mut seen = BTreeSet::new();
+            for text in &texts {
+                for finding in crate::addressed::findings(text, &known) {
+                    if !seen.insert(finding.clone()) {
+                        continue;
+                    }
+                    let name = &tool.name;
+                    let (code, message, fix) = match finding {
+                        crate::addressed::Finding::Instructs(pattern) => (
+                            codes::DESCRIPTION_INSTRUCTS_THE_READER,
+                            format!(
+                                "The definition of `{name}` holds `{pattern}`, which reads as an instruction to the model that reads it."
+                            ),
+                            "Say what the tool does, to whom, and its limits; give the agent no orders.",
+                        ),
+                        crate::addressed::Finding::NamesUnpublishedTool(named) => (
+                            codes::DESCRIPTION_NAMES_AN_UNPUBLISHED_TOOL,
+                            format!(
+                                "The definition of `{name}` names `{named}`, which is no tool of this version."
+                            ),
+                            "Name only tools this version publishes, or take the name out.",
+                        ),
+                        crate::addressed::Finding::NamesPlaceOutside(place) => (
+                            codes::DESCRIPTION_NAMES_A_PLACE_OUTSIDE,
+                            format!(
+                                "The definition of `{name}` names `{place}`, a file of the machine or an address the target does not reach."
+                            ),
+                            "Name only the target's own addresses, and no file; a tool reads what its bindings declare.",
+                        ),
+                        crate::addressed::Finding::AsksToHide(pattern) => (
+                            codes::DESCRIPTION_ASKS_TO_HIDE,
+                            format!(
+                                "The definition of `{name}` holds `{pattern}`, which asks that something be kept from the person."
+                            ),
+                            "Take the request out; what a tool does is the person's to see.",
+                        ),
+                    };
+                    self.problems.push(
+                        Diagnostic::error(kernel(code), Stage::Lint, at, message, fix).as_warning(),
+                    );
+                }
+            }
         }
     }
 
