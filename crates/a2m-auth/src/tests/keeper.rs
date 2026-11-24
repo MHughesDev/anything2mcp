@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, SessionState};
+use a2m_core::{FailureClass, Secret, SessionState};
 use a2m_vault::{ItemId, OwnerRef, SealContext, SealedKind};
 
 use super::support::{
@@ -457,6 +457,35 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     }
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 3));
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+}
+
+/// A credential a person chose that is shorter than eight bytes is refused
+/// by name before it is sealed: nothing is stored under its reference, and
+/// it is registered with no redactor (decision 0338).
+#[tokio::test]
+async fn a_chosen_credential_of_one_byte_is_refused_and_nothing_is_stored() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = person_key(1);
+    let refused = world
+        .credentials
+        .put(
+            &key.workspace,
+            &key.identity,
+            &reference("password"),
+            &Secret::new("q"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code().as_str(), "secret_too_short", "{refused}");
+    assert_eq!(refused.class(), FailureClass::Input);
+    assert!(
+        !world
+            .credentials
+            .holds(&key.workspace, &key.identity, &reference("password"))
+            .await
+            .unwrap()
+    );
+    assert!(!world.is_registered("q"));
 }
 
 /// The count of a refused credential is the session's record's, so a

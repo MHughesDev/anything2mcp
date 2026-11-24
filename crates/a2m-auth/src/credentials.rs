@@ -59,14 +59,17 @@ impl StoredCredentials {
 
     /// Stores `secret` under `reference` for one identity of one workspace,
     /// replacing what was there, sealed for the target the reference
-    /// belongs to: its first part. The secret is registered with the
-    /// redactor.
+    /// belongs to: its first part. A person chose the secret, so it is
+    /// checked as the vault checks a chosen secret and registered with the
+    /// redactor before it is sealed (decision 0338); a secret that is
+    /// refused is neither registered nor stored.
     ///
     /// # Errors
     ///
     /// `input`/`credential_of_another_target` when the reference's first
-    /// part is not a target's name; the vault's failures when it cannot
-    /// seal.
+    /// part is not a target's name; `input`/`secret_too_short` when the
+    /// secret has fewer than eight bytes; the vault's failures when it
+    /// cannot seal.
     pub async fn put(
         &self,
         workspace: &WorkspaceId,
@@ -74,9 +77,9 @@ impl StoredCredentials {
         reference: &CredentialRef,
         secret: &Secret,
     ) -> Result<(), Failure> {
-        self.vault.register(secret);
         let target = target_of(reference)?;
         let cx = context(workspace, identity, &target, reference)?;
+        self.vault.register_chosen(&cx, secret)?;
         let sealed = self.vault.seal(&cx, secret.expose().as_bytes()).await?;
         self.store
             .put_credential(*workspace, identity.to_string(), reference.clone(), sealed)

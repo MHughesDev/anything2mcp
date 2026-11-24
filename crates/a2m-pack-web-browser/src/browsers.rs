@@ -783,6 +783,12 @@ impl Browsers {
             )
             .await
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
+        // A program was started: one launch, counted under its profile
+        // root, inside the section that lets one launch through at a time.
+        #[cfg(any(test, feature = "test-support"))]
+        if let Ok(root) = &shared.root {
+            crate::test_support::launched(root.as_path());
+        }
 
         let subsystem = link.id;
         let known = &shared.settings.known_digests;

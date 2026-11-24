@@ -1,0 +1,30 @@
+operation: example_account_get
+title: Who is signed in
+effect: read
+inputs: {}
+outputs:
+  signed_in_as: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: verified
+    screen: orders
+description: >
+  Reads which account the application says is signed in. It is the
+  session's probe: it works only while the sign-in holds.
+---
+operation: example_order_list
+title: List every order
+effect: read
+inputs: {}
+outputs:
+  order_ids: {type: identifier, list: true}
+  customers: {type: text, list: true}
+bindings:
+  - mode: ui
+    verb: list
+    status: verified
+    screen: orders
+description: >
+  Lists the number and the customer of every order, from the signed-in
+  orders page.

@@ -540,6 +540,9 @@ pub(super) struct World {
     /// Where the store's file is, for a world that can be restarted.
     folder: Option<Folder>,
     pub(super) store: SessionStore,
+    /// The ledger under the session store, whose lock on its data folder
+    /// a restart lets go of, as a closed engine does.
+    ledger: Store,
     pub(super) vault: Arc<Vault>,
     pub(super) credentials: StoredCredentials,
     pub(super) fake: Arc<Fake>,
@@ -589,9 +592,14 @@ impl World {
             fake,
             person,
             probe,
+            ledger,
             ..
         } = self;
         assert!(folder.is_some(), "only a world on disk can be restarted");
+        // The engine before the restart has closed: its store lets go of
+        // its lock on the data folder, as a closed engine's does, although
+        // work it left in flight still holds the store.
+        ledger.release_folder();
         Self::over(clock, keys, folder, fake, person, probe).await
     }
 
@@ -610,7 +618,7 @@ impl World {
         let ledger = Store::open(config.with_clock(clock.clone())).await.unwrap();
         let vault = Arc::new(Vault::new(keys.clone(), Arc::new(ledger.key_records())));
         ledger.attach(Arc::clone(&vault)).await.unwrap();
-        let store = SessionStore::new(ledger);
+        let store = SessionStore::new(ledger.clone());
         let credentials = StoredCredentials::new(store.clone(), Arc::clone(&vault));
         let providers = ProviderSet::neutral()
             .with(Arc::clone(&fake) as Arc<dyn AuthProvider>)
@@ -643,6 +651,7 @@ impl World {
             keys,
             folder,
             store,
+            ledger,
             vault,
             credentials,
             fake,
