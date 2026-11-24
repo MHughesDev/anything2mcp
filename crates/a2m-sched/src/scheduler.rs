@@ -981,7 +981,7 @@ impl Scheduler {
     /// `runner_lost`, and a reconcile is queued. Its quarantine is the job's
     /// longest step alone, the time a step the ended process sent can still
     /// be in flight, and not the setting, which is for a runner that may
-    /// only be frozen (decision 0998).
+    /// only be frozen (decision 0416).
     ///
     /// Call it only when no other process can be `runner`: a runner on one
     /// machine whose process holds the store's lock on its data folder, at

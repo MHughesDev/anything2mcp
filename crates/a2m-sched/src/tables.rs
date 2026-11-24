@@ -1679,7 +1679,7 @@ enum Holder {
 /// quarantine. A lapsed lease's quarantine is the setting, or the job's
 /// longest step when longer, because its runner may only be frozen; an
 /// ended holder's is the longest step alone, because only a step it sent
-/// before it ended can still be in flight (decision 0998).
+/// before it ended can still be in flight (decision 0416).
 fn lose(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
@@ -1818,7 +1818,7 @@ pub(crate) fn sweep(
 /// Declares lost at once every lease `runner` holds, because the runner
 /// says it holds none: its process ended, and it starts again. Each is lost
 /// as a lapsed lease is, with the quarantine of a holder that ended
-/// (decision 0998).
+/// (decision 0416).
 pub(crate) fn runner_ended(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,

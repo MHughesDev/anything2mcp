@@ -405,7 +405,7 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
     );
 }
 
-/// Spec section 224 and decision 0998: a runner whose process ended and
+/// Spec section 224 and decision 0416: a runner whose process ended and
 /// that starts again holds nothing. Its leases are declared lost at once,
 /// not when they run out; each run is fenced and stopped, and its reconcile
 /// waits out only the job's longest step, the time a step the ended

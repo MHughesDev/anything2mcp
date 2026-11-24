@@ -448,7 +448,7 @@ impl Kernel {
                 // now, while the key store answered the digest key, and held
                 // for the life of the process: a key store that stops after
                 // the start then leaves that person's reads their evidence,
-                // sealed as ever (section 224, decision 0999). A server
+                // sealed as ever (section 224, decision 0417). A server
                 // serves many people, and opens each key at first use.
                 if local
                     && let Err(failure) = vault

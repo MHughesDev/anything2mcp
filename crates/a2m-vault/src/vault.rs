@@ -123,7 +123,7 @@ impl Vault {
     /// then needs no key store. The kernel calls it once at start for the
     /// person a local machine serves, so that a key store that stops after
     /// the start leaves that person's reads their sealed evidence (spec
-    /// section 224, decision 0999). It returns nothing of the key.
+    /// section 224, decision 0417). It returns nothing of the key.
     ///
     /// # Errors
     ///

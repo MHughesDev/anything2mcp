@@ -72,7 +72,7 @@ A lost lease means the control plane does not know whether the last write was se
 4. If policy allows, the run then resumes on its own; otherwise it waits for a person.
 5. If the lost runner returns, it uploads what it journaled locally as late evidence. Late evidence is stored and shown, but changes no state.
 
-A runner whose process ended and that starts again holds nothing: on one machine, where one process at a time can be the runner, every lease it held is declared lost at its start, by the same steps, and the quarantine is the longest step alone, because a process that ended cannot wake and act, and only a step it sent can still be in flight ([decision 0998](../../decisions/0998-a-runner-that-starts-again-holds-nothing-and-its-earlier-leases-are-lost-at-once.md)).
+A runner whose process ended and that starts again holds nothing: on one machine, where one process at a time can be the runner, every lease it held is declared lost at its start, by the same steps, and the quarantine is the longest step alone, because a process that ended cannot wake and act, and only a step it sent can still be in flight ([decision 0416](../../decisions/0416-a-runner-that-starts-again-holds-nothing-and-its-earlier-leases-are-lost-at-once.md)).
 
 **The gap that cannot be closed.** The lease number protects the ledger, because the ledger can check it. The target system cannot: it has no idea Anything2MCP's leases exist. A runner that froze just after deciding to commit a write, such as clicking Save in the web pack, and thawed after its lease was lost, can still send that write. This is a known limit of any lease protecting a resource that cannot check it. What Anything2MCP does about it:
 

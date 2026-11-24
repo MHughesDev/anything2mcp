@@ -1,6 +1,6 @@
-# 0998. A runner that starts again holds nothing, and its earlier leases are lost at once
+# 0416. A runner that starts again holds nothing, and its earlier leases are lost at once
 
-**Status:** Accepted. Design decision, made by the worker who fixed the faults packages 9.3h and 9.3i found, under the lead's brief. The owner had not read this record when it was merged. Numbered 0998 as a placeholder beside 0999, which the same brief wrote; both are renumbered on merge.
+**Status:** Accepted. Design decision, made by the worker who fixed the faults packages 9.3h and 9.3i found, under the lead's brief. The owner had not read this record when it was merged. Numbered 0416 as a placeholder beside 0417, which the same brief wrote; both are renumbered on merge.
 
 **Date:** 2026-11-24
 

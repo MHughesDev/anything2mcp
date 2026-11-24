@@ -390,7 +390,7 @@ impl Kernel {
         // to a process that has ended. Each is declared lost now, before
         // anything is claimed, so that its run is reconciled before it is
         // written again, and not left `running` until the lease runs out
-        // (spec section 224, decision 0998). Once per process: a loop
+        // (spec section 224, decision 0416). Once per process: a loop
         // started again may still have work in hand.
         self.inner
             .runner

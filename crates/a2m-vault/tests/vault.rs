@@ -969,7 +969,7 @@ async fn an_unreachable_key_store_stops_what_needs_it_and_nothing_else_and_recov
 
 #[tokio::test]
 async fn an_owner_key_held_at_start_seals_and_opens_after_the_key_store_stops() {
-    // Decision 0999: the key a person's items are sealed under is opened
+    // Decision 0417: the key a person's items are sealed under is opened
     // once while the key store answers, and kept in wiped memory for the
     // life of the process. After the store stops, that person's items still
     // seal and open; a key of another workspace is refused by name, and no
