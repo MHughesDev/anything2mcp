@@ -317,6 +317,9 @@ pub(crate) struct RunnerState {
     keeper_task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
     budgets: Mutex<BTreeSet<String>>,
+    /// Set once the leases this runner held before this process started
+    /// are declared lost, at the first start of the loop.
+    earlier_leases_lost: tokio::sync::OnceCell<()>,
 }
 
 impl Default for RunnerState {
@@ -326,6 +329,7 @@ impl Default for RunnerState {
             keeper_task: Mutex::new(None),
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
+            earlier_leases_lost: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -378,6 +382,23 @@ impl Kernel {
                     set_fact(tx, "runner", &made.to_string())?;
                     Ok(made)
                 }
+            })
+            .await?;
+        // The runner is this installation's one, and the process that holds
+        // the store's lock on its data folder is the only one that can be
+        // it: a lease it holds from before this process started was given
+        // to a process that has ended. Each is declared lost now, before
+        // anything is claimed, so that its run is reconciled before it is
+        // written again, and not left `running` until the lease runs out
+        // (spec section 224, decision 0998). Once per process: a loop
+        // started again may still have work in hand.
+        self.inner
+            .runner
+            .earlier_leases_lost
+            .get_or_try_init(|| async {
+                sched.runner_ended(runner).await?;
+                self.run_changed();
+                Ok::<(), Failure>(())
             })
             .await?;
         let modes: Vec<Mode> = self.providers().modes().cloned().collect();

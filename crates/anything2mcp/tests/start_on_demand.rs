@@ -633,10 +633,18 @@ async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command
     assert_eq!(processes.len(), 2, "{}", log(&machine));
     assert_ne!(processes[1], killed);
     assert!(EngineLock::held(&paths(&machine)).unwrap());
-    // The new engine reads the run the killed one left, and sends nothing.
+    // The new engine declares the killed one's lease lost at its start
+    // (decision 0998): the run it left is stopped, its cause named, and
+    // nothing is sent until it is reconciled.
     let left = output(starting(&machine, &["run", "get", &run])).await;
-    assert_eq!(left.status.code(), Some(0), "{left:?}");
-    assert_ne!(object(&left)["result"]["status"], "completed");
+    assert_eq!(left.status.code(), Some(1), "{left:?}");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&left.stdout),
+        String::from_utf8_lossy(&left.stderr)
+    );
+    assert!(said.contains("stopped"), "{said}");
+    assert!(said.contains("runner_lost"), "{said}");
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
     stop(&machine).await;
 
@@ -672,7 +680,6 @@ async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "in one process a job's lease lasts at least ten minutes, and nothing at the start of the next engine declares the killed process's lease lost although the new engine holds the lock, so the run stays `running` until the lease runs out (package 9.3i; the fix is in a2m-sched and a2m-actions)"]
 async fn the_engine_after_a_killed_one_resumes_its_run_at_once() {
     let app = TestApp::start().await.unwrap();
     let (_proxy, machine, run, _) = killed_with_a_write_in_flight(&app).await;

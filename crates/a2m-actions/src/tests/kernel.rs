@@ -186,6 +186,32 @@ pub(super) struct World {
     pub(super) logins: Arc<AtomicU32>,
 }
 
+/// The key store's own randomness: counted, as the kernel's is, and never
+/// the same bytes. Two counters that both start at nought hand out one
+/// stream, and a key one draws can then be wrapped under a nonce the other
+/// drew equal to its first bytes, which the vault rightly refuses as a stuck
+/// source (`busy`/`randomness_unavailable`). In a running engine both are
+/// the operating system's.
+pub(super) struct KeyStoreCounted(std::sync::atomic::AtomicU64);
+
+impl KeyStoreCounted {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self(std::sync::atomic::AtomicU64::new(0)))
+    }
+}
+
+impl a2m_vault::RandomSource for KeyStoreCounted {
+    fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
+        for chunk in out.chunks_mut(a2m_core::Digest::LENGTH) {
+            let number = self.0.fetch_add(1, Ordering::SeqCst);
+            let block =
+                a2m_core::Digest::of(&[b"key store ".as_slice(), &number.to_le_bytes()].concat());
+            chunk.copy_from_slice(&block.as_bytes()[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
 pub(super) struct Options {
     place: StorePlace,
     key_store: Arc<dyn KeyStore>,
@@ -239,7 +265,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(KeyStoreCounted::new())),
             block_store: false,
             settings: Settings::defaults(),
             before_open: None,
@@ -1094,7 +1120,7 @@ impl KeyStore for Switchable {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_key_store_that_stops_after_the_start_degrades_the_kernel_until_it_answers_again() {
     let store = Arc::new(Switchable {
-        inner: MemoryKeyStore::with_random(Counted::new()),
+        inner: MemoryKeyStore::with_random(KeyStoreCounted::new()),
         down: std::sync::atomic::AtomicBool::new(false),
     });
     let world = World::ready_with(Options {
@@ -1154,10 +1180,9 @@ async fn a_key_store_that_stops_after_the_start_degrades_the_kernel_until_it_ans
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "a read's trace is sealed under the workspace's key, and a kernel that has opened no key since its start needs the key store to seal it: the first read after the key store stops is refused `key_store_unreachable`, where section 224 says a degraded kernel takes reads (package 9.3h)"]
 async fn a_key_store_that_stops_before_any_read_still_lets_a_read_run() {
     let store = Arc::new(Switchable {
-        inner: MemoryKeyStore::with_random(Counted::new()),
+        inner: MemoryKeyStore::with_random(KeyStoreCounted::new()),
         down: std::sync::atomic::AtomicBool::new(false),
     });
     let world = World::ready_with(Options {

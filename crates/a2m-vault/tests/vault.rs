@@ -966,3 +966,48 @@ async fn an_unreachable_key_store_stops_what_needs_it_and_nothing_else_and_recov
     );
     assert_eq!(restarted.health().await.store_health, StoreHealth::Ok);
 }
+
+#[tokio::test]
+async fn an_owner_key_held_at_start_seals_and_opens_after_the_key_store_stops() {
+    // Decision 0999: the key a person's items are sealed under is opened
+    // once while the key store answers, and kept in wiped memory for the
+    // life of the process. After the store stops, that person's items still
+    // seal and open; a key of another workspace is refused by name, and no
+    // key is made in place of one that cannot be reached.
+    let store = Switchable::new();
+    let records = Arc::new(MemoryKeyRecords::new());
+    let vault = Vault::new(Arc::clone(&store) as _, Arc::clone(&records) as _);
+    vault
+        .hold_owner_key(&workspace(1), &person("ana"))
+        .await
+        .unwrap();
+    let count = records.all().len();
+    assert!(count > 0, "holding an owner's key records it");
+
+    store.set_down(true);
+    let sealed = vault.seal(&context(), PLAIN).await.unwrap();
+    assert_eq!(
+        vault.open(&context(), &sealed).await.unwrap().expose(),
+        PLAIN
+    );
+    // A key of another workspace needs the root, and is refused by name.
+    let mut other = context();
+    other.workspace = workspace(2);
+    let failure = vault.seal(&other, PLAIN).await.unwrap_err();
+    assert_eq!(failure.code(), &codes::KEY_STORE_UNREACHABLE);
+    assert_eq!(records.all().len(), count);
+
+    // Holding the key again is the same key: nothing new is recorded, and
+    // what was sealed still opens after a restart once the store answers.
+    vault
+        .hold_owner_key(&workspace(1), &person("ana"))
+        .await
+        .unwrap();
+    assert_eq!(records.all().len(), count);
+    store.set_down(false);
+    let restarted = Vault::new(Arc::clone(&store) as _, Arc::clone(&records) as _);
+    assert_eq!(
+        restarted.open(&context(), &sealed).await.unwrap().expose(),
+        PLAIN
+    );
+}
