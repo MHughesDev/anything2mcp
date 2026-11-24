@@ -181,7 +181,8 @@ h3 { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color:
 .bx.sel .bb { stroke: var(--route); }
 .div text { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; fill: var(--muted); }
 .div line { stroke: var(--line); stroke-dasharray: 2 4; }
-.lcap { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; fill: var(--muted); }
+.lcap { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; fill: var(--muted); paint-order: stroke; stroke: var(--box); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
+.lcap.in { stroke: var(--well); }
 .gl { fill: none; stroke: var(--muted); stroke-width: 1.1; opacity: .3; transition: opacity .2s, stroke .2s, stroke-width .2s; }
 .gl.k-path { stroke: var(--route); opacity: .4; }
 .gl.k-store { stroke-dasharray: 4 3; }
@@ -214,7 +215,7 @@ h3 { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color:
 .gc .tgw:hover .chev { stroke: var(--route); }
 .gc .plug { fill: var(--line); }
 .gc:hover .cb, .gc:focus-visible .cb { stroke: var(--route); }
-.gc.k-head .cb { fill: transparent; stroke: none; }
+.gc.k-head .cb { fill: var(--well); stroke: none; }
 .gc.k-head .cn { font-weight: 600; font-size: 13.5px; }
 .gc.k-head:hover .cn { fill: var(--route); }
 .gc.k-seam .cb { fill: var(--route-soft); stroke: none; }
@@ -375,6 +376,14 @@ summary:hover h3 { color: var(--route); }
   var A=/*DATA*/null/*END*/, N=A.nodes, O=A.outline, S={}, ORDER=O.stations.concat(O.shelves), ROOT=A.root, REC=A.records||{};
   var GH='https://github.com/MHughesDev/web2mcp/blob/main/docs/decisions/';
   ORDER.forEach(function(s){ S[s.id]=s; });
+  // Where each arrow lands: an arrow whose end is a module with inner parts carries, as its last item, which inner
+  // part that end reaches ({module: part} or {module: [parts]}, and on down). It is kept beside the arrow, so the rest
+  // of the page reads the arrow as before. ARRIVE lists, for each inner part, the arrows from outside that reach it.
+  var ARRIVE={};
+  Object.keys(N).forEach(function(v){ (N[v].edges||[]).forEach(function(e,i){ var l=e[e.length-1];
+    if(l&&typeof l==='object'&&!Array.isArray(l)) e.lands=e.pop(); e.eid=v+'#'+i;
+    if(e.lands) [0,1].forEach(function(k){ (function down(m){ var to=e.lands[m]; if(!to) return;
+      [].concat(to).forEach(function(t){ (ARRIVE[t]=ARRIVE[t]||[]).push({e:e,k:k}); down(t); }); })(e[k]); }); }); });
   var LABEL={b:'Built',p:'Partly built',t:'Not built',x:'Outside the product'}, KIND={path:'Route of a call',use:'Uses',store:'Stores'};
   function h(tag,cls,text){ var e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
   function btn(cls,text,fn){ var b=h('button',cls,text); b.type='button'; if(fn) b.addEventListener('click',fn); return b; }
@@ -563,11 +572,13 @@ summary:hover h3 { color: var(--route); }
     if(st){ var ix=O.stations.indexOf(st), nx=O.stations[ix+1];
       if(ix>=0&&nx&&st.passes){ var p=h('p','hand','Hands on to '); p.appendChild(btn('',nx.name,function(){ choose(nx.id); })); p.appendChild(document.createTextNode(': '+st.passes+'.')); X.appendChild(p); }
       X.appendChild(inside(id,true)); return X; }
-    var E=(viewOf(id).edges||[]).filter(function(e){ return (e[0]===id||e[1]===id)&&N[e[0]]&&N[e[1]]; });
+    // Its own arrows, and the arrows from outside its module that land on it (or leave from it).
+    var E=(viewOf(id).edges||[]).filter(function(e){ return (e[0]===id||e[1]===id)&&N[e[0]]&&N[e[1]]; }).map(function(e){ return {e:e,k:e[1]===id?1:0}; })
+      .concat((ARRIVE[id]||[]).filter(function(a){ return N[a.e[0]]&&N[a.e[1]]; }));
     if(E.length) X.appendChild(fold('What it receives and hands over',E.length+(E.length===1?' link':' links'),E.length<=8,function(b){ var ul=h('ul','flow');
-      E.forEach(function(e){ var inn=e[1]===id, other=inn?e[0]:e[1], li=h('li',''); li.appendChild(h('span','',inn?'From':'To')); var d=h('div','');
+      E.forEach(function(x){ var e=x.e, inn=x.k===1, other=inn?e[0]:e[1], li=h('li',''); li.appendChild(h('span','',inn?'From':'To')); var d=h('div','');
         d.appendChild(btn('',N[other].name,function(){ choose(other); })); if(e[2]) d.appendChild(document.createTextNode(': '+e[2]));
-        d.appendChild(h('div','kd',KIND[e[3]||'use'])); li.appendChild(d); ul.appendChild(li); }); b.appendChild(ul); }));
+        d.appendChild(h('div','kd',KIND[e[3]||'use']+(e[x.k]!==id?(inn?' · enters '+N[e[x.k]].name+' here':' · leaves '+N[e[x.k]].name+' from here'):''))); li.appendChild(d); ul.appendChild(li); }); b.appendChild(ul); }));
     if(k.length) X.appendChild(fold('Inside',k.length+' parts',k.length<=8,function(b){ b.appendChild(inside(id,k.length<=8)); }));
     if(n.steps&&n.steps.length) X.appendChild(fold(n.stepsTitle||'How it runs',n.steps.length+' steps',false,function(b){ b.appendChild(stepList(n.steps)); }));
     (n.walks||[]).forEach(function(wk,wi){ X.appendChild(fold('Walk: '+wk.name,wk.steps.length+' steps',false,function(b){ b.appendChild(btn('act','Follow it on the map',function(){ startWalk(id+':'+wi,0); })); b.appendChild(stepList(wk.steps)); })); });
@@ -651,6 +662,12 @@ summary:hover h3 { color: var(--route); }
       if(!a||i===words.length) return [fitText(s,max,f)]; return [fitText(a,max,f),fitText(words.slice(i).join(' '),max,f)]; }
     function nameRoom(id,w,kind){ var k=kids(id).length; if(!k||kind==='port') return w-30; return w-22-(mode==='structure'?24:8)-tw(String(k),font(11))-10; }
     function rep(id){ while(id&&!P[id]) id=parent[id]; return id||null; }
+    // The shown parts one end of an arrow reaches: the nearest shown module, or, where that end is an opened module,
+    // the inner parts the arrow lands on, followed down through every opened module beneath.
+    function ends(e,k){ var id=e[k], r=rep(id); if(!r) return []; if(r!==id) return [r];
+      var out=[]; (function down(m){ var to=e.lands&&e.lands[m], next=to?[].concat(to).filter(function(t){ return P[t]; }):[];
+        if(P[m]&&P[m].open&&next.length) next.forEach(down); else if(out.indexOf(m)<0) out.push(m); })(id); return out; }
+    function edgeOf(view,a,b){ return (N[view].edges||[]).filter(function(x){ return (x[0]===a&&x[1]===b)||(x[0]===b&&x[1]===a); })[0]; }
 
     // ---- Structure layout: containers, groups, and a grid of modules; an opened module is a container in place ----
     function grid(ids,x,y,w,o){
@@ -777,18 +794,23 @@ summary:hover h3 { color: var(--route); }
     // ---- Links: part to part, through the nearest module shown; and once per pair of containers on the whole system ----
     function relink(){
       var M={}, src=mode==='map'&&SUB?[SUB.edges]:Object.keys(N).map(function(v){ return N[v].edges||[]; });
-      src.forEach(function(list){ list.forEach(function(e){ var a=rep(e[0]), b=rep(e[1]); if(!a||!b||a===b) return;
-        if((P[a].kind==='seam'&&P[b].kind==='plug')||(P[b].kind==='seam'&&P[a].kind==='plug')) return; // a pack hangs off the seam; the plug is the link
-        var key=a+'>'+b, L=M[key]||(M[key]={key:key,source:a,target:b,n:0,texts:[],kind:'use'});
-        L.n++; if(e[2]&&L.texts.indexOf(e[2])<0) L.texts.push(e[2]); if(e[3]==='path') L.kind='path'; else if(e[3]==='store'&&L.kind!=='path') L.kind='store'; }); });
+      src.forEach(function(list){ list.forEach(function(e){ var a0=rep(e[0]), b0=rep(e[1]); if(!a0||!b0||a0===b0) return;
+        if((P[a0].kind==='seam'&&P[b0].kind==='plug')||(P[b0].kind==='seam'&&P[a0].kind==='plug')) return; // a pack hangs off the seam; the plug is the link
+        // An end on an opened module goes on to the inner part the arrow reaches, as deep as the modules are open.
+        ends(e,0).forEach(function(a){ ends(e,1).forEach(function(b){ if(a===b) return;
+          var key=a+'>'+b, L=M[key]||(M[key]={key:key,source:a,target:b,a0:a0,b0:b0,anchor:a0+'>'+b0,n:0,eids:{},texts:[],kind:'use'});
+          if(!L.eids[e.eid]){ L.eids[e.eid]=1; L.n++; } if(a!==a0||b!==b0) L.moved=true;
+          if(e[2]&&L.texts.indexOf(e[2])<0) L.texts.push(e[2]); if(e[3]==='path') L.kind='path'; else if(e[3]==='store'&&L.kind!=='path') L.kind='store'; }); }); }); });
       links=Object.keys(M).map(function(k){ return M[k]; }); LM=M;
-      links.forEach(function(L){ L.rest=!(scope===ROOT&&mode==='structure')||sharedOpen(L.source,L.target); });
+      // An arrow that was re-pointed into an opened module stays drawn, so the reader sees where it lands.
+      links.forEach(function(L){ L.rest=!(scope===ROOT&&mode==='structure')||!!L.moved||sharedOpen(L.source,L.target); });
       AGG=[];
       if(scope===ROOT&&mode==='structure'){ var G2={};
         links.forEach(function(L){ var a=P[L.source].top, b=P[L.target].top; if(a===b) return; var ia=ROWS.indexOf(a), ib=ROWS.indexOf(b); if(ia<0||ib<0) return;
           if(Math.abs(ia-ib)===1&&(a==='seam'||b==='seam')) return; // the seam touches the kernel and the packs; its links show when a module is chosen
-          var key=a+'>'+b, g=G2[key]||(G2[key]={key:'a:'+key,a:a,b:b,n:0,kind:'use',texts:[],src:[],dst:[]});
-          g.n+=L.n; g.texts=g.texts.concat(L.texts); g.src.push(L.source); g.dst.push(L.target);
+          var key=a+'>'+b, g=G2[key]||(G2[key]={key:'a:'+key,a:a,b:b,n:0,eids:{},kind:'use',texts:[],src:[],dst:[]});
+          Object.keys(L.eids).forEach(function(i){ if(!g.eids[i]){ g.eids[i]=1; g.n++; } });
+          L.texts.forEach(function(t){ if(g.texts.indexOf(t)<0) g.texts.push(t); }); g.src.push(L.source); g.dst.push(L.target);
           if(L.kind==='path') g.kind='path'; else if(L.kind==='store'&&g.kind!=='path') g.kind='store'; });
         AGG=Object.keys(G2).map(function(k){ return G2[k]; }); var bus=0;
         AGG.sort(function(p,q){ return ROWS.indexOf(p.a)-ROWS.indexOf(q.a); }).forEach(function(g){ g.adj=ROWS.indexOf(g.b)===ROWS.indexOf(g.a)+1; if(!g.adj) g.bus=bus++; });
@@ -840,7 +862,7 @@ summary:hover h3 { color: var(--route); }
     var defs=svg.append('defs');
     [['gm-r','mk-r'],['gm-m','mk-m']].forEach(function(m){ defs.append('marker').attr('id',m[0]).attr('viewBox','0 0 10 10').attr('refX',7).attr('refY',5)
       .attr('markerWidth',6).attr('markerHeight',6).attr('markerUnits','userSpaceOnUse').attr('orient','auto').append('path').attr('d','M0,1.5L8,5L0,8.5z').attr('class',m[1]); });
-    var gz=svg.append('g'), gBox=gz.append('g'), gCap=gz.append('g'), gAgg=gz.append('g'), gLink=gz.append('g'), gHit=gz.append('g'), gCard=gz.append('g'), gBadge=gz.append('g');
+    var gz=svg.append('g'), gBox=gz.append('g'), gAgg=gz.append('g'), gLink=gz.append('g'), gHit=gz.append('g'), gCap=gz.append('g'), gCard=gz.append('g'), gBadge=gz.append('g'); // captions over the arrows, with a halo, so a re-pointed arrow never hides one
     var cardSel=gCard.selectAll('g'), linkSel=gLink.selectAll('path'), hitSel=gHit.selectAll('path'), aggSel=gAgg.selectAll('path'), boxSel=gBox.selectAll('g');
     var T={exit:0,move:0,enter:0};
     function timing(kind){ if(!DUR) return {exit:0,move:0,enter:0,delay:0,edelay:0};
@@ -879,7 +901,7 @@ summary:hover h3 { color: var(--route); }
       var rr=boxSel.select('rect.bb'); (T.move?rr.transition().duration(T.move).delay(T.delay).ease(EASE):rr).attr('width',function(b){ return b.w; }).attr('height',function(b){ return b.h; });
       var cp=gCap.selectAll('text').data(CAPS,function(c){ return c.k; }).join(function(en){ return en.append('text').attr('class','lcap').style('opacity',0).attr('x',function(c){ return c.x; }).attr('y',function(c){ return c.y; }); },
         function(up){ return up; }, function(ex){ return ex.remove(); });
-      cp.text(function(c){ return c.t; }).style('font-weight',function(c){ return c.strong?600:null; });
+      cp.text(function(c){ return c.t; }).style('font-weight',function(c){ return c.strong?600:null; }).classed('in',function(c){ return open.has(c.k.split('/')[0]); });
       (T.move?cp.transition().duration(T.move).delay(T.delay).ease(EASE):cp).style('opacity',1).attr('x',function(c){ return c.x; }).attr('y',function(c){ return c.y; });
     }
     function drawCards(from){
@@ -929,10 +951,18 @@ summary:hover h3 { color: var(--route); }
       (T.move?en.transition().duration(T.enter).delay(T.edelay).ease(EASE):en).style('opacity',null).attr('transform',function(d){ return 'translate('+d.x+','+d.y+')'; });
     }
     function drawLinks(){
-      var fresh;
-      linkSel=gLink.selectAll('path').data(links,function(L){ return L.key; }).join(function(en){ fresh=en.append('path').attr('d',pathOf).style('opacity',0); return fresh; }, function(up){ return up; }, function(ex){ return ex.remove(); })
+      // An arrow that re-points as a module opens or folds keeps its two outer ends (its anchor), so the new arrow
+      // grows out of the old one's path and the old one shrinks into the new one's: the arrow seems to move.
+      var fresh, was={}, will={}, keys={};
+      links.forEach(function(L){ keys[L.key]=1; if(!will[L.anchor]) will[L.anchor]=pathOf(L); });
+      gLink.selectAll('path').each(function(L){ if(L&&!was[L.anchor]) was[L.anchor]={d:this.getAttribute('d'),shown:!this.classList.contains('quiet')}; });
+      linkSel=gLink.selectAll('path').data(links,function(L){ return L.key; }).join(function(en){ fresh=en.append('path')
+          .attr('d',function(L){ var w=T.move&&was[L.anchor]; return w?w.d:pathOf(L); }).style('opacity',function(L){ var w=T.move&&was[L.anchor]; return w&&w.shown?null:0; }); return fresh; },
+        function(up){ return up; },
+        function(ex){ if(!T.move) return ex.remove(); ex.attr('class',function(L){ return 'gl gone k-'+L.kind+(L.rest?'':' quiet'); }).transition().duration(T.move).delay(T.delay).ease(EASE)
+          .attr('d',function(L){ return will[L.anchor]||this.getAttribute('d'); }).style('opacity',function(L){ return will[L.anchor]?null:0; }).remove(); return ex; })
         .attr('class',function(L){ return 'gl k-'+L.kind+(L.rest?'':' quiet'); });
-      if(fresh) (T.move?fresh.transition('fade').duration(T.enter).delay(T.edelay+T.enter/2):fresh).style('opacity',null);
+      if(fresh) (T.move?fresh.filter(function(){ return this.style.opacity==='0'; }).transition('fade').duration(T.enter).delay(T.edelay+T.enter/2):fresh).style('opacity',null);
       (T.move?linkSel.transition().duration(T.move).delay(T.delay).ease(EASE):linkSel).attr('d',pathOf);
       hitSel=gHit.selectAll('path').data(links,function(L){ return L.key; }).join(function(en){ return en.append('path')
           .on('pointerenter',function(ev,L){ if(ev.pointerType!=='mouse') return; linkSel.filter(function(x){ return x===L; }).classed('hl',true); linkTip(ev,L); })
@@ -984,7 +1014,8 @@ summary:hover h3 { color: var(--route); }
       tip.hidden=false; placeTip(ev);
     }
     function linkTip(ev,L){ clearTimeout(tipT); tip.textContent='';
-      tip.appendChild(h('b','',N[L.source].name+' → '+N[L.target].name));
+      function nm(outer,inner){ return outer&&outer!==inner&&N[outer]?N[outer].name+' › '+N[inner].name:N[inner].name; }
+      tip.appendChild(h('b','',nm(L.a0,L.source)+' → '+nm(L.b0,L.target)));
       if(L.texts.length) tip.appendChild(h('div','',L.texts.slice(0,3).join('; ')+(L.texts.length>3?'; and '+(L.texts.length-3)+' more':'')));
       tip.appendChild(h('small','',KIND[L.kind]+(L.n>1?' · '+L.n+' arrows':'')));
       tip.hidden=false; placeTip(ev); }
@@ -1002,7 +1033,8 @@ summary:hover h3 { color: var(--route); }
       if(!walk) return null; var s=walk.steps[at], ns=new Set(), ls=new Set(), ids=s.at||[], VE=N[walk.view].edges||[];
       ids.forEach(function(i){ var r=rep(i); if(r) ns.add(r); });
       var pairs=(s.edges&&s.edges.length)?s.edges:VE.filter(function(e){ return ids.indexOf(e[0])>=0&&ids.indexOf(e[1])>=0; });
-      pairs.forEach(function(e){ var a=rep(e[0]), b=rep(e[1]); if(!a||!b||a===b) return; if(LM[a+'>'+b]) ls.add(a+'>'+b); else if(LM[b+'>'+a]) ls.add(b+'>'+a); });
+      pairs.forEach(function(p){ var e=edgeOf(walk.view,p[0],p[1])||p;
+        ends(e,0).forEach(function(a){ ends(e,1).forEach(function(b){ if(a===b) return; var k=LM[a+'>'+b]?a+'>'+b:LM[b+'>'+a]?b+'>'+a:null; if(k){ ls.add(k); ns.add(a); ns.add(b); } }); }); });
       return {n:ns,l:ls,walk:true};
     }
     function around(id){
