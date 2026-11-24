@@ -1332,7 +1332,7 @@ impl BinaryDiscoverer {
         Ok(DiscoveryReport {
             coverage: Coverage::default(),
             bounds_hit: if truncated {
-                vec!["bytes".to_owned()]
+                vec!["listed".to_owned()]
             } else {
                 Vec::new()
             },

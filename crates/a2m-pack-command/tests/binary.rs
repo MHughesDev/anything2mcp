@@ -182,7 +182,7 @@ async fn facts_of_a_large_program(scene: &Scene, bytes: &[u8]) -> (BinaryFound, 
     let cut = found.imports_total as usize > found.imports.len()
         || found.exports_total as usize > found.exports.len();
     if cut {
-        assert_eq!(report.bounds_hit, ["bytes"], "{report:?}");
+        assert_eq!(report.bounds_hit, ["listed"], "{report:?}");
         assert_eq!(finding.coverage(), Coverage::Partial);
         assert!(
             finding
