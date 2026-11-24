@@ -434,6 +434,20 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.field_text_unbounded",
+            Case::Edit(
+                ORDER_GET,
+                "description: \"Order number shown in the application\"",
+                "description: \"Order number\\u202e shown in the application\"",
+            ),
+        ),
+        (
+            "kernel.definition_unbounded",
+            Case::Elsewhere(
+                "the_whole_definition_is_bounded_text_and_a_field_description_may_hold_a_newline",
+            ),
+        ),
+        (
             "kernel.output_not_marked",
             Case::Edit(ORDER_GET, "note: {type: note}", "note: {type: text}"),
         ),
@@ -770,6 +784,8 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
             assert!(
                 test.starts_with("the_loader")
                     || test.starts_with("what_a_faulty")
+                    || *test
+                        == "the_whole_definition_is_bounded_text_and_a_field_description_may_hold_a_newline"
                     || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation"
                     || *test
                         == "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
@@ -2779,6 +2795,115 @@ fn a_description_of_1024_characters_compiles_and_one_of_1025_or_with_a_control_c
     assert!(
         problems.find("kernel.description_unbounded").is_some(),
         "{problems}"
+    );
+}
+
+/// The example's files with `find` replaced by `replace` in the one file.
+fn edited(path: &str, find: &str, replace: &str) -> Vec<(RelPath, Vec<u8>)> {
+    let mut files = example_files();
+    let file = files
+        .iter_mut()
+        .find(|(known, _)| known.as_str() == path)
+        .unwrap();
+    let old = String::from_utf8(file.1.clone()).unwrap();
+    assert!(old.contains(find), "{find}");
+    file.1 = old.replacen(find, replace, 1).into_bytes();
+    files
+}
+
+#[test]
+fn the_whole_definition_is_bounded_text_and_a_field_description_may_hold_a_newline() {
+    let set = stand_set().unwrap();
+    let problems = |files: &[(RelPath, Vec<u8>)]| problems_with(files, &set, CompileMode::Publish);
+    let input =
+        "order_id: {type: identifier, description: \"Order number shown in the application\"}";
+    let with_description = |text: &str| {
+        problems(&edited(
+            ORDER_GET,
+            input,
+            &format!("order_id: {{type: identifier, description: \"{text}\"}}"),
+        ))
+    };
+
+    // 1,024 characters of a field description fit, as do ones with a newline
+    // and a tab; 1,025 do not.
+    for fits in [
+        "a".repeat(1024),
+        "é".repeat(1024),
+        "Order number.\\nShown in the application.\\tOnly one.".to_owned(),
+    ] {
+        let found = with_description(&fits);
+        assert!(
+            found.find("kernel.field_text_unbounded").is_none(),
+            "{found}"
+        );
+        assert!(
+            found.find("kernel.definition_unbounded").is_none(),
+            "{found}"
+        );
+    }
+    let long = with_description(&"a".repeat(1025));
+    let found = long.find("kernel.field_text_unbounded").unwrap();
+    assert_eq!(found.level, Level::Error);
+    assert!(!found.fix.is_empty());
+    // A bidirectional mark, an invisible character, and a control character
+    // in a field description are refused.
+    for hidden in ["\\u202e", "\\u200b", "\\u0007", "\\u2028"] {
+        let found = with_description(&format!("Order {hidden}number"));
+        assert!(
+            found.find("kernel.field_text_unbounded").is_some(),
+            "{hidden}\n{found}"
+        );
+    }
+
+    // A bidirectional mark in an enum label is refused; the plain label is
+    // not.
+    let label = |text: &str| {
+        problems(&edited(
+            "types.yaml",
+            "released: \"Released\"",
+            &format!("released: \"{text}\""),
+        ))
+    };
+    let found = label("Released");
+    assert!(
+        found.find("kernel.field_text_unbounded").is_none(),
+        "{found}"
+    );
+    let found = label("Released\\u202e");
+    assert!(
+        found.find("kernel.field_text_unbounded").is_some(),
+        "{found}"
+    );
+    let found = label(&"a".repeat(1025));
+    assert!(
+        found.find("kernel.field_text_unbounded").is_some(),
+        "{found}"
+    );
+
+    // Each text within its own bound, the definition over 8,192 in all.
+    let long = "a".repeat(1000);
+    let extra: String = (0..9)
+        .map(|n| {
+            format!("\n  extra_{n}: {{type: identifier, required: false, description: \"{long}\"}}")
+        })
+        .collect();
+    let found = problems(&edited(ORDER_GET, input, &format!("{input}{extra}")));
+    assert!(
+        found.find("kernel.field_text_unbounded").is_none(),
+        "{found}"
+    );
+    let over = found
+        .find("kernel.definition_unbounded")
+        .unwrap_or_else(|| panic!("{found}"));
+    assert_eq!(over.level, Level::Error);
+    assert!(!over.fix.is_empty());
+    // One text fewer and it fits.
+    let fewer: String = extra.lines().take(7).collect::<Vec<_>>().join("\n");
+    let found = problems(&edited(ORDER_GET, input, &format!("{input}{fewer}")));
+    assert!(
+        found.find("kernel.definition_unbounded").is_none(),
+        "{found}"
     );
 }
 
