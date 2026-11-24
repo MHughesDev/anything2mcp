@@ -1,4 +1,4 @@
-# 0999. A `url` input matches only a destination that names its scheme, host, and port as written
+# 0412. A `url` input matches only a destination that names its scheme, host, and port as written
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. Carries out package 9.3p.
 
