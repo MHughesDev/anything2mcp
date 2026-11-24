@@ -30,7 +30,8 @@ use crate::protocol::{
     FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
     GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
     NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
-    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles, SetLifecycleEvents,
+    SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -322,6 +323,14 @@ pub enum By {
         /// The text of the row's first cell.
         key: String,
     },
+    /// One cell of the row whose first cell shows this text exactly: a
+    /// cell is known by its row's key and its place among the row's cells.
+    CellKeyed {
+        /// The text of the row's first cell.
+        key: String,
+        /// The cell's place in its row, counted from zero.
+        column: usize,
+    },
 }
 
 /// A query for exactly one element, inside another element when `within`
@@ -458,6 +467,11 @@ pub enum ReadWhat {
         /// The cell's place in its row.
         index: usize,
     },
+    /// The labels of the selected item of a tree and of the items it is
+    /// under, outermost first, joined by `/`.
+    TreePath,
+    /// The names of the files a file input holds, joined by `/`.
+    Files,
 }
 
 /// What a read gave, as the page holds it: not trimmed, not normalized.
@@ -562,6 +576,10 @@ pub enum Input {
     Check(bool),
     /// Choose the option of a select that has this value.
     SelectByValue(String),
+    /// Give a file input this one file, by its path, as a person's choice
+    /// in the browser's file chooser would. The path is a checked path
+    /// from the pack: this crate opens nothing.
+    Attach(std::path::PathBuf),
 }
 
 impl fmt::Debug for Input {
@@ -575,6 +593,7 @@ impl fmt::Debug for Input {
             Self::Click => f.write_str("Click"),
             Self::Check(on) => write!(f, "Check({on})"),
             Self::SelectByValue(value) => write!(f, "SelectByValue({value:?})"),
+            Self::Attach(_) => f.write_str("Attach(a file)"),
         }
     }
 }
@@ -1858,6 +1877,29 @@ impl Page {
                 )
                 .await
                 .map(|_| ()),
+            Input::Attach(path) => {
+                // Only a file input takes a file; nothing is sent to any
+                // other element.
+                self.checked(
+                    element,
+                    "function () { return __a2m.fileInput(this); }",
+                    Vec::new(),
+                    deadline,
+                )
+                .await
+                .map_err(looked)?;
+                let files = [path.to_string_lossy().into_owned()];
+                self.call(
+                    &SetFileInputFiles {
+                        object_id: &element.object,
+                        files: &files,
+                    },
+                    deadline,
+                )
+                .await
+                .map(|_| ())
+                .map_err(after_sent)
+            }
             Input::Press(key) => {
                 self.checked(element, PREPARE_FOCUS, Vec::new(), deadline)
                     .await

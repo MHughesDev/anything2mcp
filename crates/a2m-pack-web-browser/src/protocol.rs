@@ -1033,6 +1033,14 @@ pub(crate) struct ResponseBody {
 // ---- Input ----
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetFileInputFiles<'a> {
+    pub object_id: &'a str,
+    pub files: &'a [String],
+}
+command!(SetFileInputFiles<'_>, "DOM.setFileInputFiles" => Nothing);
+
+#[derive(Debug, Serialize)]
 pub(crate) struct InsertText<'a> {
     pub text: &'a str,
 }

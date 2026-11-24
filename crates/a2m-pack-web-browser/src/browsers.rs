@@ -36,6 +36,10 @@ use crate::tab::{
 /// of the pack that uses this crate declares it under `write_roots`.
 pub const PROFILE_ROOT: &str = "profiles";
 
+/// The folder, inside the profile root, that files for upload are staged
+/// in: a file input is given a file of this folder and of no other.
+pub const STAGING_FOLDER: &str = "staging";
+
 /// The kind of subsystem a browser is, as the supervisor counts it.
 pub const BROWSER_KIND: &str = "browser";
 
@@ -649,6 +653,20 @@ impl Browsers {
                 next_tab: AtomicU64::new(1),
             }),
         })
+    }
+
+    /// The folder files for upload are staged in, as a checked path: the
+    /// [`STAGING_FOLDER`] of the profile root. A file the pack gives a file
+    /// input is joined to it, so that no name reaches another folder.
+    ///
+    /// # Errors
+    ///
+    /// The profile root is not declared, or the folder is not inside it.
+    pub fn staging_folder(&self) -> Result<a2m_provider::CheckedPath, Failure> {
+        self.shared
+            .root
+            .clone()
+            .and_then(|root| root.join(STAGING_FOLDER))
     }
 
     /// Whether a browser program is installed. Looks at the machine and

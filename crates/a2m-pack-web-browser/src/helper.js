@@ -182,6 +182,15 @@
           const first = cellsOf(el)[0];
           return !!first && norm(first.textContent) === by.key;
         };
+      case "cell_keyed":
+        return (el) => {
+          if (!CELL_ROLES.has(roleOf(el)) || hiddenFromTree(el)) return false;
+          let row = el.parentElement;
+          while (row && roleOf(row) !== "row") row = row.parentElement;
+          if (!row) return false;
+          const cells = cellsOf(row);
+          return cells.length > 0 && norm(cells[0].textContent) === by.key && cells[by.column] === el;
+        };
       case "text": {
         const hit = by.contains
           ? (el) => norm(el.textContent).includes(by.text)
@@ -244,6 +253,13 @@
   const checkable = (el) =>
     el.localName === "input" && ["checkbox", "radio"].includes((el.getAttribute("type") || "").toLowerCase());
 
+  // A switch, a check box, or a radio button that a page draws itself, and
+  // keeps its state in `aria-checked`.
+  const ariaChecked = (el) =>
+    el.localName !== "input" && el.hasAttribute("aria-checked") &&
+    ["switch", "checkbox", "radio"].includes(roleOf(el));
+  const isOn = (el) => (checkable(el) ? el.checked : el.getAttribute("aria-checked") === "true");
+
   // Every password input of the page, for the engine to mask in a snapshot.
   const passwords = () => [...walk(document)].filter(isPassword);
 
@@ -269,6 +285,21 @@
         if (checkable(el)) return { flag: el.checked };
         if (el.hasAttribute("aria-checked")) return { flag: el.getAttribute("aria-checked") === "true" };
         return { absent: true };
+      case "tree_path": {
+        // The labels of the selected tree item and of the items it is under.
+        const item = [...walk(el)].find((candidate) => roleOf(candidate) === "treeitem" && candidate.getAttribute("aria-selected") === "true");
+        if (!item) return { absent: true };
+        const labels = [];
+        for (let node = item; node && node !== el; node = node.parentElement) {
+          if (roleOf(node) === "treeitem") labels.unshift(nameOf(node));
+        }
+        value = labels.join("/");
+        break;
+      }
+      case "files":
+        if (el.localName !== "input" || (el.getAttribute("type") || "").toLowerCase() !== "file") return { absent: true };
+        value = [...el.files].map((file) => file.name).join("/");
+        break;
       case "selected_text":
         if (el.localName !== "select") return { absent: true };
         value = el.selectedOptions.length ? norm(el.selectedOptions[0].textContent) : "";
@@ -305,7 +336,7 @@
     if (disabled(el)) return { no: "disabled" };
     if (need === "edit" && !editable(el)) return { no: "not_editable" };
     if (need === "select" && el.localName !== "select") return { no: "wrong_control" };
-    if (need === "check" && !checkable(el)) return { no: "wrong_control" };
+    if (need === "check" && !checkable(el) && !ariaChecked(el)) return { no: "wrong_control" };
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     const box = el.getBoundingClientRect();
     let x = Math.round(box.left + box.width / 2);
@@ -325,7 +356,7 @@
       x += Math.round(frame.left + view.frameElement.clientLeft);
       y += Math.round(frame.top + view.frameElement.clientTop);
     }
-    return { ok: true, x, y, checked: checkable(el) ? el.checked : null };
+    return { ok: true, x, y, checked: checkable(el) || ariaChecked(el) ? isOn(el) : null };
   }
 
   // Focus and select what is there, so that inserted text replaces it.
@@ -361,6 +392,14 @@
     fire(el, "input");
     fire(el, "change");
     return checked;
+  }
+
+  // Whether the element is a file input that can take a file.
+  function fileInput(el) {
+    if (stale(el)) return { stale: true };
+    if (el.localName !== "input" || (el.getAttribute("type") || "").toLowerCase() !== "file") return { no: "wrong_control" };
+    if (disabled(el)) return { no: "disabled" };
+    return { ok: true, x: 0, y: 0, checked: null };
   }
 
   function selectByValue(el, value) {
@@ -673,7 +712,7 @@
 
   const page = () => ({ address: location.href, title: document.title });
 
-  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, readFromPage, writeFromPage, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, fileInput, until, request, readFromPage, writeFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
     Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
   );
