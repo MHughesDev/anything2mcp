@@ -8,9 +8,10 @@ whole workspace, and the tests of the whole workspace. `--fast` stops after the
 lints, for a check while work is in progress; a push waits for the full run.
 
 `--shard K/N` splits the run over N machines: shard 1 runs the audits,
-formatting, and the lints, and every shard runs the tests of its share of the
-workspace's packages, shared out by how many tests each package holds, so that
-N machines together run every test once. `--cross` adds the lints of the whole
+formatting, the lints, and the doctests; every shard builds the tests of the
+whole workspace, with the features the whole workspace unifies as CI's run
+does, and runs its share of the test programs, shared out by how many tests
+each holds, so that N machines together run every test program once. `--cross` adds the lints of the whole
 workspace built for Windows and for macOS from this machine: nothing is
 linked, so the two C dependencies are given stand-ins (`tools/cross/`) that
 write empty objects, and the lints see the code each of those systems
@@ -30,6 +31,10 @@ import re
 import subprocess
 import sys
 import time
+
+# The toolchain rust-toolchain.toml pins, with its components, as CI's first
+# step installs it: a machine that lacks rustfmt or clippy gets them here.
+TOOLCHAIN = ("toolchain", ["rustup", "toolchain", "install"])
 
 STEPS = [
     ("documents", ["python3", "tools/docs_audit.py"]),
@@ -75,6 +80,74 @@ def share(k, n):
     return sorted(bins[k - 1][1])
 
 
+def shard_tests(k, n, env):
+    """Run shard K of N of the workspace's tests, as `cargo test --workspace`
+    builds them: every shard builds all of them with the features the whole
+    workspace unifies, as CI does, so that no shard tests a build CI never
+    makes; then it runs its share of the test programs, each from its
+    package's folder with the variables cargo gives a test, and shard 1 also
+    runs the doctests."""
+    started = time.monotonic()
+    built = subprocess.run(
+        ["cargo", "test", "--workspace", "--locked", "--no-run", "--message-format=json-render-diagnostics"],
+        env=env, capture_output=True, text=True,
+    )
+    if built.returncode != 0:
+        return False, round(time.monotonic() - started), built.stderr, []
+    programs = []
+    for line in built.stdout.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if message.get("reason") != "compiler-artifact" or not message.get("executable") or not message.get("profile", {}).get("test"):
+            continue
+        target = message["target"]
+        manifest = message["manifest_path"]
+        source = target["src_path"]
+        try:
+            with open(source, encoding="utf-8", errors="replace") as f:
+                count = len(re.findall(r"#\[(?:tokio::)?test\b", f.read()))
+        except OSError:
+            count = 0
+        if "lib" in target["kind"] or "bin" in target["kind"]:
+            count = max(count, weights_of_folder(os.path.dirname(source)))
+        name = message["package_id"].split("#")[-1].split("@")[0].rsplit("/", 1)[-1]
+        programs.append((count, f"{name} {target['kind'][0]} {target['name']}", message["executable"], os.path.dirname(manifest), name))
+    bins = [[0, []] for _ in range(n)]
+    for program in sorted(programs, key=lambda p: (-p[0], p[1])):
+        lightest = min(range(n), key=lambda i: (bins[i][0], i))
+        bins[lightest][0] += max(program[0], 1)
+        bins[lightest][1].append(program)
+    mine = sorted(bins[k - 1][1], key=lambda p: p[1])
+    print(f"shard {k} of {n} runs {len(mine)} of {len(programs)} test programs", flush=True)
+    output, failed = [], []
+    for _, label, executable, folder, package in mine:
+        run_env = {**env, "CARGO_MANIFEST_DIR": folder, "CARGO_PKG_NAME": package}
+        done = subprocess.run([executable], cwd=folder, env=run_env, capture_output=True, text=True)
+        if done.returncode != 0:
+            failed.append(label)
+            failed += [f"  {t}" for t in re.findall(r"^    (\S+)$", done.stdout, re.M)][:20]
+            output.append(done.stdout[-4000:] + done.stderr[-2000:])
+    if k == 1:
+        doc = subprocess.run(["cargo", "test", "--workspace", "--locked", "--doc", "--no-fail-fast"], env=env, capture_output=True, text=True)
+        if doc.returncode != 0:
+            failed.append("doctests")
+            output.append(doc.stdout[-4000:] + doc.stderr[-2000:])
+    return not failed, round(time.monotonic() - started), "\n".join(output), failed
+
+
+def weights_of_folder(folder):
+    count = 0
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in ("target", "node_modules", ".git")]
+        for name in files:
+            if name.endswith(".rs"):
+                with open(os.path.join(root, name), encoding="utf-8", errors="replace") as f:
+                    count += len(re.findall(r"#\[(?:tokio::)?test\b", f.read()))
+    return count
+
+
 def cross_steps():
     steps = []
     for target in CROSS_TARGETS:
@@ -112,15 +185,16 @@ def main(argv):
         if not 1 <= k <= n:
             print("--shard takes K/N with 1 <= K <= N")
             return 2
-        packages = share(k, n)
-        print(f"shard {k} of {n} tests {len(packages)} packages: {' '.join(packages)}", flush=True)
-        test = ["cargo", "test", "--locked", "--no-fail-fast"] + [a for p in packages for a in ("-p", p)]
-        steps = [step for step in steps[:4] if k == 1] + ([("test", test, {})] if "--fast" not in argv else [])
+        steps = [step for step in steps[:4] if k == 1] + ([("test", ("shard", k, n), {})] if "--fast" not in argv else [])
     if "--cross" in argv:
         steps += cross_steps()
+    steps = [(TOOLCHAIN[0], TOOLCHAIN[1], {})] + steps
     results = []
     for name, command, extra in steps:
-        ok, seconds, output, failed = run(name, command, {**env, **extra})
+        if command[0] == "shard":
+            ok, seconds, output, failed = shard_tests(command[1], command[2], {**env, **extra})
+        else:
+            ok, seconds, output, failed = run(name, command, {**env, **extra})
         results.append((name, ok, seconds))
         print(f"{'ok  ' if ok else 'FAIL'} {name} ({seconds}s)", flush=True)
         if not ok:
