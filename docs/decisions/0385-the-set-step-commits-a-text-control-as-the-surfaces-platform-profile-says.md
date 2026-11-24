@@ -1,4 +1,4 @@
-# 0399. The set step commits a text control as the surface's platform profile says
+# 0385. The set step commits a text control as the surface's platform profile says
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was written. Finishes package 8.4a, which [decision 0370](0370-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md) began, and replaces its list of commits.
 

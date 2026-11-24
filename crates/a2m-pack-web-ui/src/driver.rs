@@ -1528,7 +1528,7 @@ impl Session {
 
     /// The rule of a text control on a surface whose platform profile states
     /// how a value is committed: the one way the profile names, and nothing
-    /// else tried after it (decision 0399, the input commit record). The
+    /// else tried after it (decision 0385, the input commit record). The
     /// control is asked what it holds afterwards; for a commit that waits
     /// for the page to draw the form again, the control drawn anew is.
     async fn commit_text(

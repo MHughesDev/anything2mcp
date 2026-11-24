@@ -13,7 +13,7 @@
 //! patterns, by the lint `web.generated_id`; the name, by
 //! `web.profile_unknown`; the tier's limit on writes, by
 //! `web.profile_readonly`; and the input commit, by the driver's set step
-//! (decision 0399, the input commit record). The readiness rule and the
+//! (decision 0385, the input commit record). The readiness rule and the
 //! frame mode are read and checked here and are not applied yet.
 
 use std::sync::OnceLock;

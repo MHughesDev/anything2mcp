@@ -1,5 +1,5 @@
 //! Pages that commit a value as a family of web interface does, for the input
-//! commit a platform profile states (decision 0399). Each tells the
+//! commit a platform profile states (decision 0385). Each tells the
 //! application what it received, as a case event that `GET /__control/cases`
 //! reports, so a test asks the application and never the driver. The page of
 //! an input that keeps only what is typed into it, which a framework with

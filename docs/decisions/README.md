@@ -376,4 +376,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0382 | [The engine stops once its answer to `engine.stop` is handed over, and a lost one is no write in doubt](0382-the-engine-stops-once-its-answer-to-engine-stop-is-handed-over-and-a-lost-one-is-no-write-in-doubt.md) | Accepted (design decision) |
 | 0383 | [The promotion exit test measures the two paths in pairs](0383-the-promotion-exit-test-measures-the-two-paths-in-pairs.md) | Accepted (design decision) |
 | 0384 | [A screen changed on purpose is caught by its locators or its fingerprint, and a named section is a region](0384-a-screen-changed-on-purpose-is-caught-by-its-locators-or-its-fingerprint-and-a-named-section-is-a-region.md) | Accepted (design decision) |
-| 0399 | [The set step commits a text control as the surface's platform profile says](0399-the-set-step-commits-a-text-control-as-the-surfaces-platform-profile-says.md) | Accepted (design decision) |
+| 0385 | [The set step commits a text control as the surface's platform profile says](0385-the-set-step-commits-a-text-control-as-the-surfaces-platform-profile-says.md) | Accepted (design decision) |

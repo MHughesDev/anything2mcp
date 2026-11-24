@@ -1,7 +1,7 @@
 //! The input commit a platform profile states, applied by the driver's set
 //! step on a surface that names the profile, against the test application's
 //! pages that commit a value as each family of web interface does, through
-//! the screens of `tests/fixtures/commits` (decision 0399). Every proof asks
+//! the screens of `tests/fixtures/commits` (decision 0385). Every proof asks
 //! the application what its page was told or was sent, never the driver.
 
 #![allow(
