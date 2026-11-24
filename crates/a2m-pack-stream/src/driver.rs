@@ -29,7 +29,7 @@ use serde::Deserialize;
 use crate::channel::{ChannelEntry, MessageSchema, Ownership, SECTION_FORMAT, Shape};
 use crate::codes::{self, shown, stopped};
 use crate::json::Json;
-use crate::lower::{ARG_BODY, ARG_CORRELATION, ARG_FROM, ARG_HEADER, ARG_KEY, StepDetail};
+use crate::lower::{ARG_BODY, ARG_CORRELATION, ARG_FROM, ARG_HEADER, ARG_KEY, FOUND, StepDetail};
 use crate::names::{
     BROKER, CHANNEL, MESSAGE_SCHEMA, PACK, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE,
     STEP_CHANNELS, STEP_DESCRIBE, STEP_LATEST, STEP_POSITION, STEP_PUBLISH, STEP_SCAN,
@@ -751,6 +751,7 @@ impl StreamDriver {
         &self,
         run: &mut Run,
         step: &Step,
+        detail: &StepDetail,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
@@ -763,6 +764,11 @@ impl StreamDriver {
             .await
             .map_err(|error| wire_failure(&*self.redact, &error, "read the latest value"))?;
         let Some(message) = found else {
+            // A read whose operation declares `found` answers a key with no
+            // message as a result (decision 0999).
+            if detail.answers_missing {
+                return Ok(self.done(Values::new().with(FOUND, false)));
+            }
             return Ok(StepOutcome::Absent(Observed::default()));
         };
         if message.key.as_deref() != Some(key) {
@@ -773,7 +779,16 @@ impl StreamDriver {
                 "Report this; the driver has no rule for it.",
             ));
         }
-        Ok(self.done(run.record(&entry, &message)?))
+        let mut values = run.record(&entry, &message)?;
+        if detail.answers_missing {
+            if values.contains(FOUND) {
+                return Err(mismatch(
+                    "its body has a field named `found`, the name under which this read says whether the key held a message",
+                ));
+            }
+            values.insert(FOUND, Value::Bool(true));
+        }
+        Ok(self.done(values))
     }
 
     async fn browse(
@@ -1987,7 +2002,7 @@ impl Driver for StreamDriver {
                 step.payload.decode().map_err(StepFailure::not_sent)?
             };
             let result = if step.kind == STEP_LATEST {
-                self.latest(run, step, input).await
+                self.latest(run, step, &detail, input).await
             } else if step.kind == STEP_BROWSE {
                 self.browse(run, step, &detail, input).await
             } else if step.kind == STEP_SCAN {

@@ -1136,6 +1136,87 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     assert_eq!(scene.stand.stream(SEED_WORK).unwrap().consumers.len(), 1);
 }
 
+/// Field test 7: a read by key of a key the server holds no message for
+/// stopped the run as `output_unexpected`, as one that could be resumed. A
+/// read whose operation declares an output `found` answers it as a result,
+/// `found: false`, and every other output may then be absent (decision
+/// 0999, as decision 0348 is for the data pack). Without `found` the read
+/// keeps its old behaviour, and the read-back of a write is not changed.
+#[tokio::test]
+async fn a_read_that_declares_found_answers_a_key_with_no_message_as_found_false() {
+    let folder = Folder::new("nats-found");
+    let root = folder.path().join("target");
+    copy_tree(nats_root().path(), &root);
+    let operations = root.join("operations").join("order_status.yaml");
+    let mut text = std::fs::read_to_string(&operations).unwrap();
+    text.push_str(
+        "---\n\
+         operation: example_order_status_find\n\
+         title: Find the status of an order\n\
+         effect: read\n\
+         key: order_id\n\
+         inputs:\n  order_id: {type: identifier, description: \"Order number\"}\n\
+         outputs:\n  status: {type: text}\n  found: {type: boolean}\n\
+         bindings:\n  - mode: stream\n    verb: read\n    channel: orders.status\n    key: {order_id: input.order_id}\n\
+         description: >\n  Reads the last status the broker holds for one order, and says whether it holds one.\n",
+    );
+    std::fs::write(&operations, text).unwrap();
+    let mut scene = Scene::start().await;
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("the target does not compile:\n{problems}"),
+    };
+    let operation = |name: &str| {
+        scene
+            .compiled_target
+            .operations
+            .iter()
+            .find(|found| found.name.as_str() == name)
+            .unwrap()
+            .clone()
+    };
+    // `found` is the one output every result holds; the status the schema
+    // requires may now be absent, since a missing key returns none.
+    let find = operation("example_order_status_find");
+    let may_be_absent: Vec<(&str, bool)> = find
+        .outputs
+        .iter()
+        .map(|output| (output.name.as_str(), output.may_be_absent))
+        .collect();
+    assert_eq!(may_be_absent, [("status", true), ("found", false)]);
+    let get = operation("example_order_status_get");
+    assert!(get.outputs.iter().all(|output| !output.may_be_absent));
+
+    let (handle, mut prepared) = scene.reading().await;
+    let steps = scene.binding("example_order_status_find").act.clone();
+    // A key the server holds: its status, and `found: true`.
+    let held = done(
+        read(&handle, &mut prepared, &steps, &key_arg("A-100"))
+            .await
+            .unwrap(),
+    );
+    let result = common::outputs_of(&scene.compiled_target, "example_order_status_find", &held);
+    assert_eq!(result.get("found"), Some(&Value::Bool(true)));
+    assert_eq!(result.get("status"), Some(&Value::from("submitted")));
+    // A key it holds no message for: a result, `found: false`, no status.
+    let missing = done(
+        read(&handle, &mut prepared, &steps, &key_arg("Z-999"))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(missing.get("found"), Some(&Value::Bool(false)));
+    assert_eq!(missing.get("status"), None);
+    // The read that declares no `found` still says absent.
+    let steps = scene.binding("example_order_status_get").act.clone();
+    let outcome = read(&handle, &mut prepared, &steps, &key_arg("Z-999"))
+        .await
+        .unwrap();
+    assert!(matches!(outcome, StepOutcome::Absent(_)), "{outcome:?}");
+    handle.release(prepared, false).await;
+    assert!(scene.stand.received().is_empty());
+    assert!(scene.stand.deliveries().is_empty());
+}
+
 // ---- 6. the protocol is one interface; its limits are the compiler's ----
 
 #[tokio::test]

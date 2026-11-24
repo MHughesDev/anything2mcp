@@ -70,6 +70,23 @@ pub(crate) struct StepDetail {
     /// absent (decision 0315). Left out of the payload when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certain: Vec<String>,
+    /// `latest` of a `read`: the operation declares an output `found`, so a
+    /// key the broker holds no message for is answered as `found: false`
+    /// and not as absent (decision 0999, as decision 0348 for the data
+    /// pack). Left out of the payload when false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub answers_missing: bool,
+}
+
+/// The output by which a read by key says whether the key held a message.
+pub(crate) const FOUND: &str = "found";
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `skip_serializing_if` passes the field by reference"
+)]
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 impl StepDetail {
@@ -297,7 +314,7 @@ impl Work<'_, '_> {
         ms
     }
 
-    fn read(&mut self) -> Vec<Step> {
+    fn read(&mut self, answers: bool) -> Vec<Step> {
         for key in [
             "headers",
             "body",
@@ -322,7 +339,15 @@ impl Work<'_, '_> {
             );
         }
         let args: Vec<StepArg> = self.key_arg(true).into_iter().collect();
-        vec![self.step(STEP_LATEST, args, &StepDetail::default())]
+        let detail = StepDetail {
+            answers_missing: answers,
+            ..StepDetail::default()
+        };
+        let mut latest = self.step(STEP_LATEST, args, &detail);
+        // A read that answers a missing key does not stop on it: the step
+        // is no lookup whose absence ends the run.
+        latest.lookup = !answers;
+        vec![latest]
     }
 
     fn list(&mut self) -> Vec<Step> {
@@ -848,8 +873,33 @@ impl Lowering for StreamLowering {
                 .unwrap_or(STEP_TIMEOUT_MS),
             problems: Diagnostics::new(),
         };
+        // The channel's schema, each field with whether it is required.
+        let schema_fields: Option<BTreeMap<String, bool>> =
+            entry.schema.as_deref().and_then(|schema| {
+                let (_, section) = cx.section(&MESSAGE_SCHEMA, &BROKER)?;
+                let all: BTreeMap<String, MessageSchema> = section.payload.decode().ok()?;
+                all.get(schema).map(|found| {
+                    found
+                        .fields
+                        .iter()
+                        .map(|(name, rule)| (name.clone(), rule.required))
+                        .collect()
+                })
+            });
+        // A read by key whose operation declares an output `found` answers
+        // a key with no message as `found: false`, unless a message has a
+        // field of that name (decision 0999).
+        let answers = *binding.verb == VERB_READ
+            && binding
+                .operation
+                .outputs()
+                .iter()
+                .any(|output| output.name == FOUND)
+            && !schema_fields
+                .as_ref()
+                .is_some_and(|fields| fields.contains_key(FOUND));
         let (mut act, read_back, lookup) = if *binding.verb == VERB_READ {
-            (work.read(), Vec::new(), Vec::new())
+            (work.read(answers), Vec::new(), Vec::new())
         } else if *binding.verb == VERB_LIST {
             (work.list(), Vec::new(), Vec::new())
         } else if *binding.verb == VERB_AWAIT {
@@ -865,23 +915,22 @@ impl Lowering for StreamLowering {
         // pack returns is certain (decision 0315).
         let returns_message =
             *binding.verb == VERB_READ || *binding.verb == VERB_LIST || *binding.verb == VERB_TAKE;
-        let mut certain: Vec<String> = entry
-            .schema
-            .as_deref()
+        let mut certain: Vec<String> = schema_fields
+            .as_ref()
             .filter(|_| returns_message)
-            .and_then(|schema| {
-                let (_, section) = cx.section(&MESSAGE_SCHEMA, &BROKER)?;
-                let all: BTreeMap<String, MessageSchema> = section.payload.decode().ok()?;
-                all.get(schema).map(|found| {
-                    found
-                        .fields
-                        .iter()
-                        .filter(|(_, rule)| rule.required)
-                        .map(|(name, _)| name.clone())
-                        .collect()
-                })
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter(|(_, required)| **required)
+                    .map(|(name, _)| name.clone())
+                    .collect()
             })
             .unwrap_or_default();
+        // A read that answers a missing key is certain of `found` alone: a
+        // key with no message returns every other output as `null`.
+        if answers {
+            certain = vec![FOUND.to_owned()];
+        }
         // A list always says how many it read, whether more are left, and
         // whether it covered the channel.
         if *binding.verb == VERB_LIST {

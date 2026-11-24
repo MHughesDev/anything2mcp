@@ -329,18 +329,45 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
         result.get("status").and_then(a2m_core::Value::as_text),
         held.body["status"].as_str()
     );
-    // Its text is marked untrusted.
+    // The read says the key held a message (decision 0999), and a key the
+    // broker holds no message for is a result with `found: false`.
+    assert_eq!(result.get("found"), Some(&a2m_core::Value::Bool(true)));
+    let missing = common::done(
+        common::read(
+            &handle,
+            &mut prepared,
+            &steps,
+            &Values::new().with("key", "Z-999"),
+        )
+        .await
+        .unwrap(),
+    );
+    assert_eq!(missing.get("found"), Some(&a2m_core::Value::Bool(false)));
+    assert_eq!(missing.get("status"), None);
+    // Its text is marked untrusted; `found` is the driver's own word.
     let operation = scene
         .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_orders_status_get")
         .unwrap();
-    assert!(operation.outputs.iter().all(|output| {
-        output
-            .field_type
-            .is_some_and(|index| scene.compiled_target.field_types[index.get()].untrusted)
-    }));
+    assert!(
+        operation
+            .outputs
+            .iter()
+            .any(|output| output.name == "found")
+    );
+    assert!(
+        operation
+            .outputs
+            .iter()
+            .filter(|output| output.name != "found")
+            .all(|output| {
+                output
+                    .field_type
+                    .is_some_and(|index| scene.compiled_target.field_types[index.get()].untrusted)
+            })
+    );
 
     for (operation, address) in [
         ("example_orders_events_list", "example.orders.events"),
