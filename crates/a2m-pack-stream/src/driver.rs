@@ -956,6 +956,10 @@ impl StreamDriver {
         // from where the log ended before the publish to where it ends now.
         // A gap is a message gone from inside, whatever removed it; with no
         // place recorded before the publish, the range has no beginning.
+        // With no place recorded, the range has a beginning only where the
+        // log has lost nothing from its front: a log read from its first
+        // position, which is the first it ever held, is its whole history.
+        let mut origin_whole = false;
         let may_say_absent = !facts.may_lose_inside && (known || recorded_from.is_some());
         let mut expect = from;
         let mut whole = true;
@@ -969,6 +973,10 @@ impl StreamDriver {
                 .await
                 .map_err(|error| wire_failure(&*self.redact, &error, "scan the log"))?;
             pages += 1;
+            if pages == 1 && from.is_none() && page.start == Some(1) {
+                origin_whole = true;
+                expect = page.start;
+            }
             looked += page.messages.len();
             run.acting.measured.clear();
             run.measure("pages", pages);
@@ -1007,6 +1015,7 @@ impl StreamDriver {
                 if page.end.is_some_and(|end| reached < end) {
                     return Err(uncovered(&name));
                 }
+                let may_say_absent = may_say_absent || (origin_whole && !facts.may_lose_inside);
                 if !may_say_absent || !whole || (page.end.is_some() && expect != page.end) {
                     return Err(inconclusive(&name));
                 }

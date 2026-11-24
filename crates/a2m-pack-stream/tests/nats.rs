@@ -1973,6 +1973,47 @@ async fn a_scan_never_says_absent_of_a_log_that_lost_a_message_from_inside() {
 }
 
 #[tokio::test]
+async fn a_scan_with_nothing_recorded_says_absent_only_of_a_log_read_whole_from_its_first_message()
+{
+    // A record not yet sent has no place recorded. A log that has lost
+    // nothing from its front is its whole history, and a token not in it
+    // was never stored.
+    let scene = Scene::start().await;
+    for n in 0..3 {
+        scene.stand.publish(
+            "example.orders.events.A-102",
+            &[],
+            &format!("{{\"order_id\":\"A-102\",\"event\":\"e{n}\"}}"),
+        );
+    }
+    assert!(matches!(
+        scan_for(&scene, "tok-new", &Values::new()).await.unwrap(),
+        StepOutcome::Absent(_)
+    ));
+
+    // A log whose first message is gone has no beginning to read from: the
+    // token may have been in what was removed.
+    let scene = Scene::start().await;
+    for n in 0..3 {
+        scene.stand.publish(
+            "example.orders.events.A-102",
+            &[],
+            &format!("{{\"order_id\":\"A-102\",\"event\":\"e{n}\"}}"),
+        );
+    }
+    let first = scene.stand.messages(SEED_EVENTS)[0].seq;
+    assert!(scene.stand.remove_message(SEED_EVENTS, first));
+    assert_eq!(
+        failed(scan_for(&scene, "tok-new", &Values::new()).await),
+        (
+            "policy".to_owned(),
+            "scan_inconclusive".to_owned(),
+            Sent::Answered
+        )
+    );
+}
+
+#[tokio::test]
 async fn a_publish_in_doubt_past_the_window_is_found_by_a_scan_from_the_recorded_position() {
     let scene = Scene::start().await;
     let ledger = Ledger::open().await;

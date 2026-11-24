@@ -347,3 +347,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0353 | [A session is probed by a keeper job run through the engine, in a slot kept for it](0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md) | Accepted (design decision) |
 | 0354 | [A read that waits for a sign-in, as built, and a surface added with its own fields](0354-a-read-that-waits-for-a-sign-in-as-built-and-a-surface-added-with-its-own-fields.md) | Accepted (design decision) |
 | 0355 | [The web pack handles the edge, a fixed language, and the pages of cases 22 to 27](0355-the-web-pack-handles-the-edge-a-fixed-language-and-the-pages-of-cases-22-to-27.md) | Accepted (design decision) |
+| 0399 | [A scan with nothing recorded says absent of a log that has lost nothing from its front](0399-a-scan-with-nothing-recorded-says-absent-of-a-log-that-has-lost-nothing-from-its-front.md) | Accepted (design decision) |
