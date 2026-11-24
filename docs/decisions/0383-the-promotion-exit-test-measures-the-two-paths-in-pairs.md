@@ -1,4 +1,4 @@
-# 0399. The promotion exit test measures the two paths in pairs
+# 0383. The promotion exit test measures the two paths in pairs
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
