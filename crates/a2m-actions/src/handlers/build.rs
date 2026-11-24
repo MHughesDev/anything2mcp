@@ -599,7 +599,7 @@ fn first_file_refused(problems: &Diagnostics) -> Failure {
             "The compiler refuses the surface as given, so nothing was written: {}",
             a2m_core::said_neutral(&named.join("; "))
         ),
-        "Correct the address or the kind, and call `target.add` again.",
+        "Correct the address, the kind, or the surface's own fields as its kind declares them (`fields`, or `--fields` on the command line: a JSON object of each field's name and value), and call `target.add` again.",
     )
 }
 
