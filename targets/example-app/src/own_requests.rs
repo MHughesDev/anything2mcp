@@ -18,12 +18,22 @@
 //! - `/invitations/{token}`: a page whose address holds a long random text, and whose
 //!   script sends that text in a request's path and as a bare entry of a
 //!   query, to `/api/invitations/{token}/check` and `/api/feed?{token}`.
+//! - `/cases/rows-by-post`: a page whose script asks for its rows with
+//!   `POST /api/cases/rows/search` and the JSON body
+//!   `{"status": "open", "op": "search"}`, and shows them in a table, or
+//!   says `Failed.` when the request is failed. The
+//!   route reads with `op: "search"` and, with `op: "archive"`, archives the
+//!   first row of that status: one address that reads and writes by one
+//!   method, told apart by one field of its body (decision 0394).
+//!   `GET /__control/case-rows` reports the rows as stored and every body
+//!   the route was sent, by its `op`.
 
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::AppState;
@@ -40,6 +50,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/invitations/{token}", get(invitation))
         .route("/api/invitations/{token}/check", get(invitation_check))
         .route("/api/feed", get(feed))
+        .route("/cases/rows-by-post", get(rows_by_post))
+        .route("/api/cases/rows/search", post(rows_search))
 }
 
 fn page(title: &str, body: &str) -> Html<String> {
@@ -187,4 +199,151 @@ async fn invitation_check(Path(_token): Path<String>) -> Response {
 
 async fn feed() -> Response {
     axum::Json(json!({"items": 0})).into_response()
+}
+
+/// One row of the page of case 39.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaseRow {
+    /// The row's key, such as `C-1`.
+    pub case_id: String,
+    /// What the case is about.
+    pub title: String,
+    /// `open`, `closed`, or `archived`.
+    pub status: String,
+}
+
+/// What the control interface reports of case 39.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CaseRowsReport {
+    /// The rows as stored, in key order.
+    pub rows: Vec<CaseRow>,
+    /// The `op` of every body `POST /api/cases/rows/search` was sent since
+    /// the last reset, oldest first; `unreadable` for a body that was not
+    /// the one the route takes.
+    pub received: Vec<String>,
+}
+
+/// The rows of case 39 and what their route was sent.
+#[derive(Debug, Clone)]
+pub(crate) struct CaseRows {
+    rows: Vec<CaseRow>,
+    received: Vec<String>,
+}
+
+/// How many bodies the route remembers.
+const RECEIVED_KEPT: usize = 10_000;
+
+impl Default for CaseRows {
+    fn default() -> Self {
+        let row = |case_id: &str, title: &str, status: &str| CaseRow {
+            case_id: case_id.to_owned(),
+            title: title.to_owned(),
+            status: status.to_owned(),
+        };
+        Self {
+            rows: vec![
+                row("C-1", "Leaking valve", "open"),
+                row("C-2", "Late delivery", "open"),
+                row("C-3", "Wrong colour", "closed"),
+            ],
+            received: Vec::new(),
+        }
+    }
+}
+
+impl CaseRows {
+    fn heard(&mut self, op: &str) {
+        if self.received.len() < RECEIVED_KEPT {
+            self.received.push(op.to_owned());
+        }
+    }
+}
+
+pub(crate) async fn case_rows_report(State(state): State<AppState>) -> axum::Json<CaseRowsReport> {
+    let inner = state.lock().await;
+    axum::Json(CaseRowsReport {
+        rows: inner.case_rows.rows.clone(),
+        received: inner.case_rows.received.clone(),
+    })
+}
+
+/// The body the route takes, and nothing more.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RowsAsked {
+    status: String,
+    op: String,
+}
+
+async fn rows_by_post() -> Response {
+    page(
+        "Open cases",
+        "<h1>Open cases</h1>\n\
+         <table aria-label=\"Cases\">\n<thead><tr><th>Case</th><th>Title</th><th>Status</th></tr></thead>\n\
+         <tbody id=\"rows\"></tbody>\n</table>\n<p id=\"state\">Loading.</p>\n\
+         <script>\n\
+         (async () => {\n\
+           let response;\n\
+           try {\n\
+             response = await fetch(\"/api/cases/rows/search\", {method: \"POST\", \
+             headers: {\"Content-Type\": \"application/json\"}, \
+             body: JSON.stringify({status: \"open\", op: \"search\"})});\n\
+           } catch (error) {\n\
+             document.getElementById(\"state\").textContent = \"Failed.\";\n\
+             return;\n\
+           }\n\
+           const answer = await response.json();\n\
+           const rows = document.getElementById(\"rows\");\n\
+           for (const row of answer.rows) {\n\
+             const line = document.createElement(\"tr\");\n\
+             for (const value of [row.case_id, row.title, row.status]) {\n\
+               const cell = document.createElement(\"td\");\n\
+               cell.textContent = value;\n\
+               line.appendChild(cell);\n\
+             }\n\
+             rows.appendChild(line);\n\
+           }\n\
+           document.getElementById(\"state\").textContent = \"Loaded.\";\n\
+         })();\n\
+         </script>",
+    )
+    .into_response()
+}
+
+/// `op: "search"` answers the rows of a status; `op: "archive"` archives the
+/// first of them and answers it. Anything else is refused and changes
+/// nothing; every body is counted.
+async fn rows_search(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
+    let mut inner = state.lock().await;
+    let Ok(asked) = serde_json::from_slice::<RowsAsked>(&body) else {
+        inner.case_rows.heard("unreadable");
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "bad_body"})),
+        )
+            .into_response();
+    };
+    inner.case_rows.heard(&asked.op);
+    let rows = &mut inner.case_rows.rows;
+    match asked.op.as_str() {
+        "search" => {
+            let found: Vec<&CaseRow> = rows
+                .iter()
+                .filter(|row| row.status == asked.status)
+                .collect();
+            axum::Json(json!({"rows": found})).into_response()
+        }
+        "archive" => match rows.iter_mut().find(|row| row.status == asked.status) {
+            Some(row) => {
+                row.status = "archived".to_owned();
+                axum::Json(json!({"rows": [row.clone()]})).into_response()
+            }
+            None => axum::Json(json!({"rows": []})).into_response(),
+        },
+        _ => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "unknown_op"})),
+        )
+            .into_response(),
+    }
 }

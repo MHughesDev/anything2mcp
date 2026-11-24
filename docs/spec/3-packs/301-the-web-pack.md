@@ -292,7 +292,7 @@ In an observing tab:
 
 | What could change the system | What happens |
 | --- | --- |
-| A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
+| A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches one of the tab's safe requests in its method, origin, path template, and body ([decision 0394](../../decisions/0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md)), which only a person sets. Each one is reported as a limitation on the finding |
 | A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child, a frame in another process or a service worker, takes its own before it runs or is not let run ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
 | A request to an origin the tab was not opened for | Failed before it leaves the browser, whatever its method, and reported as a limitation (decision 0292) |

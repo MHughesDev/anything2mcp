@@ -27,9 +27,9 @@ use crate::protocol::{
     GetVersion, GrantPermissions, SetAutoAttach, SetCookies, SetDocumentContent,
     SetDownloadBehavior, TargetFilter,
 };
+use crate::safe::SafeRequests;
 use crate::tab::{
-    ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
-    watch_windows,
+    ActTab, ObserveTab, Page, PageEnvironment, Posture, open_page, shown, watch_windows,
 };
 
 /// The named root that holds the browsers' data directories. The manifest

@@ -863,56 +863,6 @@ async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
 }
 
 #[test]
-fn a_request_marked_safe_is_matched_by_origin_and_path_not_by_how_its_text_begins() {
-    let safe = |prefix: &str| SafeRequests {
-        allowed: vec![crate::SafeRequest {
-            method: "POST".to_owned(),
-            address_prefix: prefix.to_owned(),
-        }],
-    };
-    let search = safe("https://app.example.com/api/search");
-    for allowed in [
-        "https://app.example.com/api/search",
-        "https://app.example.com/api/search?q=bolts",
-        "https://app.example.com/api/search/orders",
-        "https://APP.example.com:443/api/search",
-    ] {
-        assert!(search.allows("POST", allowed), "{allowed}");
-    }
-    for refused in [
-        "https://app.example.com/api/search-and-delete",
-        "https://app.example.com/api/searches",
-        "https://app.example.com.other.example/api/search",
-        "http://app.example.com/api/search",
-        "https://app.example.com:8443/api/search",
-        "https://app.example.com/api",
-        "https://other.example/?https://app.example.com/api/search",
-    ] {
-        assert!(!search.allows("POST", refused), "{refused}");
-    }
-    assert!(!search.allows("PUT", "https://app.example.com/api/search"));
-    // A whole origin is marked by its address alone, and a longer host is
-    // not under it.
-    let whole = safe("https://app.example.com");
-    assert!(whole.allows("POST", "https://app.example.com/anything"));
-    assert!(!whole.allows("POST", "https://app.example.com.other.example/anything"));
-    // What is no address, or carries a query, marks nothing.
-    for nothing in [
-        "",
-        "/api/search",
-        "app.example.com",
-        "https://app.example.com/api?x=1",
-    ] {
-        assert!(
-            !safe(nothing).allows("POST", "https://app.example.com/api?x=1"),
-            "{nothing}"
-        );
-    }
-    // A read needs no mark.
-    assert!(SafeRequests::default().allows("GET", "https://app.example.com/"));
-}
-
-#[test]
 fn what_is_typed_and_what_a_request_carries_is_never_printed() {
     const TYPED: &str = "secret-for-tests-typed";
     for input in [
