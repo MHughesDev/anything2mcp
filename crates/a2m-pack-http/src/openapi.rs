@@ -108,6 +108,66 @@ fn document(bytes: &[u8]) -> Result<Json, Failure> {
     }
 }
 
+/// The sign a description's security scheme is classified as, by the fixed
+/// rules of decision 0399: a closed name `a2m_auth::SignInSign` knows, or
+/// `unrecognized` where no rule covers the scheme. The scheme's own text is
+/// never kept.
+fn classify_scheme(scheme: &Json) -> &'static str {
+    let word = |value: Option<&Json>| value.and_then(Json::as_text).map(str::to_ascii_lowercase);
+    let has =
+        |flows: Option<&Json>, name: &str| flows.is_some_and(|flows| flows.get(name).is_some());
+    match word(scheme.get("type")).as_deref() {
+        Some("apikey") => "api_key",
+        Some("basic") => "http_basic",
+        Some("mutualtls") => "client_certificate",
+        Some("openidconnect") => "authorization_code",
+        Some("http") => match word(scheme.get("scheme")).as_deref() {
+            Some("basic") => "http_basic",
+            Some("bearer") => "bearer_token",
+            Some("digest") => "http_digest",
+            Some("negotiate" | "ntlm") => "integrated",
+            _ => "unrecognized",
+        },
+        Some("oauth2") => {
+            let flows = scheme.get("flows");
+            let flow = word(scheme.get("flow"));
+            if has(flows, "clientCredentials") || flow.as_deref() == Some("application") {
+                "client_credentials"
+            } else if has(flows, "authorizationCode")
+                || has(flows, "implicit")
+                || matches!(flow.as_deref(), Some("accesscode" | "implicit"))
+            {
+                "authorization_code"
+            } else {
+                "unrecognized"
+            }
+        }
+        _ => "unrecognized",
+    }
+}
+
+/// How a description says the service is signed in to: the sign of each
+/// scheme it declares (OpenAPI 3 `components.securitySchemes`, Swagger 2
+/// `securityDefinitions`), each name once, in the order first met. What a
+/// description declares is a claim, not a proof: nothing is sent with it.
+pub(crate) fn sign_in_signs(bytes: &[u8]) -> Result<Vec<&'static str>, Failure> {
+    let root = document(bytes)?;
+    let declared = root
+        .get("components")
+        .and_then(|components| components.get("securitySchemes"))
+        .or_else(|| root.get("securityDefinitions"));
+    let mut signs = Vec::new();
+    if let Some(Json::Object(schemes)) = declared {
+        for (_, scheme) in schemes {
+            let sign = classify_scheme(scheme);
+            if !signs.contains(&sign) {
+                signs.push(sign);
+            }
+        }
+    }
+    Ok(signs)
+}
+
 fn length(text: &str) -> u64 {
     u64::try_from(text.len()).unwrap_or(u64::MAX)
 }
@@ -2321,5 +2381,40 @@ mod tests {
             "get_api_orders_order_id"
         );
         assert_eq!(snake("Orders.List"), "orders_list");
+    }
+
+    #[test]
+    fn each_declared_security_scheme_is_classified_by_a_fixed_rule() {
+        let described = r##"{"openapi": "3.0.3", "paths": {}, "components": {"securitySchemes": {
+            "a": {"type": "apiKey", "in": "header", "name": "X-Key"},
+            "b": {"type": "http", "scheme": "Bearer"},
+            "c": {"type": "http", "scheme": "basic"},
+            "d": {"type": "oauth2", "flows": {"clientCredentials": {}}},
+            "e": {"type": "oauth2", "flows": {"password": {}}},
+            "f": {"type": "openIdConnect"},
+            "g": {"type": "mutualTLS"},
+            "h": {"type": "apiKey", "in": "query", "name": "k"}
+        }}}"##;
+        assert_eq!(
+            super::sign_in_signs(described.as_bytes()).unwrap(),
+            [
+                "api_key",
+                "bearer_token",
+                "http_basic",
+                "client_credentials",
+                "unrecognized",
+                "authorization_code",
+                "client_certificate"
+            ]
+        );
+        let two = r##"{"swagger": "2.0", "paths": {}, "securityDefinitions": {
+            "a": {"type": "basic"},
+            "b": {"type": "oauth2", "flow": "application"}}}"##;
+        assert_eq!(
+            super::sign_in_signs(two.as_bytes()).unwrap(),
+            ["http_basic", "client_credentials"]
+        );
+        let none = br#"{"openapi": "3.0.3", "paths": {}}"#;
+        assert!(super::sign_in_signs(none).unwrap().is_empty());
     }
 }

@@ -575,7 +575,14 @@ async fn discovery_observes_and_cannot_write() {
                 }
             }
             ("http_description", Ok(findings)) => {
-                assert_eq!(findings.len(), 11);
+                assert_eq!(findings.len(), 13);
+                let by = |kind: &str| {
+                    findings
+                        .iter()
+                        .filter(|one| one.kind().as_str() == kind)
+                        .count()
+                };
+                assert_eq!((by("described_operation"), by("sign_in_method")), (11, 2));
                 for finding in findings {
                     assert_eq!(finding.level(), EvidenceLevel::Inferred);
                     assert_eq!(finding.source(), Source::PublishedDescription);
@@ -746,7 +753,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .filter(|(name, _)| name == "http_description")
         .flat_map(|(_, result)| result.unwrap())
         .collect();
-    assert_eq!(findings.len(), 11, "{findings:?}");
+    assert_eq!(findings.len(), 13, "{findings:?}");
 
     let folder = Folder::new("drafted-reads");
     let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
@@ -1414,7 +1421,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     // the origin and that path, and the surface is not an open question.
     let prefixed = format!("{base}/v1");
     let findings = findings_from_handed_file(&app, &prefixed).await;
-    assert_eq!(findings.len(), 11);
+    assert_eq!(findings.len(), 13);
     let one = target.replace("http://127.0.0.1:4010", &prefixed);
     let (_folder, root, scene, report) = draft_into(one, &findings);
     assert!(

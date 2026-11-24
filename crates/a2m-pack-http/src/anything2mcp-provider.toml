@@ -36,7 +36,7 @@ discoverer = ["http_surface", "http_description"]
 name = "http_surface"
 archetype = "request"
 surface_kinds = ["http"]
-kinds = ["endpoint"]
+kinds = ["endpoint", "sign_in_method"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 1000000, depth = 1 }
@@ -45,7 +45,7 @@ bounds = { seconds = 30, bytes = 1000000, depth = 1 }
 name = "http_description"
 archetype = "request"
 surface_kinds = ["http"]
-kinds = ["described_operation"]
+kinds = ["described_operation", "sign_in_method"]
 sources = ["published_description"]
 max_level = "inferred"
 bounds = { seconds = 60, bytes = 8000000, depth = 1 }
@@ -62,6 +62,10 @@ surface_kinds = ["http", "web"]
 
 [[finding_kinds]]
 name = "described_operation"
+surface_kinds = ["http"]
+
+[[finding_kinds]]
+name = "sign_in_method"
 surface_kinds = ["http"]
 
 [[lint_rules]]
