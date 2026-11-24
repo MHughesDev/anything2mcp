@@ -126,24 +126,59 @@ pub struct TestApp {
 }
 
 /// A client builder for the harness's own requests, and for a test that
-/// acts as a user over plain HTTP. With the feature `tls` on, its TLS
+/// acts as a user over plain HTTP. Wherever `reqwest` has TLS, its TLS
 /// configuration states its provider and trusts nothing, so that a client is
-/// made without a provider installed for the process.
+/// made without a provider installed for the process. That holds whatever
+/// switched TLS on in `reqwest`: this stand's feature `tls`, or another
+/// crate of the same build, such as `a2m-auth` with its own `tls`, while
+/// this stand's is off.
 pub fn client_builder() -> reqwest::ClientBuilder {
-    #[cfg(feature = "tls")]
-    let builder = {
-        // With no configuration, reqwest is handed something it does not
-        // know, and `build` returns an error instead of stopping the process.
-        match crate::tls::plain_client_config() {
-            Some(config) => reqwest::Client::builder().tls_backend_preconfigured(config),
-            None => reqwest::Client::builder().tls_backend_preconfigured(()),
-        }
+    // With no configuration, reqwest is handed something it does not know,
+    // and `build` returns an error instead of stopping the process.
+    let builder = match plain_client_config() {
+        Some(config) => reqwest::Client::builder().tls_backend_preconfigured(config),
+        None => reqwest::Client::builder().tls_backend_preconfigured(()),
     };
-    #[cfg(not(feature = "tls"))]
-    let builder = reqwest::Client::builder();
     // No client of the workspace takes a proxy from the environment
     // (decision 0197): the harness asks the application on this machine.
     builder.no_proxy()
+}
+
+/// The stand-in for `reqwest::ClientBuilder::tls_backend_preconfigured` in
+/// a build whose `reqwest` has no TLS, where there is nothing to configure.
+/// A method of the type itself is always chosen before a method of a trait,
+/// so where `reqwest` has TLS the call in [`client_builder`] is `reqwest`'s
+/// own, which states the provider, and this one is never called. Which of
+/// the two it is follows the features the build unified in `reqwest`, which
+/// this stand's own features cannot see.
+#[allow(
+    dead_code,
+    reason = "used only in a build whose reqwest has no TLS; see above"
+)]
+trait NoTlsInReqwest {
+    fn tls_backend_preconfigured(self, tls: impl std::any::Any) -> Self;
+}
+
+impl NoTlsInReqwest for reqwest::ClientBuilder {
+    fn tls_backend_preconfigured(self, _tls: impl std::any::Any) -> Self {
+        self
+    }
+}
+
+/// The harness's own client configuration: ring, stated, and no roots. The
+/// harness speaks plain HTTP only. `None` if ring offered no version, which
+/// it always does.
+fn plain_client_config() -> Option<rustls::ClientConfig> {
+    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+    .ok()
+    .map(|builder| {
+        builder
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth()
+    })
 }
 
 impl TestApp {
