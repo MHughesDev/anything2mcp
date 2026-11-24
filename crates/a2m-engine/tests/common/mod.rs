@@ -218,6 +218,10 @@ code = "example_not_covered"
 class = "unknown_variant"
 code = "example_nothing_recorded"
 
+[[failure_codes]]
+class = "edge_blocked"
+code = "example_held_at_edge"
+
 [effects]
 network = "surfaces"
 sessions = ["json_app"]
@@ -243,6 +247,10 @@ pub struct Hooks {
     pub first_mode_drifts: AtomicBool,
     /// Every step is refused as it would be when the session has ended.
     pub session_ended: AtomicBool,
+    /// The driver's health says every surface is unavailable, with this
+    /// code, as a driver does that holds an origin off after its edge
+    /// refused a visit.
+    pub unavailable: Mutex<Option<&'static str>>,
     /// The posture each `prepare` was given.
     pub postures: Mutex<Vec<String>>,
     /// A step of this kind asks, before it acts, whether another record
@@ -1096,7 +1104,10 @@ impl Driver for AppDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        DriverHealth::Ready
+        match *self.hooks.unavailable.lock().unwrap() {
+            Some(code) => DriverHealth::Unavailable(FailureCode::new(code).unwrap()),
+            None => DriverHealth::Ready,
+        }
     }
 
     fn release<'a>(&'a self, _prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {

@@ -1363,8 +1363,16 @@ fn derive_step(
             0
         } else {
             let scope = run.base.with_input(&call.inputs);
-            let (candidates, _) = run.candidates(found, &scope)?;
-            candidates.first().map_or(0, |candidate| candidate.binding)
+            match run.candidates(found, &scope) {
+                Ok((candidates, _)) => candidates.first().map_or(0, |candidate| candidate.binding),
+                // On a resume the binding is the one the approved diff
+                // names. Whether it may act now is asked when the record is
+                // read, after the records in doubt are reconciled, so that a
+                // run with a write in doubt never says less than that
+                // (decision 0399).
+                Err(_) if run.job.snapshot.is_some() => 0,
+                Err(failure) => return Err(Stop::Fail(failure)),
+            }
         };
         one_save(found, found.bindings.get(binding))?;
         if run.posture != Posture::Live {
@@ -2057,9 +2065,14 @@ async fn reconcile(
             reconcile_keyless(run, loaded, found, record, held).await?;
             continue;
         }
-        // A failure of a class that would end the run for good says only
-        // that the record could not be read: it is still in doubt, and the
-        // run stops for a resume or a person.
+        // The record could not be read: it is still in doubt, and the run
+        // says so. A failure that ends the run for good, or that does not
+        // pass by itself, a surface blocked at the edge or held off by its
+        // driver among them (decision 0399), says only that the record could
+        // not be read, and waits for a resume or a person. `transient` and
+        // `busy` stand, for the scheduler to try the reconcile again; a
+        // session that ended stands, because only a sign-in lets the read go
+        // on.
         let (raw, seen, evidence, context) = match read_in_doubt(
             run,
             loaded,
@@ -2069,7 +2082,15 @@ async fn reconcile(
         )
         .await
         {
-            Err(Stop::Fail(failure)) if settles(failure.class()) => {
+            Err(Stop::Fail(failure))
+                if !matches!(
+                    failure.class(),
+                    FailureClass::PossibleCommit
+                        | FailureClass::SessionExpired
+                        | FailureClass::Transient
+                        | FailureClass::Busy
+                ) =>
+            {
                 return Err(Stop::Fail(codes::fail(
                     &codes::row::CANNOT_RECONCILE,
                     format!(

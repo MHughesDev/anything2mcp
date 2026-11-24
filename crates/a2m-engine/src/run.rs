@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    BindingPlan, BindingStatus, Environment, Failure, FailureClass, Mode, OperationIndex,
-    OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState, Step, SurfaceIndex,
-    Value, Values,
+    BindingPlan, BindingStatus, Environment, Failure, FailureClass, FailureCode, Mode,
+    OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState,
+    Step, SurfaceIndex, Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_provider::{
@@ -476,13 +476,38 @@ impl<'a> Run<'a> {
         };
         let surface_ref = self.surface_ref(binding.surface)?;
         let surface_name = &surface_ref.surface.name;
-        if let DriverHealth::Degraded(code) | DriverHealth::Unavailable(code) =
-            handle.health(&surface_ref)
-        {
-            return Ok(Err(no_binding(format!(
-                "The driver of the mode `{}` is not ready ({code}).",
-                binding.mode
-            ))));
+        match handle.health(&surface_ref) {
+            DriverHealth::Ready => {}
+            DriverHealth::Unavailable(code) => {
+                // The driver's own word that the surface may not be reached
+                // now, such as an origin it holds off after its edge
+                // refused a visit: the binding does not qualify, with the
+                // driver's code and the class its manifest declares, and
+                // nothing is sent (decision 0399). A code no manifest of
+                // the provider declares says only that it is not ready.
+                let declared = self.declared_class(&handle, &code);
+                return Ok(Err(match declared {
+                    Some(class) => Failure::new(
+                        class,
+                        code.clone(),
+                        format!(
+                            "The driver of the mode `{}` says the surface `{surface_name}` cannot be reached now ({code}), so nothing was sent.",
+                            binding.mode
+                        ),
+                        "Wait for what the driver names to end, then resume the run.",
+                    ),
+                    None => no_binding(format!(
+                        "The driver of the mode `{}` is not ready ({code}).",
+                        binding.mode
+                    )),
+                }));
+            }
+            DriverHealth::Degraded(code) => {
+                return Ok(Err(no_binding(format!(
+                    "The driver of the mode `{}` is not ready ({code}).",
+                    binding.mode
+                ))));
+            }
         }
         if conditions
             .sessions
@@ -525,6 +550,25 @@ impl<'a> Run<'a> {
             ))));
         }
         Ok(Ok(handle))
+    }
+
+    /// The class the manifest of `handle`'s provider declares for `code`.
+    fn declared_class(&self, handle: &DriverHandle, code: &FailureCode) -> Option<FailureClass> {
+        let provider = &handle.choice().provider;
+        self.engine
+            .deps
+            .registry
+            .listing()
+            .into_iter()
+            .find(|listing| &listing.name == provider)
+            .and_then(|listing| {
+                listing
+                    .manifest
+                    .failure_codes
+                    .iter()
+                    .find(|declared| &declared.code == code)
+                    .map(|declared| declared.class)
+            })
     }
 
     /// The operation's bindings in `shadow`, in the plan's order, each with

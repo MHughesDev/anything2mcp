@@ -512,6 +512,100 @@ async fn a_degraded_kernel_takes_reads_and_refuses_writes_before_anything_runs()
     assert!(completed(&outcome), "{outcome:?}");
 }
 
+// ---- a surface its driver holds off ----
+
+/// A driver whose health says a surface cannot be reached now, as the web
+/// pack's does for an origin whose edge refused a visit: the run does not
+/// start, with the driver's code and the class its manifest declares, and
+/// nothing reaches the driver, neither the preview's read nor the write
+/// (decision 0399). Once the driver is ready, the approved run writes once.
+#[tokio::test]
+async fn a_surface_its_driver_says_is_unavailable_starts_nothing_and_names_the_drivers_code() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    let held = (FailureClass::EdgeBlocked, "example_held_at_edge".to_owned());
+
+    // The preview: nothing is read.
+    *scene.hooks.unavailable.lock().unwrap() = Some("example_held_at_edge");
+    let outcome = scene.work(JobKind::Preview, ITEM_UPSERT, rail()).await;
+    assert_eq!(failed_as(&outcome), held, "{outcome:?}");
+    assert!(
+        scene.steps(&["get_item", "put_item", "intend"]).is_empty(),
+        "{:?}",
+        scene.hooks.seen()
+    );
+    assert!(scene.hooks.postures.lock().unwrap().is_empty());
+
+    // An approved run whose surface the driver then holds off: nothing is
+    // read again, no intent is recorded, and nothing is written.
+    scene.another_run(ITEM_UPSERT).await;
+    *scene.hooks.unavailable.lock().unwrap() = None;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    let reads = scene.hooks.count("get_item");
+    *scene.hooks.unavailable.lock().unwrap() = Some("example_held_at_edge");
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(failed_as(&outcome), held, "{outcome:?}");
+    assert_eq!(scene.hooks.count("get_item"), reads);
+    assert!(scene.steps(&["put_item", "intend"]).is_empty());
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // A code its provider does not declare says only that the driver is
+    // not ready.
+    *scene.hooks.unavailable.lock().unwrap() = Some("example_never_declared");
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Busy, "no_binding".to_owned()),
+        "{outcome:?}"
+    );
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // Ready again: the resume writes once and verifies.
+    *scene.hooks.unavailable.lock().unwrap() = None;
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+}
+
+/// A record in doubt whose surface its driver then holds off, or whose
+/// read is refused at the edge: the reconcile reads nothing it cannot, and
+/// the run still says that a write may have gone through, never a class a
+/// caller is told is safe to call again (decision 0399).
+#[tokio::test]
+async fn a_record_in_doubt_that_cannot_be_read_leaves_the_run_possible_commit() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned())
+    );
+
+    *scene.hooks.unavailable.lock().unwrap() = Some("example_held_at_edge");
+    scene.new_lease().await;
+    let reads = scene.hooks.count("get_item");
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::PossibleCommit, "cannot_reconcile".to_owned()),
+        "{outcome:?}"
+    );
+    let message = outcome.failure().unwrap().message().to_owned();
+    assert!(
+        message.contains("edge_blocked/example_held_at_edge"),
+        "{message}"
+    );
+    assert_eq!(scene.hooks.count("get_item"), reads);
+    assert_eq!(scene.hooks.count("put_item"), 1);
+
+    // Ready again: the resume reads the record, finds the write, and sends
+    // nothing more.
+    *scene.hooks.unavailable.lock().unwrap() = None;
+    resumed_as_landed(&scene, "after the driver held the surface off").await;
+}
+
 // ---- a call to the control plane that never answers ----
 
 #[tokio::test]
