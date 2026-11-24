@@ -75,7 +75,8 @@ pub enum DecimalMark { Point /* "." */, Comma /* "," */ }
 pub enum Rounding { HalfUp, HalfEven, HalfDown, Up, Down, Ceiling, Floor }
 pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey, CallerKey }
 
-// Checked names: lowercase letters, digits, and underscores, starting with a letter. Each has
+// Checked names: lowercase letters, digits, and underscores, starting with a letter, and never a
+// name Windows keeps for a device (con, prn, aux, nul, com0-9, lpt0-9; decision 0431). Each has
 // LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name. Each one
 // made by the macro also has `const fn fixed(&'static str)`: in a `const`, a bad name fails the build.
 checked_name! { /// Any crate declares one of its own.
@@ -92,6 +93,7 @@ pub struct CredentialRef(/* vault:// and one to four parts; a refusal never show
 pub struct LintCode(/* owner and rule joined by one dot, 64 in all: kernel.no_fixed_wait */);
 impl LintCode { pub fn owner(&self) -> &str; pub fn rule(&self) -> &str; }
 pub struct InvalidName; pub struct UnknownName;               // both convert to Failure
+impl InvalidName { pub fn next_step(&self) -> String; pub fn kept_for_a_device(&self) -> Option<&str>; }
 
 pub struct Failure { /* class, code, message, next_step; and `said`, what the system itself said, whole and untrusted */ }
 // Failure::with_said(text), said(), carrying_said(&other): kept apart from the sentence, never joined into it; decision 0162
