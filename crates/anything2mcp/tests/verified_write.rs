@@ -404,13 +404,18 @@ async fn a_command_that_runs_the_engine_itself_holds_its_lock_and_no_second_engi
     assert_eq!(printed(&served)["error"]["code"], "engine_running");
 
     // A third command waits; once the first has gone, it runs the engine
-    // itself and reads the run.
+    // itself and reads the run. The new engine declares the killed one's
+    // lease lost at its start (decision 0416): the run is stopped with its
+    // cause named, a write that may have been sent, and nothing is sent
+    // again until it is reconciled.
     let third = machine.program(&["run", "get", &run]).spawn().unwrap();
     first.kill().unwrap();
     first.wait().unwrap();
     let third = ended_within(third).await;
-    assert_eq!(third.status.code(), Some(0), "{third:?}");
-    assert_eq!(printed(&third)["result"]["run_id"], run.as_str());
+    assert_eq!(third.status.code(), Some(1), "{third:?}");
+    let error = &printed(&third)["error"];
+    assert_eq!(error["class"], "possible_commit", "{error}");
+    assert_eq!(error["code"], "runner_lost", "{error}");
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
 }
 

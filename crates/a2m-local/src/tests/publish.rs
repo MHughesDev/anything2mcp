@@ -209,7 +209,10 @@ async fn page_of(publishing: &Publishing, version: &str) -> String {
     let asked = publishing.publish(&publishing.agent, Some(version)).await;
     assert_eq!(asked.exit, ExitClass::PersonNeeded, "{asked:?}");
     let link = asked.result.unwrap()["link"].as_str().unwrap().to_owned();
-    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let page = http.get(&link).send().await.unwrap();
     assert_eq!(page.status(), StatusCode::OK);
     let text = page.text().await.unwrap();
