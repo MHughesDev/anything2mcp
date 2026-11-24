@@ -633,10 +633,18 @@ async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command
     assert_eq!(processes.len(), 2, "{}", log(&machine));
     assert_ne!(processes[1], killed);
     assert!(EngineLock::held(&paths(&machine)).unwrap());
-    // The new engine reads the run the killed one left, and sends nothing.
+    // The new engine declares the killed one's lease lost at its start
+    // (decision 0998): the run it left is stopped, its cause named, and
+    // nothing is sent until it is reconciled.
     let left = output(starting(&machine, &["run", "get", &run])).await;
-    assert_eq!(left.status.code(), Some(0), "{left:?}");
-    assert_ne!(object(&left)["result"]["status"], "completed");
+    assert_eq!(left.status.code(), Some(1), "{left:?}");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&left.stdout),
+        String::from_utf8_lossy(&left.stderr)
+    );
+    assert!(said.contains("stopped"), "{said}");
+    assert!(said.contains("runner_lost"), "{said}");
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
     stop(&machine).await;
 
