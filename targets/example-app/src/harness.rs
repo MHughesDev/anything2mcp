@@ -96,6 +96,11 @@ struct Seen {
 }
 
 #[derive(Deserialize)]
+struct CaseEvents {
+    events: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct TrapWrites {
     writes: BTreeMap<String, u64>,
 }
@@ -526,6 +531,16 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<Seen>("/__control/seen").await?.seen)
+    }
+
+    /// What the pages of cases 6 to 9, 11, and 12 told the application since
+    /// the last reset, oldest first, each as `name: text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn case_events(&self) -> Result<Vec<String>, HarnessError> {
+        Ok(self.ask::<CaseEvents>("/__control/cases").await?.events)
     }
 
     /// What the anti-forgery case stored: each order's note, how many writes

@@ -34,7 +34,7 @@
   const rendered = (el) =>
     el.isConnected &&
     el.getClientRects().length > 0 &&
-    getComputedStyle(el).visibility !== "hidden";
+    el.ownerDocument.defaultView.getComputedStyle(el).visibility !== "hidden";
 
   const hiddenFromTree = (el) => {
     for (let at = el; at; at = at.parentElement || (at.getRootNode() && at.getRootNode().host)) {
@@ -46,7 +46,9 @@
   // Every element under a root, in document order, through open shadow roots.
   function* walk(root) {
     const start = root.nodeType === Node.ELEMENT_NODE ? root : null;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    // The document of the root, which is another one inside a frame.
+    const owner = root.ownerDocument || root;
+    const walker = owner.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     if (start && start.shadowRoot) yield* walk(start.shadowRoot);
     for (let el = walker.nextNode(); el; el = walker.nextNode()) {
       yield el;
@@ -192,6 +194,13 @@
       const scope = find(query.within);
       if (scope.length !== 1) return { scope: scope.length };
       root = scope[0];
+      // A frame is a scope that is entered: its own document, when it is of
+      // the page's own origin. A frame of another origin has none to enter,
+      // and is no scope at all.
+      if (root.localName === "iframe" || root.localName === "frame") {
+        if (!root.contentDocument) return { scope: 0 };
+        root = root.contentDocument;
+      }
     }
     const matches = matcher(query.by);
     const found = [];
@@ -228,7 +237,10 @@
   // Every password input of the page, for the engine to mask in a snapshot.
   const passwords = () => [...walk(document)].filter(isPassword);
 
-  const stale = (el) => !(el instanceof Element) || !el.isConnected;
+  // An element of a frame is of that frame's own `Element`, so it is known
+  // by its kind of node and not by the page's own class.
+  const isElement = (el) => !!el && el.nodeType === Node.ELEMENT_NODE;
+  const stale = (el) => !isElement(el) || !el.isConnected;
 
   function read(el, what, limit) {
     if (stale(el)) return { stale: true };
@@ -280,8 +292,8 @@
     if (need === "check" && !checkable(el)) return { no: "wrong_control" };
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     const box = el.getBoundingClientRect();
-    const x = Math.round(box.left + box.width / 2);
-    const y = Math.round(box.top + box.height / 2);
+    let x = Math.round(box.left + box.width / 2);
+    let y = Math.round(box.top + box.height / 2);
     if (need !== "edit" && need !== "select") {
       let hit = el.getRootNode().elementFromPoint(x, y);
       // A label passes its click on to its control.
@@ -289,6 +301,13 @@
         at === el || el.contains(at) || (at.localName === "label" && at.control === el) ||
         (at.closest && at.closest("label") && at.closest("label").control === el);
       if (!hit || !passes(hit)) return { no: "obscured" };
+    }
+    // The middle is in the coordinates of the page the person sees: each
+    // frame the element is in moves it by where the frame is.
+    for (let view = el.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
+      const frame = view.frameElement.getBoundingClientRect();
+      x += Math.round(frame.left + view.frameElement.clientLeft);
+      y += Math.round(frame.top + view.frameElement.clientTop);
     }
     return { ok: true, x, y, checked: checkable(el) ? el.checked : null };
   }
@@ -300,16 +319,17 @@
     el.focus();
     if (typeof el.select === "function") el.select();
     else {
-      const range = document.createRange();
+      const range = el.ownerDocument.createRange();
       range.selectNodeContents(el);
-      const selection = getSelection();
+      const selection = el.ownerDocument.getSelection();
       selection.removeAllRanges();
       selection.addRange(range);
     }
     return checked;
   }
 
-  const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true, composed: true }));
+  const fire = (el, type) =>
+    el.dispatchEvent(new (el.ownerDocument.defaultView.Event)(type, { bubbles: true, composed: true }));
 
   // Sets the value through the element's own setter, past a framework's
   // wrapper, and tells the page as a person's edit would.
@@ -318,7 +338,8 @@
     if (!checked.ok) return checked;
     if (el.isContentEditable) el.textContent = text;
     else {
-      const proto = el.localName === "textarea" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const view = el.ownerDocument.defaultView;
+      const proto = el.localName === "textarea" ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(proto, "value").set.call(el, text);
     }
     fire(el, "input");
@@ -352,11 +373,11 @@
         return count(condition.query) === 0;
       case "enabled": {
         const found = locate(condition.query);
-        return found instanceof Element && !disabled(found);
+        return isElement(found) && !disabled(found);
       }
       case "text": {
         const found = locate(condition.query);
-        return found instanceof Element && !isPassword(found) && textMatches(found, condition.match);
+        return isElement(found) && !isPassword(found) && textMatches(found, condition.match);
       }
       case "url":
         return condition.contains ? location.href.includes(condition.text) : location.href === condition.text;
@@ -377,14 +398,36 @@
       let observer = null;
       let timer = null;
       const events = ["input", "change", "load", "hashchange", "popstate", "transitionend", "animationend"];
+      const watching = new Set();
+      const frames = [];
       const done = (answer) => {
         if (observer) observer.disconnect();
         clearTimeout(timer);
         for (const type of events) removeEventListener(type, look, true);
+        for (const frame of frames) frame.removeEventListener("load", look);
         resolve(answer);
       };
+      // A frame of the page's own origin changes without the page's own
+      // document changing: its document is watched too, as it appears.
+      function watchFrames(root) {
+        for (const el of walk(root)) {
+          if ((el.localName === "iframe" || el.localName === "frame") && !watching.has(el)) {
+            watching.add(el);
+            frames.push(el);
+            el.addEventListener("load", look);
+          }
+          if ((el.localName === "iframe" || el.localName === "frame") && el.contentDocument) {
+            if (!watching.has(el.contentDocument)) {
+              watching.add(el.contentDocument);
+              observer.observe(el.contentDocument, { subtree: true, childList: true, attributes: true, characterData: true });
+            }
+            watchFrames(el.contentDocument);
+          }
+        }
+      }
       function look() {
         let now;
+        watchFrames(document);
         try {
           now = holds(condition);
         } catch (error) {

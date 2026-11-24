@@ -12,6 +12,7 @@
 pub mod answers;
 mod api;
 pub mod auth;
+pub mod cases;
 mod connection;
 mod control;
 pub mod details;
@@ -65,6 +66,8 @@ pub(crate) struct Inner {
     pub(crate) seen: Vec<String>,
     /// Case 35: how the shipment's optional `carrier` is answered.
     pub(crate) carrier: answers::CarrierAnswer,
+    /// Cases 6 to 9, 11, and 12: what the pages told the application.
+    pub(crate) case_events: Vec<String>,
 }
 
 /// How many requests the application remembers having received.
@@ -82,6 +85,7 @@ impl Default for Inner {
             notes: forgery::seeded(),
             seen: Vec::new(),
             carrier: answers::CarrierAnswer::default(),
+            case_events: Vec::new(),
         }
     }
 }
@@ -112,6 +116,7 @@ pub(crate) fn router_over(state: AppState) -> Router {
         .merge(edges::routes())
         .merge(escapes::routes())
         .merge(leaving::routes())
+        .merge(cases::routes())
         .merge(own_requests::routes())
         .merge(forgery::routes())
         .merge(views::routes())
