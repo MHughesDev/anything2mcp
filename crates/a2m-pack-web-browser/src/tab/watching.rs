@@ -314,14 +314,17 @@ impl Page {
     /// exchange with no fields, since its body never came whole (a page
     /// that never reads an answer leaves it so, measured); one with no
     /// answer is forgotten. Without this a take would wait for them until
-    /// its deadline.
+    /// its deadline. One whose answer came whole and is being read is left
+    /// to the read, which records it once, with its fields.
     pub(super) fn left_behind(&self, loader: &str) {
         let Ok(mut pending) = self.pending.lock() else {
             return;
         };
         let ended: Vec<String> = pending
             .iter()
-            .filter(|(_, one)| one.loader.as_deref().is_some_and(|own| own != loader))
+            .filter(|(_, one)| {
+                !one.reading && one.loader.as_deref().is_some_and(|own| own != loader)
+            })
             .map(|(number, _)| number.clone())
             .collect();
         if ended.is_empty() {
