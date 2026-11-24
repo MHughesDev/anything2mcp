@@ -95,6 +95,7 @@ max_level = "discovered"
 bounds = { seconds = 60, bytes = 50000000, depth = 8 }
 surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its archetype
 files = []                               # the names under which it reads files a person hands a discovery, from the project's `sources` folder; left out, none (decision 0263)
+driven_by = "engine"                     # "engine" | "person"; left out, "engine". "person" only where `points.traffic_capture` is not empty (decisions 0392, 0395)
 
 [[file_kinds]]
 name = "sheets"
@@ -278,7 +279,9 @@ impl Registry {
     pub fn driver(&self, mode: &Mode) -> Result<DriverHandle, Failure>;
     pub fn source_reader(&self, name: &ReaderName) -> Result<Arc<dyn SourceReader>, Failure>;   // those packs registered; the built-in ones are `a2m-sources`'s
     pub fn source_readers(&self) -> Vec<Arc<dyn SourceReader>>;
-    pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle>;
+    pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle>;          // driven by the engine alone
+    pub fn capture_discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle>;  // driven by a person alone
+    pub fn capture_stop(&self) -> CaptureStop;
     pub fn files_taken(&self, surface: &SurfaceDescription) -> BTreeSet<String>;   // the `files` those discoverers declare: the names a discovery of the surface may be handed
     pub fn auth_providers(&self) -> Vec<Arc<dyn AuthProvider>>;          // handed to the keeper by `a2m-actions`
     pub fn compiler_set(&self) -> &CompilerSet;                         // handed to the compiler by `a2m-actions`
@@ -441,7 +444,15 @@ pub trait Discoverer: Send + Sync {
     /// Observe within the scope's bounds, reaching the system only through `port`. Findings go to `out` as they are made.
     fn discover<'a>(&'a self, port: &'a dyn SandboxPort, scope: &'a DiscoveryScope<'a>, out: &'a mut dyn FindingSink)
         -> BoxFuture<'a, Result<DiscoveryReport, Failure>>;
+    /// For a discoverer a person drives (decision 0395): no port; reads its pack's capture until `end` is set.
+    /// The default fails, `unknown_variant`/`discoverer_cannot_watch`.
+    fn watch<'a>(&'a self, scope: &'a DiscoveryScope<'a>, end: &'a CaptureEnd, out: &'a mut dyn FindingSink)
+        -> BoxFuture<'a, Result<DiscoveryReport, Failure>> { /* the default */ }
 }
+pub enum DrivenBy { Engine, Person }                          // DiscovererDecl::driven_by
+pub struct CaptureEnd;     // is_set(), async ended(); set by the contract alone
+pub struct CaptureStop;    // the kernel's half: stop(), end() -> &CaptureEnd; from Registry::capture_stop alone
+pub const CAPTURE_END_GRACE: Duration;                       // 5 seconds, after the end, to return
 pub struct SurfaceDescription { pub kind: SurfaceKind, pub archetype: Archetype, pub address: String, pub facts: Values }
 pub struct DiscoveryScope<'a> {
     pub surface: &'a SurfaceRef, pub bounds: Bounds, pub deadline: Deadline,
@@ -490,6 +501,8 @@ impl DiscovererHandle {
     pub fn suits(&self, surface: &SurfaceDescription) -> bool;
     pub async fn discover(&self, port: &dyn SandboxPort, scope: &DiscoveryScope<'_>, out: &mut dyn FindingSink)
         -> Result<DiscoveryReport, Failure>;                   // each finding is checked against the manifest as it arrives
+    pub async fn watch(&self, scope: &DiscoveryScope<'_>, end: &CaptureEnd, out: &mut dyn FindingSink)
+        -> Result<DiscoveryReport, Failure>;                   // the same check; at its bound the handle sets the end
     pub fn describe(&self, findings: &[Finding], form: DescribeForm) -> Description;
 }
 ```
@@ -503,6 +516,7 @@ Contracts the signatures do not show:
 - **No secret leaves a driver.** Credentials arrive through `SessionLease::apply`, which writes into a sink the driver owns and never returns the value. Captures pass the `Redact` the context carries before they leave `act`. The handle is the backstop: on the way out of `act` it redacts every text in `Observed::values` and `for_reconcile`, a capture's name, and a capture whose bytes are text. Bytes that are not text cannot be searched and pass as the driver left them. A value that was redacted no longer equals what was intended, so a read-back that returns a secret ends as a mismatch and not as a stored secret.
 - **There is one redactor.** `PackContext::redact`, `PrepareContext::redact`, and the handle's own are the same object: the vault's redactor, which the action registry's kernel hands to `HostServices` and to the engine alike. `PrepareContext::redact` is a borrow that ends with `prepare`, and `StepInput` carries none, so a driver redacts in `act` with the one it keeps from its `PackContext`. A host that built the two from different objects would break this; nothing checks it.
 - **What a capture yields is structure, and passes the contract's check whatever the pack did.** `take_capture` withholds whole a request whose method or origin is not of its form or holds a secret the redactor knows, and counts it; cuts a query or fragment off a path; and holds every path segment, every name of a query's parameter or a header, and each part of a field's name to one predicate, `is_captured_word` (at most 32 characters of ASCII letters, digits, `_`, `-`, `.`; at most three digits; no run of more than 15 hexadecimal digits) and to the redactor. A segment that fails is `{value}`; a name that fails is dropped, saying one was left out. It holds by itself, whatever the pack flagged. A surface of a kind the manifest does not declare is refused by the handle before the pack is asked (decision 0391).
+- **A discoverer is called by one method, which its manifest names** (decisions 0392, 0395, and 0999). `DiscovererHandle::discover` refuses a discoverer whose `driven_by` is `person`, and `DiscovererHandle::watch` one whose `driven_by` is `engine`, both `policy`, `effect_not_declared`, before the pack is asked; the registry gives the first kind only through `discoverers_for` and the second only through `capture_discoverers_for`. A manifest with a person-driven discoverer and no `points.traffic_capture` is refused. `watch` takes no port. The handle holds its bound: the earlier of the scope's deadline and its `seconds`, held to the manifest's; at the bound it sets the end itself and names `seconds` in the report, and once the end is set, a discoverer that has not returned within `CAPTURE_END_GRACE` is dropped, `transient`, `timeout`. A `CaptureEnd` has no public constructor and no public setter; its `CaptureStop` comes from the registry.
 - **A discoverer has no handle and no token.** `discover` is given a `SandboxPort`, a scope, and a sink. The port's one method takes no `Authority`, so there is nowhere to pass a token; a `DriverHandle` comes only from the registry, which no pack is given; an `IntentToken` has no public constructor. `ReadOnlyPort` sends every step with `Authority::Read`, so a step marked `commits` is refused before the driver sees it. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its archetype, each pack states and its conformance test proves. The limit of this: a discoverer builds its own steps, and the driver behind the port may be another pack's, so a step of a kind that saves, sent without the `commits` mark, is stopped by that driver's own posture guard and by nothing in the kernel, unless the mode lists the kind under `commit_steps`. No first-party manifest lists one yet.
 - **`CheckedPath` refuses the same forms on every operating system:** an empty path, an absolute path, `.` and `..`, a backslash, a colon (so every drive, stream, and network form), a home folder mark, a control character, a part that ends with a dot or a space, a device name, and a link that leads outside the root. A link that stays inside is followed. The path is resolved once; every method that opens the file looks once more that it still resolves inside the root.
 - **What `check` and `join` promise about links.** Every link that exists in the path when it is made is followed, in a folder on the way and at the final name alike, as long as it leads inside the root; one that leads outside, or nowhere, is refused. So the path a `CheckedPath` holds, which `as_path` gives and the reading methods use, has no link in it, and a pack that looks at it cannot tell a file from a link to one. `entry_kind` is how it can: it reports what stands at the final name as written, `Absent`, `File`, `Folder`, `Link`, or `Other`, and follows nothing.
@@ -788,6 +802,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 | A step of a kind that always commits is never carried out as a read | `tests/handle.rs`: through the handle and through `ReadOnlyPort`, with a mode that lists the kind |
 | A driver cannot return, and a manifest cannot declare, a code that is the kernel's alone | `tests/handle.rs`, also through a step's `fails_as`; `tests/registry.rs`, every code of the list |
 | `for_reconcile` on a committing step, `Absent` from a step that is no lookup, and an undeclared code are refused | `tests/handle.rs` |
+| A discoverer is called only by the method its manifest names, and a person-driven one ends at its end or its bound | `tests/watch.rs`: a person-driven discoverer without `points.traffic_capture` is refused; it is in `capture_discoverers_for` and in no answer of `discoverers_for`; `discover` on it and `watch` on an engine-driven one are refused unasked; an end already set returns at once, an end never set returns at the manifest's bound; one that does not return after its end is a `timeout`; a finding its manifest does not allow is refused from `watch` as from `discover`; the default `watch` fails |
 | A discoverer cannot write | By the types, as stated under the contracts above; and `tests/handle.rs` sends a committing step through `ReadOnlyPort` and sees it refused before the driver |
 | An availability check starts no process | By construction: the check has no way to reach the supervisor. No test counts processes |
 | A path outside its root, through `..`, an absolute or drive or network form, or a link, can never become a `CheckedPath` | `tests/paths.rs`: thirty-seven escape forms, refused on every operating system; planted links, on Linux and macOS, and on Windows where the test may make a link |
@@ -828,6 +843,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 17. Done ([decision 0391](../../decisions/0391-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md), package E2): `points.traffic_capture`, `CaptureSource`, `TrafficCapture`, `CapturedTraffic`, `CapturedRequest`, `take_capture`, `kept_by_structure`, `Registrar::traffic_capture`, `Registry::captures_for`, `CaptureHandle`, `Capturing`. Tests: `tests/capture.rs`. No action handler opens a capture through the registry yet.
 16. Done ([decision 0343](../../decisions/0343-the-decompiling-engine-is-a-discoverer-of-the-provider-contract-that-starts-only-a-pinned-program-and-reads-one-form.md), package X6): the module `decompiler`: `Decompiler` (the place the person named and the digests the product pins; `identify` looks at the program and starts nothing; `decompile` is handed a `CheckedPath` of a regular file and never a process), `DecompilerSpec`, `DecompilerDiscoverer`, and `DecompilerDescriber`; the codes `decompiler_not_installed`, `decompiler_not_pinned`, `decompiler_spec_invalid`, `decompiler_failed`, and `decompiler_output_unknown`; the stand `targets/example-decompiler`. The findings are `artifact`, `inferred`, and carry the engine's digest. Not built: the settings and the pack that register it, and the first engine's adapter and pinned digests.
 18. Done ([decision 0404](../../decisions/0404-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md), package E7a): the module `shape`, moved from the HTTP pack, which used it alone, and from the web pack's private copy; both packs read and check their shapes through it. Where the two copies refused different things, the stricter refusal holds in both, each with a test in `src/shape.rs`. Not built: its use by the browser base (package E7b).
+19. Done ([decision 0395](../../decisions/0395-a-person-driven-discoverer-is-called-through-a-method-of-its-own-and-the-scope-is-left-as-it-is.md) and [decision 0999](../../decisions/0999-a-person-driven-discoverer-is-held-to-its-bound-by-the-handle-and-has-a-code-for-the-watch-it-lacks.md), package E2a): `DrivenBy` and `DiscovererDecl::driven_by`; `Discoverer::watch` with its default; `CaptureEnd`, `CaptureStop`, `CAPTURE_END_GRACE`; `DiscovererHandle::watch`; `Registry::capture_discoverers_for` and `capture_stop`; `discoverers_for` and `files_taken` keep to discoverers the engine drives; the code `discoverer_cannot_watch`. Tests: `tests/watch.rs`. Not built: the capture job that calls `watch` (package E2b), and a check that a person-driven discoverer's surface kinds are among those its pack captures.
 
 ## Open points
 
