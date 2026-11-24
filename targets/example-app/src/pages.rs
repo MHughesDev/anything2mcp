@@ -151,6 +151,8 @@ pub(crate) async fn order_detail(
 }
 
 /// The form for one line item. The address `.../items/new` gives an empty form.
+/// The control interface can change how it looks, as a release would
+/// (`crate::releases`).
 pub(crate) async fn item_form(
     State(state): State<AppState>,
     Path((order_id, item_code)): Path<(String, String)>,
@@ -182,25 +184,16 @@ pub(crate) async fn item_form(
             "",
         ),
     };
-    let body = format!(
-        "<h1>Order {id}</h1>\n\
-         <form id=\"line-item\" data-order=\"{id}\" data-version=\"{version}\">\n\
-         <h2>Line Item Details</h2>\n\
-         <p><label for=\"item_code\">Item code</label> \
-         <input id=\"item_code\" name=\"item_code\" value=\"{code}\" required{code_lock}></p>\n\
-         <p><label for=\"description\">Description</label> \
-         <input id=\"description\" name=\"description\" value=\"{description}\" required></p>\n\
-         <p><label for=\"quantity\">Quantity</label> \
-         <input id=\"quantity\" name=\"quantity\" inputmode=\"numeric\" value=\"{quantity}\" required></p>\n\
-         <fieldset>\n<legend>Dimensions</legend>\n\
-         <p><label for=\"length\">Length</label> \
-         <input id=\"length\" name=\"length_in\" value=\"{length}\" aria-describedby=\"length-hint\" required> \
-         <span id=\"length-hint\">inches</span></p>\n</fieldset>\n\
-         <p><button type=\"submit\">Save</button></p>\n\
-         <p id=\"status\" role=\"status\"></p>\n\
-         <ul id=\"problems\" role=\"alert\"></ul>\n\
-         </form>\n<script>\n{FORM_SCRIPT}</script>"
-    );
+    let values = crate::releases::ItemValues {
+        order: &id,
+        code: &code,
+        description: &description,
+        quantity: &quantity,
+        length: &length,
+        version: &version,
+        code_lock,
+    };
+    let body = crate::releases::item_form_body(inner.line_item_change, &values, FORM_SCRIPT);
     page("Line item", &body).into_response()
 }
 

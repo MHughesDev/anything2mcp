@@ -781,8 +781,16 @@ handler!(
         let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
         let kept = run.clone();
         let to_hold = keyed.clone();
+        // The call of a tool that only reads is kept as its run is, without
+        // a disk sync of its own (spec section 208, Reads); a caller's key
+        // is held synced whatever the tool does (decision 0160).
+        let durability = if effect == EffectClass::Read && to_hold.is_none() {
+            Durability::Relaxed
+        } else {
+            Durability::Synced
+        };
         store
-            .write(Durability::Synced, move |tx| {
+            .write(durability, move |tx| {
                 keep_run_call(tx, &kept, stored, &facts)?;
                 if let Some(held) = &to_hold {
                     // Held before the run is admitted: a call stopped in

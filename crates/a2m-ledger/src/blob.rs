@@ -222,6 +222,19 @@ impl Blobs<'_> {
     /// `busy`/`store_unavailable` while no vault is attached; what the vault
     /// returns when it cannot seal; `busy`/`storage_full`.
     pub async fn put(&self, new: NewBlob) -> Result<BlobRef, Failure> {
+        self.put_as(new, Durability::Synced).await
+    }
+
+    /// [`Blobs::put`], with the commit of the blob's row pushed to disk as
+    /// hard as `durability` says: `Durability::Relaxed` for the evidence of
+    /// a read, whose run is kept without a disk sync of its own (spec
+    /// section 208, Reads). The file itself is written and synced to disk
+    /// before its row commits, either way.
+    ///
+    /// # Errors
+    ///
+    /// As [`Blobs::put`].
+    pub async fn put_as(&self, new: NewBlob, durability: Durability) -> Result<BlobRef, Failure> {
         let shared = self.store.shared();
         let attached = shared.attached()?;
         let name = BlobRef(attached.digest.keyed_digest(
@@ -260,7 +273,7 @@ impl Blobs<'_> {
         let folder = shared.blob_dir.clone();
 
         self.store
-            .write(Durability::Synced, move |tx| {
+            .write(durability, move |tx| {
                 let text = name.to_string();
                 // Two callers may keep the same content at once. The writer
                 // is one thread, so the first to arrive here writes it.

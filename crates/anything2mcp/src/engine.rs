@@ -197,6 +197,10 @@ pub struct Engine {
     /// The engine lock, held for as long as the kernel is open, when this
     /// engine took it. The local engine's channel holds its own.
     lock: Option<EngineLock>,
+    /// The command tree of the kernel's action registry, made at the first
+    /// command line run on this engine. The registry does not change while
+    /// the kernel is open, so neither does the tree.
+    commands: std::sync::OnceLock<crate::cli::Tree>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -568,7 +572,14 @@ impl Engine {
             project: options.project,
             runner_problem,
             lock,
+            commands: std::sync::OnceLock::new(),
         })
+    }
+
+    /// The command tree of the engine's actions, made once.
+    pub(crate) fn command_tree(&self) -> &crate::cli::Tree {
+        self.commands
+            .get_or_init(|| crate::cli::Tree::of(self.kernel.actions()))
     }
 
     /// The kernel, for a host that needs more than `dispatch`.

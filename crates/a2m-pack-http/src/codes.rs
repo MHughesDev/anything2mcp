@@ -24,6 +24,9 @@ a2m_core::failure_codes! {
     RESPONSE_SCHEMA_MISMATCH = Drift, "response_schema_mismatch",
         meaning "The body of an accepted answer does not fit the declared shape.",
         next "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs, and correct the one that is wrong.";
+    DESCRIPTION_CHANGED = Drift, "description_changed",
+        meaning "The published description an `api` binding is pinned to is not, where it was served, the text it was pinned from: it has changed, or is no longer served there. Nothing of the call was sent (decision 0389).",
+        next "Import the description again, review what changed in the drafts, and publish a new version.";
     UNEXPECTED_STATUS = UnknownVariant, "unexpected_status",
         meaning "A status the endpoint does not declare.",
         next "Find out what the answer means, and declare it under the endpoint's `responses`.";
@@ -172,6 +175,20 @@ pub(crate) fn token_not_read(endpoint: &str) -> Failure {
             "The endpoint `{endpoint}` sends an anti-forgery token with a write, and no token of its page is held in this pass; nothing was sent."
         ),
         "Run the tool again, so that the page is fetched and its token read before the write.",
+    )
+}
+
+/// A pinned description that is not, where it was served, the text it was
+/// pinned from. Its name is the target's; nothing of the system's text is
+/// said. Nothing of the call was sent (decision 0389).
+pub(crate) fn description_changed(description: &str, why: &str) -> Failure {
+    failure(
+        &row::DESCRIPTION_CHANGED,
+        format!(
+            "The description `{}` this binding is pinned to has changed since it was pinned: {why}. Nothing of the call was sent.",
+            shown(description)
+        ),
+        row::DESCRIPTION_CHANGED.next,
     )
 }
 

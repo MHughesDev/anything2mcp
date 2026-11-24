@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    Digest, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex, SurfaceName, ToolRuns,
-    Values,
+    Digest, EffectClass, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex,
+    SurfaceName, ToolRuns, Values,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
@@ -137,6 +137,22 @@ impl InProcessControl {
 
     fn redacted(&self, failure: Failure) -> Failure {
         self.kernel.redact().redact_failure(&failure)
+    }
+
+    /// How hard the commits that only record the run itself, its state, its
+    /// result, its evidence, and the decision about it, are pushed to disk.
+    /// A run of a tool that only reads has no records and no intents, and
+    /// the ledger keeps it without a disk sync on every commit (spec section
+    /// 208, Reads): each commit survives a crash of the process, and reaches
+    /// the disk with the next synced commit or checkpoint, which the
+    /// write-ahead log keeps in order, so nothing later is on disk without
+    /// it. Every commit of any other run is synced.
+    fn run_durability(&self) -> Durability {
+        if self.run.effect == EffectClass::Read {
+            Durability::Relaxed
+        } else {
+            Durability::Synced
+        }
     }
 
     /// Whether the run's plan is a draft: a plan a trial or a discovery
@@ -268,11 +284,18 @@ impl Control for InProcessControl {
                 count_call: false,
             };
             // The decision is recorded whether it allows or refuses, so the
-            // transaction commits either way.
+            // transaction commits either way. A read's is part of the read's
+            // record, and the policy engine syncs any other.
+            let asked = if question.writes {
+                Durability::Synced
+            } else {
+                self.run_durability()
+            };
+            let durability = a2m_policy::Policy::durability_for(&request, asked);
             let decided = self
                 .kernel
                 .store()?
-                .write(Durability::Synced, move |tx| {
+                .write(durability, move |tx| {
                     let decision = policy.decide(tx, &request);
                     if let Some(refusal) = decision.refusal.clone() {
                         return Ok(Err(refusal));
@@ -517,7 +540,7 @@ impl Control for InProcessControl {
                     let pre_approved = decision.clearance();
                     if pre_approval && let Some(clearance) = pre_approved {
                         tx.ledger().begin_writes(&fence, clearance)?;
-                        return Ok(Ok(Clearance::Cleared));
+                        return Ok(Ok((Clearance::Cleared, false)));
                     }
                     // A refusal stops the run here; it is not a wait. That
                     // is a kill switch, and it is a policy engine that
@@ -529,7 +552,7 @@ impl Control for InProcessControl {
                     match policy.consume(tx, run, &diff) {
                         Ok(clearance) => {
                             tx.ledger().begin_writes(&fence, clearance)?;
-                            Ok(Ok(Clearance::Cleared))
+                            Ok(Ok((Clearance::Cleared, false)))
                         }
                         Err(missing) if missing.code() == &a2m_policy::APPROVAL_MISSING => {
                             // The refusal to write without a person is a
@@ -552,12 +575,42 @@ impl Control for InProcessControl {
                                 }),
                                 None,
                             )?;
-                            Ok(Ok(Clearance::Waits))
+                            Ok(Ok((Clearance::Waits, false)))
+                        }
+                        // The run's approval is expired, used, revoked, or
+                        // for another diff: it clears nothing, and the run
+                        // waits for a person to approve its diff again
+                        // (decision 0388). The refusal is named in the
+                        // run's own events, beside the need it leaves.
+                        Err(stale) if *stale.code() == a2m_policy::APPROVAL_STALE => {
+                            tx.ledger().append_event(
+                                &fence,
+                                EventKind::Need,
+                                &json!({
+                                    "needs": "approval",
+                                    "decision": decision.id.to_string(),
+                                    "diff": diff.to_string(),
+                                    "refused": stale.code().as_str(),
+                                    "why": stale.message(),
+                                }),
+                                None,
+                            )?;
+                            Ok(Ok((Clearance::Waits, true)))
                         }
                         Err(stale) => Ok(Err(stale)),
                     }
                 })
                 .await?;
+            let cleared = cleared.map(|(clearance, stale)| {
+                if stale {
+                    // What this process noted of an approval no longer
+                    // holds, and the page it was given on has closed: the
+                    // run's next answer asks for an approval afresh, with
+                    // a new page.
+                    self.kernel.inner.signals.forget(run);
+                }
+                clearance
+            });
             if matches!(cleared, Ok(Clearance::Cleared)) {
                 // The approval is used: the run no longer waits to be
                 // resumed.
@@ -805,7 +858,7 @@ impl Control for InProcessControl {
             let sent = match event {
                 EngineEvent::Moved(to) => {
                     store
-                        .write(Durability::Synced, move |tx| {
+                        .write(self.run_durability(), move |tx| {
                             let mut ledger = tx.ledger();
                             // The engine says `validating` before it has
                             // the plan, and may say a state the run is
@@ -1001,13 +1054,16 @@ impl Control for InProcessControl {
             self.kernel
                 .store()?
                 .blobs()
-                .put(NewBlob {
-                    workspace: self.run.workspace,
-                    owner: OwnerRef::of(&self.identity()),
-                    kind: blob.kind,
-                    class: blob.class,
-                    plain: blob.bytes,
-                })
+                .put_as(
+                    NewBlob {
+                        workspace: self.run.workspace,
+                        owner: OwnerRef::of(&self.identity()),
+                        kind: blob.kind,
+                        class: blob.class,
+                        plain: blob.bytes,
+                    },
+                    self.run_durability(),
+                )
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
@@ -1117,7 +1173,7 @@ impl InProcessControl {
         let fence = self.fence;
         self.kernel
             .store()?
-            .write(Durability::Synced, move |tx| {
+            .write(self.run_durability(), move |tx| {
                 tx.ledger().store_result(&fence, blob)
             })
             .await
@@ -1131,7 +1187,7 @@ impl InProcessControl {
         let moved = self
             .kernel
             .store()?
-            .write(Durability::Synced, move |tx| {
+            .write(self.run_durability(), move |tx| {
                 let mut ledger = tx.ledger();
                 let row = ledger.run(run)?;
                 let state = row.state;

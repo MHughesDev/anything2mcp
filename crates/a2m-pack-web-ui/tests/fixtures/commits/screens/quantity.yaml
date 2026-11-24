@@ -1,0 +1,19 @@
+# A form that posts a change back and is drawn again by the application.
+screen: quantity
+surface: app
+reach: {url: "/cases/commit/postback"}
+ready: {visible: {role: heading, name: "Quantity"}}
+fields:
+  quantity:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: Quantity}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save quantity"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, contains: "Saved"}}
+    commits: true

@@ -202,6 +202,10 @@ struct Walk<'a> {
     /// True for a Swagger 2.0 document, which states a body, a parameter's
     /// type, and a shared schema in places of its own.
     swagger: bool,
+    /// Set when a reference that leads to another file was met: such a
+    /// reference is never followed, and the shape it would give is left
+    /// as an open question that says so.
+    outside: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -214,6 +218,7 @@ impl<'a> Walk<'a> {
             seen: BTreeMap::new(),
             optional_may_be_null: false,
             swagger: false,
+            outside: false,
         }
     }
 
@@ -272,6 +277,10 @@ impl<'a> Walk<'a> {
             let open = u64::try_from(self.open.len()).unwrap_or(u64::MAX);
             self.step(length(reference).saturating_mul(open.saturating_add(2)))?;
             if self.open.contains(&reference) {
+                return Ok(None);
+            }
+            if !reference.starts_with('#') {
+                self.outside = true;
                 return Ok(None);
             }
             let Some(target) = self.target(reference)? else {
@@ -697,6 +706,19 @@ pub(crate) struct DescribedOperation {
     /// The base path a 2.0 description states, when it states one that is
     /// not the root: leading slash, no trailing one.
     pub base_path: Option<String>,
+    /// The digest of the description's text as the import read it, once
+    /// redacted and with its line endings made one: what an `api` binding
+    /// is pinned to (decision 0389). A finding that states none is not
+    /// pinned, and its read is drafted over its endpoint entry.
+    pub digest: Option<String>,
+    /// The path, on the surface, the description was fetched from; none
+    /// when it was handed in as a file. The `api` driver reads it again to
+    /// see whether the description has changed since it was pinned.
+    pub served_at: Option<String>,
+    /// True when the description states the answer's shape only through a
+    /// reference to another file, which the import never reads: the shape
+    /// is left as an open question that says so.
+    pub response_outside: bool,
 }
 
 impl DescribedOperation {
@@ -748,6 +770,18 @@ impl DescribedOperation {
             (
                 "base_path".to_owned(),
                 self.base_path.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "digest".to_owned(),
+                self.digest.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "served_at".to_owned(),
+                self.served_at.as_deref().map_or(Json::Null, text),
+            ),
+            (
+                "response_outside".to_owned(),
+                Json::Bool(self.response_outside),
             ),
         ])
         .to_text()
@@ -806,6 +840,15 @@ impl DescribedOperation {
                 .get("base_path")
                 .and_then(Json::as_text)
                 .map(str::to_owned),
+            digest: json
+                .get("digest")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
+            served_at: json
+                .get("served_at")
+                .and_then(Json::as_text)
+                .map(str::to_owned),
+            response_outside: json.get("response_outside") == Some(&Json::Bool(true)),
         })
     }
 
@@ -839,20 +882,26 @@ impl DescribedOperation {
     /// The path as a template of this pack: each placeholder a lowercase
     /// name. `None` when the description's path is not one.
     pub(crate) fn template_path(&self) -> Option<String> {
-        let mut out = String::new();
-        for part in self.path.split('/').skip(1) {
-            out.push('/');
-            match part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) {
-                Some(name) => {
-                    out.push('{');
-                    out.push_str(&snake(name));
-                    out.push('}');
-                }
-                None => out.push_str(part),
-            }
-        }
-        parse_path(&out).ok().map(|_| out)
+        template_path_of(&self.path)
     }
+}
+
+/// A description's path as a template of this pack: each placeholder a
+/// lowercase name. `None` when the path is not one.
+pub(crate) fn template_path_of(path: &str) -> Option<String> {
+    let mut out = String::new();
+    for part in path.split('/').skip(1) {
+        out.push('/');
+        match part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) {
+            Some(name) => {
+                out.push('{');
+                out.push_str(&snake(name));
+                out.push('}');
+            }
+            None => out.push_str(part),
+        }
+    }
+    parse_path(&out).ok().map(|_| out)
 }
 
 /// Every operation a description states, in the order of its paths.
@@ -906,6 +955,7 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
             let mut ok = Vec::new();
             let mut absent = Vec::new();
             let mut response = None;
+            let mut response_outside = false;
             // A 2.0 operation answers, and takes, JSON when its own list of
             // types, or else the document's, names it or names none.
             let (answers_json, takes_json) = if swagger {
@@ -931,9 +981,11 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                     if (200..300).contains(&status) {
                         if ok.is_empty() {
                             walk.optional_may_be_null = true;
+                            walk.outside = false;
                             let drafted = walk.body_shape(body, answers_json);
                             walk.optional_may_be_null = false;
                             response = drafted?;
+                            response_outside = response.is_none() && walk.outside;
                         }
                         ok.push(status);
                     } else if status == 404 {
@@ -995,6 +1047,9 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 endpoint: None,
                 endpoint_shared: false,
                 base_path: base_path.clone(),
+                digest: None,
+                served_at: None,
+                response_outside,
             });
         }
     }
@@ -1305,7 +1360,7 @@ pub(crate) fn redacted(bytes: &[u8], redact: &dyn Redact) -> Result<String, Fail
     Ok(redact.redact(text))
 }
 
-fn draft_value(json: &Json) -> DraftValue {
+pub(crate) fn draft_value(json: &Json) -> DraftValue {
     match json {
         Json::Null => DraftValue::Null,
         Json::Bool(flag) => DraftValue::Bool(*flag),
@@ -1320,6 +1375,67 @@ fn draft_value(json: &Json) -> DraftValue {
                 .map(|(name, value)| (name.clone(), draft_value(value)))
                 .collect(),
         ),
+    }
+}
+
+/// The target's `http` surfaces that take what a finding is about, with
+/// the path each one's address ends in: of kind `http`, at the finding's
+/// origin, with an address whose path begins the finding's own, by whole
+/// segments.
+pub(crate) fn surfaces_taking<'a>(
+    finding: &Finding,
+    cx: &DraftContext<'a>,
+) -> Vec<(&'a str, String)> {
+    let (origin, at) = match finding.subject() {
+        a2m_core::Subject::Address(address) => (Some(address.origin()), address.path()),
+        _ => (None, "/"),
+    };
+    let at = at.trim_end_matches('/');
+    let mut taking: Vec<(&str, String)> = Vec::new();
+    if let (Some(origin), Some(surfaces)) = (
+        origin,
+        cx.existing()
+            .and_then(|sources| sources.file("target.yaml"))
+            .and_then(|file| file.docs.first())
+            .and_then(|target| target.get("surfaces")),
+    ) {
+        for entry in surfaces.entries() {
+            if entry.value.text("kind") != Some(HTTP_SURFACE.as_str()) {
+                continue;
+            }
+            let Some(Ok(base)) = entry
+                .value
+                .text(crate::ADDRESS_KEY)
+                .map(crate::driver::Origin::of)
+            else {
+                continue;
+            };
+            let within = base.prefix.is_empty()
+                || at == base.prefix
+                || at.starts_with(&format!("{}/", base.prefix));
+            if base.text == origin && within {
+                taking.push((entry.key.value.as_str(), base.prefix));
+            }
+        }
+    }
+    taking
+}
+
+/// The one surface an operation of a description certainly lives on: the
+/// only `http` surface that takes its finding, when a 2.0 description's
+/// base path, if it states one, is the path that surface's address ends
+/// in. `None` when that is not certain.
+pub(crate) fn certain_surface<'a>(
+    finding: &Finding,
+    operation: &DescribedOperation,
+    cx: &DraftContext<'a>,
+) -> Option<&'a str> {
+    match surfaces_taking(finding, cx).as_slice() {
+        [(surface, prefix)] => match &operation.base_path {
+            Some(base_path) if base_path != prefix => None,
+            _ => Some(surface),
+        },
+        _ => None,
     }
 }
 
@@ -1347,6 +1463,13 @@ impl DraftingRule for DescribedOperationRule {
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));
         };
+        // An operation the pinned description states has its request there,
+        // in the endpoint catalog's entry for an `api` read: no endpoint
+        // entry states it a second time (rule eight, decision 0389).
+        if crate::described::pinned_draft(finding, &operation, cx).is_some() {
+            cx.not_drafted(crate::described::PINNED_ELSEWHERE);
+            return Ok(Vec::new());
+        }
         // An operation whose name is another's takes none: its name is an
         // open question, in a file named for its method and path.
         let name = if operation.endpoint_shared {
@@ -1360,38 +1483,7 @@ impl DraftingRule for DescribedOperationRule {
         // address whose path begins the finding's own, by whole segments.
         // With one such surface it is that; with none, or several (the
         // longer path is not preferred), the question stays open.
-        let (origin, at) = match finding.subject() {
-            a2m_core::Subject::Address(address) => (Some(address.origin()), address.path()),
-            _ => (None, "/"),
-        };
-        let at = at.trim_end_matches('/');
-        let mut taking: Vec<(&str, String)> = Vec::new();
-        if let (Some(origin), Some(surfaces)) = (
-            origin,
-            cx.existing()
-                .and_then(|sources| sources.file("target.yaml"))
-                .and_then(|file| file.docs.first())
-                .and_then(|target| target.get("surfaces")),
-        ) {
-            for entry in surfaces.entries() {
-                if entry.value.text("kind") != Some(HTTP_SURFACE.as_str()) {
-                    continue;
-                }
-                let Some(Ok(base)) = entry
-                    .value
-                    .text(crate::ADDRESS_KEY)
-                    .map(crate::driver::Origin::of)
-                else {
-                    continue;
-                };
-                let within = base.prefix.is_empty()
-                    || at == base.prefix
-                    || at.starts_with(&format!("{}/", base.prefix));
-                if base.text == origin && within {
-                    taking.push((entry.key.value.as_str(), base.prefix));
-                }
-            }
-        }
+        let taking = surfaces_taking(finding, cx);
         let unknown = || {
             cx.open_question(&format!(
                 "Which `http` surface does the endpoint `{name}` live on?"
@@ -1466,9 +1558,15 @@ impl DraftingRule for DescribedOperationRule {
             "response_schema",
             operation.response.as_ref().map_or_else(
                 || {
-                    cx.open_question(&format!(
-                        "What is the shape of the answer of `{name}`? The description states none this pack can follow."
-                    ))
+                    cx.open_question(&if operation.response_outside {
+                        format!(
+                            "What is the shape of the answer of `{name}`? The description states it only by a reference to another file, which the import does not read."
+                        )
+                    } else {
+                        format!(
+                            "What is the shape of the answer of `{name}`? The description states none this pack can follow."
+                        )
+                    })
                 },
                 draft_value,
             ),
@@ -2168,6 +2266,25 @@ mod tests {
               "/wide": {{"get": {{"responses": {{"200": {{"content": {{"application/json": {{"schema": {{"$ref": "#/components/schemas/S0"}}}}}}}}}}}}}}
             }}, "components": {{"schemas": {{{schemas}}}}}}}"##
         )
+    }
+
+    /// Package 4.4: a reference to another file is never followed, and the
+    /// answer it would shape is marked as such, so its draft names why;
+    /// a reference inside the document is followed as before.
+    #[test]
+    fn a_reference_to_another_file_is_not_followed_and_is_named() {
+        let text = r##"{"openapi": "3.0.3", "paths": {
+          "/outside": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {"$ref": "shared.json#/Order"}}}}}}},
+          "/inside": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Order"}}}}}}}
+        }, "components": {"schemas": {"Order": {"type": "object", "properties": {"order_id": {"type": "string"}}}}}}"##;
+        let found = operations(text.as_bytes()).unwrap();
+        let outside = found.iter().find(|op| op.path == "/outside").unwrap();
+        assert!(outside.response.is_none() && outside.response_outside);
+        let inside = found.iter().find(|op| op.path == "/inside").unwrap();
+        assert!(inside.response.is_some() && !inside.response_outside);
+        // The mark survives the finding.
+        let read = DescribedOperation::from_found(&outside.found()).unwrap();
+        assert!(read.response_outside);
     }
 
     #[test]

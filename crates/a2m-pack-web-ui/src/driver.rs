@@ -24,7 +24,7 @@ use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
-    Element, Input, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
+    Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
     Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
     Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
@@ -36,6 +36,7 @@ use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
 use crate::lower::{CALL_TOOL, GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
+use crate::profiles::InputCommit;
 
 mod site_tools;
 mod widgets;
@@ -220,6 +221,18 @@ impl Tab<'_> {
     }
 }
 
+/// A field of a screen, the place of the locator that found it, and the
+/// element found.
+struct Found<'a> {
+    field: &'a crate::model::Field,
+    locator: usize,
+    element: &'a Element,
+}
+
+/// How long a page whose platform posts a change back is given to draw
+/// the form again, at most.
+const REDRAWN_WITHIN: Duration = Duration::from_secs(10);
+
 /// What a session keeps to open its acting tab, once a step of a write
 /// asks for it.
 struct ToAct {
@@ -266,6 +279,9 @@ struct Session {
     /// sets fields and performs the one action marked as the commit point
     /// (decision 0147).
     posture: Posture,
+    /// How a text control is committed, as the surface's platform profile
+    /// states it; `None` sets a text control by the rule of no profile.
+    commit: Option<InputCommit>,
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -1425,7 +1441,18 @@ impl Session {
             }
             Rule::Text => {
                 let text = widget_text(value).ok_or_else(wrong_value)?;
-                self.set_text(&element, &text, &what, deadline).await?
+                match self.commit {
+                    Some(commit) => {
+                        let found = Found {
+                            field,
+                            locator,
+                            element: &element,
+                        };
+                        self.commit_text(commit, &found, &text, &what, deadline)
+                            .await?
+                    }
+                    None => self.set_text(&element, &text, &what, deadline).await?,
+                }
             }
             rule => {
                 let text = widget_text(value).ok_or_else(wrong_value)?;
@@ -1497,6 +1524,113 @@ impl Session {
             ),
             "Look at the page; the control changes what is typed into it, and its field needs another `control`.",
         )))
+    }
+
+    /// The rule of a text control on a surface whose platform profile states
+    /// how a value is committed: the one way the profile names, and nothing
+    /// else tried after it (decision 0385, the input commit record). The
+    /// control is asked what it holds afterwards; for a commit that waits
+    /// for the page to draw the form again, the control drawn anew is.
+    async fn commit_text(
+        &self,
+        commit: InputCommit,
+        found: &Found<'_>,
+        text: &str,
+        what: &str,
+        deadline: Deadline,
+    ) -> Result<&'static str, StepFailure> {
+        let seen = match self.tab() {
+            Tab::Act(tab) => tab.changes(),
+            Tab::Observe(_) => 0,
+        };
+        let first = if commit == InputCommit::TypeThenBlur {
+            Input::Type(text.to_owned())
+        } else {
+            Input::Fill(text.to_owned())
+        };
+        self.tab()
+            .input(found.element, &first, deadline, what)
+            .await?;
+        let then = if commit == InputCommit::Enter {
+            Input::Press(Key::Enter)
+        } else {
+            Input::Blur
+        };
+        // The text reached the page: whatever fails from here leaves its
+        // fate unknown.
+        self.tab()
+            .input(found.element, &then, deadline, what)
+            .await
+            .map_err(|failure| StepFailure::unknown(failure.failure))?;
+        let holder = if commit == InputCommit::BlurThenWaitReady {
+            self.redrawn(found, seen, what, deadline).await?
+        } else {
+            found.element.clone()
+        };
+        match self.tab().read(&holder, &ReadWhat::Value, deadline).await {
+            Ok(RawValue::Text(held)) if held == text => Ok(commit.name()),
+            Err(BrowserError::PasswordField) => Ok(commit.name()),
+            Ok(_) => Err(StepFailure::unknown(fail(
+                &codes::row::UNEXPECTED_CONTROL,
+                format!(
+                    "{what} does not hold the text it was given, committed as the surface's platform profile says (`{}`).",
+                    commit.name()
+                ),
+                "Look at the page; the surface may name the wrong platform profile, or the control changes what is put into it.",
+            ))),
+            Err(error) => Err(StepFailure::unknown(browser_failure(&error, what).failure)),
+        }
+    }
+
+    /// The control the page drew anew after a commit that sends the change
+    /// and draws the form again: the wait is for the old control to leave
+    /// its document, or a new document to load, on the page's own word; a
+    /// page that does not draw again in the time given is a stop with the
+    /// fate of the value unknown (rule 7), never read as committed.
+    async fn redrawn(
+        &self,
+        found: &Found<'_>,
+        seen: u64,
+        what: &str,
+        deadline: Deadline,
+    ) -> Result<Element, StepFailure> {
+        let unknown =
+            |error: &BrowserError| StepFailure::unknown(browser_failure(error, what).failure);
+        let Tab::Act(tab) = self.tab() else {
+            return Err(codes::not_usable(
+                "a value is committed in a tab that cannot act",
+            ));
+        };
+        let within = deadline.remaining().min(REDRAWN_WITHIN);
+        let drew = tab
+            .wait_redrawn(found.element, seen, within, deadline)
+            .await
+            .map_err(|error| unknown(&error))?;
+        if !drew {
+            return Err(StepFailure::unknown(fail(
+                &codes::row::COMMIT_NOT_REDRAWN,
+                format!(
+                    "{what} was committed as the surface's platform profile says (`{}`), and the page did not draw the form again within {} seconds.",
+                    InputCommit::BlurThenWaitReady.name(),
+                    within.as_secs()
+                ),
+                "Look at the page: its change may not have reached the application. Find out what it holds before running the tool again.",
+            )));
+        }
+        let field = found.field;
+        let frame = field
+            .fingerprint
+            .as_ref()
+            .and_then(|print| print.frame.as_ref());
+        let query = field.locate[found.locator].query_in(frame);
+        self.tab()
+            .wait(&Primitive::Visible(query), deadline)
+            .await
+            .map_err(|error| unknown(&error))?;
+        self.find(what, &field.locate, field.fingerprint.as_ref(), deadline)
+            .await
+            .map(|(element, _)| element)
+            .map_err(|failure| StepFailure::unknown(failure.failure))
     }
 
     /// An action, and the download it declares, if it does: the refusal of
@@ -1983,6 +2117,9 @@ pub(crate) struct TabSetup {
     /// The session's browser state, with the mark of its session and
     /// epoch, when its provider placed one.
     pub state: Option<(String, BrowserState)>,
+    /// How a text control is committed, as the surface's platform profile
+    /// states it; `None` for a surface that names no profile, or `auto`.
+    pub commit: Option<InputCommit>,
 }
 
 impl TabSetup {
@@ -2178,12 +2315,30 @@ pub(crate) fn tab_setup(
     let origins = Origins::of([&own])
         .and_requests_to(declared.iter())
         .and_refused_quietly(quiet.iter());
+    // The input commit of the surface's platform. `auto` is settled by the
+    // probe's detection (package E2), which is not built: until it is, a
+    // surface of `auto` commits as one that names no profile. A name this
+    // version does not hold is a stop, never a guess (rule 7).
+    let commit = match fields.profile.as_deref() {
+        None | Some("auto") => None,
+        Some(name) => Some(
+            crate::profiles::named(name)
+                .ok_or_else(|| {
+                    codes::not_usable(format!(
+                        "the surface names the platform profile `{}`, which this version of the web pack does not hold",
+                        shown(name)
+                    ))
+                })?
+                .input_commit,
+        ),
+    };
     Ok(TabSetup {
         origin,
         profile,
         environment,
         origins,
         state,
+        commit,
     })
 }
 
@@ -2201,6 +2356,7 @@ impl UiDriver {
             environment,
             origins,
             state: _,
+            commit,
         } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
@@ -2292,6 +2448,7 @@ impl UiDriver {
             downloads: self.browsers.downloads_folder(),
             staging: self.browsers.staging_folder(),
             posture: cx.posture,
+            commit,
         })
     }
 }

@@ -11,7 +11,10 @@
 //! never a parameter (decision 0284).
 
 use a2m_core::{FileKindName, Finding, FindingKind};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, names_a_secret};
+use a2m_files::{
+    Doc, DraftContext, DraftDoc, DraftValue, DraftingRule, Located, RelPath, UNTRUSTED_TEXT,
+    names_a_secret,
+};
 
 use crate::codes::{self, FILE_KIND, FOLDER};
 use crate::discover::CommandFound;
@@ -209,6 +212,14 @@ impl DraftingRule for CommandFromFinding {
         let found = CommandFound::read(finding)?;
         let name = slug(&found.name);
         let listed = &found.name;
+        // A command a person already declared is theirs: drafting it again
+        // would name it twice, and a changed file is never overwritten.
+        if declared(cx, listed).is_some() {
+            cx.not_drafted(
+                "A person already declared this command in a `commands/` file, so no draft of it is made.",
+            );
+            return Ok(Vec::new());
+        }
 
         let mut program = vec![(
             "digests",
@@ -380,6 +391,238 @@ impl DraftingRule for CommandFromFinding {
                     DraftValue::Map(vec![(name, DraftValue::map(command))]),
                 ),
             ]),
+        }])
+    }
+}
+
+/// The command a person declared for a listed command, with the name they
+/// gave it: the entry named as the drafter would name it, or one whose
+/// argument list begins with the listed command's words, as written.
+fn declared<'a>(cx: &DraftContext<'a>, listed: &str) -> Option<(&'a str, &'a Located<Doc>)> {
+    let key = slug(listed);
+    let words: Vec<&str> = listed.split(' ').collect();
+    cx.existing()?
+        .docs_of("command")
+        .filter_map(|doc| doc.get("commands"))
+        .flat_map(Located::entries)
+        .find(|entry| {
+            entry.key.value == key
+                || entry.value.get("args").is_some_and(|args| {
+                    let items = args.items();
+                    items.len() >= words.len()
+                        && items
+                            .iter()
+                            .zip(&words)
+                            .all(|(item, word)| item.as_text() == Some(*word))
+                })
+        })
+        .map(|entry| (entry.key.value.as_str(), &entry.value))
+}
+
+/// The drafting rule from `command` findings to read operations, over the
+/// commands a person has declared `effect: read` (decision 0387). The help
+/// does not say what a command does, so nothing is drafted for a command
+/// whose effect nobody declared, and nothing for one declared a write; the
+/// effect is the person's word, never inferred from a name.
+pub(crate) struct OperationFromCommand;
+
+/// A command's outputs as an operation holds them: the declared form's
+/// fields with the type each one states, and whether the form gives one
+/// record or a list of rows.
+struct Shape {
+    list: bool,
+    outputs: Vec<(String, DraftValue)>,
+}
+
+/// The output type for a declared word of a JSON field.
+fn output_type(word: &str) -> Option<&'static str> {
+    match word {
+        "text" => Some(UNTRUSTED_TEXT),
+        "integer" => Some("integer"),
+        "decimal" => Some("decimal"),
+        "boolean" => Some("boolean"),
+        _ => None,
+    }
+}
+
+/// What a declared output form gives, or why it gives nothing to draft.
+fn shape(output: &Located<Doc>) -> Result<Shape, &'static str> {
+    let field = |name: &str, ty: &str, list: bool| {
+        let mut fields = vec![("type", DraftValue::text(ty))];
+        if list {
+            fields.push(("list", DraftValue::Bool(true)));
+        }
+        (name.to_owned(), DraftValue::map(fields))
+    };
+    if let Some(json) = output.get("json") {
+        let lines = json.get("lines").and_then(Located::as_bool) == Some(true);
+        if json.get("at").is_some() {
+            return Err(
+                "The declared output follows a path into a document, and whether it holds one record or a list is not stated.",
+            );
+        }
+        let mut outputs = Vec::new();
+        for entry in json.get("fields").map(Located::entries).unwrap_or_default() {
+            let word = match &entry.value.value {
+                Doc::Map(_) => entry.value.text("type"),
+                _ => entry.value.as_text(),
+            };
+            let Some(ty) = word.and_then(output_type) else {
+                return Err("A declared output field has a type this rule does not read.");
+            };
+            outputs.push(field(&entry.key.value, ty, lines));
+        }
+        return Ok(Shape {
+            list: lines,
+            outputs,
+        });
+    }
+    if let Some(table) = output.get("table") {
+        let columns = table.get("header").or_else(|| table.get("columns"));
+        let outputs = columns
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Located::as_text)
+            .map(|name| field(name, UNTRUSTED_TEXT, true))
+            .collect();
+        return Ok(Shape {
+            list: true,
+            outputs,
+        });
+    }
+    if let Some(pattern) = output.get("pattern").and_then(Located::as_text) {
+        let Ok(compiled) = regex::Regex::new(pattern) else {
+            return Err("The declared output pattern is not one this rule reads.");
+        };
+        let list = output.text("match") == Some("every_line");
+        let outputs = compiled
+            .capture_names()
+            .flatten()
+            .map(|name| field(name, UNTRUSTED_TEXT, list))
+            .collect();
+        return Ok(Shape { list, outputs });
+    }
+    Err("The declared output prints nothing this rule can name.")
+}
+
+impl DraftingRule for OperationFromCommand {
+    fn finding_kind(&self) -> FindingKind {
+        codes::finding_kind()
+    }
+
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::fixed("operation")
+    }
+
+    fn draft(
+        &self,
+        finding: &Finding,
+        cx: &DraftContext<'_>,
+    ) -> Result<Vec<DraftDoc>, a2m_core::Failure> {
+        let found = CommandFound::read(finding)?;
+        let none = |reason: &str| {
+            cx.not_drafted(reason);
+            Ok(Vec::new())
+        };
+        let Some((key, command)) = declared(cx, &found.name) else {
+            return none(
+                "No operation is drafted: no person has declared this command's effect, and its help does not say what it does.",
+            );
+        };
+        match command.text("effect") {
+            Some("read") => {}
+            Some(_) => {
+                return none(
+                    "No read is drafted: the command is declared a write, which a rule never drafts.",
+                );
+            }
+            None => {
+                return none("No operation is drafted: the command's effect is not declared.");
+            }
+        }
+        let Some(target) = cx.target() else {
+            return none("No operation is drafted: the target has no name to name a tool by.");
+        };
+        // An operation already bound to the command is the person's.
+        let bound = cx.existing().is_some_and(|sources| {
+            sources.docs_of("operation").any(|operation| {
+                operation.get("bindings").is_some_and(|bindings| {
+                    bindings.items().iter().any(|binding| {
+                        binding.text("mode") == Some("cli") && binding.text("command") == Some(key)
+                    })
+                })
+            })
+        });
+        if bound {
+            return none("No operation is drafted: an operation already binds this command.");
+        }
+        if command
+            .get("args")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .any(|arg| arg.get("stamp").is_some())
+        {
+            return none(
+                "No operation is drafted: the command takes a record's stamp, which a read of one does not give.",
+            );
+        }
+        let shaped = match command.get("output").map(shape) {
+            Some(Ok(shaped)) if !shaped.outputs.is_empty() => shaped,
+            Some(Err(reason)) => return none(reason),
+            _ => return none("No operation is drafted: the command declares no output to name."),
+        };
+        let mut inputs: Vec<(String, DraftValue)> = Vec::new();
+        for entry in command
+            .get("params")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let param = &entry.value;
+            let name = &entry.key.value;
+            let Some(ty) = param.text("type") else {
+                return none("No operation is drafted: a declared param states no type.");
+            };
+            if named_as_secret(name) || param.get("list").is_some() {
+                return none(
+                    "No operation is drafted: a declared param is named as a secret or takes a list.",
+                );
+            }
+            let mut fields = vec![("type", DraftValue::text(ty))];
+            if param.get("required").and_then(Located::as_bool) == Some(false) {
+                fields.push(("required", DraftValue::Bool(false)));
+            }
+            inputs.push((name.clone(), DraftValue::map(fields)));
+        }
+        let operation = format!("{}_{key}", target.as_str());
+        if a2m_core::OperationName::new(&operation).is_err() {
+            return none("No operation is drafted: the command's name makes no tool name.");
+        }
+        let verb = if shaped.list { "list" } else { "read" };
+        let body = DraftValue::map(vec![
+            ("operation", DraftValue::text(&operation)),
+            ("effect", DraftValue::text("read")),
+            ("inputs", DraftValue::Map(inputs)),
+            ("outputs", DraftValue::Map(shaped.outputs)),
+            (
+                "bindings",
+                DraftValue::List(vec![DraftValue::map(vec![
+                    ("mode", DraftValue::text("cli")),
+                    ("verb", DraftValue::text(verb)),
+                    ("command", DraftValue::text(key)),
+                ])]),
+            ),
+            (
+                "description",
+                DraftValue::text(&format!(
+                    "Runs the command `{key}`, which a person declared a read, and returns what it prints as the declared output names it. Drafted by rule from the command's finding and its declaration; its name is provisional."
+                )),
+            ),
+        ]);
+        Ok(vec![DraftDoc {
+            path: RelPath::new(&format!("operations/{key}.yaml"))?,
+            body,
         }])
     }
 }

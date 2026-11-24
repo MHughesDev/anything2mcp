@@ -1455,6 +1455,8 @@ impl PageHttpDriver {
             environment,
             origins,
             state: _,
+            // A page request sends its value; no control is committed.
+            commit: _,
         } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();

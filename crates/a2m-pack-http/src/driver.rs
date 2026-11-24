@@ -7,7 +7,7 @@
 //! send to an address the run may not reach, or put a credential anywhere
 //! but the one request it was placed for.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,12 +24,13 @@ use a2m_telemetry::{Acting, Detail, record_headers};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
+use crate::described::{DESCRIBED_FORMAT, DESCRIPTION_KIND, DescribedSection};
 use crate::endpoints::{ENDPOINT_KIND, PACK};
 use crate::forgery;
 use crate::forms::{AnswerSpec, Charset, Form, Unread, ascii_if_said, refused_control};
 use crate::json::Json;
 use crate::link;
-use crate::lower::{EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
+use crate::lower::{CALL, EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
 use crate::shape::Shape;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
@@ -260,6 +261,12 @@ struct Session {
     /// unencrypted link to another machine.
     unencrypted_accepted: bool,
     sections: BTreeMap<usize, EndpointSection>,
+    /// The pinned descriptions of the plan, by the position of their
+    /// section; their operations are in `sections` too (decision 0389).
+    described: BTreeMap<usize, DescribedSection>,
+    /// The pinned descriptions this pass found unchanged where they are
+    /// served, by section and name. Each is read again once a pass.
+    unchanged: BTreeSet<(usize, String)>,
     held: Option<Held>,
     expiry: Expiry,
     answer: Option<Answer>,
@@ -406,7 +413,26 @@ impl HttpDriver {
         }
 
         let mut sections = BTreeMap::new();
+        let mut described = BTreeMap::new();
         for (position, section) in cx.plan.packs.iter().enumerate() {
+            let pinned = section.pack == PACK
+                && section.kind == DESCRIPTION_KIND
+                && section.surface_kind == surface.kind;
+            if pinned {
+                if section.format != DESCRIBED_FORMAT {
+                    return Err(codes::not_usable(format!(
+                        "its pinned descriptions are in format {}, and this pack reads format {DESCRIBED_FORMAT}",
+                        section.format
+                    )));
+                }
+                let decoded = section
+                    .payload
+                    .decode::<DescribedSection>()
+                    .map_err(|_| codes::not_usable("its pinned descriptions do not decode"))?;
+                sections.insert(position, decoded.templates());
+                described.insert(position, decoded);
+                continue;
+            }
             let own = section.pack == PACK
                 && section.kind == ENDPOINT_KIND
                 && section.surface_kind == surface.kind;
@@ -500,6 +526,8 @@ impl HttpDriver {
             surface: surface.name.as_str().to_owned(),
             unencrypted_accepted,
             sections,
+            described,
+            unchanged: BTreeSet::new(),
             held,
             expiry,
             answer: None,
@@ -2093,6 +2121,78 @@ impl HttpDriver {
 
     /// One safe request with no body and no credential, to a literal path
     /// of the surface: what a discoverer may send.
+    /// Before the first call of a pass that a pinned description serves,
+    /// the description is read again where it was served, and its digest
+    /// compared with the one the plan pins (decision 0389). One that has
+    /// changed, or is no longer served there, stops the call as `drift`,
+    /// `description_changed`, and nothing of the call is sent. A
+    /// description handed in as a file names no place, and is not read.
+    async fn unchanged(
+        &self,
+        session: &mut Session,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<(), StepFailure> {
+        let named = step
+            .refers_to
+            .as_ref()
+            .ok_or_else(|| codes::not_usable("it names no described operation"))?;
+        let position = named.section.get();
+        let (description, pinned) = session
+            .described
+            .get(&position)
+            .and_then(|section| {
+                let described = section.operations.get(&named.entry)?;
+                let pinned = section.pinned.get(&described.description)?;
+                Some((described.description.clone(), pinned.clone()))
+            })
+            .ok_or_else(|| {
+                codes::not_usable("the operation it names is not in a pinned description")
+            })?;
+        let key = (position, description);
+        if session.unchanged.contains(&key) {
+            return Ok(());
+        }
+        let Some(served_at) = pinned.served_at else {
+            session.unchanged.insert(key);
+            return Ok(());
+        };
+        let built = Built {
+            method: Method::Get,
+            path: served_at.clone(),
+            query: String::new(),
+            headers: vec![(
+                "accept".to_owned(),
+                "application/json, application/yaml;q=0.8, */*;q=0.1".to_owned(),
+            )],
+            body: None,
+        };
+        let most = self.max_response_bytes;
+        let changed = |why: &str| StepFailure::not_sent(codes::description_changed(&key.1, why));
+        let received = session
+            .send(&built, None, most, until(step, input), None)
+            .await
+            .map_err(|not| match not {
+                NotReceived::Lost(how) => lost(&how, false, &served_at),
+                NotReceived::Refused(failure) => StepFailure::not_sent(failure),
+                NotReceived::TooLarge => changed("it is now larger than the driver reads"),
+            })?;
+        if !(200..300).contains(&received.status) {
+            return Err(changed(&format!(
+                "the surface answered the request for it with status {}",
+                received.status
+            )));
+        }
+        let digest = String::from_utf8(received.body)
+            .ok()
+            .map(|text| crate::described::digest_of(&self.redact.redact(&text)));
+        if digest.as_deref() != Some(pinned.digest.as_str()) {
+            return Err(changed("its text is not the text it was pinned from"));
+        }
+        session.unchanged.insert(key);
+        Ok(())
+    }
+
     async fn probe(
         &self,
         session: &mut Session,
@@ -2200,6 +2300,9 @@ impl Driver for HttpDriver {
             if step.kind == TOKEN {
                 self.token(session, step, input).await
             } else if step.kind == REQUEST {
+                self.request(session, step, input).await
+            } else if step.kind == CALL {
+                self.unchanged(session, step, input).await?;
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
                 validate(session, step, input, &self.redact, &self.overruns).await
@@ -2311,6 +2414,8 @@ mod tests {
             surface: "api".to_owned(),
             unencrypted_accepted: false,
             sections: BTreeMap::new(),
+            described: BTreeMap::new(),
+            unchanged: std::collections::BTreeSet::new(),
             held: None,
             expiry: Expiry::default(),
             answer: None,

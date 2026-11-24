@@ -39,10 +39,10 @@ Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-
 | --- | --- |
 | Surface kinds | `http` |
 | Modes | `http` and `api`, archetype request |
-| Step kinds | `token`, `request`, `validate`, `extract` for `http`; `call` for `api`. Checked names within each mode |
+| Step kinds | `token`, `request`, `validate`, `extract` for `http`; `call`, `validate`, `extract` for `api`; and `probe`, which only a discoverer makes, in both. Checked names within each mode |
 | Drivers | One per mode |
-| File kinds | Owns `endpoints/`, for `http` surfaces and, for requests made from inside a page, `web` surfaces. The web pack declares that it reads the kind and is handed the validated entries as data. Owns a pinned copy of an imported description, with its digest, which an `api` binding names |
-| Binding fields | `http`: `endpoint`, `path_params`, `query`, `body`. `api`: `operation_id`, `args` |
+| File kinds | Owns `endpoints/`, for `http` surfaces and, for requests made from inside a page, `web` surfaces. The web pack declares that it reads the kind and is handed the validated entries as data. Owns `descriptions/`, a pinned description, the endpoint catalog's entries for `api` reads: the pack's reading of an imported description's drafted reads, one document each, with the digest of the text it was read from and the path it was served at, which an `api` binding names ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
+| Binding fields | `http`: `endpoint`, `path_params`, `query`, `body`. `api`: `description`, `operation_id` (or `method` and `path`, as the description writes them), `args`, `extract` |
 | Finding kinds | `endpoint`, with the schema of its `found`, which the web pack's probe produces and this pack's drafting rule reads; `described_operation`, from descriptions |
 | Discoverers | `http_description`, `http_surface` (below) |
 | Describer | `http_describer`: endpoints as method, template, and shapes |
@@ -50,7 +50,7 @@ Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-
 
 ## The endpoint catalog
 
-Endpoints live only in the endpoint catalog (rule eight). There is one catalog, owned by this pack and read by two: the `http` mode and the web pack's `page_http`. Each compiles the entries it uses into its own step payload; there is no kernel type for a request ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
+Endpoints live only in the endpoint catalog (rule eight). There is one catalog, owned by this pack, and it has two kinds of entry: an endpoint entry, in `endpoints/`, and, for a read bound in `api`, the operation's document of its pinned description, in `descriptions/`. One operation's request is stated in one of them, never both: the import drafts no endpoint entry for an operation it pins, and the lint `http.endpoint_stated_twice` refuses an endpoint entry that states the request of an operation an `api` binding binds ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)). The endpoint entries are read by two: the `http` mode and the web pack's `page_http`; the pinned documents by the `api` mode. Each compiles the entries it uses into its own step payload; there is no kernel type for a request ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
 
 | Field | Meaning |
 | --- | --- |
@@ -105,7 +105,7 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
 | `http` | A warm connection to the surface; the anti-forgery bootstrap if declared | `token`, then `request` from the template | `validate`: the status is one the endpoint declares and the body fits its schema | The endpoint the binding names; or the save response with `prefer: response` |
-| `api` | The same, for the description's server | `call` | The same | The described read operation the binding names |
+| `api` | The same; before the first `call` of a pass, the description read again where it was served, and its digest compared with the one the plan pins: a description that changed stops the call as `drift`, `description_changed`, with nothing sent ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) | `call` | The same | Not built: `api` binds reads only, and a write is an `http` binding |
 
 - **Every failure says whether the request was sent.** A write request sent wholly or in part with no complete answer is `possible_commit`; before any byte of a write was sent, a lost connection is `transient`.
 - **A write that was sent is settled only by the application's verdict.** An answer that is not one, a redirect to another origin or an answer too large to read, leaves the write in doubt as `possible_commit`, and the read-back or reconcile decides. The driver never reports such a write in a class the ledger takes as settled ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
@@ -151,7 +151,7 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| A published description | Endpoint entries with field types from its schema, for the methods the description marks safe only: an entry for any other method describes a write, and the drafter refuses it; one read operation for each safe method that answers with a body: GET in OpenAPI, a query in GraphQL, a read of an entity set in OData, with the description's own example of each placeholder ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Which become tools, and their names in the language of the work; every write, its endpoint entry included |
+| A published description | Endpoint entries with field types from its schema, for the methods the description marks safe only: an entry for any other method describes a write, and the drafter refuses it; one read operation for each safe method that answers with a body: GET in OpenAPI, a query in GraphQL, a read of an entity set in OData, with the description's own example of each placeholder ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)); and the pinned description, a document for each GET whose read is drafted, with the digest of the text, on the one surface that certainly takes it, the drafted read then binding the described operation in `api`, and no endpoint entry drafted for that operation ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)). A schema reached only by a reference to another file is never read, and its shape is an open question that says so | Which become tools, and their names in the language of the work; every write, its endpoint entry included |
 | An entity set with a declared key, in OData | The key as the operation's `natural` identity | Nothing more about identity |
 | An endpoint seen in capture, with no description | An endpoint entry with its template tiers marked, at `inferred` | Confirming every template; all operations |
 
@@ -172,8 +172,9 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 | `http.unencrypted_credentials` | Warning | A surface declares `unencrypted_credentials: accepted`: its credentials cross an unencrypted link to another machine |
 | `http.placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry; refused by the lowering |
 | `http.graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash. Not built |
-| `http.api_operation_missing` | Error | An `operation_id` not in the pinned description. Not built |
-| `http.api_description_changed` | Error | The pinned description's digest differs from the one the binding was written against. Not built |
+| `http.api_operation_missing` | Error | An `api` binding's operation, by `operation_id` or by method and path, not in the pinned description it names, or a description no file pins; refused by the lowering, as are `http.api_arg_unknown` and `http.api_arg_missing` ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
+| `http.endpoint_stated_twice` | Error | An endpoint entry that states, on one surface, by one method and path, the request of an operation an `api` binding binds through its pinned description: the operation would be stated in two places of the catalog ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
+| `http.api_description_changed` | Error | The documents of one pinned description do not all state one digest, place, and surface: some were pinned from another text of it. A change of the service's own text after publish is the run's `drift`, `description_changed` ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
 
 ## Effects and hazards
 
@@ -245,7 +246,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 ## Build order
 
-Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Built so far: the `http` mode against cases 1 to 5, 17, and 23 (the anti-forgery bootstrap and the edge's answers: [decision 0357](../../decisions/0357-the-http-pack-fetches-the-page-that-gives-a-writes-token-and-names-the-edge-when-it-answers.md)), with cases 16, 20, and 21 proven through the product and 18 and 19 the engine's, credentials and sign-in signals, and the OpenAPI import with its endpoint drafts and a read operation drafted for each GET; the [crate's design](../../architecture/crates/a2m-pack-http.md) lists what is not. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
+Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Built so far: the `http` mode against cases 1 to 5, 17, and 23 (the anti-forgery bootstrap and the edge's answers: [decision 0357](../../decisions/0357-the-http-pack-fetches-the-page-that-gives-a-writes-token-and-names-the-edge-when-it-answers.md)), with cases 16, 20, and 21 proven through the product and 18 and 19 the engine's, credentials and sign-in signals, and the OpenAPI import with its endpoint drafts, a read operation drafted for each GET, and the `api` mode for reads, pinned to the description's digest ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)); the [crate's design](../../architecture/crates/a2m-pack-http.md) lists what is not. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
 
 ## Open points
 
@@ -254,5 +255,5 @@ Package 4.1: the `endpoints/` schema and its compilation, `http` reads against c
 - gRPC reflection, and its stand.
 - Which OpenAPI versions are accepted, and what happens to a description that references files outside itself.
 - The HTTP client and its TLS stack, verified on three operating systems with a licence on the closed list.
-- Whether `api` needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`.
+- Whether `api` needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`. As built, its templates and driver are `http`'s; it is a mode for what its binding names and the check it makes before it acts ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)).
 - Where an authorization-code response arrives on a server.

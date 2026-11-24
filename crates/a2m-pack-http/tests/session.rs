@@ -683,14 +683,22 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     assert_eq!(
         written,
         [
-            "endpoints/get_account.yaml",
+            "descriptions/api.yaml",
             "endpoints/get_order.yaml",
             "operations/account_get.yaml"
         ]
     );
-    let draft =
-        |name: &str| std::fs::read_to_string(folder.path().join("endpoints").join(name)).unwrap();
-    let read = draft("get_order.yaml");
+    // Each GET is stated once (rule eight, decision 0389): the drafted
+    // read's request in the pinned description, and no endpoint entry for
+    // it; the GET no read is drafted for in its endpoint entry, and not in
+    // the pinned description.
+    assert!(!folder.path().join("endpoints/get_account.yaml").exists());
+    let pinned = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
+    assert!(
+        pinned.contains("path: \"/account\"") && !pinned.contains("/orders/"),
+        "{pinned}"
+    );
+    let read = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
     assert!(
         read.contains("effect: \"read\"") && read.contains("surface: \"api\""),
         "{read}"
@@ -718,7 +726,14 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     // Drafting the same findings again gives the same bytes.
     let again = Drafter::new(set, &root).draft(&findings).unwrap();
     assert!(again.conflicts.is_empty(), "{again:?}");
-    assert_eq!(draft("get_order.yaml"), read);
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap(),
+        read
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap(),
+        pinned
+    );
 
     // The describer counts, and keeps the system's own text apart.
     let description = scene.registry.discoverers_for(&SurfaceDescription {
@@ -851,7 +866,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         plan.clone(),
         &address,
     );
-    let (handle, mut prepared) = reading.reader().await;
+    let (handle, mut prepared) = reading.reader_of("api").await;
     let mut got = std::collections::BTreeMap::new();
     for name in [
         "example_orders_items_get",
@@ -890,6 +905,200 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
     assert!(app.writes().await.unwrap().is_empty());
 }
 
+/// Package 4.4, the `api` mode (decision 0389): the test application's
+/// description, imported where it serves it, drafts reads that bind the
+/// described operation itself, pinned to the description's digest, and
+/// that compile. Run, the read gives what the application stores. Once the
+/// application serves a revised description, the next pass stops the call
+/// as `drift`, `description_changed`, and the application hears no request
+/// of the call. A binding that names an operation the description does not
+/// state, and a pinned description whose documents state two digests, do
+/// not compile.
+#[tokio::test]
+async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_named_drift() {
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-api");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &root).draft(&findings).unwrap();
+    assert!(
+        report.kept_failing.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    assert!(
+        report
+            .written
+            .iter()
+            .any(|path| path.as_str() == "descriptions/api.yaml"),
+        "{report:?}"
+    );
+    // The read binds the described operation, by the description's own
+    // `operationId`, not an endpoint entry.
+    let read =
+        std::fs::read_to_string(folder.path().join("operations/api_orders_get.yaml")).unwrap();
+    assert!(read.contains("mode: \"api\""), "{read}");
+    assert!(read.contains("operation_id: \"get_order\""), "{read}");
+    assert!(!read.contains("endpoint:"), "{read}");
+    // The pinned description holds the digest of the text it was read
+    // from, and where that text is served.
+    let pinned = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
+    // The stand's own client, which states its TLS provider whatever
+    // features the build unifies.
+    let served = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let digest = a2m_core::Digest::of(served.as_bytes()).to_string();
+    assert!(
+        pinned.contains(&format!("digest: \"{digest}\"")),
+        "{pinned}"
+    );
+    assert!(
+        pinned.contains("served_at: \"/api/openapi.json\""),
+        "{pinned}"
+    );
+
+    let compiled = |root: &TargetRoot| {
+        let sources = a2m_files::load(root, set).unwrap();
+        a2m_files::compile(
+            &sources,
+            set,
+            a2m_files::CompileMode::Draft,
+            a2m_files::DRAFT_VERSION,
+        )
+    };
+    let plan = compiled(&root).unwrap().plan;
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_api_orders_get")
+        .unwrap();
+    assert_eq!(operation.bindings[0].mode.as_str(), "api");
+    assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+
+    let reading = Scene::over(
+        Folder::new("drafted-api-run"),
+        common::registry(
+            &Folder::new("drafted-api-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let inputs = Values::new().with("order_id", "A-100");
+    let (handle, mut prepared) = reading.reader_of("api").await;
+    let ran = reading
+        .read(&handle, &mut prepared, "example_api_orders_get", &inputs)
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let stored = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(
+        ran.values.get("customer").and_then(Value::as_text),
+        Some(stored.customer.as_str())
+    );
+    assert_eq!(
+        ran.values.get("order_id").and_then(Value::as_text),
+        Some("A-100")
+    );
+
+    // The service's description is revised after the plan was made: the
+    // next pass reads it again, and stops before the call is sent.
+    app.revise_description(true).await.unwrap();
+    let before = app.seen().await.unwrap().len();
+    let (handle, mut prepared) = reading.reader_of("api").await;
+    let failure = reading
+        .read(&handle, &mut prepared, "example_api_orders_get", &inputs)
+        .await
+        .unwrap_err();
+    handle.release(prepared, false).await;
+    assert_eq!(failure.failure.class(), FailureClass::Drift, "{failure:?}");
+    assert_eq!(failure.sent, a2m_provider::Sent::NotSent);
+    assert_eq!(
+        failure.failure.code().as_str(),
+        "description_changed",
+        "{failure:?}"
+    );
+    let heard: Vec<String> = app.seen().await.unwrap().split_off(before);
+    assert_eq!(heard, ["GET /api/openapi.json"], "{heard:?}");
+    // Served as it was pinned again, the call goes out.
+    app.revise_description(false).await.unwrap();
+    let (handle, mut prepared) = reading.reader_of("api").await;
+    reading
+        .read(&handle, &mut prepared, "example_api_orders_get", &inputs)
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    assert!(app.writes().await.unwrap().is_empty());
+
+    // The operation's request is stated once: no endpoint entry was
+    // drafted for it, and one written by hand beside the `api` binding is
+    // refused (rule eight).
+    assert!(!folder.path().join("endpoints/get_order.yaml").exists());
+    std::fs::create_dir_all(folder.path().join("endpoints")).unwrap();
+    std::fs::write(
+        folder.path().join("endpoints/get_order.yaml"),
+        "endpoint: get_order\nsurface: api\nmethod: GET\npath: \"/api/orders/{order_id}\"\neffect: read\nauth: none\nresponse_schema: {type: object}\n",
+    )
+    .unwrap();
+    let problems = compiled(&root).unwrap_err().to_string();
+    assert!(
+        problems.contains("http.endpoint_stated_twice"),
+        "{problems}"
+    );
+    std::fs::remove_file(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    compiled(&root).unwrap();
+
+    // An operation the pinned description does not state is refused by
+    // name, and so is a pinned description pinned from two texts.
+    std::fs::write(
+        folder.path().join("operations/api_orders_get.yaml"),
+        read.replace(
+            "operation_id: \"get_order\"",
+            "operation_id: \"get_orders\"",
+        ),
+    )
+    .unwrap();
+    let problems = compiled(&root).unwrap_err().to_string();
+    assert!(
+        problems.contains("http.api_operation_missing"),
+        "{problems}"
+    );
+    std::fs::write(folder.path().join("operations/api_orders_get.yaml"), &read).unwrap();
+    let other = "0".repeat(64);
+    let once = pinned.replacen(
+        &format!("digest: \"{digest}\""),
+        &format!("digest: \"{other}\""),
+        1,
+    );
+    assert_ne!(once, pinned);
+    std::fs::write(folder.path().join("descriptions/api.yaml"), once).unwrap();
+    let problems = compiled(&root).unwrap_err().to_string();
+    assert!(
+        problems.contains("http.api_description_changed"),
+        "{problems}"
+    );
+}
+
 /// Case 35: the application's optional `carrier`, which its description
 /// lists as not required and does not call nullable. A read drafted from
 /// that description returns when the property is `null` and when it is
@@ -919,8 +1128,7 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
     Drafter::new(set, &root).draft(&findings).unwrap();
     // The property is written as possibly null, though the description
     // never says `nullable`.
-    let endpoint =
-        std::fs::read_to_string(folder.path().join("endpoints").join("get_shipment.yaml")).unwrap();
+    let endpoint = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(endpoint.contains("nullable"), "{endpoint}");
     let sources = a2m_files::load(&root, set).unwrap();
     let plan = a2m_files::compile(
@@ -940,7 +1148,7 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
         plan,
         &address,
     );
-    let (handle, mut prepared) = reading.reader().await;
+    let (handle, mut prepared) = reading.reader_of("api").await;
     let inputs = Values::new().with("order_id", "A-100");
     for answer in [
         CarrierAnswer::Object,
@@ -1093,7 +1301,7 @@ async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
         plan,
         &address,
     );
-    let (handle, mut prepared) = reading.reader().await;
+    let (handle, mut prepared) = reading.reader_of("api").await;
     let ran = reading
         .read(
             &handle,
@@ -1208,7 +1416,7 @@ async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_
         plan,
         &address,
     );
-    let (handle, mut prepared) = reading.reader().await;
+    let (handle, mut prepared) = reading.reader_of("api").await;
     let inputs = Values::new().with("order_id", "A-100");
     for (answer, packages) in [
         (CarrierAnswer::Object, Value::Int(2)),
@@ -1448,7 +1656,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     let findings = findings_from_handed_file(&app, &base).await;
     let (folder, _, _, report) = draft_into(with_other, &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
-    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(entry.contains("surface: \"api\""), "{entry}");
 
     // Several `http` surfaces: the path the address ends in tells which
@@ -1465,7 +1673,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     let findings = findings_from_handed_file(&app, &prefixed).await;
     let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
-    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(entry.contains("surface: \"api\""), "{entry}");
     let (_folder, _, _, report) = draft_into(two(&prefixed), &findings);
     assert!(!report.open_questions.is_empty(), "{report:?}");
@@ -1577,7 +1785,7 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
     // The only one, at the origin and a trailing slash: taken.
     let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
     let (folder, _) = drafted_into(&slash, &findings);
-    assert!(surface_of(&folder, "endpoints/get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "descriptions/api.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1607,7 +1815,7 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
         &findings,
     );
-    assert!(surface_of(&folder, "endpoints/get_orders.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "descriptions/api.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]

@@ -9,11 +9,12 @@
 //! no code but the list below, and a test holds the list to the folder.
 //!
 //! Detecting a family, which uses the `detect` rules and a page, is the
-//! probe's. Applying a profile to a surface is this crate's: so far, the
-//! identifier patterns, by the lint `web.generated_id`, and the name, by
-//! `web.profile_unknown`. The readiness rule, the input commit, the frame
-//! mode, and the tier's limit on writes are read and checked here and are not
-//! applied yet (decision 0370, the profiles record).
+//! probe's. Applying a profile to a surface is this crate's: the identifier
+//! patterns, by the lint `web.generated_id`; the name, by
+//! `web.profile_unknown`; the tier's limit on writes, by
+//! `web.profile_readonly`; and the input commit, by the driver's set step
+//! (decision 0385, the input commit record). The readiness rule and the
+//! frame mode are read and checked here and are not applied yet.
 
 use std::sync::OnceLock;
 
@@ -48,14 +49,6 @@ const LOCATORS: &[&str] = &[
     "title",
     "css",
 ];
-/// The ways a value may be committed in the page.
-const COMMITS: &[&str] = &[
-    "none",
-    "blur",
-    "enter",
-    "blur_then_wait_ready",
-    "native_set_then_blur",
-];
 /// The kinds of evidence a rule of `detect` gives.
 const DETECTS: &[&str] = &["dom", "js", "script", "header", "cookie"];
 /// The tiers of support.
@@ -73,6 +66,54 @@ const KEYS: &[&str] = &[
 ];
 /// The longest a pattern of identifiers may be.
 const MOST_PATTERN: usize = 200;
+
+/// How a value is committed in a page of a family: what the driver's set
+/// step does to a text control so that the page's own code takes the value.
+/// The driver has a way for each, and the loader refuses a file that names
+/// any other, so a profile never states a commit the driver does not know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputCommit {
+    /// Insert the text as one edit, then take the focus away: the page is
+    /// told by its control's `change`. A page the server draws whole.
+    Blur,
+    /// Insert the text as one edit, then press Enter.
+    Enter,
+    /// Insert the text, take the focus away, and wait for the page to send
+    /// the change and draw the form again; the value is read back from the
+    /// control drawn anew. A page that posts back on a change.
+    BlurThenWaitReady,
+    /// Type the text key by key, then take the focus away: a page whose
+    /// inputs keep their value in a component's state takes only what its
+    /// own key handlers saw.
+    TypeThenBlur,
+}
+
+impl InputCommit {
+    /// Every commit the driver knows.
+    pub const ALL: [Self; 4] = [
+        Self::Blur,
+        Self::Enter,
+        Self::BlurThenWaitReady,
+        Self::TypeThenBlur,
+    ];
+
+    /// The name a profile file gives it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Blur => "blur",
+            Self::Enter => "enter",
+            Self::BlurThenWaitReady => "blur_then_wait_ready",
+            Self::TypeThenBlur => "type_then_blur",
+        }
+    }
+
+    /// The commit of a name, when the driver knows one.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|commit| commit.name() == name)
+    }
+}
 
 /// One rule that says a page is of a family.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +139,7 @@ pub struct Profile {
     /// The identifiers a locator may not be built on.
     pub reject_id_patterns: Vec<Regex>,
     /// How a value is committed in the page.
-    pub input_commit: String,
+    pub input_commit: InputCommit,
     /// Whether frames are `declared` or `found`.
     pub frames: String,
     /// How often the family changes: `low`, `medium`, or `high`.
@@ -233,7 +274,17 @@ pub fn parse(file: &str, text: &str) -> Result<Profile, String> {
                 .map_err(|_| format!("`{pattern}` is not a pattern this crate runs"))?,
         );
     }
-    let input_commit = words(doc, "input_commit", COMMITS, "a way to commit a value")?.to_owned();
+    let commit = doc
+        .get("input_commit")
+        .and_then(Located::as_text)
+        .ok_or("`input_commit` is missing, or is not text")?;
+    let input_commit = InputCommit::named(commit).ok_or_else(|| {
+        let known: Vec<&str> = InputCommit::ALL.iter().map(|known| known.name()).collect();
+        format!(
+            "`input_commit` is `{commit}`, which is not a way to commit a value the driver knows: {}",
+            known.join(", ")
+        )
+    })?;
     let frames = doc
         .get("frames")
         .and_then(|frames| frames.get("mode"))
@@ -335,6 +386,23 @@ mod tests {
         assert!(!named("virtualized_grid").unwrap().may_write());
     }
 
+    /// Each family states the commit its pages need, and each commit's name
+    /// is read back as itself.
+    #[test]
+    fn each_family_states_its_commit_and_each_commit_is_read_by_its_name() {
+        for (family, commit) in [
+            ("plain", InputCommit::Blur),
+            ("aspnet_webforms", InputCommit::BlurThenWaitReady),
+            ("controlled_inputs", InputCommit::TypeThenBlur),
+            ("virtualized_grid", InputCommit::Enter),
+        ] {
+            assert_eq!(named(family).unwrap().input_commit, commit, "{family}");
+        }
+        for commit in InputCommit::ALL {
+            assert_eq!(InputCommit::named(commit.name()), Some(commit));
+        }
+    }
+
     /// What does not fit is refused with a sentence, and nothing is guessed.
     #[test]
     fn a_profile_that_does_not_fit_is_refused_and_says_why() {
@@ -348,6 +416,16 @@ mod tests {
             (
                 good.replace("input_commit: blur", "input_commit: hope"),
                 "commit",
+            ),
+            // Commits an earlier design named, which the driver has no way
+            // for: refused at load, never applied as something else.
+            (
+                good.replace("input_commit: blur", "input_commit: native_set_then_blur"),
+                "the driver knows",
+            ),
+            (
+                good.replace("input_commit: blur", "input_commit: none"),
+                "the driver knows",
             ),
             (good.replace("[role]", "[role, role]"), "twice"),
             (good.replace("[role]", "[xpath]"), "kind of locator"),

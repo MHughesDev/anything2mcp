@@ -1,0 +1,72 @@
+operation: example_reference_change
+title: Change the reference
+effect: irreversible
+commit_points: 1
+inputs:
+  reference: {type: text, description: "The reference"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: reference
+    fields:
+      reference: input.reference
+    action: save
+description: >
+  Puts a reference into a field that is taken when it loses the focus.
+---
+operation: example_reference_save
+title: Keep a reference
+effect: irreversible
+commit_points: 1
+inputs:
+  reference: {type: text, description: "The reference"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: typed
+    fields:
+      reference: input.reference
+    action: save
+description: >
+  Puts a reference into a field that keeps only what is typed key by key,
+  and saves it.
+---
+operation: example_quantity_post
+title: Post the quantity
+effect: irreversible
+commit_points: 1
+inputs:
+  quantity: {type: text, description: "The quantity"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: quantity
+    fields:
+      quantity: input.quantity
+    action: save
+description: >
+  Puts a quantity into a form that posts it back and is drawn again.
+---
+operation: example_quantity_stuck
+title: Post the quantity, unanswered
+effect: irreversible
+commit_points: 1
+inputs:
+  quantity: {type: text, description: "The quantity"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: stuck
+    fields:
+      quantity: input.quantity
+    action: save
+description: >
+  Puts a quantity into a form that posts it back and is never drawn again.

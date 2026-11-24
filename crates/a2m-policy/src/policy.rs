@@ -12,7 +12,7 @@ use a2m_ledger::{Durability, PolicyKey, Store, Tx, WriteClearance};
 use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
 use crate::model::{
-    Context, PrincipalRef, Question, Request, Resource, RuleId, ToolRef, ToolsetName, word,
+    Context, PrincipalRef, Question, Request, Resource, Role, RuleId, ToolRef, ToolsetName, word,
 };
 use crate::rules::{self, Answer, RuleKind, Verdict};
 use crate::set::{
@@ -471,15 +471,54 @@ impl Policy {
         }
     }
 
+    /// How hard a decision about `request` may be pushed to disk when its
+    /// caller asks for `asked`: relaxed only for a request that reads, is
+    /// bound to no diff, and is not an action only an administrator may
+    /// perform, and synced otherwise. An administrator's action, such as
+    /// setting the kill switch, is synced even where its effect is labelled
+    /// a read, so that no caller's request can relax it (decision 0386).
+    #[must_use]
+    pub fn durability_for(request: &Request, asked: Durability) -> Durability {
+        let administrators = matches!(
+            &request.resource,
+            Resource::Action(action) if action.needs == Role::Admin
+        );
+        if asked == Durability::Relaxed
+            && request.context.effect == a2m_core::EffectClass::Read
+            && request.diff_hash.is_none()
+            && !administrators
+        {
+            Durability::Relaxed
+        } else {
+            Durability::Synced
+        }
+    }
+
     /// Decides one request in a transaction of its own, which commits
-    /// whether the answer was allow or deny.
+    /// whether the answer was allow or deny, and is synced to disk before
+    /// it returns.
     pub async fn decide_alone(&self, request: Request) -> Decision {
+        self.decide_alone_as(request, Durability::Synced).await
+    }
+
+    /// [`Policy::decide_alone`], with the commit pushed to disk as hard as
+    /// `durability` says. `Durability::Relaxed` is for the decision about a
+    /// call of a tool that only reads, which is part of a read's record:
+    /// the ledger keeps a read without a disk sync of its own (spec section
+    /// 208, Reads). The decision still commits before the answer is given,
+    /// survives a crash of the process, and reaches the disk with the next
+    /// synced commit or checkpoint, which the write-ahead log keeps in
+    /// order. A decision a write rests on is never relaxed: a request whose
+    /// effect is not `read`, or that is bound to a diff, is synced whatever
+    /// `durability` says.
+    pub async fn decide_alone_as(&self, request: Request, durability: Durability) -> Decision {
+        let durability = Self::durability_for(&request, durability);
         let policy = self.clone();
         let asked = request.clone();
         let decided = self
             .inner
             .store
-            .write(Durability::Synced, move |tx| Ok(policy.decide(tx, &asked)))
+            .write(durability, move |tx| Ok(policy.decide(tx, &asked)))
             .await;
         decided.unwrap_or_else(|_| Decision {
             id: DecisionId::from_bytes([0; 16]),

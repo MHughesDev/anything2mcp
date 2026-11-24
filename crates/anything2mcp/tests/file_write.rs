@@ -301,8 +301,18 @@ async fn a_process_ended_after_the_new_file_was_in_place_is_reconciled_and_write
         );
         assert!(kinds.contains(&"reconcile_read"), "{kinds:?}");
         // The reconcile read the file, found the intended value, and sent no
-        // second write: no "acted" was recorded after the first intent.
-        assert!(!kinds.contains(&"acted"), "{kinds:?}");
+        // second write. The killed program may have recorded its own act
+        // before it died, or not, as the kill fell; either way there is at
+        // most that one "acted", and none after the reconcile read.
+        assert!(
+            kinds.iter().filter(|kind| **kind == "acted").count() <= 1,
+            "{kinds:?}"
+        );
+        let reconciled = kinds
+            .iter()
+            .position(|kind| *kind == "reconcile_read")
+            .unwrap();
+        assert!(!kinds[reconciled..].contains(&"acted"), "{kinds:?}");
         assert!(stand.outside_untouched().unwrap());
         world.close().await;
         proved = true;

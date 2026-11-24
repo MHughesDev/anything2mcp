@@ -427,6 +427,42 @@ impl TestApp {
         .await
     }
 
+    /// Serves the description as its revision (case 38), or as its first
+    /// text, from now on, until the next reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn revise_description(&self, revised: bool) -> Result<(), HarnessError> {
+        let body = serde_json::json!({"revised": revised});
+        self.command(
+            self.http
+                .post(self.url("/__control/description"))
+                .json(&body),
+        )
+        .await
+    }
+
+    /// Changes one page as a release would (package 9.1), from now on,
+    /// until the next reset or a change to `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn change_screen(
+        &self,
+        page: crate::releases::ChangedPage,
+        change: crate::releases::ScreenChange,
+    ) -> Result<(), HarnessError> {
+        let release = crate::releases::ScreenRelease { page, change };
+        self.command(
+            self.http
+                .post(self.url("/__control/screens"))
+                .json(&release),
+        )
+        .await
+    }
+
     /// Exactly what is stored for an order's delivery details, if anything (case 33).
     ///
     /// # Errors

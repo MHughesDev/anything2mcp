@@ -494,6 +494,9 @@ pub(crate) struct SurfaceFields {
     /// scheme.
     #[serde(default)]
     pub refuse_quietly: Vec<String>,
+    /// The platform profile the surface names: one of `profiles/`, or
+    /// `auto`, which the probe is to settle (package E2).
+    pub profile: Option<String>,
 }
 
 /// A viewport.

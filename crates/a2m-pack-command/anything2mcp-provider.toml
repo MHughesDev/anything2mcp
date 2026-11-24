@@ -93,6 +93,10 @@ finding_kind = "command"
 file_kind = "command"
 
 [[drafting_rules]]
+finding_kind = "command"
+file_kind = "operation"
+
+[[drafting_rules]]
 finding_kind = "powershell_command"
 file_kind = "command"
 

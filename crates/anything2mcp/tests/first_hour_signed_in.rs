@@ -53,8 +53,10 @@ use serde_json::{Value as Json, json};
 const READ: &str = "example_api_orders_get";
 /// Its input: an order the test application holds from its seed.
 const ORDER_INPUT: &str = r#"{"order_id": "A-100"}"#;
-/// The drafted files the hour keeps: the read's endpoint and operation.
-const KEPT: [&str; 2] = ["endpoints/get_order.yaml", "operations/api_orders_get.yaml"];
+/// The drafted files the hour keeps: the read's operation, the description
+/// it is pinned to in the `api` mode, the one place its request is
+/// stated (decision 0389).
+const KEPT: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// The sign-in, as the developer's agent declares it: the provider and the
 /// vault reference the token is kept under. No secret is in it.
@@ -409,7 +411,7 @@ async fn the_signed_in_first_hour_from_an_empty_folder_to_a_read_called_under_th
     // 9. Promoted on the scout's proof, and published by the person.
     let promoted = desk
         .ok(&[
-            "binding", "promote", "example", "--tool", READ, "--mode", "http",
+            "binding", "promote", "example", "--tool", READ, "--mode", "api",
         ])
         .await;
     assert_eq!(promoted["result"]["promoted"], true, "{promoted}");

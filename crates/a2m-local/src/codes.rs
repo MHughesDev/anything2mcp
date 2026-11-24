@@ -68,6 +68,15 @@ a2m_core::failure_codes! {
     SOCKET_PATH_TOO_LONG = Input, "socket_path_too_long",
         meaning "The engine's socket would have a path longer than the system takes for a socket's address, so the channel can be neither made nor reached there.",
         next "Set `A2M_HOME` to a folder with a shorter full path, then run the command again.";
+    REQUEST_NOT_FROM_PAGE = Policy, "request_not_from_page",
+        meaning "A request to the loopback listener did not come from the page this engine served: it named another host or origin, or a press came without the one-time value of the page as it was last shown, or with one already spent.",
+        next "Open the approval link in your own browser on this machine and press there; a program cannot approve.";
+    PAGE_NOT_FOUND = Input, "page_not_found",
+        meaning "No page waits at that address on the loopback listener: it was answered, its window ended, the engine started again, or the address never held one.",
+        next "Look at the run with `anything2mcp run get`; if it still waits, resume it for a new link.";
+    CHANGE_NOT_SHOWN_WHOLE = Policy, "change_not_shown_whole",
+        meaning "A change with more records than its page can show was pressed to approve, and a change not shown in full is not approved on the page.",
+        next "Decline it from the page, and call the tool again with fewer records in one run.";
     SURFACE_UNAVAILABLE = Busy, "surface_unavailable",
         meaning "The person surface cannot show a page: it holds no approval desk.",
         next "Run `anything2mcp doctor run` for the reason.",

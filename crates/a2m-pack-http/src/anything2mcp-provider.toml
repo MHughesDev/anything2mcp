@@ -1,5 +1,5 @@
-# The manifest of the HTTP pack. What is not built is not declared: the `api`
-# mode, the `token` step, the edge codes, and the GraphQL and OData rules.
+# The manifest of the HTTP pack. What is not built is not declared: writes
+# through the `api` mode, and the GraphQL and OData rules.
 manifest_format = 1
 contract = 1
 
@@ -23,13 +23,29 @@ session_reads = 8
 session_writes = 1
 exclusive = "none"
 
+# Reads bound to an operation of a pinned published description
+# (decision 0389). A `call` never saves: a pinned description holds reads
+# only. Ranked ahead of `http`, so a verified `api` binding is tried first;
+# being the first, it is also the mode a surface's discovery is prepared
+# in, so it takes the discoverers' `probe`, which the one driver of both
+# modes carries out.
+[[modes]]
+name = "api"
+archetype = "request"
+verbs = ["read", "list", "search"]
+steps = ["call", "validate", "extract", "probe"]
+rank = 10
+session_reads = 8
+session_writes = 1
+exclusive = "none"
+
 [[surface_kinds]]
 name = "http"
 archetype = "request"
 session = true
 
 [points]
-driver = ["http"]
+driver = ["http", "api"]
 discoverer = ["http_surface", "http_description"]
 
 [[discoverers]]
@@ -55,6 +71,11 @@ files = ["description"]
 name = "endpoint"
 directory = "endpoints/"
 surface_kinds = ["http", "web"]
+
+[[file_kinds]]
+name = "description"
+directory = "descriptions/"
+surface_kinds = ["http"]
 
 [[finding_kinds]]
 name = "endpoint"
@@ -89,6 +110,11 @@ level = "error"
 summary = "No `http` binding names an endpoint whose requests the front end computes or signs."
 
 [[lint_rules]]
+code = "http.endpoint_stated_twice"
+level = "error"
+summary = "No endpoint entry states the operation an `api` binding binds through its pinned description."
+
+[[lint_rules]]
 code = "http.unencrypted_credentials"
 level = "warning"
 summary = "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
@@ -100,6 +126,10 @@ file_kind = "endpoint"
 [[drafting_rules]]
 finding_kind = "described_operation"
 file_kind = "operation"
+
+[[drafting_rules]]
+finding_kind = "described_operation"
+file_kind = "description"
 
 [[failure_codes]]
 class = "rejected"
@@ -116,6 +146,10 @@ code = "version_not_read"
 [[failure_codes]]
 class = "drift"
 code = "response_schema_mismatch"
+
+[[failure_codes]]
+class = "drift"
+code = "description_changed"
 
 [[failure_codes]]
 class = "unknown_variant"

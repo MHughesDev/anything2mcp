@@ -39,14 +39,18 @@ pub const VALIDATE: StepKind = StepKind::fixed("validate");
 pub const EXTRACT: StepKind = StepKind::fixed("extract");
 /// The step only a discoverer makes: one safe request with no body.
 pub const PROBE: StepKind = StepKind::fixed("probe");
+/// The step of the `api` mode: one call of an operation a pinned
+/// description states, sent once the description is known not to have
+/// changed since it was pinned (decision 0389). It never saves.
+pub const CALL: StepKind = StepKind::fixed("call");
 
-const READ_VERBS: &[&str] = &["read", "list", "search"];
+pub(crate) const READ_VERBS: &[&str] = &["read", "list", "search"];
 const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "delete", "submit", "call"];
 /// The verbs whose writes cannot be taken back, whatever reads them back.
 const IRREVERSIBLE_VERBS: &[&str] = &["delete", "submit"];
 
 /// How long a step may take when the target states no `request` timeout.
-const DEFAULT_TIMEOUT_MS: u32 = 30_000;
+pub(crate) const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
 /// The time limit of a step that judges or reads an answer already held.
 /// It sends nothing and waits for nothing, so it does not take a request's
@@ -92,27 +96,36 @@ impl HttpLowering {
 }
 
 /// One endpoint as a lowering uses it.
-struct Found<'a> {
-    name: &'a str,
-    at: &'a Place,
-    section: SectionIndex,
-    template: EndpointTemplate,
+pub(crate) struct Found<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) at: &'a Place,
+    pub(crate) section: SectionIndex,
+    pub(crate) template: EndpointTemplate,
 }
 
-struct Lower<'a, 'b> {
-    cx: &'a LowerContext<'b>,
-    section: Option<(SectionIndex, EndpointSection)>,
-    timeout_ms: u32,
-    problems: Diagnostics,
+/// One lowering of a binding: the endpoints it may name, and what it found
+/// wrong. The `api` mode lowers through it too (decision 0389).
+pub(crate) struct Lower<'a, 'b> {
+    pub(crate) cx: &'a LowerContext<'b>,
+    pub(crate) section: Option<(SectionIndex, EndpointSection)>,
+    pub(crate) timeout_ms: u32,
+    pub(crate) problems: Diagnostics,
 }
 
 impl<'a> Lower<'a, '_> {
-    fn refuse(&mut self, rule: &'static str, stage: Stage, at: &Place, message: String, fix: &str) {
+    pub(crate) fn refuse(
+        &mut self,
+        rule: &'static str,
+        stage: Stage,
+        at: &Place,
+        message: String,
+        fix: &str,
+    ) {
         self.problems.push(problem(rule, stage, at, message, fix));
     }
 
     /// The endpoint a binding, or its `read_back`, names.
-    fn endpoint(&mut self, part: &'a Located<Doc>) -> Option<Found<'a>> {
+    pub(crate) fn endpoint(&mut self, part: &'a Located<Doc>) -> Option<Found<'a>> {
         let named = part.get("endpoint")?;
         let name = named.as_text()?;
         let found = self.section.as_ref().and_then(|(index, section)| {
@@ -179,7 +192,7 @@ impl<'a> Lower<'a, '_> {
     /// The `request` step of one endpoint: a value for every placeholder of
     /// its path, and one for each `query` and `body` entry the binding
     /// writes. `from_inputs` is the binding's own doc, or its `read_back`.
-    fn request(
+    pub(crate) fn request(
         &mut self,
         found: &Found<'_>,
         part: &Located<Doc>,
@@ -467,7 +480,7 @@ impl<'a> Lower<'a, '_> {
         }
     }
 
-    fn validate(&self, found: &Found<'_>) -> Step {
+    pub(crate) fn validate(&self, found: &Found<'_>) -> Step {
         self.step(
             VALIDATE,
             found,
@@ -478,7 +491,7 @@ impl<'a> Lower<'a, '_> {
     /// The `extract` step: one value for each output of the operation, taken
     /// from the answer's field of the same name, or from the path the
     /// binding's `extract` map gives.
-    fn extract(&mut self, found: &Found<'_>, part: &Located<Doc>) -> Step {
+    pub(crate) fn extract(&mut self, found: &Found<'_>, part: &Located<Doc>) -> Step {
         let renamed = part.get("extract");
         let mut payload = ExtractStep::default();
         for output in self.cx.operation().outputs() {

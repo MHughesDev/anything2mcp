@@ -1,0 +1,19 @@
+# The same form, whose change is posted and which is never drawn again.
+screen: stuck
+surface: app
+reach: {url: "/cases/commit/stuck"}
+ready: {visible: {role: heading, name: "Quantity"}}
+fields:
+  quantity:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: Quantity}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save quantity"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, contains: "Saved"}}
+    commits: true

@@ -40,6 +40,9 @@ a2m_core::failure_codes! {
     UNEXPECTED_CONTROL = UnknownVariant, "unexpected_control",
         meaning "The element found is not a control its field's rule can set or read.",
         next "Look at the page; correct the field's `control`, or declare the state the page is in.";
+    COMMIT_NOT_REDRAWN = UnknownVariant, "commit_not_redrawn",
+        meaning "A value was committed on a surface whose platform profile says the page sends a change and draws the form again, and the page did not draw it again in the time given. What became of the value is not known.",
+        next "Look at the page and find out what the application holds; then correct the surface's `profile`, or the screen, before running the tool again.";
     UNKNOWN_CONTROL = UnknownVariant, "unknown_control",
         meaning "The plan names a control this driver has no rule for.",
         next "Compile the target again with the version of the web pack that is enabled.";

@@ -26,7 +26,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `/orders/{order}/delivery` | Case 33: the order's delivery details on a page of the browser's own controls: a select, a check box, a radio group, a date field, and a text area. Save stays disabled until the date is valid, and asks for confirmation in a native dialog before it saves through the JSON interface |
 | `GET`, `PUT /api/orders/{order}/delivery` | Read or update the delivery details. Every field and the version are required |
 | `GET /api/orders/{order}/handoff`, `GET /api/orders/{order}/pickup` | Case 36: the first answers with a property named `client_secret` (the invented text `example-not-a-secret-0001`) beside ordinary values, and takes an optional query value `access_token`; the second requires a query value `api_key` |
-| `GET /api/openapi.json` | Case 30: an OpenAPI 3.1 description of the JSON interface, written by hand and held to the routes by a test |
+| `GET /api/openapi.json` | Case 30: an OpenAPI 3.1 description of the JSON interface, written by hand and held to the routes by a test. Case 38: served revised, as of its version 2, after `POST /__control/description` with `{"revised": true}` |
 | `/secure/...` | Cases 13 to 15 and 29: signing in, below |
 | `/traps/...` | Case 32: pages that write by themselves, below |
 | `/escapes/...` | Case 32, continued: pages that try to get out of a tab that only observes, below |
@@ -112,6 +112,7 @@ Under `/__control`. It exists only in this application, and no fault ever applie
 | `POST /__control/auth/revoke` | Revoke `bearer_token` or `api_key` until a reset |
 | `GET /__control/traps` | How many writes each trap page caused, by name |
 | `POST /__control/shipment` | Case 35: how `GET /api/orders/{order}/shipment` answers its optional `carrier` object until a reset: `{"answer": "object"}`, `"null"`, `"missing"`, or `"text"` (a wrong kind). The description gives `carrier` as neither required nor nullable. Case 37: the same switch answers the hand-off's optional `packages` as `null` or leaves it out, and with `"required_null"` its required `carrier_code` as `null` |
+| `GET`, `POST /__control/screens` | Package 9.1: the form of a line item, `/orders/{order}/items/{item}`, changed as a release would change it, until a reset: `{"page": "line_item", "change": "reword"}` (the label "Quantity" reads "Qty", the button "Save" reads "Save line item"), `"restyle"` (class names, a style sheet, and every identifier renamed, each label still naming its field), `"reorder"` (the dimensions, then the quantity, then the description), `"wrap"` (the form inside a named card whose header holds the heading "Line Item Details"), or `"none"`. Nothing the form sends or stores changes. `GET` says what each page shows now (`TestApp::change_screen`) |
 | `GET /__control/cases` | What the pages of cases 6 to 9, 11, and 12 told the application since the last reset, oldest first, each as `name: text` (`TestApp::case_events`) |
 | `GET /__control/seen` | The method and path, without the query, of every request the application received outside the control interface since the last reset, oldest first and at most 10,000, so a test can show that a refused value sent none |
 

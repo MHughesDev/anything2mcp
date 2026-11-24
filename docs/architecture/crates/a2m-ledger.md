@@ -225,6 +225,7 @@ impl IntentToken {
 // Evidence, findings, versions, audit.
 impl Blobs<'_> {
     pub async fn put(&self, new: NewBlob) -> Result<BlobRef, Failure>;   // workspace, owner, kind, retention class, plain bytes
+    pub async fn put_as(&self, new: NewBlob, durability: Durability) -> Result<BlobRef, Failure>; // `put` syncs the row; Relaxed for a read's evidence (decision 0386); the file is synced before the row either way
     pub async fn get(&self, blob: &BlobRef) -> Result<Opened, Failure>;
     pub async fn exists(&self, blob: &BlobRef) -> Result<bool, Failure>;
 }

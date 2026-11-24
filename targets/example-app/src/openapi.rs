@@ -1,7 +1,13 @@
 //! Case 30: a served description of the JSON interface, an OpenAPI 3.1 document at
 //! `/api/openapi.json`. It is written by hand; a test holds it to the routes the
 //! application serves, in both directions.
+//!
+//! Case 38: the description is revised, as a release of the service would revise
+//! it, through the control interface: the same routes, described as of a later
+//! version, so that a binding pinned to the first text can tell it has changed
+//! (decision 0389).
 
+use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
@@ -12,7 +18,21 @@ use crate::AppState;
 pub(crate) const PATH: &str = "/api/openapi.json";
 
 pub(crate) fn routes() -> Router<AppState> {
-    Router::new().route(PATH, get(|| async { Json(document()) }))
+    Router::new().route(
+        PATH,
+        get(|State(state): State<AppState>| async move {
+            Json(served(state.lock().await.description_revised))
+        }),
+    )
+}
+
+/// The document as it is served: the first text, or its revision.
+fn served(revised: bool) -> Value {
+    let mut described = document();
+    if revised {
+        described["info"]["version"] = json!("2");
+    }
+    described
 }
 
 /// The description of the copy served under `/secure/bearer`, at `PATH`
@@ -21,8 +41,8 @@ pub(crate) fn routes() -> Router<AppState> {
 pub(crate) fn bearer_routes() -> Router<AppState> {
     Router::new().route(
         PATH,
-        get(|| async {
-            let mut described = document();
+        get(|State(state): State<AppState>| async move {
+            let mut described = served(state.lock().await.description_revised);
             described["security"] = json!([{"bearer": []}]);
             Json(described)
         }),

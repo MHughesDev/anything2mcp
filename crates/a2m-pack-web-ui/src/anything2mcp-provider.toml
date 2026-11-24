@@ -248,6 +248,10 @@ code = "unexpected_control"
 
 [[failure_codes]]
 class = "unknown_variant"
+code = "commit_not_redrawn"
+
+[[failure_codes]]
+class = "unknown_variant"
 code = "unknown_control"
 
 [[failure_codes]]

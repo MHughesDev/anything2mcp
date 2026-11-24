@@ -1,6 +1,6 @@
 # Pages whose inputs are kept in a component's state, so that a value put in
-# an element does not reach the application until the element's own setter
-# and events are used; and whose generated class names and identifiers are
+# an element does not reach the application unless the page's own key
+# handlers saw it typed; and whose generated class names and identifiers are
 # made by a build, and are different in each.
 profile: controlled_inputs
 detect:
@@ -10,7 +10,7 @@ detect:
 locators:
   priority: [role, label, test_id, text, css]
   reject_id_patterns: ["^:r[0-9a-z]+:$", "^[a-z]+-[0-9a-f]{6,}$"]
-input_commit: native_set_then_blur
+input_commit: type_then_blur
 frames: {mode: declared}
 drift_risk: medium
 support_tier: full
