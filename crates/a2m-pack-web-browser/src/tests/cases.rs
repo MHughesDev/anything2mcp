@@ -406,6 +406,15 @@ async fn a_form_inside_a_frame_is_found_through_the_frame_and_through_nothing_el
         text: "Dispatch form".to_owned(),
     });
     let code = textbox("Dispatch code");
+    // The frame loads after the page's own document does: it is waited for
+    // before the form in it is looked for.
+    must(
+        tab.wait(
+            &Primitive::Visible(code.clone().within(frame.clone())),
+            soon(),
+        )
+        .await,
+    );
     assert!(tab.locate(&code, soon()).await.is_err());
 
     let field = must(

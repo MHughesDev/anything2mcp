@@ -61,6 +61,19 @@ a2m_core::failure_codes! {
     ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
         meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",
         next "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.";
+    CHALLENGE_PAGE = EdgeBlocked, "challenge_page",
+        meaning "The edge answered with a challenge that asks the visitor to prove it is not a program. The engine does not answer a challenge, and the surface is left alone for a while.",
+        next "Ask the application's owner or its IT to allow the engine's address; a person may open the application in a browser of their own.";
+    RATE_LIMITED_BY_EDGE = EdgeBlocked, "rate_limited_by_edge",
+        meaning "The surface answered a page with status 429.",
+        next "Look at the surface in a browser, and ask its owner before trying again.";
+    FORBIDDEN_BY_EDGE = EdgeBlocked, "forbidden_by_edge",
+        meaning "The surface answered a page with status 403.",
+        next "Look at the surface in a browser, and ask its owner before trying again.";
+    SURFACE_IN_MAINTENANCE = Busy, "surface_in_maintenance",
+        meaning "The surface answered 503: it is being worked on. Nothing is retried, and the surface is left alone for a while.",
+        next "Try again after the maintenance ends.",
+        passes by_itself;
     FILE_NOT_STAGED = Input, "file_not_staged",
         meaning "A file input was given a name that is not the name of a file in the staging folder: it holds no file of that name, or the name is not one plain name.",
         next "Put the file in the staging folder under the name, and give that name; no path is taken.";

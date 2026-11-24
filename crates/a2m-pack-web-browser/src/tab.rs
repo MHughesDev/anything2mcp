@@ -30,8 +30,8 @@ use crate::protocol::{
     FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
     GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
     NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
-    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles, SetLifecycleEvents,
-    SetLocale, SetTimezone,
+    SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles,
+    SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -504,6 +504,10 @@ pub struct Loaded {
     /// The status of the document's response, when there was one. `None`
     /// for a move within the same document.
     pub status: Option<u16>,
+    /// Whether the document's response says the edge holds the visitor for
+    /// a challenge: the header `cf-mitigated` with the value `challenge`.
+    /// Never passed: the engine does not answer a challenge (rule 5).
+    pub challenged: bool,
 }
 
 /// A key to press.
@@ -851,7 +855,7 @@ struct Nav {
     /// The loader whose document has been parsed.
     loaded: Option<String>,
     /// The loader of the last document response, and its status.
-    document: Option<(String, u16)>,
+    document: Option<(String, u16, bool)>,
 }
 
 /// Who is moving the tab to another document: the `goto` under way, or the
@@ -1426,8 +1430,8 @@ impl Page {
                 .borrow()
                 .document
                 .as_ref()
-                .filter(|(of, _)| *of == loader)
-                .map(|(_, status)| *status);
+                .filter(|(of, _, _)| *of == loader)
+                .map(|(_, status, challenged)| (*status, *challenged));
         }
         // A tab a person signs in in may be on a page whose origin its
         // helper does not look at: the browser says where it is, and the
@@ -1451,7 +1455,8 @@ impl Page {
         Ok(Loaded {
             address,
             title,
-            status: document_status,
+            status: document_status.map(|(status, _)| status),
+            challenged: document_status.is_some_and(|(_, challenged)| challenged),
         })
     }
 
@@ -2481,7 +2486,9 @@ impl Page {
                 self.answered(&received.request_id, &received.response);
                 if received.kind == "Document" && !received.loader_id.is_empty() {
                     self.nav.send_modify(|nav| {
-                        nav.document = Some((received.loader_id, received.response.status));
+                        let challenged = received.response.challenged();
+                        nav.document =
+                            Some((received.loader_id, received.response.status, challenged));
                     });
                 }
             }
@@ -3413,6 +3420,17 @@ async fn prepare(
     page.call(
         &SetLocale {
             locale: &env.locale,
+        },
+        deadline,
+    )
+    .await?;
+    // A page reads its language from `navigator.language` and from the
+    // header the browser sends, not from the number format alone: both are
+    // the target's locale too.
+    page.call(
+        &SetAcceptLanguage {
+            user_agent: "",
+            accept_language: &env.locale,
         },
         deadline,
     )

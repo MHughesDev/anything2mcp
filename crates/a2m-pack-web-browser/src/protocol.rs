@@ -300,6 +300,22 @@ pub(crate) struct ResponseDescription {
     pub status: u16,
     #[serde(default)]
     pub mime_type: String,
+    /// The response's headers. Only the one that names a challenge is
+    /// looked at, and none is kept.
+    #[serde(default)]
+    pub headers: serde_json::Map<String, Value>,
+}
+
+impl ResponseDescription {
+    /// Whether the edge says the visitor is held for a challenge.
+    pub(crate) fn challenged(&self) -> bool {
+        self.headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("cf-mitigated")
+                && value
+                    .as_str()
+                    .is_some_and(|text| text.eq_ignore_ascii_case("challenge"))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -909,6 +925,17 @@ pub(crate) struct SetLocale<'a> {
     pub locale: &'a str,
 }
 command!(SetLocale<'_>, "Emulation.setLocaleOverride" => Nothing);
+
+/// The language the page is told the visitor reads: the header
+/// `Accept-Language` and `navigator.language`. An empty `user_agent` leaves
+/// the browser's own.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetAcceptLanguage<'a> {
+    pub user_agent: &'a str,
+    pub accept_language: &'a str,
+}
+command!(SetAcceptLanguage<'_>, "Emulation.setUserAgentOverride" => Nothing);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

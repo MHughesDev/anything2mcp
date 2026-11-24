@@ -1,0 +1,130 @@
+operation: example_edge_read
+title: Read a page the edge may stand in front of
+effect: read
+key: kind
+inputs:
+  kind: {type: text, description: "Which page: ok, blocked, limited, challenge, or maintenance"}
+outputs:
+  heading: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: edge
+description: >
+  Reads the heading of a page that the edge of the site may answer for.
+---
+operation: example_memo_submit
+title: Save a memo the page signs
+effect: irreversible
+commit_points: 1
+inputs:
+  memo: {type: text, description: "The memo"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: signed
+    fields:
+      memo: input.memo
+    action: save
+description: >
+  Types a memo and presses Save; the page signs the request it sends.
+---
+operation: example_export_start
+title: Start an export and wait for it
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: export
+    action: start
+description: >
+  Starts the export and waits for the page to say it is ready.
+---
+operation: example_export_download
+title: Download the export
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: export
+    action: download
+description: >
+  Presses the link that offers the file, which no screen declares a download for.
+---
+operation: example_layout_submit
+title: Save a quantity in whichever layout the page has
+effect: irreversible
+commit_points: 1
+inputs:
+  flag: {type: text, description: "Which layout the page is asked for"}
+  quantity: {type: text, description: "How many"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: layout
+    fields:
+      quantity: input.quantity
+    action: save
+description: >
+  Types the quantity into the field of the layout the page shows.
+---
+operation: example_packing_submit
+title: Choose a packing unit
+effect: irreversible
+commit_points: 1
+inputs:
+  unit: {type: text, description: "The unit's code: pallet or crate"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: locale
+    fields:
+      unit: input.unit
+    action: save
+description: >
+  Chooses a unit by its code on a page that speaks the browser's language.
+---
+operation: example_packing_read
+title: Read the packing page
+effect: read
+inputs: {}
+outputs:
+  unit: {type: text}
+  shown: {type: text}
+  language: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: locale
+description: >
+  Reads the code of the chosen unit, a number as the page writes it, and the language it speaks.
+---
+operation: example_note_read
+title: Read the note of an order
+effect: read
+inputs: {}
+outputs:
+  note: {type: untrusted_text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: note
+description: >
+  Reads a note whose text is not to be believed.

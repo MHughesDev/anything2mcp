@@ -79,7 +79,7 @@ async fn event(State(state): State<AppState>, Path(name): Path<String>, body: Bo
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn page(title: &str, body: &str) -> Html<String> {
+pub(crate) fn page(title: &str, body: &str) -> Html<String> {
     Html(format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <title>{title} - Example Orders</title>\n</head>\n<body>\n<main>\n{body}\n</main>\n</body>\n</html>\n"
@@ -88,7 +88,7 @@ fn page(title: &str, body: &str) -> Html<String> {
 
 /// In a page's script: a function that tells the application an event. The
 /// events of one page arrive in the order they were told.
-const TELL: &str = "let told = Promise.resolve();\n\
+pub(crate) const TELL: &str = "let told = Promise.resolve();\n\
                     const tell = (name, text) => {\n\
                     told = told.then(() => fetch(\"/cases/events/\" + name, \
                     {method: \"POST\", body: text}));\n\

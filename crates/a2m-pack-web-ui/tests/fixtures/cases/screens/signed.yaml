@@ -1,0 +1,19 @@
+# Case 22: a page whose script signs the request it sends.
+screen: signed
+surface: app
+reach: {url: "/cases/signed"}
+ready: {visible: {role: heading, name: "Memo"}}
+fields:
+  memo:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: Memo}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save memo"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Saved."}}
+    commits: true

@@ -4,8 +4,8 @@
 //! proven against this one, which imitates the hard cases and has a control
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
 //! lists the cases; this crate covers cases 1 to 5, and the parts its README names
-//! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34, and the pages of cases 6 to 9, 11,
-//! and 12 under `/cases`.
+//! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34, and the pages of cases 6 to 12 and
+//! 22 to 27 under `/cases`.
 //!
 //! It is test equipment, not part of the product, so it sits outside the crate
 //! layering. A product crate may use it in tests only.
@@ -23,6 +23,7 @@ pub mod faults;
 pub mod forgery;
 pub mod harness;
 mod identity;
+mod later;
 mod leaving;
 mod openapi;
 mod own_requests;
@@ -69,6 +70,8 @@ pub(crate) struct Inner {
     pub(crate) carrier: answers::CarrierAnswer,
     /// Cases 6 to 9, 11, and 12: what the pages told the application.
     pub(crate) case_events: Vec<String>,
+    /// Case 24: when the export was started.
+    pub(crate) export_started: Option<std::time::Instant>,
 }
 
 /// How many requests the application remembers having received.
@@ -87,6 +90,7 @@ impl Default for Inner {
             seen: Vec::new(),
             carrier: answers::CarrierAnswer::default(),
             case_events: Vec::new(),
+            export_started: None,
         }
     }
 }
@@ -118,6 +122,7 @@ pub(crate) fn router_over(state: AppState) -> Router {
         .merge(escapes::routes())
         .merge(leaving::routes())
         .merge(cases::routes())
+        .merge(later::routes())
         .merge(own_requests::routes())
         .merge(forgery::routes())
         .merge(views::routes())

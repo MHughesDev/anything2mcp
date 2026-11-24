@@ -48,12 +48,12 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 19 | Has a header with lines, saved separately, and another saved in one request | Dependent records; one commit point with nested records | 3 |
 | 20 | Creates a duplicate if the same create is sent twice | That Anything2MCP never sends it twice | 3 |
 | 21 | Lets a second user change a record between preview and write | `changed_since_preview` | 3 |
-| 22 | Computes a value in the browser before saving, and signs a request in the browser | Endpoint mining stopping at shadow; the HTTP binding marked unsupported | 4 |
+| 22 | Computes a value in the browser before saving, and signs a request in the browser. Built as `/cases/signed` ([decision 0399](../decisions/0399-the-web-pack-handles-the-edge-a-fixed-language-and-the-pages-of-cases-22-to-27.md)) | Endpoint mining stopping at shadow; the HTTP binding marked unsupported | 4 |
 | 23 | Answers with a rate-limit status, a challenge page, or a maintenance page when told to | `edge_blocked` and surface health; no retry | 4 |
-| 24 | Starts an export that finishes later and offers a download | Long-running jobs and downloads | 4 |
-| 25 | Shows one of two layouts depending on a flag | Ordered locators; a new variant stops | 8 |
-| 26 | Switches language and number format | Fixed locale; comparison by code, not label | 8 |
-| 27 | Returns text containing instructions aimed at an agent | Untrusted fields; the manipulation test suite | 3 |
+| 24 | Starts an export that finishes later and offers a download. Built as `/cases/export` | Long-running jobs and downloads | 4 |
+| 25 | Shows one of two layouts depending on a flag. Built as `/cases/layout/{flag}`, with a third layout for a flag nobody declared | Ordered locators; a new variant stops | 8 |
+| 26 | Switches language and number format. Built as `/cases/locale`, which speaks the browser's language | Fixed locale; comparison by code, not label | 8 |
+| 27 | Returns text containing instructions aimed at an agent. Built as `/cases/note`, with a button the text names | Untrusted fields; the manipulation test suite | 3 |
 | 28 | Exists as a small native desktop program with the same data. Built as `targets/example-desk` for Linux: a test hosts it, and it publishes an accessibility tree over a session bus of the test's own and draws no window. It holds the labelled values of one order, a table of its line items, a control with no accessible name, two controls of one role and name, a password field, a value that appears late, and a Save button, and counts each press of Save as a write and each ask for the password's text ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)). On Windows the same crate builds a window of plain controls in a process of its own, shown on screen without taking the focus, with the same data, and counts each message a client sends its controls ([decision 0209](../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); it is written and has not yet run: its CI job is its first run. A macOS stand is not built | The desktop driver | 8 |
 | 29 | Takes a bearer token or an API key on its JSON interface, and revokes one when told to | Credentials in the HTTP modes; a refused credential is not tried again | 2 |
 | 30 | Serves a description of its JSON interface | Reading a described interface; the description held to what is served | 4 |
@@ -99,7 +99,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 14 | The control interface expires or revokes every session | Idle and total time limits on a clock |
 | 15 | A mode in which a new sign-in revokes the other sessions | |
 | 17 | The fault "lost after commit": the write is stored and the connection closes with no answer. It covers the JSON interface and so the pages' saves, which go through it | |
-| 23 | Fixed routes for a 403 edge page and a 429 with a retry time; the status fault gives either on any path | A challenge page and a maintenance page |
+| 23 | Fixed routes for a 403 edge page and a 429 with a retry time; the status fault gives either on any path; `/edge/challenge` (403 and the header `cf-mitigated: challenge`), `/edge/maintenance` (503 with a retry time), and `/edge/ok`. Each asked is listed by `GET /__control/cases` as `edge: <name>` | |
 | 29 | The whole JSON interface again for a bearer token and for an API key header, with 401 and `WWW-Authenticate`; the control interface revokes either | |
 | 30 | An OpenAPI 3.1 document, written by hand; a test calls every operation it names and compares its list with the served routes | The signed-in copies are named in its text, not as paths |
 | 31 | The fault "changed shape" renames one field in a JSON answer | |

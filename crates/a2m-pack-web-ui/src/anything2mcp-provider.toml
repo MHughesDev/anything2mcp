@@ -232,6 +232,22 @@ class = "rejected"
 code = "app_validation_error"
 
 [[failure_codes]]
+class = "edge_blocked"
+code = "challenge_page"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "rate_limited_by_edge"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "forbidden_by_edge"
+
+[[failure_codes]]
+class = "busy"
+code = "surface_in_maintenance"
+
+[[failure_codes]]
 class = "input"
 code = "file_not_staged"
 

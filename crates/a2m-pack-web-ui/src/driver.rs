@@ -71,17 +71,68 @@ pub(crate) struct UiDriver {
     /// Whether a browser program was found when the pack registered.
     /// `health` answers from this, without looking at the machine again.
     installed: bool,
+    /// The surfaces the edge refused lately.
+    held: Held,
 }
 
 impl UiDriver {
     pub(crate) fn new(browsers: Browsers, max_snapshot_elements: usize) -> Self {
         Self {
             installed: browsers.availability() == a2m_core::Availability::Ready,
+            held: Held::default(),
             browsers,
             snapshots: SnapshotLimits {
                 max_elements: max_snapshot_elements,
             },
         }
+    }
+}
+
+/// How long a surface whose edge refused a visit is left alone: no run
+/// asks it again in that time, so a block or a limit is never a retry storm.
+const EDGE_HOLD: Duration = Duration::from_secs(60);
+
+/// The surfaces the edge refused, by origin, with the refusal and when: the
+/// pack's own memory, shared by every run of its driver, and gone when the
+/// engine stops.
+#[derive(Clone, Default)]
+pub(crate) struct Held(
+    std::sync::Arc<
+        std::sync::Mutex<BTreeMap<String, (&'static a2m_core::CodeEntry, std::time::Instant)>>,
+    >,
+);
+
+impl Held {
+    /// The refusal that still holds a surface off, if there is one.
+    fn of(&self, origin: &str) -> Option<&'static a2m_core::CodeEntry> {
+        let mut held = self.0.lock().ok()?;
+        match held.get(origin) {
+            Some((row, at)) if at.elapsed() < EDGE_HOLD => Some(row),
+            Some(_) => {
+                held.remove(origin);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn hold(&self, origin: &str, row: &'static a2m_core::CodeEntry) {
+        if let Ok(mut held) = self.0.lock() {
+            held.insert(origin.to_owned(), (row, std::time::Instant::now()));
+        }
+    }
+}
+
+/// What the edge's answer to a page was, when it was a refusal.
+fn edge_refusal(loaded: &Loaded) -> Option<&'static a2m_core::CodeEntry> {
+    if loaded.challenged {
+        return Some(&codes::row::CHALLENGE_PAGE);
+    }
+    match loaded.status {
+        Some(429) => Some(&codes::row::RATE_LIMITED_BY_EDGE),
+        Some(403) => Some(&codes::row::FORBIDDEN_BY_EDGE),
+        Some(503) => Some(&codes::row::SURFACE_IN_MAINTENANCE),
+        _ => None,
     }
 }
 
@@ -203,6 +254,8 @@ struct Session {
     /// ended, each with its `ready` (decision 0245).
     expiry: Vec<(String, Cond)>,
     snapshots: SnapshotLimits,
+    /// The surfaces the edge refused lately, shared with the driver.
+    held: Held,
     /// Where files for a file input are staged, or why that is not known.
     staging: Result<a2m_provider::CheckedPath, Failure>,
     /// What the run may do. Only a live run sets a field or clicks an
@@ -1013,11 +1066,38 @@ impl Session {
         }
         let address = Address::new(&made).map_err(StepFailure::not_sent)?;
         let what = format!("the screen `{name}`");
+        // A surface the edge refused lately is not asked again.
+        if let Some(row) = self.held.of(&self.origin) {
+            return Err(StepFailure::not_sent(fail(
+                row,
+                format!(
+                    "The edge of {} refused a visit a moment ago, and the surface is left alone for a while; nothing was sent.",
+                    self.origin
+                ),
+                row.next,
+            )));
+        }
         let loaded = self
             .tab()
             .goto(&address, until(step, input))
             .await
             .map_err(|error| browser_failure(&error, &what))?;
+        // An answer of the edge is a stop that keeps what it was: the
+        // status, and no more. It is never retried and a challenge is never
+        // answered (rule 5); the surface is held off for a while.
+        if let Some(row) = edge_refusal(&loaded) {
+            self.held.hold(&self.origin, row);
+            return Err(StepFailure::answered(fail(
+                row,
+                format!(
+                    "{what} was answered by the edge of the site with status {}, and not by the application.",
+                    loaded
+                        .status
+                        .map_or_else(|| "none".to_owned(), |s| s.to_string())
+                ),
+                row.next,
+            )));
+        }
         // Where the page ended is checked: a move to another origin is not
         // followed by anything.
         let inside = loaded
@@ -2100,6 +2180,7 @@ impl UiDriver {
             origin,
             sections,
             snapshots: self.snapshots.clone(),
+            held: self.held.clone(),
             staging: self.browsers.staging_folder(),
             posture: cx.posture,
         })
@@ -2172,11 +2253,18 @@ impl Driver for UiDriver {
         })
     }
 
-    fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        if self.installed {
-            DriverHealth::Ready
-        } else {
-            DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE)
+    fn health(&self, surface: &SurfaceRef) -> DriverHealth {
+        if !self.installed {
+            return DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE);
+        }
+        // A surface whose edge refused a visit lately is not ready: it is
+        // named by the refusal until the hold ends.
+        match origin_of(&surface.surface.address)
+            .ok()
+            .and_then(|origin| self.held.of(&origin))
+        {
+            Some(row) => DriverHealth::Unavailable(row.failure_code()),
+            None => DriverHealth::Ready,
         }
     }
 
