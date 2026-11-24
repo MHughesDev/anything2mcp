@@ -1,4 +1,4 @@
-# 0399. Endpoint inference as built: the counts, the short number, the sibling words, and the map
+# 0341. Endpoint inference as built: the counts, the short number, the sibling words, and the map
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. Carries out points 1, 4, 5, 6, and 7 of [decision 0322](0322-a-capture-never-infers-required-and-types-a-parameter-from-every-value.md), whose points stand; it states the exact rules the web probe now holds, where that decision left a figure or a test open.
 
