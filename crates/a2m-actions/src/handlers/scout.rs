@@ -512,7 +512,7 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
             // The fixed rules of `a2m-auth` over what this surface's
             // discovery found. Always marked inferred; what the files
             // declare is kept as declared, and the recommendation stands
-            // beside it (decision 0399).
+            // beside it (decision 0367).
             let recommendation = a2m_auth::recommend(
                 identified
                     .sign_in_findings

@@ -1,4 +1,4 @@
-# 0399. `auth.detect` recommends a mode and a provider by fixed rules, and marks it inferred
+# 0367. `auth.detect` recommends a mode and a provider by fixed rules, and marks it inferred
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package 2.6. The owner had not read this record when it was merged. The number 0399 is a placeholder the lead renumbers on merge.
 

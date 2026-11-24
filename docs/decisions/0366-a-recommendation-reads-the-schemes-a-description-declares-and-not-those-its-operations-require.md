@@ -1,10 +1,10 @@
-# 0399. A recommendation reads the schemes a description declares, and not those its operations require
+# 0366. A recommendation reads the schemes a description declares, and not those its operations require
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package 2.7, from a finding of the [sessions-and-secrets review](../reviews/sessions-and-secrets-review-2026-11-24.md) (finding 5). The owner had not read this record when it was merged. The number 0399 is a placeholder the lead renumbers on merge.
 
 **Date:** 2026-11-24
 
-**Changes:** nothing is rewritten. Adds a limit to [decision 0399 on the rules](0399-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md), point 5.
+**Changes:** nothing is rewritten. Adds a limit to [decision 0367 on the rules](0367-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md), point 5.
 
 ## Context
 

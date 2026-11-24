@@ -1,4 +1,4 @@
-# 0399. `auth.detect`'s questions are in its answer, and the unknowns ledger is the scout's
+# 0368. `auth.detect`'s questions are in its answer, and the unknowns ledger is the scout's
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package 2.7, from a finding of the [sessions-and-secrets review](../reviews/sessions-and-secrets-review-2026-11-24.md) (finding 3). The owner had not read this record when it was merged. The number 0399 is a placeholder the lead renumbers on merge.
 
@@ -8,7 +8,7 @@
 
 ## Context
 
-Section 215 said the table of recommendations opens a question in the unknowns ledger where no row matches. `auth.detect` is a read-only action: the catalog marks it `Observe`, and it writes nothing, so it cannot open a question in a table of the ledger. When the rules were built ([decision 0399 on the rules](0399-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md)) the two sentences could not both stand.
+Section 215 said the table of recommendations opens a question in the unknowns ledger where no row matches. `auth.detect` is a read-only action: the catalog marks it `Observe`, and it writes nothing, so it cannot open a question in a table of the ledger. When the rules were built ([decision 0367 on the rules](0367-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md)) the two sentences could not both stand.
 
 ## Decision
 

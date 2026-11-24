@@ -109,7 +109,7 @@ fn document(bytes: &[u8]) -> Result<Json, Failure> {
 }
 
 /// The sign a description's security scheme is classified as, by the fixed
-/// rules of decision 0399: a closed name `a2m_auth::SignInSign` knows, or
+/// rules of decision 0367: a closed name `a2m_auth::SignInSign` knows, or
 /// `unrecognized` where no rule covers the scheme. The scheme's own text is
 /// never kept.
 fn classify_scheme(scheme: &Json) -> &'static str {

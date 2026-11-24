@@ -243,7 +243,7 @@ impl Discoverer for HttpSurface {
             }
             // A challenge the surface itself sent is seen, not claimed: a
             // sign of how it is signed in to, at the level `discovered`,
-            // for the rules that recommend a mode (decision 0399).
+            // for the rules that recommend a mode (decision 0367).
             for sign in signs {
                 let found = sign_in_found(sign, "challenge");
                 out.found(
@@ -323,7 +323,7 @@ impl HttpDescription {
 
 impl HttpDescription {
     /// One sign of how the description says the service is signed in to,
-    /// as a `sign_in_method` finding (decision 0399). It is a claim of the
+    /// as a `sign_in_method` finding (decision 0367). It is a claim of the
     /// description, at the level `inferred`: no request was sent with it.
     fn sign_in(
         &self,
