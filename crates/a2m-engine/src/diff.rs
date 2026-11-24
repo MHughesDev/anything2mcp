@@ -103,7 +103,7 @@ pub struct DiffRecord {
     pub could_take: Vec<DiffBinding>,
     /// The values the write is sent with as its preconditions, such as the
     /// version a guard compares, each normalized, or its hash when
-    /// restricted (decision 0399). They are what was approved and are in
+    /// restricted (decision 0378). They are what was approved and are in
     /// the hash, but they are no field of the record: the system checks
     /// them, and nothing compares them with a read. In the hash only when
     /// there are any, so a diff of before this field hashes the same.

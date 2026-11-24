@@ -1,5 +1,5 @@
 //! The fixed rules that turn sign-in findings into a recommended mode and
-//! provider for `auth.detect` (decisions 0085, 0321, and 0399).
+//! provider for `auth.detect` (decisions 0085, 0321, and 0367).
 //!
 //! The rules are a table, never a model (rule 1): one row for each sign a
 //! discoverer names. A sign no row names is a question for a person, never

@@ -1,4 +1,4 @@
-# 0399. An input marked precondition is sent with a write and never compared with its read-back
+# 0378. An input marked precondition is sent with a write and never compared with its read-back
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

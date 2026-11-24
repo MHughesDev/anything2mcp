@@ -413,7 +413,7 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
         "{reasons:#?}"
     );
 
-    // Decision 0399: once a person answers in the mapping that the server
+    // Decision 0365: once a person answers in the mapping that the server
     // does not run `orders_get`'s one string, for the definition listed,
     // the scout run again drafts its read, and the read reads what the
     // stand stores.

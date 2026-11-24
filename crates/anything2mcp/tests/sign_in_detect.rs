@@ -1,6 +1,6 @@
 //! How a target signs in is found, and a mode and a provider are
 //! recommended, through the product (package 2.6, decisions 0321 and
-//! 0399).
+//! 0367).
 //!
 //! `auth.detect` runs each surface's discoverers in the engine's sandbox
 //! and gives the fixed rules of `a2m-auth` what they found. The three

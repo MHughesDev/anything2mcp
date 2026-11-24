@@ -173,7 +173,7 @@ mod tests {
     /// places: a failed record that settles the run, and a failure that
     /// shows what was recorded. `run.rs` makes one in one place, from the
     /// table of a provider: a driver's code that its health gives, in the
-    /// class the provider's manifest declares for it (decision 0399). A
+    /// class the provider's manifest declares for it (decision 0377). A
     /// place more fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {

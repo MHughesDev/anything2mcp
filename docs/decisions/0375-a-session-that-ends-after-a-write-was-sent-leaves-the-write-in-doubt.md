@@ -1,4 +1,4 @@
-# 0399. A session that ends after a write was sent leaves the write in doubt
+# 0375. A session that ends after a write was sent leaves the write in doubt
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

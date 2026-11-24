@@ -1363,7 +1363,7 @@ impl Inner {
                     }
                     // The mark goes with the move to `valid`, in the same
                     // write, so that a restart cannot lose it (decision
-                    // 0399). A renewal keeps the one it found.
+                    // 0374). A renewal keeps the one it found.
                     if let Made::SignedIn { under_drafts } = made {
                         next.made_under_drafts = under_drafts;
                     }

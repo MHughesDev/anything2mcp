@@ -162,7 +162,7 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
     assert_eq!(add.bindings[0].lookup.len(), 3);
 }
 
-/// Decision 0399: a write that says truly that its program reaches the
+/// Decision 0364: a write that says truly that its program reaches the
 /// target's own server stays a write, and its read-back still verifies it;
 /// reaching a host outside the target is still a hazard.
 #[test]
@@ -297,7 +297,7 @@ fn a_file_that_breaks_a_rule_does_not_compile() {
         "    effect: write\n    hazard: sends_outside\n",
         "command.hazard_needs_irreversible",
     );
-    // Decision 0399: only a read answers "none" by printing nothing; a server
+    // Decision 0364: only a read answers "none" by printing nothing; a server
     // is named as a host; a path to the records goes with a document.
     refused(
         FILE,

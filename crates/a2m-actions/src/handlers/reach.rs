@@ -1,5 +1,5 @@
 //! The reach: a network the person names, kept as a protected setting
-//! (decisions 0223, 0318, 0327, 0399).
+//! (decisions 0223, 0318, 0327, 0339).
 //!
 //! The reaches are a list of [`Reach`] kept as one fact of the installation's
 //! store. Only the person's acts below write it, each after the operating

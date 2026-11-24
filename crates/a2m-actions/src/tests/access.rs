@@ -1,5 +1,5 @@
 //! Toolsets, grants, and policy sets as actions (package 6.3, decisions
-//! 0328 and 0399): each change is a person's act published as a new
+//! 0328 and 0339): each change is a person's act published as a new
 //! version; a toolset only narrows; the built-in toolsets keep working once
 //! a set defines toolsets; a set that asks for a second administrator gets
 //! one who proves presence of their own; and an explanation is for an

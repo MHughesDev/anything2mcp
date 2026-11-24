@@ -203,7 +203,7 @@ struct Answer {
     /// The anti-forgery token the request carried, when the answer's body
     /// holds it in any letter case. What the answer says is then never
     /// quoted, and no value taken from it may hold the token (decision
-    /// 0399).
+    /// 0357).
     echoed: Option<Secret>,
 }
 

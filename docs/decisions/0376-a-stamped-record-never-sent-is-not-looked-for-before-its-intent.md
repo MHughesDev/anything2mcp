@@ -1,4 +1,4 @@
-# 0399. A stamped record never sent is not looked for before its intent
+# 0376. A stamped record never sent is not looked for before its intent
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

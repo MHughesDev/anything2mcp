@@ -364,7 +364,7 @@ impl McpDriver {
     /// of the provider's closed table of interpreter forms, in its one form,
     /// given the entry file and then the surface's arguments; the entry
     /// file is checked and its digest measured before every start (decision
-    /// 0399). A package runner is refused whatever the surface names.
+    /// 0371). A package runner is refused whatever the surface names.
     async fn open_local(
         &self,
         cx: &PrepareContext<'_>,

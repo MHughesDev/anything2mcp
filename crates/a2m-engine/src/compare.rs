@@ -4,7 +4,7 @@
 //! its key and not a precondition of the write, in declared order. A
 //! precondition, such as the version a guard compares, is sent with the
 //! write and checked by the system; no read gives it back as it was sent,
-//! so it is never compared (decision 0399). Each is normalized by its field type on both
+//! so it is never compared (decision 0378). Each is normalized by its field type on both
 //! sides, the intended value and the value read, and the two are compared
 //! as values: there is no float anywhere in a comparison.
 
@@ -43,7 +43,7 @@ pub(crate) fn record_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<F
 
 /// The inputs of an operation that are preconditions of its write, in
 /// declared order: shown in the diff and bound by the approval, never
-/// compared with what is read (decision 0399).
+/// compared with what is read (decision 0378).
 pub(crate) fn precondition_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
     operation
         .inputs

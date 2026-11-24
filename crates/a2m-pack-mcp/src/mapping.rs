@@ -263,7 +263,7 @@ pub(crate) struct ToolEntry {
     pub untrusted_fields: Vec<String>,
     /// `structured`, `text`, or `json_text`: where the result's values
     /// are. `json_text` reads the result's text items as JSON (decision
-    /// 0399).
+    /// 0365).
     pub result: String,
     /// An error result whose text starts with this means the record is
     /// absent.

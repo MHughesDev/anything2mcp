@@ -184,7 +184,7 @@ async fn a_session_that_ends_during_the_read_back_leaves_the_write_in_doubt_unti
     let ended = world.agent(&["run", "resume", &run]).await;
     assert_eq!(writes(&app).await, 1);
     // The write may have landed and was not read back: the run says so,
-    // and says that sending it again is not safe (decision 0399).
+    // and says that sending it again is not safe (decision 0377).
     assert_eq!(ended.result()["status"], "stopped", "{}", ended.json);
     assert_eq!(ended.error()["class"], "possible_commit", "{}", ended.json);
     assert_eq!(ended.error()["code"], "no_confirmation", "{}", ended.json);

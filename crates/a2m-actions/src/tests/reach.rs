@@ -1,4 +1,4 @@
-//! The reach as actions (package N3, decisions 0327 and 0399): an agent
+//! The reach as actions (package N3, decisions 0327 and 0339): an agent
 //! cannot name or withdraw one; a reach is named on the network the machine
 //! is on and is not in force on another; and a listing shows the facts a
 //! reach states by name, and never a digest.

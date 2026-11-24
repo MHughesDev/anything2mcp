@@ -518,7 +518,7 @@ async fn a_degraded_kernel_takes_reads_and_refuses_writes_before_anything_runs()
 /// pack's does for an origin whose edge refused a visit: the run does not
 /// start, with the driver's code and the class its manifest declares, and
 /// nothing reaches the driver, neither the preview's read nor the write
-/// (decision 0399). Once the driver is ready, the approved run writes once.
+/// (decision 0377). Once the driver is ready, the approved run writes once.
 #[tokio::test]
 async fn a_surface_its_driver_says_is_unavailable_starts_nothing_and_names_the_drivers_code() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
@@ -571,7 +571,7 @@ async fn a_surface_its_driver_says_is_unavailable_starts_nothing_and_names_the_d
 /// A record in doubt whose surface its driver then holds off, or whose
 /// read is refused at the edge: the reconcile reads nothing it cannot, and
 /// the run still says that a write may have gone through, never a class a
-/// caller is told is safe to call again (decision 0399).
+/// caller is told is safe to call again (decision 0377).
 #[tokio::test]
 async fn a_record_in_doubt_that_cannot_be_read_leaves_the_run_possible_commit() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
@@ -960,7 +960,7 @@ async fn a_record_in_doubt_is_read_through_the_mode_that_wrote_it_and_never_by_a
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     // The record is still in doubt, and the run says so, naming why it
-    // could not be read (decision 0399).
+    // could not be read (decision 0377).
     assert_eq!(
         failed_as(&outcome),
         (FailureClass::PossibleCommit, "no_confirmation".to_owned())

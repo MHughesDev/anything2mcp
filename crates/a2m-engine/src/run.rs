@@ -483,7 +483,7 @@ impl<'a> Run<'a> {
                 // now, such as an origin it holds off after its edge
                 // refused a visit: the binding does not qualify, with the
                 // driver's code and the class its manifest declares, and
-                // nothing is sent (decision 0399). A code no manifest of
+                // nothing is sent (decision 0377). A code no manifest of
                 // the provider declares says only that it is not ready.
                 let declared = self.declared_class(&handle, &code);
                 return Ok(Err(match declared {

@@ -250,7 +250,7 @@ fn commit_failure(failure: StepFailure) -> Failure {
 /// What the failure of a provider's step becomes once the record's write
 /// was sent: the write is in doubt. Only `possible_commit` itself stands.
 /// A session that ended after the write was sent is in doubt too, never
-/// `session_expired` (decision 0399): the write may have landed, so the run
+/// `session_expired` (decision 0375): the write may have landed, so the run
 /// says so, `retry_safe` false, and the keeper has been told of the end
 /// already. A resume needs a session like any other, so it waits for the
 /// sign-in, and then reconciles before anything is written again.
@@ -1369,7 +1369,7 @@ fn derive_step(
                 // names. Whether it may act now is asked when the record is
                 // read, after the records in doubt are reconciled, so that a
                 // run with a write in doubt never says less than that
-                // (decision 0399).
+                // (decision 0377).
                 Err(_) if run.job.snapshot.is_some() => 0,
                 Err(failure) => return Err(Stop::Fail(failure)),
             }
@@ -2066,7 +2066,7 @@ async fn reconcile(
             continue;
         }
         // The record could not be read: it is still in doubt, whatever the
-        // read failed with, and the run says so (decision 0399), by the
+        // read failed with, and the run says so (decision 0377), by the
         // rule a failure after the save follows (`after_send`): a surface
         // blocked at the edge or held off by its driver, a connection lost,
         // is the write in doubt, naming the cause, and the scheduler
@@ -2684,7 +2684,7 @@ async fn commit_point(
     // A record found by its stamp that is still `planned` was never sent:
     // its intent comes next, and nothing is sent before an intent. No record
     // of the system can carry its stamp, so the preview did not look for it
-    // and this check does not either (decision 0399). A look for it could
+    // and this check does not either (decision 0376). A look for it could
     // say nothing more, and where the system cannot prove an absence by
     // itself, such as a log that has lost its front, it would stop the
     // write for nothing.

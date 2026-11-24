@@ -734,7 +734,7 @@ pub struct InputPlan {
     /// What it means, for the caller.
     pub description: String,
     /// Whether it is a precondition of the write and not a field of the
-    /// record (decision 0399): a value the write is sent with and the
+    /// record (decision 0378): a value the write is sent with and the
     /// system checks, such as the version a guard compares, which no read
     /// gives back as it was sent. The engine leaves it out of the record's
     /// fields, so it is never compared with a read-back; it stays in the

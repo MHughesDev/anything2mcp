@@ -1822,7 +1822,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Holds every input marked `precondition` to what it may be
-    /// (decision 0399): an input of an operation that writes, not part of
+    /// (decision 0378): an input of an operation that writes, not part of
     /// its key. A pipeline's inputs are never one: a pipeline writes
     /// through its operations, whose own inputs say it.
     fn preconditions(

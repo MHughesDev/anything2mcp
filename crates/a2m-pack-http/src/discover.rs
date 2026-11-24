@@ -118,7 +118,7 @@ fn sign_in_found(sign: &str, read_from: &str) -> Json {
 }
 
 /// The sign a challenge's scheme names, by the fixed rules of decision
-/// 0399: a scheme the rules know, or `challenge` for one they do not.
+/// 0367: a scheme the rules know, or `challenge` for one they do not.
 fn sign_of_challenge(scheme: &str) -> &'static str {
     match scheme {
         "basic" => "http_basic",

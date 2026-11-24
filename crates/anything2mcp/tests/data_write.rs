@@ -36,7 +36,7 @@ use serde_json::Value as Json;
 
 const UPDATE: &str = "example_line_item_update";
 const GET: &str = "example_line_item_get";
-/// The update guarded by the line's version (decision 0399).
+/// The update guarded by the line's version (decision 0378).
 const REPRICE: &str = "example_line_item_reprice";
 const LINE: [&str; 2] = ["A-100", "L-101"];
 /// How long a test waits for something that should come at once. Only a
@@ -529,7 +529,7 @@ fn reprice(price: &str, seen_version: i64) -> String {
 /// A write guarded by the record's version: the version is a precondition
 /// of the write, sent with it and checked by the store, and never compared
 /// with what is read back, which holds the version the store raised
-/// (decision 0399). A second write sent with the version the line no longer
+/// (decision 0378). A second write sent with the version the line no longer
 /// has is refused by the store's own guard, and nothing is written.
 async fn a_guarded_write_is_verified_and_a_changed_version_writes_nothing(rig: Rig) {
     let world = published(&rig).await;

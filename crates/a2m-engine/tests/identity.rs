@@ -139,7 +139,7 @@ async fn a_stamped_record_is_found_again_by_its_stamp_after_a_lost_answer() {
     );
 
     // Before the intent nothing looked for the stamp: a record still
-    // `planned` was never sent, so no record can carry it (decision 0399).
+    // `planned` was never sent, so no record can carry it (decision 0376).
     assert_eq!(scene.steps(&["find_item", "add_item"]), ["add_item"]);
 
     // Reconcile looks the record up by its stamp, finds the write landed,
@@ -176,7 +176,7 @@ async fn a_stamped_record_whose_write_never_left_is_written_once_on_resume() {
 
     // The lookup by the stamp finds nothing: the record goes back to
     // `planned` and is written, once, with no second look before its new
-    // intent (decision 0399).
+    // intent (decision 0376).
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, REF_ADD, input).await;
     assert!(completed(&outcome), "{outcome:?}");
@@ -260,7 +260,7 @@ async fn a_key_assigned_before_the_commit_point_is_recorded_first_and_read_back_
     assert!(at(&log, "before_commit") < at(&log, "add_item"), "{log:?}");
     // The save and the read-back used the assigned code. Nothing looked
     // the record up by its stamp: before its intent it was never sent
-    // (decision 0399), and after its save it is read by the recorded code.
+    // (decision 0376), and after its save it is read by the recorded code.
     assert_eq!(
         text(&scene.hooks.given("add_item")[0].args, "code"),
         "N-001"

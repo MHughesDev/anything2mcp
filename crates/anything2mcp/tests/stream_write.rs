@@ -462,7 +462,7 @@ async fn a_publish_cut_after_the_server_stored_it_is_resumed_and_the_stream_hold
 
 /// A log in use has lost its front: two more events of another order came
 /// after the seed, and the oldest two were taken off, so the log begins at
-/// its third position. Before decision 0399 the engine looked for a record
+/// its third position. Before decision 0376 the engine looked for a record
 /// never sent with nothing recorded, and the look stopped the publish as
 /// `scan_inconclusive`.
 async fn a_log_whose_front_was_trimmed(raw: &mut Raw) {

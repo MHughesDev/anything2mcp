@@ -1,4 +1,4 @@
-# 0399. A surface its driver holds off is refused before the run sends anything, with the driver's code
+# 0377. A surface its driver holds off is refused before the run sends anything, with the driver's code
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 
