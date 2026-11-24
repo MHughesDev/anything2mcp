@@ -5,4 +5,5 @@ mod destinations;
 mod keeper;
 mod oauth;
 mod providers;
+mod recommend;
 mod support;
