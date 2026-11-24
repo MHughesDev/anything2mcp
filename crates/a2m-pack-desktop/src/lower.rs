@@ -725,8 +725,9 @@ impl<'a> Lower<'a, '_> {
 }
 
 /// Whether a management namespace begins with two separators,
-/// `\\host\root` or `//host/root`: another machine's.
-fn names_another_machine(namespace: &str) -> bool {
+/// `\\host\root` or `//host/root`: another machine's. The statement is
+/// withdrawn for one, and the driver refuses to ask one.
+pub(crate) fn names_another_machine(namespace: &str) -> bool {
     let mut chars = namespace.chars();
     matches!(
         (chars.next(), chars.next()),

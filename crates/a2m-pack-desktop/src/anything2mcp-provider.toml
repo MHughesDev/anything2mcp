@@ -261,6 +261,10 @@ code = "session_in_use"
 class = "busy"
 code = "writes_not_built"
 
+[[failure_codes]]
+class = "policy"
+code = "remote_namespace_refused"
+
 # It reads a running application a person started and the target names, on
 # the person's screen. It starts nothing and reaches no network.
 [effects]

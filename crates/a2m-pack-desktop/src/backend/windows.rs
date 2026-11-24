@@ -33,6 +33,17 @@
 //! this file and finds every method called on a UI Automation object
 //! inside an [`ask`] that names it. A password edit (`IsPassword`) is
 //! reported as present and secret, and its value is never asked for.
+//!
+//! **The acting half** is apart (decision 0399, after decision 0218 on
+//! Linux): [`Hands`], which only the driver's `set` and `invoke` make,
+//! makes the members of [`ACT_MEMBERS`] through [`act`], the one function
+//! that may: the value pattern's `SetValue` and the invoke pattern's
+//! `Invoke`. Only the acting half calls it, and tests hold both lists and
+//! this file's source. Before every act it proves again, on the UI
+//! Automation thread, that the element is the application's and that the
+//! application is the process proven at prepare: its number, its start
+//! time, its program, and its digest when the surface states one. No
+//! member sends a key or a pointer event: there is none in either list.
 
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -42,7 +53,7 @@ use std::time::Duration;
 
 use a2m_provider::{Deadline, resolved_path};
 use tokio::sync::oneshot;
-use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, HANDLE, HWND, LPARAM};
+use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HANDLE, HWND, LPARAM};
 use windows::Win32::Security::{
     EqualSid, GetTokenInformation, PSID, TOKEN_ELEVATION, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
     TOKEN_USER, TokenElevation, TokenUser,
@@ -52,24 +63,26 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, OpenProcessToken,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetProcessTimes, OpenProcess,
+    OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VariantClear};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, HWINEVENTHOOK, IUIAutomation, IUIAutomation2, IUIAutomationElement,
-    IUIAutomationTreeWalker, IUIAutomationValuePattern, SetWinEventHook, UIA_CONTROLTYPE_ID,
-    UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_IsValuePatternAvailablePropertyId,
-    UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_ValuePatternId, UnhookWinEvent,
+    IUIAutomationInvokePattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
+    SetWinEventHook, UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_ELEMENTNOTENABLED,
+    UIA_E_TIMEOUT, UIA_InvokePatternId, UIA_IsValuePatternAvailablePropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_ValuePatternId, UnhookWinEvent,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, GetMessageW, GetWindowThreadProcessId, IsWindow,
     IsWindowVisible, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, TranslateMessage,
     WINEVENT_OUTOFCONTEXT, WM_QUIT,
 };
-use windows::core::{BOOL, HRESULT, Interface, PWSTR};
+use windows::core::{BOOL, BSTR, HRESULT, Interface, PWSTR};
 
-use super::{App, AxError, Limits, Window};
+use super::{Acted, App, AxError, Heard, Limits, PRESS, Settable, Window};
 use crate::roles;
 use crate::tree::{El, Node, Tree};
 
@@ -104,7 +117,23 @@ pub(crate) const READ_MEMBERS: &[&str] = &[
     "GetCurrentPropertyValue",
     "GetCurrentPatternAs",
     "CurrentValue",
+    // Before a set: whether the element is enabled, and whether its value
+    // pattern says it is read-only. Asking changes nothing.
+    "CurrentIsEnabled",
+    "CurrentIsReadOnly",
 ];
+
+/// Every member the acting half may make: set a value through the value
+/// pattern, and invoke through the invoke pattern. Only [`act`] makes one,
+/// and only [`Hands`] calls it. A test holds that no member of
+/// [`READ_MEMBERS`] is here, and that each is one of UI Automation's
+/// members that act.
+pub(crate) const ACT_MEMBERS: &[&str] = &["SetValue", "Invoke"];
+
+/// The patterns the acting half gets, to make a member of [`ACT_MEMBERS`]
+/// on: the value pattern and the invoke pattern. Getting one asks the
+/// element for an interface and changes nothing.
+const ACT_PATTERNS: &[UIA_PATTERN_ID] = &[UIA_ValuePatternId, UIA_InvokePatternId];
 
 /// The properties `GetCurrentPropertyValue` may ask for.
 const READ_PROPERTIES: &[UIA_PROPERTY_ID] = &[UIA_IsValuePatternAvailablePropertyId];
@@ -216,6 +245,28 @@ fn ask<T>(
         return Err(AxError::Lost(format!("`{member}` is not a read")));
     }
     call().map_err(|error| said(member, &error))
+}
+
+/// Makes one member of [`ACT_MEMBERS`], the one function that changes an
+/// application, and gives the system's answer as it is: whether the
+/// application did it is the caller's to read from it. Only [`Hands`]
+/// calls it. A member not on the list is not made.
+fn act<T>(
+    member: &'static str,
+    call: impl FnOnce() -> windows::core::Result<T>,
+) -> Result<windows::core::Result<T>, Acted> {
+    if !ACT_MEMBERS.contains(&member) || READ_MEMBERS.contains(&member) {
+        return Err(Acted::NotSent(AxError::Lost(format!(
+            "`{member}` is not a member that acts"
+        ))));
+    }
+    Ok(call())
+}
+
+/// Whether the system said an element took no act because it is not
+/// enabled: the application's answer, with nothing done.
+fn not_enabled(error: &windows::core::Error) -> bool {
+    error.code() == HRESULT(UIA_E_ELEMENTNOTENABLED as i32)
 }
 
 /// The same, for a member whose answer may be no element: the system then
@@ -378,6 +429,32 @@ fn session_of(process: u32) -> Option<u32> {
     unsafe { ProcessIdToSessionId(process, &raw mut session) }
         .ok()
         .map(|()| session)
+}
+
+/// When a process started, as the system's clock gives it: what tells a
+/// process from a later one with the same number.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn started_of(process: u32) -> Option<u64> {
+    let opened = open(process).ok()?;
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: the process handle is open; the four times are ours, and the
+    // call writes each once.
+    unsafe {
+        GetProcessTimes(
+            opened.0,
+            &raw mut created,
+            &raw mut exited,
+            &raw mut kernel,
+            &raw mut user,
+        )
+    }
+    .ok()?;
+    Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
 }
 
 fn hwnd(number: isize) -> HWND {
@@ -940,6 +1017,17 @@ impl Watch {
             Err(_) => Ok(false),
         }
     }
+
+    /// Waits for the application's next event, or the deadline. Windows
+    /// does not hear the application's exit here: a walk after it fails,
+    /// which the caller reads as the application gone.
+    pub(crate) async fn heard(&mut self, deadline: Deadline) -> Result<Heard, AxError> {
+        Ok(if self.next(deadline).await? {
+            Heard::Changed
+        } else {
+            Heard::Passed
+        })
+    }
 }
 
 impl Drop for Watch {
@@ -1044,6 +1132,231 @@ fn listen(
     for hook in hooks {
         // SAFETY: a hook this thread set, removed once, on this thread.
         let _ = unsafe { UnhookWinEvent(hook) };
+    }
+}
+
+/// What the driver proved of the application's process when it was
+/// prepared, and proves again before every act: its number, its start
+/// time, the program it runs, and, when the surface states one, the
+/// program's digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Proof {
+    process: u32,
+    started: u64,
+    program: PathBuf,
+    digest: Option<String>,
+}
+
+impl Proof {
+    /// Whether the process is still the one proven. Only the system is
+    /// asked.
+    fn holds(&self, process: u32) -> bool {
+        let same = process == self.process
+            && started_of(process) == Some(self.started)
+            && image_of(process)
+                .and_then(|image| resolved_path(&image).ok())
+                .is_some_and(|image| image == self.program);
+        same && self
+            .digest
+            .as_ref()
+            .is_none_or(|stated| running_digest(process, &self.program).as_ref() == Some(stated))
+    }
+}
+
+/// The acting half of the back end, over one look and the proof of its
+/// application. Made only by the driver's `set` and `invoke`; it is the
+/// only caller of [`act`]. Each method is one job on the UI Automation
+/// thread, which proves the element's process again before it acts.
+pub(crate) struct Hands<'a> {
+    look: &'a Look,
+    proof: &'a Proof,
+}
+
+/// The element a key names, when its process is still the one proven.
+#[allow(unsafe_code)] // one call into UI Automation, explained below
+fn proven(uia: &Uia, proof: &Proof, el: &El) -> Result<IUIAutomationElement, AxError> {
+    if process_of(el)? != proof.process || !proof.holds(proof.process) {
+        return Err(AxError::Replaced);
+    }
+    let element = uia.element(el)?;
+    // SAFETY: a method of an element this thread holds, with no argument.
+    let owner = ask("CurrentProcessId", || unsafe { element.CurrentProcessId() })?;
+    if u32::try_from(owner).ok() != Some(proof.process) {
+        return Err(AxError::Replaced);
+    }
+    Ok(element)
+}
+
+/// The value pattern of an element, or `None` when it offers none.
+#[allow(unsafe_code)] // one call into UI Automation, explained below
+fn value_pattern(
+    element: &IUIAutomationElement,
+) -> Result<Option<IUIAutomationValuePattern>, AxError> {
+    let pattern = UIA_ValuePatternId;
+    if !READ_PATTERNS.contains(&pattern) || !ACT_PATTERNS.contains(&pattern) {
+        return Err(AxError::Lost("a pattern that is not used".to_owned()));
+    }
+    // SAFETY: a method of an element this thread holds, with a plain value
+    // as its argument; the pattern it gives is owned by its wrapper.
+    ask_optional("GetCurrentPatternAs", || unsafe {
+        element.GetCurrentPatternAs::<IUIAutomationValuePattern>(pattern)
+    })
+}
+
+impl Hands<'_> {
+    /// Proves again, before an act, that the element is the application's
+    /// and that the application is still the process proven when the run
+    /// was prepared.
+    pub(crate) async fn prove(&self, app: &App, node: &Node) -> Result<(), AxError> {
+        if node.el.bus != app.root.bus {
+            return Err(AxError::Replaced);
+        }
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        self.look
+            .run(2 * CALL_LIMIT, move |uia| {
+                proven(uia, &proof, &el).map(|_| ())
+            })
+            .await
+    }
+
+    /// Whether the element's value may be set now: it offers the value
+    /// pattern, it is enabled, and the pattern does not say it is
+    /// read-only. Three reads.
+    #[allow(unsafe_code)] // calls into UI Automation, explained below
+    pub(crate) async fn settable(&self, node: &Node) -> Result<Settable, AxError> {
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        self.look
+            .run(2 * CALL_LIMIT, move |uia| {
+                let element = proven(uia, &proof, &el)?;
+                let Some(value) = value_pattern(&element)? else {
+                    return Ok(Settable::NoInterface);
+                };
+                // SAFETY (each `ask`): a method of an element this thread
+                // holds, or of the pattern it gave, with no argument.
+                let enabled = ask("CurrentIsEnabled", || unsafe { element.CurrentIsEnabled() })?;
+                if !enabled.as_bool() {
+                    return Ok(Settable::Disabled);
+                }
+                let read_only = ask("CurrentIsReadOnly", || unsafe { value.CurrentIsReadOnly() })?;
+                Ok(if read_only.as_bool() {
+                    Settable::ReadOnly
+                } else {
+                    Settable::Yes
+                })
+            })
+            .await
+    }
+
+    /// Sets the element's whole value through its value pattern. A control
+    /// that holds a secret is never set. `false` when the system says the
+    /// element took nothing because it is not enabled.
+    #[allow(unsafe_code)] // calls into UI Automation, explained below
+    pub(crate) async fn set_text(&self, node: &Node, text: &str) -> Result<bool, Acted> {
+        if node.secret {
+            return Err(Acted::NotSent(AxError::Secret));
+        }
+        let (proof, el, text) = (self.proof.clone(), node.el.clone(), text.to_owned());
+        let answer = self
+            .look
+            .run(2 * CALL_LIMIT, move |uia| {
+                let sent = (|| {
+                    let element = proven(uia, &proof, &el).map_err(Acted::NotSent)?;
+                    // SAFETY: a method of an element this thread holds, with
+                    // no argument.
+                    let secret = ask("CurrentIsPassword", || unsafe {
+                        element.CurrentIsPassword()
+                    })
+                    .map_err(Acted::NotSent)?;
+                    if secret.as_bool() {
+                        return Err(Acted::NotSent(AxError::Secret));
+                    }
+                    let Some(value) = value_pattern(&element).map_err(Acted::NotSent)? else {
+                        return Err(Acted::NotSent(AxError::Lost(
+                            "the element offers no value pattern".to_owned(),
+                        )));
+                    };
+                    let text = BSTR::from(text.as_str());
+                    // SAFETY: a method of the pattern this thread got, with a
+                    // string that outlives the call.
+                    match act("SetValue", || unsafe { value.SetValue(&text) })? {
+                        Ok(()) => Ok(true),
+                        Err(error) if not_enabled(&error) => Ok(false),
+                        Err(error) => Err(Acted::Unknown(said("SetValue", &error))),
+                    }
+                })();
+                Ok(sent)
+            })
+            .await;
+        // A job the thread may have begun is a set that may have been made.
+        answer.unwrap_or_else(|error| Err(Acted::Unknown(error)))
+    }
+
+    /// Does the element's action named `name`: only [`PRESS`], through its
+    /// invoke pattern. `Ok(None)` when the name is another, or the element
+    /// offers no invoke pattern, and nothing was sent; `Ok(Some(false))`
+    /// when the system says the element is not enabled.
+    #[allow(unsafe_code)] // calls into UI Automation, explained below
+    pub(crate) async fn perform(&self, node: &Node, name: &str) -> Result<Option<bool>, Acted> {
+        if name != PRESS {
+            return Ok(None);
+        }
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        let answer = self
+            .look
+            .run(2 * CALL_LIMIT, move |uia| {
+                let sent = (|| {
+                    let element = proven(uia, &proof, &el).map_err(Acted::NotSent)?;
+                    let pattern = UIA_InvokePatternId;
+                    if !ACT_PATTERNS.contains(&pattern) {
+                        return Err(Acted::NotSent(AxError::Lost(
+                            "a pattern that is not used".to_owned(),
+                        )));
+                    }
+                    // SAFETY: a method of an element this thread holds, with
+                    // a plain value as its argument.
+                    let Some(invoke) = ask_optional("GetCurrentPatternAs", || unsafe {
+                        element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(pattern)
+                    })
+                    .map_err(Acted::NotSent)?
+                    else {
+                        return Ok(None);
+                    };
+                    // SAFETY: a method of the pattern this thread got, with no
+                    // argument.
+                    match act("Invoke", || unsafe { invoke.Invoke() })? {
+                        Ok(()) => Ok(Some(true)),
+                        Err(error) if not_enabled(&error) => Ok(Some(false)),
+                        Err(error) => Err(Acted::Unknown(said("Invoke", &error))),
+                    }
+                })();
+                Ok(sent)
+            })
+            .await;
+        answer.unwrap_or_else(|error| Err(Acted::Unknown(error)))
+    }
+}
+
+impl Look {
+    /// What proves the application's process now: for the driver to keep,
+    /// and to prove again before every act. Only the system is asked.
+    pub(crate) fn proof(&self, app: &App, digest: Option<&str>) -> Result<Proof, AxError> {
+        let program = image_of(app.process)
+            .and_then(|image| resolved_path(&image).ok())
+            .ok_or(AxError::Replaced)?;
+        let started = started_of(app.process).ok_or(AxError::Replaced)?;
+        Ok(Proof {
+            process: app.process,
+            started,
+            program,
+            digest: digest
+                .map(|stated| stated.strip_prefix("sha256:").unwrap_or(stated).to_owned()),
+        })
+    }
+
+    /// The acting half, over this look and the proof of its application.
+    /// Only the driver's `set` and `invoke` ask for it.
+    pub(crate) fn hands<'a>(&'a self, proof: &'a Proof) -> Hands<'a> {
+        Hands { look: self, proof }
     }
 }
 
@@ -1215,9 +1528,57 @@ mod tests {
     fn the_back_end_calls_no_member_that_acts() {
         for member in READ_MEMBERS {
             assert!(!ACTING.contains(member), "{member}");
+            assert!(!ACT_MEMBERS.contains(member), "{member}");
         }
         assert_eq!(READ_PATTERNS, &[UIA_ValuePatternId]);
         assert_eq!(READ_PROPERTIES, &[UIA_IsValuePatternAvailablePropertyId]);
+    }
+
+    #[test]
+    fn the_acting_half_sets_a_value_and_invokes_and_nothing_else() {
+        assert_eq!(ACT_MEMBERS, &["SetValue", "Invoke"]);
+        for member in ACT_MEMBERS {
+            assert!(ACTING.contains(member), "{member}");
+        }
+        assert_eq!(ACT_PATTERNS, &[UIA_ValuePatternId, UIA_InvokePatternId]);
+        // No key and no pointer: neither list has a member that makes an
+        // input event.
+        for member in READ_MEMBERS.iter().chain(ACT_MEMBERS) {
+            assert!(!member.contains("Input"), "{member}");
+            assert!(!member.contains("Keys"), "{member}");
+            assert!(!member.contains("Message"), "{member}");
+        }
+        // The one function that acts refuses any other member before it
+        // makes it.
+        assert!(matches!(act("Toggle", || Ok(())), Err(Acted::NotSent(_))));
+        assert!(matches!(
+            act("CurrentValue", || Ok(())),
+            Err(Acted::NotSent(_))
+        ));
+    }
+
+    #[test]
+    fn only_the_acting_half_calls_the_one_function_that_acts() {
+        let code = code();
+        let hands = code
+            .find("impl Hands<'_> {")
+            .expect("the acting half is in the module");
+        let end = hands
+            + code[hands..]
+                .find("\n}\n")
+                .expect("the acting half's block ends");
+        let calls: Vec<usize> = code
+            .match_indices("act(\"")
+            .map(|(at, _)| at)
+            .filter(|at| !code[..*at].ends_with('_') && !code[..*at].ends_with("fn "))
+            .collect();
+        assert_eq!(calls.len(), 2, "one set and one invoke");
+        for at in calls {
+            assert!(
+                (hands..end).contains(&at),
+                "a call of `act` outside the acting half, at byte {at}"
+            );
+        }
     }
 
     /// This file up to its tests, which is all the code that runs.
@@ -1233,7 +1594,7 @@ mod tests {
         // Where each `ask` and `ask_optional` begins and ends, and the
         // member it names.
         let mut spans = Vec::new();
-        for opening in ["ask(\"", "ask_optional(\""] {
+        for opening in ["ask(\"", "ask_optional(\"", "act(\""] {
             let mut from = 0;
             while let Some(found) = code[from..].find(opening) {
                 let start = from + found;
@@ -1246,9 +1607,11 @@ mod tests {
         }
         assert!(spans.len() >= 20, "{} asks found", spans.len());
         for (start, end, member) in &spans {
+            let acting = code[*start..].starts_with("act(");
+            let list = if acting { ACT_MEMBERS } else { READ_MEMBERS };
             assert!(
-                READ_MEMBERS.contains(member),
-                "`{member}` is asked and not on the list"
+                list.contains(member),
+                "`{member}` is asked and not on its list"
             );
             let call = &code[*start..*end];
             assert!(
@@ -1278,12 +1641,20 @@ mod tests {
                 "`.{method}(` is called outside an ask"
             );
         }
-        // And no method that acts is called at all.
+        // And no method that acts is called but inside the one function
+        // that acts, naming it.
         for member in ACTING {
-            assert!(
-                !code.contains(&format!(".{member}(")),
-                "`.{member}(` is called"
-            );
+            for (at, _) in code.match_indices(&format!(".{member}(")) {
+                assert!(
+                    spans.iter().any(|(start, end, named)| {
+                        *start < at
+                            && at < *end
+                            && named == member
+                            && code[*start..].starts_with("act(")
+                    }),
+                    "`.{member}(` is called outside an act that names it"
+                );
+            }
         }
     }
 

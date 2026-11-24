@@ -13,8 +13,18 @@
 //!   label "Reference"     text field "R-2"
 //!   label "Access code"   secure text field holding SECRET
 //!   label "Line items"    table "Line items" in a scroll view: three columns, one row a line
-//!   button "Save"                              (a press is counted as a write)
+//!   button "Save"                              (a press is counted as a write; it stores what the edit fields hold when the application takes it)
+//!   label "New customer"  text field ""        (holds at most CUSTOMER_MOST characters, and cuts the rest)
+//!   label "New status"    text field ""
+//!   label "Message"       text field, not editable ("Saved." once Save stored)
+//!   label "Problem"       text field, not editable, hidden but while the application refuses a value
 //! ```
+//!
+//! A value a client sets into a field (`setAccessibilityValue:`) is kept in
+//! the book with its window and its label, shown by the field, and not
+//! stored until Save; the fields labelled `Customer` and `Status` show what
+//! is stored. A field that is not editable, or not enabled, takes nothing
+//! set into it and says its value may not be set (decision 0399).
 //!
 //! What the stand witnesses: the text fields, the secure text field, and
 //! Save are subclasses of AppKit's own, which count each time AppKit's
@@ -45,19 +55,21 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use objc2::rc::Retained;
+use objc2::runtime::Sel;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityPostNotification, NSAccessibilityUnignoredDescendant,
-    NSAccessibilityValueChangedNotification, NSApplication, NSApplicationActivationPolicy,
-    NSBackingStoreType, NSButton, NSControl, NSControlTextEditingDelegate, NSResponder,
-    NSScrollView, NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource,
-    NSTableViewDelegate, NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    NSAccessibility, NSAccessibilityLayoutChangedNotification, NSAccessibilityPostNotification,
+    NSAccessibilityUnignoredDescendant, NSAccessibilityValueChangedNotification, NSApplication,
+    NSApplicationActivationPolicy, NSBackingStoreType, NSButton, NSControl,
+    NSControlTextEditingDelegate, NSResponder, NSScrollView, NSSecureTextField, NSTableColumn,
+    NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTextField, NSView, NSWindow,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{NSInteger, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
-use crate::child::{ORDER_ENV, PREFIX, decode_order};
-use crate::{LATE, Order, SECRET, WINDOW};
+use crate::child::{FieldFault, ORDER_ENV, PREFIX, Pressed, arm, book, decode_order};
+use crate::{CUSTOMER_MOST, DIALOG, FieldSet, LATE, Order, SAVED, SECRET, WINDOW};
 
 static WRITES: AtomicU64 = AtomicU64::new(0);
 static SECRET_READS: AtomicU64 = AtomicU64::new(0);
@@ -70,7 +82,17 @@ thread_local! {
     static WINDOW_KEPT: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
     static LINES_KEPT: RefCell<Option<Retained<Lines>>> = const { RefCell::new(None) };
     static TRACKING: RefCell<Option<Retained<ValueField>>> = const { RefCell::new(None) };
+    /// The value fields, by the name their requests are counted under.
+    static FIELDS: RefCell<BTreeMap<&'static str, Retained<ValueField>>> =
+        const { RefCell::new(BTreeMap::new()) };
+    /// The dialog a fault raised, kept while the process lives.
+    static DIALOG_KEPT: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
 }
+
+/// The field fault the main thread is to carry out next, and whether it
+/// found the field.
+static FIELD_FAULT: Mutex<Option<FieldFault>> = Mutex::new(None);
+static FAULT_FOUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -97,6 +119,8 @@ fn as_listed(label: &NSTextField) -> Option<Retained<AnyObject>> {
 /// the label that labels it, when one does.
 struct Field {
     counted: &'static str,
+    /// The label's text, which a set is kept under.
+    label: &'static str,
     title: Option<Retained<NSTextField>>,
 }
 
@@ -116,14 +140,35 @@ define_class!(
         fn accessibility_value(&self) -> Option<Retained<AnyObject>> {
             count(&format!("edit:{}.AXValue", self.ivars().counted));
             // SAFETY: the superclass's own answer to the same request.
-            unsafe { msg_send![super(self), accessibilityValue] }
+            let answer = unsafe { msg_send![super(self), accessibilityValue] };
+            if self.ivars().counted == "order_number" {
+                after_key_read(self.mtm());
+            }
+            answer
         }
 
+        /// A client's set of the field's value: kept in the book, refused
+        /// by a field that is not editable or not enabled, cut to
+        /// `CUSTOMER_MOST` in `New customer`, and shown as AppKit's own
+        /// editing would, with the notice that the value changed.
         #[unsafe(method(setAccessibilityValue:))]
         fn set_accessibility_value(&self, value: Option<&AnyObject>) {
             count(&format!("edit:{}.AXSetValue", self.ivars().counted));
-            // SAFETY: as above, with the value the request carried.
-            unsafe { msg_send![super(self), setAccessibilityValue: value] }
+            if self.isEditable() && self.isEnabled() {
+                set_value(self, value);
+            }
+        }
+
+        /// Whether a client may make the request: a set of the value only
+        /// while the field is editable and enabled.
+        #[unsafe(method(isAccessibilitySelectorAllowed:))]
+        fn is_accessibility_selector_allowed(&self, selector: Sel) -> bool {
+            if selector == sel!(setAccessibilityValue:) {
+                self.isEditable() && self.isEnabled()
+            } else {
+                // SAFETY: the superclass's own answer to the same request.
+                unsafe { msg_send![super(self), isAccessibilitySelectorAllowed: selector] }
+            }
         }
 
         #[unsafe(method(setAccessibilityFocused:))]
@@ -147,16 +192,40 @@ define_class!(
     }
 );
 
+/// A client's value, set into a field that takes it: kept in the book,
+/// cut to [`CUSTOMER_MOST`] in `New customer`, and shown.
+fn set_value(field: &ValueField, value: Option<&AnyObject>) {
+    let text = value
+        .and_then(|value| value.downcast_ref::<NSString>())
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    book().sets.push(FieldSet {
+        window: WINDOW.to_owned(),
+        field: field.ivars().label.to_owned(),
+        value: text.clone(),
+    });
+    let held: String = if field.ivars().counted == "new_customer" {
+        text.chars().take(CUSTOMER_MOST).collect()
+    } else {
+        text
+    };
+    show(field, &held);
+    if ["new_customer", "new_status"].contains(&field.ivars().counted) {
+        clear_said();
+    }
+}
+
 impl ValueField {
     fn new(
         mtm: MainThreadMarker,
         counted: &'static str,
-        title: Option<&Retained<NSTextField>>,
+        title: Option<(&'static str, &Retained<NSTextField>)>,
         frame: NSRect,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(Field {
             counted,
-            title: title.cloned(),
+            label: title.map_or("", |(label, _)| label),
+            title: title.map(|(_, label)| label.clone()),
         });
         // SAFETY: a text field's own initializer, with a plain frame.
         unsafe { msg_send![super(this), initWithFrame: frame] }
@@ -214,10 +283,11 @@ define_class!(
     struct SaveButton;
 
     impl SaveButton {
-        /// Save's action: a write.
+        /// Save's action: a write, and the application's rule.
         #[unsafe(method(save:))]
         fn save(&self, _sender: Option<&AnyObject>) {
             WRITES.fetch_add(1, Ordering::SeqCst);
+            press();
         }
 
         #[unsafe(method(accessibilityPerformPress))]
@@ -304,12 +374,148 @@ fn truth_line() -> String {
         .map(|(member, times)| format!("{member}={times}"))
         .collect();
     format!(
-        "{PREFIX}truth\t{}\t{}\t{}\t{}",
+        "{PREFIX}truth\t{}\t{}\t{}\t{}\t{}",
         WRITES.load(Ordering::SeqCst),
         SECRET_READS.load(Ordering::SeqCst),
         lock(&SHOWN_LATE),
-        asked.join(";")
+        asked.join(";"),
+        book().line()
     )
+}
+
+/// A field shows `text`, and the application says its value changed, as
+/// AppKit's own editing would.
+fn show(field: &NSTextField, text: &str) {
+    field.setStringValue(&NSString::from_str(text));
+    let element: &AnyObject = field;
+    // SAFETY: the field is a live view of the stand's window, on the main
+    // thread; the name is AppKit's own constant.
+    unsafe { NSAccessibilityPostNotification(element, NSAccessibilityValueChangedNotification) };
+}
+
+/// The value field counted under `counted`, on the main thread.
+fn field(counted: &str) -> Option<Retained<ValueField>> {
+    FIELDS.with(|fields| fields.borrow().get(counted).cloned())
+}
+
+/// The window's layout changed: a field was shown or hidden.
+fn laid_out() {
+    WINDOW_KEPT.with(|kept| {
+        if let Some(window) = kept.borrow().as_ref() {
+            let element: &AnyObject = window;
+            // SAFETY: the stand's live window, on the main thread; the name
+            // is AppKit's own constant.
+            unsafe {
+                NSAccessibilityPostNotification(element, NSAccessibilityLayoutChangedNotification);
+            }
+        }
+    });
+}
+
+/// What the window says, cleared once a field changes: the message, and
+/// the problem, hidden.
+fn clear_said() {
+    if let Some(message) = field("message") {
+        show(&message, "");
+    }
+    book().message.clear();
+    if let Some(problem) = field("problem") {
+        show(&problem, "");
+        if !problem.isHidden() {
+            problem.setHidden(true);
+            laid_out();
+        }
+    }
+}
+
+/// A press of Save: the application's rule, and what the window shows.
+fn press() {
+    let text = |counted: &str| field(counted).map(|field| field.stringValue().to_string());
+    let customer = text("new_customer").unwrap_or_default();
+    let status = text("new_status").unwrap_or_default();
+    let pressed = book().press(&customer, &status);
+    match pressed {
+        Pressed::Silent => {}
+        Pressed::Refused(said) => {
+            if let Some(problem) = field("problem") {
+                problem.setHidden(false);
+                show(&problem, said);
+                laid_out();
+            }
+        }
+        Pressed::Stored => {
+            for (counted, value) in [("customer", &customer), ("status", &status)] {
+                if let Some(shown) = field(counted) {
+                    show(&shown, value);
+                }
+            }
+            if let Some(message) = field("message") {
+                show(&message, SAVED);
+            }
+            SAVED.clone_into(&mut book().message);
+        }
+    }
+}
+
+/// What the faults armed for the next read of the order number do once
+/// it has been answered: the window moves to another record, or the
+/// application raises its dialog.
+fn after_key_read(mtm: MainThreadMarker) {
+    let (record, dialog) = {
+        let mut book = book();
+        (
+            book.record_after_read.take(),
+            std::mem::take(&mut book.dialog_after_read),
+        )
+    };
+    if let Some(other) = record
+        && let Some(number) = field("order_number")
+    {
+        show(&number, &other);
+    }
+    if dialog {
+        // SAFETY: a window's own initializer, with plain values; the window
+        // is kept by the stand until the process ends, and not released
+        // when it closes.
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                rect(80.0, 80.0, 300.0, 120.0),
+                NSWindowStyleMask::Titled,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        // SAFETY: as above.
+        unsafe { window.setReleasedWhenClosed(false) };
+        window.setTitle(&NSString::from_str(DIALOG));
+        window.orderFrontRegardless();
+        DIALOG_KEPT.with(|kept| *kept.borrow_mut() = Some(window));
+    }
+}
+
+/// On the main thread: the field fault the control interface left, carried
+/// out on the field after the label it names.
+extern "C" fn apply_fault(_context: *mut c_void) {
+    let fault = lock(&FIELD_FAULT).take();
+    let found = fault.is_some_and(|fault| {
+        let (FieldFault::ReadOnly(label) | FieldFault::Disabled(label)) = &fault;
+        let named = FIELDS.with(|fields| {
+            fields
+                .borrow()
+                .values()
+                .find(|field| field.ivars().label == label)
+                .cloned()
+        });
+        named.is_some_and(|named| {
+            match fault {
+                FieldFault::ReadOnly(_) => named.setEditable(false),
+                FieldFault::Disabled(_) => named.setEnabled(false),
+            }
+            true
+        })
+    });
+    FAULT_FOUND.store(found, Ordering::SeqCst);
 }
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
@@ -325,7 +531,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
     let window = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),
-            rect(40.0, 40.0, 560.0, 640.0),
+            rect(40.0, 40.0, 560.0, 800.0),
             NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
             NSBackingStoreType::Buffered,
             false,
@@ -337,12 +543,12 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
     let content = window
         .contentView()
         .ok_or_else(|| "the window has no content view".to_owned())?;
-    let top = 600.0;
+    let top = 760.0;
     // The field nothing labels comes first.
     let unnamed = ValueField::new(mtm, "unnamed", None, rect(160.0, top, 300.0, 24.0));
     unnamed.setStringValue(&NSString::from_str("a value nothing labels"));
     content.addSubview(&unnamed);
-    let rows: [(&str, &'static str, &str); 6] = [
+    let rows: [(&'static str, &'static str, &str); 6] = [
         ("Order number", "order_number", order.number.as_str()),
         ("Customer", "customer", order.customer.as_str()),
         ("Status", "status", order.status.as_str()),
@@ -355,7 +561,12 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
         let label = NSTextField::labelWithString(&NSString::from_str(name), mtm);
         label.setFrame(rect(10.0, y, 140.0, 24.0));
         content.addSubview(&label);
-        let field = ValueField::new(mtm, counted, Some(&label), rect(160.0, y, 300.0, 24.0));
+        let field = ValueField::new(
+            mtm,
+            counted,
+            Some((*name, &label)),
+            rect(160.0, y, 300.0, 24.0),
+        );
         field.setStringValue(&NSString::from_str(value));
         let labelling: &AnyObject = &label;
         // SAFETY: the label is a view of the same window, kept by it for as
@@ -365,6 +576,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
         if *counted == "tracking" {
             TRACKING.with(|kept| *kept.borrow_mut() = Some(field.clone()));
         }
+        FIELDS.with(|fields| fields.borrow_mut().insert(*counted, field.clone()));
     }
     let y = top - 32.0 * 7.0;
     let label = NSTextField::labelWithString(&NSString::from_str("Access code"), mtm);
@@ -406,7 +618,7 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
     scroll.setHasVerticalScroller(true);
     content.addSubview(&scroll);
     table.reloadData();
-    let save = SaveButton::new(mtm, rect(10.0, 20.0, 100.0, 30.0));
+    let save = SaveButton::new(mtm, rect(10.0, y - 190.0, 100.0, 30.0));
     save.setTitle(&NSString::from_str("Save"));
     let target: &AnyObject = &save;
     // SAFETY: the button is its own target, kept by the window; `save:` is
@@ -416,6 +628,33 @@ fn make(mtm: MainThreadMarker, order: &Order) -> Result<(), String> {
         save.setAction(Some(sel!(save:)));
     }
     content.addSubview(&save);
+    // The edit fields, and what the application says, below Save.
+    let edits: [(&'static str, &'static str, bool); 4] = [
+        ("New customer", "new_customer", true),
+        ("New status", "new_status", true),
+        ("Message", "message", false),
+        ("Problem", "problem", false),
+    ];
+    for (row, (name, counted, editable)) in edits.iter().enumerate() {
+        let y = y - 230.0 - 32.0 * row as f64;
+        let label = NSTextField::labelWithString(&NSString::from_str(name), mtm);
+        label.setFrame(rect(10.0, y, 140.0, 24.0));
+        content.addSubview(&label);
+        let field = ValueField::new(
+            mtm,
+            counted,
+            Some((*name, &label)),
+            rect(160.0, y, 300.0, 24.0),
+        );
+        field.setEditable(*editable);
+        let labelling: &AnyObject = &label;
+        // SAFETY: as for the fields above.
+        unsafe { field.setAccessibilityTitleUIElement(Some(labelling)) };
+        // The problem is shown only while the application refuses a value.
+        field.setHidden(*counted == "problem");
+        content.addSubview(&field);
+        FIELDS.with(|fields| fields.borrow_mut().insert(*counted, field.clone()));
+    }
     window.orderFrontRegardless();
     WINDOW_KEPT.with(|kept| *kept.borrow_mut() = Some(window));
     LINES_KEPT.with(|kept| *kept.borrow_mut() = Some(lines));
@@ -438,6 +677,36 @@ unsafe extern "C" {
         context: *mut c_void,
         work: extern "C" fn(*mut c_void),
     );
+    fn dispatch_sync_f(queue: *const Queue, context: *mut c_void, work: extern "C" fn(*mut c_void));
+}
+
+/// Arms a fault, or has the main thread carry out a field fault and waits
+/// until it has; the answer the control interface gives.
+fn fault(line: &str) -> String {
+    match arm(line) {
+        Err(()) => "fault\tunknown".to_owned(),
+        Ok(None) => "fault".to_owned(),
+        Ok(Some(field)) => {
+            *lock(&FIELD_FAULT) = Some(field);
+            FAULT_FOUND.store(false, Ordering::SeqCst);
+            // SAFETY: the main queue is the system's own object, which lives
+            // as long as the process; the function takes no context. This
+            // thread is not the main thread, so the wait cannot block on
+            // itself.
+            unsafe {
+                dispatch_sync_f(
+                    &raw const _dispatch_main_q,
+                    std::ptr::null_mut(),
+                    apply_fault,
+                )
+            };
+            if FAULT_FOUND.load(Ordering::SeqCst) {
+                "fault".to_owned()
+            } else {
+                "fault\tno field has that label".to_owned()
+            }
+        }
+    }
 }
 
 /// On the main thread: the tracking field shows the late value, and the
@@ -491,6 +760,8 @@ fn control_interface() {
         } else if let Some(after) = line.strip_prefix("late ") {
             late(after.parse::<u64>().unwrap_or(0));
             println!("{PREFIX}late");
+        } else if line.starts_with("fault ") {
+            println!("{PREFIX}{}", fault(line));
         } else if line == "quit" {
             break;
         }
@@ -510,6 +781,7 @@ pub(crate) fn serve() -> i32 {
         .ok()
         .and_then(|text| decode_order(&text))
         .unwrap_or_else(Order::example);
+    book().open(&order);
     let app = NSApplication::sharedApplication(mtm);
     let _ = app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     if let Err(why) = make(mtm, &order) {
