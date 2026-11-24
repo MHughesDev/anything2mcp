@@ -71,6 +71,8 @@ pub(crate) struct Inner {
     pub(crate) seen: Vec<String>,
     /// Case 35: how the shipment's optional `carrier` is answered.
     pub(crate) carrier: answers::CarrierAnswer,
+    /// Case 38: whether the served description is its revision.
+    pub(crate) description_revised: bool,
     /// Cases 6 to 9, 11, and 12: what the pages told the application.
     pub(crate) case_events: Vec<String>,
     /// Case 24: when the export was started.
@@ -95,6 +97,7 @@ impl Default for Inner {
             notes: forgery::seeded(),
             seen: Vec::new(),
             carrier: answers::CarrierAnswer::default(),
+            description_revised: false,
             case_events: Vec::new(),
             export_started: None,
             line_item_change: releases::ScreenChange::default(),

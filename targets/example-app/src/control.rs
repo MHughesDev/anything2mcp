@@ -36,6 +36,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/faults", get(faults).post(add_fault).delete(clear_faults))
         .route("/settings", post(settings))
         .route("/shipment", post(set_carrier))
+        .route("/description", post(revise_description))
         .route("/screens", get(screens).post(change_screen))
         .route("/orders/{order_id}/delivery", get(stored_delivery))
         .route("/auth", get(auth_report))
@@ -159,6 +160,24 @@ async fn set_carrier(
     Json(answer): Json<crate::answers::CarrierAnswer>,
 ) -> StatusCode {
     state.lock().await.carrier = answer;
+    StatusCode::NO_CONTENT
+}
+
+/// What the control interface is told of the served description.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Revision {
+    /// Whether the description is served as its revision.
+    revised: bool,
+}
+
+/// Case 38: whether the served description is its revision from now on,
+/// until the next reset.
+async fn revise_description(
+    State(state): State<AppState>,
+    Json(revision): Json<Revision>,
+) -> StatusCode {
+    state.lock().await.description_revised = revision.revised;
     StatusCode::NO_CONTENT
 }
 

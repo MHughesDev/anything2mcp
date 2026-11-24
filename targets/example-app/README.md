@@ -26,7 +26,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `/orders/{order}/delivery` | Case 33: the order's delivery details on a page of the browser's own controls: a select, a check box, a radio group, a date field, and a text area. Save stays disabled until the date is valid, and asks for confirmation in a native dialog before it saves through the JSON interface |
 | `GET`, `PUT /api/orders/{order}/delivery` | Read or update the delivery details. Every field and the version are required |
 | `GET /api/orders/{order}/handoff`, `GET /api/orders/{order}/pickup` | Case 36: the first answers with a property named `client_secret` (the invented text `example-not-a-secret-0001`) beside ordinary values, and takes an optional query value `access_token`; the second requires a query value `api_key` |
-| `GET /api/openapi.json` | Case 30: an OpenAPI 3.1 description of the JSON interface, written by hand and held to the routes by a test |
+| `GET /api/openapi.json` | Case 30: an OpenAPI 3.1 description of the JSON interface, written by hand and held to the routes by a test. Case 38: served revised, as of its version 2, after `POST /__control/description` with `{"revised": true}` |
 | `/secure/...` | Cases 13 to 15 and 29: signing in, below |
 | `/traps/...` | Case 32: pages that write by themselves, below |
 | `/escapes/...` | Case 32, continued: pages that try to get out of a tab that only observes, below |
