@@ -149,7 +149,9 @@ def weights_of_folder(folder):
 
 
 def cross_steps():
-    steps = []
+    # The two targets' standard libraries, which a machine set up for Linux
+    # alone has not got.
+    steps = [("cross targets", ["rustup", "target", "add"] + CROSS_TARGETS, {})]
     for target in CROSS_TARGETS:
         under = target.replace("-", "_")
         steps.append((
