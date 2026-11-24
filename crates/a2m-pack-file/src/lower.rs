@@ -631,8 +631,15 @@ impl Lowering for FileLowering {
             }
             // A new row carries its key and its fields; the other writes
             // carry the key at `locate` and the fields at `set`.
+            // The `save` that commits carries every one of them again, so
+            // that what the write sends is plain to an offline test, which
+            // compares the committing step's arguments with the values its
+            // `<step>.request.json` states (finding 22 of field test 4).
+            // The driver reads none of them at `save`: it saves what
+            // `set` built.
+            let save_args: Vec<StepArg> = key.iter().cloned().chain(fields.clone()).collect();
             let set_args = if change == Change::Create {
-                key.iter().cloned().chain(fields).collect()
+                save_args.clone()
             } else {
                 fields
             };
@@ -653,7 +660,7 @@ impl Lowering for FileLowering {
                 steps.step(
                     SAVE,
                     &StepSpec::Save,
-                    Vec::new(),
+                    save_args,
                     &a2m_provider::codes::row::NO_CONFIRMATION,
                     true,
                     false,
