@@ -22,7 +22,7 @@ use a2m_ledger::{
     RetentionClass, Store, StoreConfig, Tables, ToolKind, Tx, WriteClearance,
 };
 use a2m_telemetry::ManualClock;
-use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
+use a2m_vault::{KeyStore, MemoryKeyStore, RandomSource, Vault};
 
 /// Random bytes that are the same on every run: a counter, hashed.
 pub struct Counted(AtomicU64);
@@ -100,6 +100,16 @@ pub async fn memory_clocked() -> (Store, Arc<ManualClock>) {
 pub async fn open_clocked(
     folder: Option<&Path>,
     keys: Arc<MemoryKeyStore>,
+    clock: Arc<ManualClock>,
+) -> (Store, Arc<Vault>) {
+    open_keyed(folder, keys, clock).await
+}
+
+/// The same, with the vault's root in any key store, such as one derived
+/// from a passphrase, which opens the same root in every process.
+pub async fn open_keyed(
+    folder: Option<&Path>,
+    keys: Arc<dyn KeyStore>,
     clock: Arc<ManualClock>,
 ) -> (Store, Arc<Vault>) {
     let config = match folder {

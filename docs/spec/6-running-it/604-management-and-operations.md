@@ -22,13 +22,21 @@ On one machine the same actions exist, and the person who runs the engine is its
 
 ## Upgrades
 
-- **The store migrates itself.** The binary migrates its own database on start, and can run against the previous schema during a rolling upgrade.
+- **The store migrates itself.** The binary migrates its own database on start, and can run against the previous schema during a rolling upgrade. On one machine, a store kept as the build of migration 0028 wrote it is opened by this build and each later one, which applies the migrations it lacks and reads its runs, records, evidence, and audit chain (`crates/a2m-ledger/tests/older_store.rs`, package 9.2a). The fixture is never made again; a release's own store may be kept beside it.
 - **Target files keep loading.** They carry a format version; older formats keep loading, and `version.migrate` (the shortcut `migrate`) rewrites them.
 - **One part at a time.** Control-plane replicas and runners can be upgraded one at a time. Servers pin a version and upgrade deliberately; how an update arrives is in [section 605](605-packaging-and-release.md).
 
 ## Backup and recovery
 
-The database and the evidence store are backed up with standard tools. The vault is backed up separately, with its keys. After a restore, every run that was in flight is treated as `possible_commit` and reconciled before it continues ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)).
+**On one machine**, a backup is a copy of the data folder, made by the person with their system's own tools while the engine is stopped. There is no backup action. What the person does:
+
+1. Stop the engine with `anything2mcp engine stop`, and let no command run until the copy is made. A copy made while the engine runs may hold half of a transaction; the engine checks its store's integrity at start and refuses a damaged one as `store_corrupt`.
+2. Copy the whole data folder: the folder `A2M_HOME` names, under `data`, or the system's own (`~/.local/share/anything2mcp` on Linux, `~/Library/Application Support/anything2mcp` on macOS, `%LOCALAPPDATA%\anything2mcp` on Windows). It holds the store with its evidence, the browser profiles the engine owns, the runner's journal, and the logs. On the passphrase route it holds the salt too, so the copy opens with the same passphrase. With the operating system's key store, the root key stays in that store and is not in the copy: the copy opens only for the same account on the same machine.
+3. To put the copy back, stop the engine, move the newer folder away, put the copy in its place whole, and start the engine.
+
+The engine then holds what the copy held, and nothing of what the newer folder recorded after it: the newer folder's runs, approvals, and sign-ins are gone with it, while what those runs wrote is still in the system. A run that was in flight when the copy was taken is found stopped; once its lease has lapsed it is declared lost, and its caller's `run.resume` reconciles every record left mid-write before anything is sent ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)). So a write that the newer folder made after the copy was taken is found by reading and verified, not sent again. The proof is `crates/anything2mcp/tests/copied_data_folder.rs`: the real program is killed with its write held unsent, the folder is copied, the newer folder completes the write, the copy is put back, and its resume reads the record, verifies it, and sends nothing; the test application holds one write (package 9.2a).
+
+**On a server**, after the first release, the database and the evidence store are backed up with standard tools, and the vault separately, with its keys. After a restore, every run that was in flight is treated as `possible_commit` and reconciled before it continues. That half is package 9.2.
 
 ## Retention
 
