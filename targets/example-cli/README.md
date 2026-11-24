@@ -132,6 +132,11 @@ A fault is a setting: `Fault::once(kind)` for the next start it applies to, `Fau
 | `RoundQuantity { multiple }` | Stores a quantity rounded down, and prints the quantity asked for |
 | `UppercaseName` | Stores a new item's name in upper case, and prints it as given |
 | `ReportVersion { version }` | Reports another version |
+| `TabbedHelp` | Sets out each listing of commands in help with a tab between a name and its text. Name `help` with `.on("help")` |
+| `UnnamedHelpLine` | Adds `  [options]` and a text to the overview's listing of commands, a line that holds no command name. Name `help` with `.on("help")` |
+| `SilentMiss` | Answers `item show` of a code it does not hold with no output and status 0 |
+| `InterfaceLine` | Prints a second line after the version: `example-cli interface 7` |
+| `NestedJson` | Prints `item list --format=json` as one document, `{"header": {"count": n}, "items": [...]}` |
 | `RequireSession` | Refuses every data command with status 77 unless signed in, by `login` or by the variable `EXAMPLE_CLI_TOKEN` |
 | `LeakSecret` | Prints the password `login` read, and the token variable, on both streams |
 | `SpawnChild { lifetime_ms }` | Starts a child process that keeps the program's output streams and outlives it |

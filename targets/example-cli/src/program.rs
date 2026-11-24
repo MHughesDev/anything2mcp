@@ -711,7 +711,11 @@ impl Run {
                 _ => None,
             })
             .unwrap_or_else(|| VERSION.to_owned());
-        self.out(&format!("example-cli {version}\n"))
+        let mut text = format!("example-cli {version}\n");
+        if self.has(&FaultKind::InterfaceLine) {
+            text.push_str("example-cli interface 7\n");
+        }
+        self.out(&text)
     }
 
     fn help(&self, args: &[String]) -> Result<(), Stopped> {
@@ -722,11 +726,17 @@ impl Run {
             .collect();
         if args.is_empty() {
             self.err("example-cli: error: a command is required\n");
-            self.err(&overview());
+            self.err(&overview(
+                self.has(&FaultKind::TabbedHelp),
+                self.has(&FaultKind::UnnamedHelpLine),
+            ));
             return Err(Stopped::new(exit::INPUT, String::new()));
         }
         if words.is_empty() {
-            return self.out(&overview());
+            return self.out(&overview(
+                self.has(&FaultKind::TabbedHelp),
+                self.has(&FaultKind::UnnamedHelpLine),
+            ));
         }
         let name = words.join(" ");
         let known: Vec<&Help> = HELP
@@ -757,7 +767,7 @@ impl Run {
                 let mut text =
                     format!("Usage: example-cli {name} <command> [arguments]\n\nCommands:\n");
                 for help in group {
-                    text.push_str(&format!("  {:<14} {}\n", help.name, help.about));
+                    text.push_str(&listing_line(self.has(&FaultKind::TabbedHelp), help));
                 }
                 self.out(&text)
             }
@@ -808,6 +818,9 @@ impl Run {
             return Err(Stopped::input(format!("unknown format {form:?}")));
         }
         let store = self.load(self.data_home()?)?;
+        if self.has(&FaultKind::SilentMiss) && !store.items.contains_key(sku) {
+            return Ok(());
+        }
         let item = store.items.get(sku).ok_or_else(|| absent(sku))?;
         if form == "json" {
             return self.out(&format!("{}\n", self.item_json(item)));
@@ -861,7 +874,12 @@ impl Run {
         let text = match form {
             "json" => {
                 let documents: Vec<Value> = items.iter().map(|item| self.item_json(item)).collect();
-                format!("{}\n", Value::Array(documents))
+                if self.has(&FaultKind::NestedJson) {
+                    let nested = json!({"header": {"count": documents.len()}, "items": documents});
+                    format!("{nested}\n")
+                } else {
+                    format!("{}\n", Value::Array(documents))
+                }
             }
             "jsonl" => items
                 .iter()
@@ -1098,13 +1116,26 @@ fn signed_in(home: &Path) -> bool {
         || std::env::var_os(TOKEN_ENV).is_some_and(|token| token == PASSWORD)
 }
 
-fn overview() -> String {
+/// One line of a listing of commands: two spaces, the name padded, and its
+/// text; with a tab between the name and its text when `tabbed`.
+fn listing_line(tabbed: bool, help: &Help) -> String {
+    if tabbed {
+        format!("  {}\t{}\n", help.name, help.about)
+    } else {
+        format!("  {:<14} {}\n", help.name, help.about)
+    }
+}
+
+fn overview(tabbed: bool, unnamed: bool) -> String {
     let mut text = format!(
         "example-cli {VERSION}\nInventory for the imaginary order-entry system `example`.\n\n\
          Usage: example-cli [--home <dir>] <command> [arguments]\n\nCommands:\n"
     );
     for help in HELP {
-        text.push_str(&format!("  {:<14} {}\n", help.name, help.about));
+        text.push_str(&listing_line(tabbed, help));
+    }
+    if unnamed {
+        text.push_str("  [options]      Not the name of a command.\n");
     }
     text.push_str(
         "\nOptions:\n  --home <dir>   The folder that holds the data; or set EXAMPLE_CLI_HOME\n  \

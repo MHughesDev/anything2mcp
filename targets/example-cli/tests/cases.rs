@@ -617,6 +617,58 @@ fn fault_drift_changes_every_output_form() -> Outcome {
     Ok(())
 }
 
+/// The four faults that make a program answer in a way another reader must
+/// handle: help set out with tabs, a miss answered with silence, a second
+/// version line, and one nested JSON document.
+#[test]
+fn fault_help_with_tabs_a_silent_miss_a_second_version_line_and_nested_json() -> Outcome {
+    let stand = stand()?;
+    stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::TabbedHelp).on("help"))?;
+    let help = stand.run(&["--help"])?;
+    assert!(
+        help.stdout.contains("\n  item show\tShow one item"),
+        "{}",
+        help.stdout
+    );
+    stand.control().clear_faults()?;
+    assert!(!stand.run(&["--help"])?.stdout.contains('\t'));
+
+    stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::SilentMiss).on("item show"))?;
+    let miss = stand.run(&["item", "show", "ZZ-9999"])?;
+    assert_eq!((code(&miss), miss.stdout.as_str()), (status(exit::OK), ""));
+    assert_eq!(
+        code(&stand.run(&["item", "show", "SK-1001"])?),
+        status(exit::OK)
+    );
+    stand.control().clear_faults()?;
+    assert_eq!(
+        code(&stand.run(&["item", "show", "ZZ-9999"])?),
+        status(exit::ABSENT)
+    );
+
+    stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::InterfaceLine))?;
+    assert_eq!(
+        stand.run(&["--version"])?.stdout,
+        "example-cli 2.4.1\nexample-cli interface 7\n"
+    );
+    stand.control().clear_faults()?;
+
+    stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::NestedJson).on("item list"))?;
+    let document: Value =
+        serde_json::from_str(&stand.run(&["item", "list", "--format=json"])?.stdout)?;
+    assert_eq!(document["header"]["count"], 3);
+    assert_eq!(document["items"].as_array().map(Vec::len), Some(3));
+    Ok(())
+}
+
 /// A question nobody expected, even on a read, even with `--yes`.
 #[test]
 fn fault_an_unexpected_prompt() -> Outcome {
