@@ -444,6 +444,25 @@ impl Kernel {
             ));
 
             if let Some(vault) = &prepared.vault {
+                // The key the local person's runs are sealed under is opened
+                // now, while the key store answered the digest key, and held
+                // for the life of the process: a key store that stops after
+                // the start then leaves that person's reads their evidence,
+                // sealed as ever (section 224, decision 0999). A server
+                // serves many people, and opens each key at first use.
+                if local
+                    && let Err(failure) = vault
+                        .hold_owner_key(
+                            &found.workspace,
+                            &a2m_vault::OwnerRef::of(&a2m_core::Identity::Person(found.user)),
+                        )
+                        .await
+                {
+                    fixed.push(Impaired {
+                        part: Part::Vault,
+                        failure,
+                    });
+                }
                 let mut set = ProviderSet::neutral();
                 for provider in providers.auth_providers() {
                     match set.with(provider) {
