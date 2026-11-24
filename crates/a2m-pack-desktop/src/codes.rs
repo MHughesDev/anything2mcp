@@ -98,8 +98,8 @@ a2m_core::failure_codes! {
         next "Run the tool again once the other write has ended.",
         passes by_itself;
     WRITES_NOT_BUILT = Busy, "writes_not_built",
-        meaning "This pack writes only on Linux in this version. Nothing was sent.",
-        next "Run the write on Linux. On this system the pack reads only.",
+        meaning "This pack writes only on Linux, Windows, and macOS in this version. Nothing was sent.",
+        next "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
         passes not_by_itself;
 }
 
@@ -128,15 +128,15 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 
 /// A write on a system where the pack's acting half is not built. Nothing
 /// was sent.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub(crate) fn writes_not_built() -> StepFailure {
     StepFailure::not_sent(failure(
         &row::WRITES_NOT_BUILT,
         format!(
-            "The desktop pack changes applications only on Linux in this version; this system is {}. Nothing was sent.",
+            "The desktop pack changes applications only on Linux, Windows, and macOS in this version; this system is {}. Nothing was sent.",
             std::env::consts::OS
         ),
-        "Run the write on Linux. On this system the pack reads only.",
+        "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
     ))
 }
 
