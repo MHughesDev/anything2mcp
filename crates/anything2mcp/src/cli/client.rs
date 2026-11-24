@@ -169,6 +169,7 @@ pub(crate) async fn start(
 
 /// What the engine answered to one action: the response as JSON, and its
 /// exit class.
+#[derive(Debug)]
 struct Answered {
     body: Json,
     exit: ExitClass,
@@ -330,21 +331,90 @@ pub(crate) fn not_reached(tree: &Tree, action: &str, failure: &Failure, json: bo
     finished
 }
 
+/// The action that stops the engine.
+const STOP_ACTION: &str = "engine.stop";
+
+/// What a command sends its steps with, beside the link: its global
+/// options, the project folder it was run in, and the engine's paths.
+pub(crate) struct Asking<'a> {
+    pub(crate) globals: &'a Globals,
+    pub(crate) project: Option<&'a Path>,
+    pub(crate) paths: &'a Paths,
+}
+
+/// What an `engine.stop` whose answer was lost comes to. A stop writes
+/// nothing of the person's, so its lost answer is no write in doubt, and
+/// asking for it again is safe. The client looks at the channel once
+/// more: an engine that stops lets go of its channel before it ends, and
+/// takes no connection after it was asked, so one that no longer answers
+/// has stopped serving, which is what its answer says, and the command
+/// succeeds with that answer and a warning that says how it was learned.
+/// An engine that still answers did not take the stop: the command fails
+/// with `busy`/`engine_running`, and running it again asks again
+/// (decision 0399).
+async fn stop_answer_lost(paths: &Paths) -> Result<Answered, Failure> {
+    let connector = Connector::new(paths, program_version()?, ClientLabel::CommandLine)?;
+    match connector.connect().await {
+        Ok(_still) => Err(Failure::new(
+            FailureClass::Busy,
+            local_codes::ENGINE_RUNNING,
+            "The engine was asked to stop, its answer was lost, and it still answers on the local channel: it did not take the stop.",
+            "Run `anything2mcp engine stop` again: a stop writes nothing, so asking again is safe.",
+        )),
+        Err(failure)
+            if unreachable(&failure) || *failure.code() == local_codes::CONNECTION_LOST =>
+        {
+            let response = a2m_actions::Response {
+                ok: true,
+                action: STOP_ACTION.to_owned(),
+                result: Some(serde_json::json!({"stopping": true})),
+                error: None,
+                warnings: vec![
+                    "The engine's answer to the stop was lost; it no longer answers on the local channel, so it has stopped serving.".to_owned(),
+                ],
+                next: None,
+                exit: ExitClass::Succeeded,
+                decision: None,
+            };
+            Ok(Answered {
+                body: response.to_json(),
+                exit: ExitClass::Succeeded,
+            })
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
 /// Sends the steps of one command to the engine in turn and renders the
 /// last answer: the first that is not a success, or the final one. The
 /// same rule as a command that runs the engine in its own process.
 pub(crate) async fn run_steps(
     link: &Link,
     tree: &Tree,
-    globals: &Globals,
+    asking: &Asking<'_>,
     steps: Vec<Step>,
     json: bool,
-    project: Option<&Path>,
     warning: Option<&str>,
 ) -> Finished {
     let mut last = None;
     for step in steps {
-        match send(link, &step, globals, project).await {
+        let sent = match send(link, &step, asking.globals, asking.project).await {
+            Err(failure)
+                if step.action == STOP_ACTION
+                    && failure.class() == FailureClass::PossibleCommit =>
+            {
+                stop_answer_lost(asking.paths).await
+            }
+            sent => sent,
+        };
+        match sent {
+            Err(failure) if failure.code() == &local_codes::ENGINE_RUNNING => {
+                return render::render(
+                    &render::refused(&step.action, &failure, ExitClass::Failed),
+                    tree,
+                    json,
+                );
+            }
             Ok(answered) => {
                 let go_on = answered.exit == ExitClass::Succeeded;
                 last = Some(answered);
@@ -426,7 +496,38 @@ pub(crate) async fn carry(
 mod tests {
     use a2m_actions::ExitClass;
 
-    use super::{Sent, exit_class, not_an_answer};
+    use super::{Sent, exit_class, not_an_answer, stop_answer_lost};
+
+    /// A lost answer to `engine.stop` is never a write in doubt: with no
+    /// engine on the channel after it, the stop is what the command says,
+    /// with a warning; with one still answering, the command fails by name,
+    /// and is safe to run again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_lost_answer_to_a_stop_is_a_stop_when_the_channel_no_longer_answers() {
+        let home = std::env::temp_dir().join(format!("a2m-stop-lost-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let paths = a2m_actions::Paths::under(&home);
+
+        let stopped = stop_answer_lost(&paths).await.unwrap();
+        assert_eq!(stopped.exit, ExitClass::Succeeded);
+        assert_eq!(stopped.body["ok"], true, "{}", stopped.body);
+        assert_eq!(stopped.body["action"], "engine.stop");
+        assert_eq!(stopped.body["result"]["stopping"], true);
+        assert_eq!(stopped.body["warnings"].as_array().unwrap().len(), 1);
+
+        let channel = a2m_local::Channel::bind(&paths, crate::local::program_version().unwrap())
+            .await
+            .unwrap();
+        let control = channel.control();
+        let serving =
+            tokio::spawn(channel.serve(axum::Router::new(), a2m_local::IdlePolicy::never()));
+        let still = stop_answer_lost(&paths).await.unwrap_err();
+        assert_eq!(still.code(), &a2m_local::codes::ENGINE_RUNNING, "{still:?}");
+        assert_eq!(still.class(), a2m_core::FailureClass::Busy);
+        control.stop(a2m_local::StopReason::Asked);
+        drop(serving.await.unwrap());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn the_exit_class_is_read_from_its_word_and_anything_else_is_a_failure() {

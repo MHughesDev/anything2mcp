@@ -121,7 +121,7 @@ async fn an_engine_whose_data_directory_is_removed_refuses_the_next_request_by_n
 async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_leaves_nothing() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
-    let served = Served::start(&machine);
+    let mut served = Served::start(&machine);
 
     // A command that does not hold the vault's passphrase cannot run the
     // engine itself: whatever it reads, the engine read.
@@ -189,9 +189,12 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     assert_eq!(still.status.code(), Some(0), "{still:?}");
 
     // Asked to stop, the engine closes and its process ends by itself.
+    // The engine answers the stop before it stops taking requests, so the
+    // answer is the engine's own, with no warning of a lost one.
     let stop = output(without_key(&["engine", "stop"])).await;
-    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}; {}", served.so_far());
     assert_eq!(object(&stop)["result"]["stopping"], true);
+    assert_eq!(object(&stop)["warnings"], json!([]), "{stop:?}");
     let (code, printed) = served.ended();
     assert_eq!(code, Some(0), "{printed}");
     let last: Json = serde_json::from_str(printed.trim()).unwrap();

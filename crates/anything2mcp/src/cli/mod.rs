@@ -498,16 +498,13 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
                 crate::engine::settings_warning(link.start_variables_differing(
                     &crate::engine::settings_variables(&host.environment),
                 ));
-            let finished = client::run_steps(
-                &link,
-                &tree,
-                &globals,
-                steps,
-                json,
-                project.as_deref(),
-                warning.as_deref(),
-            )
-            .await;
+            let asking = client::Asking {
+                globals: &globals,
+                project: project.as_deref(),
+                paths: &paths,
+            };
+            let finished =
+                client::run_steps(&link, &tree, &asking, steps, json, warning.as_deref()).await;
             return after_steps(finished, stop.as_ref(), &tree, json);
         }
         // No engine runs and none was started: `engine.in_process` is on,
