@@ -20,8 +20,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Environment, EvidenceLevel, Failure, Finding, NoSecrets, Redact, Step, SurfaceKind,
-    Values,
+    Archetype, Coverage, Environment, EvidenceLevel, Failure, Finding, LimitationCode, NoSecrets,
+    Redact, Step, SurfaceKind, Values,
 };
 use a2m_pack_command::binary::BinaryFound;
 use a2m_pack_command::codes;
@@ -159,6 +159,49 @@ async fn facts(scene: &Scene, bytes: &[u8]) -> BinaryFound {
     assert_eq!(finding.level(), EvidenceLevel::Inferred);
     assert_eq!(finding.kind().as_str(), "binary");
     serde_json::from_str(finding.found()).unwrap()
+}
+
+/// The most imports or exports one finding lists (`MOST_LISTED` of the
+/// pack); a program with more is reported as read in part, by name.
+const MOST_LISTED: usize = 2_000;
+
+/// Like `facts`, for a program of the system's own build, which may hold more
+/// imports or exports than a finding lists (a Mach-O file lists a bind for
+/// each place that uses a symbol). The pack's bound is not loosened and the
+/// program is not skipped: when the lists are cut, the test requires that
+/// the pack said so (`bytes` as the bound hit, partial coverage, a
+/// truncation limitation), that a list is full, and that the totals count
+/// what the lists could not hold. Answers whether they were cut.
+async fn facts_of_a_large_program(scene: &Scene, bytes: &[u8]) -> (BinaryFound, bool) {
+    let (report, findings) = read(scene, bytes, &NoSecrets).await.unwrap();
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(finding.level(), EvidenceLevel::Inferred);
+    assert_eq!(finding.kind().as_str(), "binary");
+    let found: BinaryFound = serde_json::from_str(finding.found()).unwrap();
+    let cut = found.imports_total as usize > found.imports.len()
+        || found.exports_total as usize > found.exports.len();
+    if cut {
+        assert_eq!(report.bounds_hit, ["bytes"], "{report:?}");
+        assert_eq!(finding.coverage(), Coverage::Partial);
+        assert!(
+            finding
+                .limitations()
+                .iter()
+                .any(|limit| limit.code == LimitationCode::Truncated),
+            "{:?}",
+            finding.limitations()
+        );
+        assert!(
+            found.imports.len() == MOST_LISTED || found.exports.len() == MOST_LISTED,
+            "{} imports and {} exports are listed",
+            found.imports.len(),
+            found.exports.len()
+        );
+    } else {
+        assert!(report.bounds_hit.is_empty(), "{report:?}");
+    }
+    (found, cut)
 }
 
 async fn stop(scene: &Scene, bytes: &[u8]) -> Failure {
@@ -730,7 +773,7 @@ async fn the_stand_program_agrees_with_the_system_tools() {
     let stand = Stand::start().unwrap();
     let program = stand.program().to_path_buf();
     let bytes = std::fs::read(&program).unwrap();
-    let found = facts(&scene, &bytes).await;
+    let (found, cut) = facts_of_a_large_program(&scene, &bytes).await;
     assert_eq!(found.kind, "executable");
     assert_eq!(found.bits, 64);
     assert_eq!(found.architecture, std::env::consts::ARCH);
@@ -776,9 +819,11 @@ async fn the_stand_program_agrees_with_the_system_tools() {
             .map(|import| import.name.clone())
             .collect();
         let our_exports: BTreeSet<String> = found.exports.iter().cloned().collect();
-        assert_eq!(our_imports, imports);
-        assert_eq!(our_exports, exports);
-        assert_eq!(found.imports_total as usize, found.imports.len());
+        if !cut {
+            assert_eq!(our_imports, imports);
+            assert_eq!(our_exports, exports);
+            assert_eq!(found.imports_total as usize, found.imports.len());
+        }
         assert!(found.signer.is_none());
     } else if cfg!(target_os = "macos") {
         assert_eq!(
@@ -795,7 +840,7 @@ async fn the_stand_program_agrees_with_the_system_tools() {
         let ours: BTreeSet<String> = found.libraries.iter().cloned().collect();
         assert_eq!(ours, listed);
         // Every symbol the system's tool lists as undefined is an import.
-        if let Some(undefined) = tool("nm", &["-u", path]) {
+        if let Some(undefined) = tool("nm", &["-u", path]).filter(|_| !cut) {
             let ours: BTreeSet<String> = found
                 .imports
                 .iter()
