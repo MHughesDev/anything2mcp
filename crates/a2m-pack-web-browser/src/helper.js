@@ -408,6 +408,35 @@
     return checked;
   }
 
+  // Takes the focus from the element, as a person's moving on would, so
+  // that a page that commits a value when its control loses the focus is
+  // told. An element that does not hold the focus is left as it is.
+  function blur(el) {
+    if (stale(el)) return { stale: true };
+    el.blur();
+    return { ok: true, x: 0, y: 0, checked: null };
+  }
+
+  // Waits, at most `timeoutMs`, for the element to leave its document: a
+  // page that draws a part of itself again after a change replaces the
+  // control. `true` once it has left, `false` when the time ends first.
+  function gone(el, timeoutMs) {
+    return new Promise((resolve) => {
+      if (stale(el)) return resolve(true);
+      let timer = null;
+      const observer = new MutationObserver(() => {
+        if (stale(el)) done(true);
+      });
+      const done = (answer) => {
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(answer);
+      };
+      observer.observe(el.ownerDocument, { childList: true, subtree: true });
+      timer = setTimeout(() => done(false), timeoutMs);
+    });
+  }
+
   // Whether the element is a file input that can take a file.
   function fileInput(el) {
     if (stale(el)) return { stale: true };
@@ -726,7 +755,7 @@
 
   const page = () => ({ address: location.href, title: document.title });
 
-  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, fileInput, until, request, readFromPage, writeFromPage, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, blur, gone, selectByValue, fileInput, until, request, readFromPage, writeFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
     Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
   );

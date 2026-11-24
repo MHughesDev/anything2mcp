@@ -575,6 +575,10 @@ pub enum Input {
     Type(String),
     /// Set the value through the element's own setter and tell the page.
     NativeSet(String),
+    /// Take the focus from the element, as a person's moving on would, so
+    /// that a page that commits a value when its control loses the focus is
+    /// told; nothing is done to an element that does not hold the focus.
+    Blur,
     /// Focus and press one key.
     Press(Key),
     /// A click in the middle of the element.
@@ -597,6 +601,7 @@ impl fmt::Debug for Input {
             Self::Fill(text) => write!(f, "Fill({} characters)", length(text)),
             Self::Type(text) => write!(f, "Type({} characters)", length(text)),
             Self::NativeSet(text) => write!(f, "NativeSet({} characters)", length(text)),
+            Self::Blur => f.write_str("Blur"),
             Self::Press(key) => write!(f, "Press({key:?})"),
             Self::Click => f.write_str("Click"),
             Self::Check(on) => write!(f, "Check({on})"),
@@ -1379,6 +1384,36 @@ impl Page {
         }
     }
 
+    /// Whether the element left its document within `within`: `true` once
+    /// it has, or once its document was replaced under the wait; `false`
+    /// when the time ends first. The page waits, and is asked once.
+    async fn gone(
+        &self,
+        element: &Element,
+        within: std::time::Duration,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
+        if element.tab != self.serial {
+            return Ok(true);
+        }
+        let millis = usize::try_from(within.as_millis()).unwrap_or(usize::MAX);
+        match self
+            .evaluate(
+                On::Element(&element.object),
+                "function (timeout) { return __a2m.gone(this, timeout); }",
+                vec![CallArgument::number(millis)],
+                true,
+                true,
+                deadline,
+            )
+            .await
+        {
+            Ok(evaluated) => Self::answer(evaluated),
+            Err(CallError::Gone | CallError::NoHelper) => Ok(true),
+            Err(CallError::Browser(error)) => Err(error),
+        }
+    }
+
     fn answer<T: DeserializeOwned>(evaluated: Evaluated) -> Result<T, BrowserError> {
         evaluated.result.read().ok_or_else(|| {
             BrowserError::Unexpected("the helper answered in a shape no rule covers".to_owned())
@@ -1894,6 +1929,15 @@ impl Page {
                     element,
                     "function (text) { return __a2m.nativeSet(this, text); }",
                     vec![CallArgument::text(text)],
+                    deadline,
+                )
+                .await
+                .map(|_| ()),
+            Input::Blur => self
+                .checked(
+                    element,
+                    "function () { return __a2m.blur(this); }",
+                    Vec::new(),
                     deadline,
                 )
                 .await
@@ -3855,6 +3899,40 @@ impl ActTab {
                     return Err(BrowserError::Timeout { dispatch: Dispatch::NotSent });
                 }
             }
+        }
+    }
+
+    /// Waits, at most `within`, for the page to draw again the part that
+    /// holds `element`: `true` once the element has left its document, or
+    /// a document of the tab has loaded after the count `seen` that
+    /// [`ActTab::changes`] gave; `false` when the time ends with the
+    /// element still there. A page whose platform commits a value by
+    /// sending it and drawing the form again is waited for so, on the
+    /// page's own word, never for a fixed time.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::Crashed`], [`BrowserError::Disconnected`], or
+    /// [`BrowserError::Timeout`] when the tab goes or does not answer by
+    /// `deadline`.
+    pub async fn wait_redrawn(
+        &self,
+        element: &Element,
+        seen: u64,
+        within: std::time::Duration,
+        deadline: Deadline,
+    ) -> Result<bool, BrowserError> {
+        if self.changes() > seen {
+            return Ok(true);
+        }
+        let soon = Deadline::after(within.min(deadline.remaining()));
+        tokio::select! {
+            gone = self.page.gone(element, within.min(deadline.remaining()), deadline) => gone,
+            changed = self.changed_since(seen, soon) => match changed {
+                Ok(()) => Ok(true),
+                Err(BrowserError::Timeout { .. }) => Ok(false),
+                Err(error) => Err(error),
+            },
         }
     }
 

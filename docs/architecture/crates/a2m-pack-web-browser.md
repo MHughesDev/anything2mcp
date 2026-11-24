@@ -181,7 +181,7 @@ pub enum Primitive { Visible(Query), Hidden(Query), Enabled(Query), Text(Query, 
                      Url(TextMatch), All(Vec<Primitive>), Any(Vec<Primitive>) }
 pub enum ReadWhat { Value, Text, Checked, SelectedText, Attribute { name: String }, Cell { index: usize }, TreePath, Files }
 pub enum RawValue { Text(String), Flag(bool), Absent }
-pub enum Input { Fill(String), Type(String), NativeSet(String), Press(Key), Click, Check(bool), SelectByValue(String) }
+pub enum Input { Fill(String), Type(String), NativeSet(String), Blur, Press(Key), Click, Check(bool), SelectByValue(String), Attach(PathBuf) }
 pub enum Key { Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, Space }
 pub enum DialogAnswer { Accept, AcceptWith(String), Dismiss }
 pub struct PageRequest { pub method: String, pub address: Address, pub headers: Vec<(String, String)>, pub body: Option<String> }
