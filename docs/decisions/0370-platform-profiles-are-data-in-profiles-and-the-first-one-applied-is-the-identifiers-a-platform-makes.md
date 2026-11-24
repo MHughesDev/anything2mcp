@@ -1,6 +1,6 @@
-# 0399. Platform profiles are data in `profiles/`, and the first part applied is the identifiers a platform makes
+# 0370. Platform profiles are data in `profiles/`, and the first part applied is the identifiers a platform makes
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was written. Carries out the first slice of package 8.4a, which [decision 0399 on the remaining widget drivers](0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md) split from 8.4.
+**Status:** Accepted. Design decision. The owner had not read this record when it was written. Carries out the first slice of package 8.4a, which [decision 0370 on the remaining widget drivers](0351-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md) split from 8.4.
 
 **Date:** 2026-11-24
 
@@ -21,7 +21,7 @@ The design says a platform profile is one preset for each family of web interfac
 ## Not built
 
 - The probe's use of `detect` and `ready` to name a family and to know a page is ready (`unknown_platform`, `{profile_ready: true}`): these need a page, and are package E2's.
-- The input commit (`blur`, `enter`, `native_set_then_blur`, `blur_then_wait_ready`) as an operation of the widget drivers: the files state it and the loader checks it, and the drivers still follow the one text rule of decision 0399 on the widget drivers.
+- The input commit (`blur`, `enter`, `native_set_then_blur`, `blur_then_wait_ready`) as an operation of the widget drivers: the files state it and the loader checks it, and the drivers still follow the one text rule of decision 0370 on the widget drivers.
 - `web.profile_readonly`, the refusal of a write binding on a surface whose tier is `read_only` or `unsupported`; the frame mode `found`; the locator priority as the order the drivers try kinds of locator in; and `drift_risk` as how often drift is checked. Each reads the profile the same way these two lints do, and each is its own step.
 - A profile written by a person outside the repository, and the settings that would name its folder.
 

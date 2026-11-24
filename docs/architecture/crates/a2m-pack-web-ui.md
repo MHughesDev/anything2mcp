@@ -57,7 +57,7 @@ Codes are stable once released. A lint code is the pack's name, a dot, and the r
 | `web.css_not_last` | Error | A `css` locator is allowed only last in a list | Yes |
 | `web.css_used` | Warning | Any `css` locator | Yes |
 | `web.no_fingerprint` | Error | A field, an action, or a table with no fingerprint | Yes |
-| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile | Yes, for `css` and `test_id` locators of fields and actions ([decision 0399](../../decisions/0399-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)) |
+| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile | Yes, for `css` and `test_id` locators of fields and actions ([decision 0370](../../decisions/0370-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)) |
 | `web.profile_unknown` | Error | A surface's `profile` is not the name of a profile or `auto` | Yes |
 | `web.commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted | No |
 | `web.variant_unhandled` | Error | A variant with no handling | The schema requires a handling |

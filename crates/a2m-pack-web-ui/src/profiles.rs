@@ -13,7 +13,7 @@
 //! identifier patterns, by the lint `web.generated_id`, and the name, by
 //! `web.profile_unknown`. The readiness rule, the input commit, the frame
 //! mode, and the tier's limit on writes are read and checked here and are not
-//! applied yet (decision 0399, the profiles record).
+//! applied yet (decision 0370, the profiles record).
 
 use std::sync::OnceLock;
 
