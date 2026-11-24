@@ -169,7 +169,13 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
     assert!(scouted["report_hash"].is_string(), "{scouted}");
     assert_eq!(
         found_by_kind(&scouted),
-        json!({"described_operation": {"inferred": 11}, "endpoint": {"discovered": 2}}),
+        // The description's two declared signs of a sign-in are found with
+        // its operations (decision 0367).
+        json!({
+            "described_operation": {"inferred": 11},
+            "endpoint": {"discovered": 2},
+            "sign_in_method": {"inferred": 2}
+        }),
         "{scouted}"
     );
     let written = drafted(&scouted);
@@ -373,7 +379,13 @@ async fn a_scout_of_a_large_description_answers_within_the_cap_and_its_lists_are
 
     // The counts are the whole report's.
     let counts = &scouted["counts"];
-    assert_eq!(count(&counts["found"]), MANY + SOUND + 11 + 2, "{counts}");
+    // The operations, the two endpoints the live look found, and the two
+    // signs of a sign-in the description declares (decision 0367).
+    assert_eq!(
+        count(&counts["found"]),
+        MANY + SOUND + 11 + 2 + 2,
+        "{counts}"
+    );
     assert!(written_in(&scouted).len() <= 20, "{scouted}");
     assert!(count(&counts["drafted.written"]) > 20, "{counts}");
     // Reads whose answer the description gives no shape of are held with

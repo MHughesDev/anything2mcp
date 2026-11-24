@@ -326,11 +326,16 @@ fn check_report(report: &Json) {
     let surface = &content["surfaces"][0];
     assert_eq!(surface["state"], "identified", "{report}");
     // Found through the surface's own mode, with no binding written first:
-    // the operations the published description states, and the endpoints
-    // the live look found.
+    // the operations the published description states, the two signs of a
+    // sign-in its security schemes declare (decision 0367), and the
+    // endpoints the live look found.
     assert_eq!(
         surface["findings_by_kind"],
-        json!({"described_operation": {"inferred": 11}, "endpoint": {"discovered": 2}}),
+        json!({
+            "described_operation": {"inferred": 11},
+            "endpoint": {"discovered": 2},
+            "sign_in_method": {"inferred": 2}
+        }),
         "{report}"
     );
     let written: Vec<&str> = content["drafted"]["written"]
