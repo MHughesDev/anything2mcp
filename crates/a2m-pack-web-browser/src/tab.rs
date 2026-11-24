@@ -316,6 +316,12 @@ pub enum By {
         /// The selector.
         selector: String,
     },
+    /// The row of a grid or a table whose first cell shows this text
+    /// exactly: a row is known by its key, never by its place.
+    RowKeyed {
+        /// The text of the row's first cell.
+        key: String,
+    },
 }
 
 /// A query for exactly one element, inside another element when `within`
@@ -447,6 +453,11 @@ pub enum ReadWhat {
         /// The attribute's name.
         name: String,
     },
+    /// The text of one cell of a row, counted from zero among its cells.
+    Cell {
+        /// The cell's place in its row.
+        index: usize,
+    },
 }
 
 /// What a read gave, as the page holds it: not trimmed, not normalized.
@@ -566,6 +577,16 @@ impl fmt::Debug for Input {
             Self::SelectByValue(value) => write!(f, "SelectByValue({value:?})"),
         }
     }
+}
+
+/// A dialog of the browser that is open on a tab: what kind it is and what
+/// it says, as the page gave it, redacted and bounded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenDialog {
+    /// `alert`, `confirm`, `prompt`, or `beforeunload`.
+    pub kind: String,
+    /// What the dialog says.
+    pub message: String,
 }
 
 /// How to answer a dialog of the page.
@@ -929,6 +950,9 @@ pub(crate) struct Page {
     nav: watch::Sender<Nav>,
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
+    /// The dialog that is open, as the browser says it: its kind and what it
+    /// says, redacted.
+    open_dialog: Mutex<Option<OpenDialog>>,
     blocked: Mutex<Vec<RequestShape>>,
     /// How many documents of the tab's own frame have loaded, and how many
     /// things the tab refused, together: what a wait for the next change of
@@ -2434,7 +2458,13 @@ impl Page {
             EventKind::ContextsCleared if own => {
                 self.world.send_replace(None);
             }
-            EventKind::DialogOpening if own => {
+            EventKind::DialogOpening(opened) if own => {
+                if let Ok(mut open) = self.open_dialog.lock() {
+                    *open = Some(OpenDialog {
+                        kind: opened.kind,
+                        message: shown(self.redact.as_ref(), &opened.message),
+                    });
+                }
                 self.status.send_if_modified(|status| {
                     let open = *status == Status::Open;
                     if open {
@@ -2444,6 +2474,9 @@ impl Page {
                 });
             }
             EventKind::DialogClosed if own => {
+                if let Ok(mut open) = self.open_dialog.lock() {
+                    *open = None;
+                }
                 self.status.send_if_modified(|status| {
                     let dialog = *status == Status::Dialog;
                     if dialog {
@@ -3177,6 +3210,7 @@ pub(crate) async fn open_page(
         status: watch::Sender::new(Status::Open),
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
+        open_dialog: Mutex::new(None),
         blocked: Mutex::new(Vec::new()),
         changes: watch::Sender::new(0),
         pending: Mutex::new(BTreeMap::new()),
@@ -3652,6 +3686,16 @@ impl ActTab {
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
         self.page.write_from_page(write, deadline).await
+    }
+
+    /// The dialog that is open, if one is: nothing is answered.
+    #[must_use]
+    pub fn open_dialog(&self) -> Option<OpenDialog> {
+        self.page
+            .open_dialog
+            .lock()
+            .ok()
+            .and_then(|open| open.clone())
     }
 
     /// Answers the dialog that is open.

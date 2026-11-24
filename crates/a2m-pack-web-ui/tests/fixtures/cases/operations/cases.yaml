@@ -110,3 +110,38 @@ bindings:
     action: send
 description: >
   Presses the button of a form that a notice covers until it is closed.
+---
+operation: example_order_delivery_update
+title: Change the delivery details of an order
+effect: write
+key: order_id
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  shipping: {type: text, description: "How it ships: standard, express, or freight"}
+  gift_wrap: {type: boolean, description: "Whether it is gift wrapped"}
+  priority: {type: text, description: "How urgent: low, normal, or high"}
+  deliver_on: {type: text, description: "The delivery date, as 2026-12-01"}
+  notes: {type: text, description: "Notes for the carrier"}
+outputs:
+  shipping: {type: text}
+  gift_wrap: {type: boolean}
+  priority: {type: text}
+  deliver_on: {type: text}
+  notes: {type: text}
+bindings:
+  - mode: ui
+    verb: update
+    status: shadow
+    screen: delivery
+    fields:
+      shipping: input.shipping
+      gift_wrap: input.gift_wrap
+      priority: input.priority
+      deliver_on: input.deliver_on
+      notes: input.notes
+    action: save
+    read_back: {screen: delivery}
+description: >
+  Sets each native control of the delivery page, saves after the browser's
+  own confirmation, and reads the page back.

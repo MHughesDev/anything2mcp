@@ -223,18 +223,16 @@ async fn a_page_that_changes_its_address_without_loading_is_ready_when_what_it_s
 async fn a_row_of_a_grid_that_draws_only_what_shows_is_found_by_its_key() {
     let app = TestApp::start().await.unwrap();
     let (stand, tab) = opened("case-grid", &app, GRID).await;
+    // A row is known by what its first cell shows, never by its place.
     let row_of = |key: &str| {
-        Query::role(
-            "row",
-            &format!("{key} Line {} {}", number(key), quantity(key)),
-        )
+        Query::new(By::RowKeyed {
+            key: key.to_owned(),
+        })
     };
-    fn number(key: &str) -> u32 {
-        key.trim_start_matches("R-").parse().unwrap()
-    }
-    fn quantity(key: &str) -> u32 {
-        (number(key) * 7) % 90 + 1
-    }
+    let quantity = |key: &str| {
+        let number: u32 = key.trim_start_matches("R-").parse().unwrap();
+        (number * 7) % 90 + 1
+    };
 
     // Only the first rows exist; the page says how few.
     must(
@@ -273,10 +271,22 @@ async fn a_row_of_a_grid_that_draws_only_what_shows_is_found_by_its_key() {
             .await,
     );
     let row = must(tab.locate(&row_of("R-07342"), soon()).await);
-    let cells = must(tab.read(&row, &ReadWhat::Text, soon()).await);
+    for (index, wanted) in [
+        "R-07342".to_owned(),
+        "Line 7342".to_owned(),
+        quantity("R-07342").to_string(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            must(tab.read(&row, &ReadWhat::Cell { index }, soon()).await),
+            RawValue::Text(wanted)
+        );
+    }
     assert_eq!(
-        cells,
-        RawValue::Text(format!("R-07342 Line 7342 {}", quantity("R-07342")))
+        must(tab.read(&row, &ReadWhat::Cell { index: 3 }, soon()).await),
+        RawValue::Absent
     );
     assert_eq!(told(&app, 1).await, ["find: R-07342"]);
     drop(tab);

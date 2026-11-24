@@ -117,7 +117,7 @@ Elements are found by meaning: from the accessibility tree and a small helper in
 
 - **An ambiguous match fails.** The driver never picks the first of several.
 - **A fingerprint is required** on every field and action: what must also be true of the matched element, such as nearby text, its section, or its role. A match that fails it is `drift`.
-- **Open shadow roots are pierced, and frames are declared.** A screen inside a frame declares its frame path. A closed shadow root falls back to the keyboard or the network.
+- **Open shadow roots are pierced, and frames are declared.** A screen inside a frame declares its frame path: `frame`, a list of locators, outermost first. As built, a frame of the page's own origin is a scope that is entered; a frame of another origin has no document to enter and is never a scope. A closed shadow root falls back to the keyboard or the network.
 - **Generated identifiers are rejected** by the surface's platform profile, which lists their patterns.
 - Position alone, and XPath, are not accepted. The full format is in the [file formats](../../reference/file-formats.md#locators), and whether role and name find nearly every field is hypothesis H-02.
 
@@ -192,16 +192,16 @@ One driver per kind of control. The control names are shared with the desktop pa
 | `number`, `currency`, `measurement` | As text, formatted by the field type | Input value, normalized |
 | `select` | Choose by stored code | Selected code |
 | `combobox`, `autocomplete` | Open, type to filter, choose the option whose code or exact label matches | Selected code, or the label map |
-| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker | Value, normalized to the field's time-zone rule |
+| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker. As built, for `date`: the text rule, in the form the browser's date field takes (`2026-12-01`); the picker, `datetime`, and `time` are not built ([decision 0399](../../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | Value, normalized to the field's time-zone rule |
 | `checkbox`, `toggle` | Set to the target state only if different | Live checked state, never the attribute |
-| `radio` | Choose by stored code | Checked option |
+| `radio` | Choose by stored code: the field's `options` give the label of each code's radio button inside the group its locators find; a code the options do not list is refused before anything is sent | Checked option, as its code |
 | `slider` | Keyboard steps to the value | Current value |
 | `file` | Attach the file to the input directly | File name shown |
 | `rich_text` | Editor-specific command, or paste as plain text | Editor content, normalized |
 | `grid` | Address a cell by row key and column id; scroll or filter to find the row | Cell value; the network response preferred |
 | `tree` | Expand along a path of labels | Selected path |
 | `tabs`, `accordion` | Activate by name | Active name |
-| `dialog` | Declared as expected; confirm or dismiss by named action | Closed state |
+| `dialog` | Declared as expected; confirm or dismiss by named action. As built: a dialog in the page is a variant with the handling `confirm` or `dismiss` and the action it is `with`; a dialog of the browser is declared by the action that opens it (`dialog: {says, answer}`), and one that says anything else stops the run | Closed state |
 | `toast` | Observed only | Text, used as a confirmation |
 
 A password input's value is never read, whatever a step asks.

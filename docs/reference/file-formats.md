@@ -98,11 +98,11 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `surface` | The surface it lives on; default is the first web or desktop surface |
 | `reach` (required) | How to get there: `url` with placeholders, or `from` another screen with an action |
 | `ready` (required) | A condition that is true when the screen can be used |
-| `frame` | A declared frame path, when the screen is inside a frame |
+| `frame` | A declared frame path, when the screen is inside a frame: a list of locators, outermost first, each looked for inside the one before. Every locator of the screen, and every section of a fingerprint, is then looked for inside the frame. Only a frame of the page's own origin can be entered |
 | `fields` | Map of field name to a field (below) |
 | `actions` | Map of action name to an action (below) |
 | `rows` | For a table: its `locate` and `fingerprint`, its `header`, the text of every heading in order, and its `columns`, each a name with the `header` it is under and its `type`. An output that is a list takes the column of its name. Finding one row by its key is not built |
-| `variants` | Named states that can appear, such as a confirmation dialog, each with a condition `when` and a handling: `confirm`, `dismiss`, `stop`, or `absent`, which says the record the screen shows does not exist. As built: `when` is `{visible: locator}`, and the handling is `stop` or `absent` |
+| `variants` | Named states that can appear, such as a confirmation dialog, each with a condition `when` and a handling: `confirm`, `dismiss`, `stop`, or `absent`, which says the record the screen shows does not exist. As built: `when` is `{visible: locator}`, and the handling is `stop`, `absent`, `confirm`, or `dismiss`; the last two name an action of the screen in `with`. `confirm` answers a question the page asks of the action just performed, once; `dismiss` closes a state that is in the way, before the step goes on ([decision 0399](../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
 
 **Field.**
 
@@ -113,6 +113,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `locate` (required) | Ordered list of [locators](#locators) |
 | `fingerprint` (required) | What must also be true of the matched element: `section`, a locator of the one element it is inside, and optionally `near_text`, a text that section shows ([decision 0113](../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)) |
 | `read` | `value`, `text`, or an attribute name; default by control |
+| `options` | For a `radio`, and for no other control: each stored code with the label of its radio button. The field's locators find the group ([decision 0399](../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
 | `commit` | What commits the value in the page: `blur`, `enter`, or `none` |
 
 **Action.**
@@ -122,6 +123,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `locate` (required) | Ordered list of locators |
 | `fingerprint` (required) | As for a field |
 | `confirm` (required) | The condition that shows the action took effect |
+| `dialog` | A dialog of the browser the action's click is expected to open: `says`, the words it must have exactly, and `answer`, `accept` or `dismiss`. One that says anything else stops the run ([decision 0399](../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
 | `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md)); an action without it is not a save |
 
 ### Locators

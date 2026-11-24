@@ -152,6 +152,10 @@
     return "";
   }
 
+  // The cells of a row, in order: its own, not those of a row inside it.
+  const CELL_ROLES = new Set(["cell", "gridcell", "columnheader", "rowheader"]);
+  const cellsOf = (row) => [...walk(row)].filter((el) => el !== row && CELL_ROLES.has(roleOf(el)));
+
   function matcher(by) {
     switch (by.kind) {
       case "role_name":
@@ -172,6 +176,12 @@
           throw new Error("a2m-password-refused");
         }
         return (el) => el.matches(by.selector);
+      case "row_keyed":
+        return (el) => {
+          if (roleOf(el) !== "row" || hiddenFromTree(el)) return false;
+          const first = cellsOf(el)[0];
+          return !!first && norm(first.textContent) === by.key;
+        };
       case "text": {
         const hit = by.contains
           ? (el) => norm(el.textContent).includes(by.text)
@@ -263,6 +273,12 @@
         if (el.localName !== "select") return { absent: true };
         value = el.selectedOptions.length ? norm(el.selectedOptions[0].textContent) : "";
         break;
+      case "cell": {
+        const cell = cellsOf(el)[what.index];
+        if (!cell) return { absent: true };
+        value = norm(cell.textContent);
+        break;
+      }
       case "attribute":
         if (!el.hasAttribute(what.name)) return { absent: true };
         value = el.getAttribute(what.name);

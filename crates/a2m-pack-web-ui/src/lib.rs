@@ -21,9 +21,9 @@
 //!
 //! Not built yet, and so not declared in the pack's manifest: the
 //! `site_tools` mode; `page_http` writes beyond `update` by PUT; a session
-//! kept in page storage; the application's own sign-out; frames; platform
-//! profiles; the controls beyond text, select, and check
-//! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
+//! kept in page storage; the application's own sign-out; platform
+//! profiles; the controls beyond text, select, check box, radio, and date;
+//! reading a grid by a row's key; the verbs `open`, `search`, `delete`, `upload`, and `download`;
 //! identity by a stamp or a search; setting a finding against existing
 //! screen models, and drafting a field that is set or a type from a
 //! snapshot.

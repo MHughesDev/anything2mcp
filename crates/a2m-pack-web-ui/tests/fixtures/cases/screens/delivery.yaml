@@ -1,0 +1,52 @@
+# Case 33: an order's delivery details on a page made of the browser's own
+# controls: a select, a check box, a radio group, a date field, a text area,
+# a button that stays disabled until the date is valid, and a dialog of the
+# browser that asks before it saves.
+screen: delivery
+surface: app
+reach: {url: "/orders/{order_id}/delivery"}
+ready: {visible: {role: button, name: Save}}
+fields:
+  shipping:
+    type: text
+    control: select
+    locate:
+      - {role: combobox, name: Shipping}
+    fingerprint: {section: {role: form, name: ""}}
+  gift_wrap:
+    type: boolean
+    control: checkbox
+    locate:
+      - {role: checkbox, name: "Gift wrap"}
+    fingerprint: {section: {role: form, name: ""}}
+  priority:
+    type: text
+    control: radio
+    locate:
+      - {role: group, name: Priority}
+    fingerprint: {section: {role: form, name: ""}}
+    options: {low: Low, normal: Normal, high: High}
+  deliver_on:
+    type: text
+    control: date
+    locate:
+      - {role: textbox, name: "Delivery date"}
+    fingerprint: {section: {role: form, name: ""}}
+  notes:
+    type: text
+    control: textarea
+    locate:
+      - {role: textbox, name: Notes}
+    fingerprint: {section: {role: form, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: Save}
+    fingerprint: {section: {role: form, name: ""}}
+    dialog: {says: "Save the delivery details?", answer: accept}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Saved."}}
+    commits: true
+variants:
+  not_found:
+    when: {visible: {role: heading, name: "Not found"}}
+    handling: absent

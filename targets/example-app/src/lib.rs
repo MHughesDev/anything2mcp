@@ -4,7 +4,8 @@
 //! proven against this one, which imitates the hard cases and has a control
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
 //! lists the cases; this crate covers cases 1 to 5, and the parts its README names
-//! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34.
+//! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34, and the pages of cases 6 to 9, 11,
+//! and 12 under `/cases`.
 //!
 //! It is test equipment, not part of the product, so it sits outside the crate
 //! layering. A product crate may use it in tests only.

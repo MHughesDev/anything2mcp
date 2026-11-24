@@ -15,8 +15,8 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Action, Cond, Field, Fingerprint, Handling, LocateBy, Locator, PAYLOAD_FORMAT, ReadHow, Rows,
-    Screen, ScreenSection, Segment, Variant,
+    Action, Cond, Field, Fingerprint, Handling, LocateBy, Locator, NativeDialog, PAYLOAD_FORMAT,
+    ReadHow, Rows, Screen, ScreenSection, Segment, Variant,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -36,6 +36,8 @@ pub const CONTROLS: &[&str] = &[
     "measurement",
     "select",
     "checkbox",
+    "radio",
+    "date",
 ];
 
 /// A code of this pack's compiler: its lint rules, and what its file kind
@@ -117,12 +119,19 @@ pub(crate) fn screen_schema() -> JsonSchema {
         .required("control", JsonSchema::control())
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
-        .optional("read", JsonSchema::words(&["value", "text", "checked"]));
+        .optional("read", JsonSchema::words(&["value", "text", "checked"]))
+        .optional("options", JsonSchema::map_of(JsonSchema::text()));
     let action = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
         .required("confirm", condition_schema(2))
-        .optional("commits", JsonSchema::bool());
+        .optional("commits", JsonSchema::bool())
+        .optional(
+            "dialog",
+            JsonSchema::object()
+                .required("says", JsonSchema::text())
+                .required("answer", JsonSchema::words(&["accept", "dismiss"])),
+        );
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
@@ -397,22 +406,52 @@ impl Reader {
             );
             return None;
         }
+        let mut options = BTreeMap::new();
+        for entry in doc.get("options").map(Located::entries).unwrap_or_default() {
+            if let Some(label) = entry.value.as_text() {
+                options.insert(entry.key.value.clone(), label.to_owned());
+            }
+        }
+        if (control == "radio") == options.is_empty() {
+            self.refuse(
+                "options_not_fitting",
+                &doc.at,
+                if control == "radio" {
+                    "A `radio` field names its choices under `options`, each code with the label of its radio button.".to_owned()
+                } else {
+                    format!(
+                        "The control `{}` has no `options`; only a `radio` takes them.",
+                        shown(&control)
+                    )
+                },
+                "Write `options:` for a radio group, and nowhere else.",
+            );
+            return None;
+        }
         Some(Field {
             control,
             locate,
             fingerprint,
             read,
+            options,
         })
     }
 
     fn action(&mut self, doc: &Located<Doc>) -> Option<Action> {
         let locate = self.locators(doc)?;
         let fingerprint = self.fingerprint(doc, &locate)?;
+        let dialog = doc.get("dialog").and_then(|stated| {
+            Some(NativeDialog {
+                says: stated.text("says")?.to_owned(),
+                accept: stated.text("answer") == Some("accept"),
+            })
+        });
         Some(Action {
             locate,
             fingerprint,
             confirm: self.condition(doc.get("confirm")?)?,
             commits: doc.get("commits").and_then(Located::as_bool) == Some(true),
+            dialog,
         })
     }
 

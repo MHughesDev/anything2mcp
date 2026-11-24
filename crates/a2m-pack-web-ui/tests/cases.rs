@@ -14,7 +14,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, NoSecrets, Values};
+use a2m_core::{FailureClass, NoSecrets, Value, Values};
 use a2m_provider::{DriverHandle, Posture, Prepared, StepFailure};
 use common::{Scene, Stand, Write, compile};
 use example_app::harness::TestApp;
@@ -241,5 +241,102 @@ async fn a_form_inside_a_frame_is_set_and_sent_through_the_frame_the_screen_decl
     .unwrap();
     assert!(handle.release(prepared, false).await.complete);
     assert_eq!(told(&app, 1).await, ["frame-code: D-4471"]);
+    scene.stand.end().await;
+}
+
+/// Case 33: the browser's own controls, each set and read back through the
+/// driver: a select, a check box, a radio group, a date field, and a text
+/// area. Save is disabled until the date is valid, and the browser asks
+/// before it saves, which the action declares. The application says what it
+/// stored, and how many times.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_browsers_own_controls_are_set_confirmed_saved_and_read_back() {
+    let app = TestApp::start().await.unwrap();
+    let scene = scene("case-delivery", &app).await;
+    let (handle, mut prepared, write) = writing(&scene).await;
+    let binding = scene.binding("example_order_delivery_update");
+    let inputs = Values::new()
+        .with("order_id", "A-100")
+        .with("shipping", "express")
+        .with("gift_wrap", true)
+        .with("priority", "high")
+        .with("deliver_on", "2026-12-01")
+        .with("notes", "Leave at the dock");
+    run(
+        &scene,
+        &handle,
+        &mut prepared,
+        &write,
+        &binding.act,
+        &inputs,
+    )
+    .await
+    .unwrap();
+    let back = scene
+        .run(&handle, &mut prepared, &binding.read_back, &inputs, None)
+        .await
+        .unwrap();
+    assert!(handle.release(prepared, false).await.complete);
+
+    let stored =
+        serde_json::to_value(app.stored_delivery("A-100").await.unwrap().unwrap()).unwrap();
+    assert_eq!(app.delivery_write_count("A-100").await.unwrap(), 1);
+    for (name, wanted) in [
+        ("shipping", serde_json::json!("express")),
+        ("gift_wrap", serde_json::json!(true)),
+        ("priority", serde_json::json!("high")),
+        ("deliver_on", serde_json::json!("2026-12-01")),
+        ("notes", serde_json::json!("Leave at the dock")),
+    ] {
+        assert_eq!(stored[name], wanted, "{name}");
+    }
+    for (name, wanted) in [
+        ("shipping", Value::from("express")),
+        ("gift_wrap", Value::from(true)),
+        ("priority", Value::from("high")),
+        ("deliver_on", Value::from("2026-12-01")),
+        ("notes", Value::from("Leave at the dock")),
+    ] {
+        assert_eq!(back.values.get(name), Some(&wanted), "{name}");
+    }
+    scene.stand.end().await;
+}
+
+/// Case 33: a code the radio group does not list, and a date the page does
+/// not take, store nothing: the first is refused before anything is sent,
+/// and the second leaves Save disabled.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_choice_the_screen_does_not_list_and_a_date_the_page_refuses_store_nothing() {
+    let app = TestApp::start().await.unwrap();
+    let scene = scene("case-delivery-refused", &app).await;
+    let binding = scene.binding("example_order_delivery_update");
+    let base = Values::new()
+        .with("order_id", "A-100")
+        .with("shipping", "express")
+        .with("gift_wrap", false)
+        .with("priority", "high")
+        .with("deliver_on", "2026-12-01")
+        .with("notes", "");
+    for (changed, value) in [("priority", "urgent"), ("deliver_on", "2101-01-01")] {
+        let inputs = base.clone().with(changed, value);
+        let (handle, mut prepared, write) = writing(&scene).await;
+        let refused = run(
+            &scene,
+            &handle,
+            &mut prepared,
+            &write,
+            &binding.act,
+            &inputs,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            refused.sent,
+            a2m_provider::Sent::NotSent,
+            "{changed}: {refused}"
+        );
+        handle.release(prepared, true).await;
+    }
+    assert_eq!(app.delivery_write_count("A-100").await.unwrap(), 0);
     scene.stand.end().await;
 }

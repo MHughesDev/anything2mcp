@@ -128,7 +128,7 @@ pub(crate) enum EventKind {
     ContextCreated(ContextCreated),
     ContextDestroyed(ContextDestroyed),
     ContextsCleared,
-    DialogOpening,
+    DialogOpening(DialogOpened),
     DialogClosed,
     TargetCrashed,
     Attached(Attached),
@@ -148,6 +148,17 @@ pub(crate) enum EventKind {
     LoadingFailed(Loading),
 }
 
+/// What the browser says of a dialog that opened.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct DialogOpened {
+    /// What the dialog says.
+    #[serde(default)]
+    pub message: String,
+    /// `alert`, `confirm`, `prompt`, or `beforeunload`.
+    #[serde(default, rename = "type")]
+    pub kind: String,
+}
+
 impl EventKind {
     /// `None` for a method the engine does not listen for, and for a known
     /// method whose parameters are not the shape expected: such an event is
@@ -161,7 +172,7 @@ impl EventKind {
             "Runtime.executionContextCreated" => Self::ContextCreated(of(params)?),
             "Runtime.executionContextDestroyed" => Self::ContextDestroyed(of(params)?),
             "Runtime.executionContextsCleared" => Self::ContextsCleared,
-            "Page.javascriptDialogOpening" => Self::DialogOpening,
+            "Page.javascriptDialogOpening" => Self::DialogOpening(of(params)?),
             "Page.javascriptDialogClosed" => Self::DialogClosed,
             "Inspector.targetCrashed" => Self::TargetCrashed,
             "Target.attachedToTarget" => Self::Attached(of(params)?),

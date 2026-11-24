@@ -23,10 +23,10 @@ use std::time::Duration;
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value};
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input,
-    Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue,
-    ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
-    looks_like_an_action, path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
+    Element, Input, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
+    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
+    Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -37,8 +37,8 @@ use a2m_telemetry::{Acting, Detail};
 use crate::codes::{self, shown};
 use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
 use crate::model::{
-    Cond, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows,
-    Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
+    Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
+    ReadStep, Rows, Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
 
@@ -750,6 +750,56 @@ impl Session {
         Ok(())
     }
 
+    /// The radio button of one choice of a group the field's locator found:
+    /// the one of that label inside the group.
+    async fn radio(
+        &self,
+        what: &str,
+        field: &Field,
+        position: usize,
+        label: &str,
+        deadline: Deadline,
+    ) -> Result<Element, StepFailure> {
+        let frame = field
+            .fingerprint
+            .as_ref()
+            .and_then(|print| print.frame.as_ref());
+        let group = field.locate[position].query_in(frame);
+        self.tab()
+            .locate(&Query::role("radio", label).within(group), deadline)
+            .await
+            .map_err(|error| browser_failure(&error, what))
+    }
+
+    /// Answers the dialog of the browser that the action declares, if the
+    /// page has one open and it says what the action says it will. One that
+    /// says anything else is not answered.
+    async fn answer_declared_dialog(
+        &self,
+        action: &Action,
+        deadline: Deadline,
+        what: &str,
+    ) -> Result<bool, StepFailure> {
+        let (Tab::Act(tab), Some(declared)) = (self.tab(), action.dialog.as_ref()) else {
+            return Ok(false);
+        };
+        if tab
+            .open_dialog()
+            .is_none_or(|open| open.message != declared.says)
+        {
+            return Ok(false);
+        }
+        let how = if declared.accept {
+            DialogAnswer::Accept
+        } else {
+            DialogAnswer::Dismiss
+        };
+        tab.answer_dialog(&how, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, what))?;
+        Ok(true)
+    }
+
     /// The variants of the screen the page shows now, by name.
     async fn variants_now(
         &self,
@@ -1108,11 +1158,41 @@ impl Session {
                 .fields
                 .get(&item.from)
                 .ok_or_else(|| codes::not_usable("a field it reads is not on its screen"))?;
-            known_control(&field.control)?;
+            let rule = known_control(&field.control)?;
             let what = format!("the field `{}` of the screen `{name}`", item.from);
             let (element, locator) = self
                 .find(&what, &field.locate, field.fingerprint.as_ref(), deadline)
                 .await?;
+            if rule == Rule::Radio {
+                // The choice whose radio button is on, by the code it stores.
+                let mut chosen = None;
+                for (code, label) in &field.options {
+                    let radio = self.radio(&what, field, locator, label, deadline).await?;
+                    match self.tab().read(&radio, &ReadWhat::Checked, deadline).await {
+                        Ok(RawValue::Flag(true)) => {
+                            chosen = Some(code.clone());
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(error) => return Err(browser_failure(&error, &what)),
+                    }
+                }
+                let Some(code) = chosen else {
+                    return Err(StepFailure::answered(fail(
+                        &codes::row::UNEXPECTED_CONTROL,
+                        format!("No choice of {what} is on."),
+                        "Look at the page; the group shows no choice, or one the field's `options` do not list.",
+                    )));
+                };
+                means.push(Detail::new(
+                    format!("locator.{}", item.from),
+                    locator.to_string(),
+                ));
+                observed
+                    .values
+                    .insert(item.output.clone(), Value::Text(code));
+                continue;
+            }
             let value = match self
                 .tab()
                 .read(&element, &field.read.what(), deadline)
@@ -1214,6 +1294,15 @@ impl Session {
                 let on = value.and_then(Value::as_bool).ok_or_else(wrong_value)?;
                 self.tab()
                     .input(&element, &Input::Check(on), deadline, &what)
+                    .await?;
+                "check"
+            }
+            Rule::Radio => {
+                let code = widget_text(value).ok_or_else(wrong_value)?;
+                let label = field.options.get(&code).ok_or_else(wrong_value)?;
+                let radio = self.radio(&what, field, locator, label, deadline).await?;
+                self.tab()
+                    .input(&radio, &Input::Check(true), deadline, &what)
                     .await?;
                 "check"
             }
@@ -1378,9 +1467,27 @@ impl Session {
                 "Correct the action's `confirm` in the screen so that it names what the page shows only once the action is done.",
             )));
         }
-        self.tab()
-            .input(&element, &Input::Click, deadline, &what)
-            .await?;
+        // A click of an action that declares a dialog may be answered by
+        // the dialog at once, the page being held in its handler.
+        let mut dialog_answered = false;
+        match self.tab() {
+            Tab::Act(tab) => match tab.input(&element, &Input::Click, deadline).await {
+                Ok(()) => {}
+                Err(BrowserError::UnexpectedDialog { .. })
+                    if self.answer_declared_dialog(action, deadline, &what).await? =>
+                {
+                    dialog_answered = true;
+                }
+                Err(error) => return Err(browser_failure(&error, &what)),
+            },
+            Tab::Observe(_) => {
+                return Err(StepFailure::not_sent(fail(
+                    &a2m_provider::codes::row::READ_ONLY_POSTURE,
+                    "This run may only look at the page, and its tab cannot act.".to_owned(),
+                    "Run the operation where it may act.",
+                )));
+            }
+        }
 
         // From here the click has reached the page. What the application
         // made of it is known only when the page shows the action's
@@ -1431,6 +1538,13 @@ impl Session {
                         "the page did not show its confirmation in the time the step allows"
                             .to_owned(),
                     ));
+                }
+                Err(BrowserError::UnexpectedDialog { .. })
+                    if !dialog_answered
+                        && self.answer_declared_dialog(action, deadline, &what).await? =>
+                {
+                    dialog_answered = true;
+                    continue;
                 }
                 Err(BrowserError::UnexpectedDialog { .. }) => {
                     return Err(StepFailure::unknown(
@@ -1582,6 +1696,7 @@ enum Rule {
     Text,
     Select,
     Check,
+    Radio,
 }
 
 /// The rule for a control's name. A name with no rule stops the step: the
@@ -1591,6 +1706,10 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
         "text" | "textarea" | "number" | "currency" | "measurement" => Ok(Rule::Text),
         "select" => Ok(Rule::Select),
         "checkbox" => Ok(Rule::Check),
+        "radio" => Ok(Rule::Radio),
+        // A date is typed, or set through the field's own setter, in the
+        // form the browser's date field takes: `2026-12-01`.
+        "date" => Ok(Rule::Text),
         other => Err(StepFailure::not_sent(fail(
             &codes::row::UNKNOWN_CONTROL,
             format!(

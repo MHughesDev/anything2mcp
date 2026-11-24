@@ -307,6 +307,11 @@ pub(crate) struct Field {
     pub fingerprint: Option<Fingerprint>,
     /// What is read of it.
     pub read: ReadHow,
+    /// For a `radio`: the label of each choice, by the code it stores. The
+    /// field's locators find the group; each choice is the radio button of
+    /// that label inside it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
 }
 
 /// One action of a screen.
@@ -320,6 +325,20 @@ pub(crate) struct Action {
     pub confirm: Cond,
     /// Whether it saves in the application.
     pub commits: bool,
+    /// The dialog of the browser the action's click is expected to open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<NativeDialog>,
+}
+
+/// A dialog of the browser, such as a confirmation before saving, that an
+/// action declares as expected: what it says, and how it is answered. A
+/// dialog that says anything else is not answered (rule 7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeDialog {
+    /// What the dialog must say, exactly.
+    pub says: String,
+    /// Whether it is accepted; otherwise it is dismissed.
+    pub accept: bool,
 }
 
 /// What a variant means for the step that meets it.

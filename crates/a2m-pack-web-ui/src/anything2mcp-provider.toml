@@ -114,6 +114,12 @@ name = "select"
 [[controls]]
 name = "checkbox"
 
+[[controls]]
+name = "radio"
+
+[[controls]]
+name = "date"
+
 [[lint_rules]]
 code = "web.css_not_last"
 level = "error"
