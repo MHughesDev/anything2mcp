@@ -490,7 +490,7 @@ jobs:
             echo "a test skipped itself"
             exit 1
           fi
-          grep -q "test result: ok. 3 passed" stream-write.log
+          grep -q "test result: ok. 5 passed" stream-write.log
       - name: Show the server's log
         if: always()
         run: docker logs nats
