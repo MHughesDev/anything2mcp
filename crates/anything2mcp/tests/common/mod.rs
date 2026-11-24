@@ -15,6 +15,7 @@ pub mod prefixed;
 pub mod proxy;
 pub mod served;
 pub mod service;
+pub mod tending;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

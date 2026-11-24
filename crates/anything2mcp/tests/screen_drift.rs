@@ -31,6 +31,7 @@ use a2m_core::{Failure, RunId};
 use a2m_policy::{Channel, PresenceCheck};
 use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use anything2mcp::{Engine, EngineOptions};
+use common::tending::{CHECK_WAIT, PASS_STEP, may_step, next_due_after};
 use common::{Machine, World};
 use example_app::harness::TestApp;
 use example_app::releases::{ChangedPage, ScreenChange};
@@ -41,10 +42,6 @@ const GET: &str = "example_line_item_get";
 const UPDATE: &str = "example_line_item_update";
 /// The screen model of the form, in the project's draft.
 const SCREEN: &str = "targets/example/screens/line_item.yaml";
-
-/// How many passes of tending a test waits through for a check to end
-/// before it fails by name.
-const PASSES: u32 = 1_500;
 
 /// A person surface that shows the engine's pages: it keeps the desk, the
 /// approvals it was asked for, and each person's act, and the test presses
@@ -243,13 +240,20 @@ impl Stand {
 
     /// Moves the clock by `by` and tends until the watch `id` has made
     /// `checks` checks and is not running one. Between two passes the
-    /// clock moves on by a tenth of a second.
+    /// clock moves on by [`PASS_STEP`], never as far as the watch's next due
+    /// time (see `common::tending`); the wait is bounded by [`CHECK_WAIT`]
+    /// of real time.
     async fn checked(&self, by: Duration, id: &str, checks: u64) -> Json {
+        let before = self.watch(id).await;
         self.clock.advance(by);
-        for pass in 0..PASSES {
-            if pass > 0 {
-                self.clock.advance(Duration::from_millis(100));
+        let next = next_due_after(&before, self.clock.now().as_unix_millis());
+        let started = std::time::Instant::now();
+        let mut first = true;
+        while started.elapsed() < CHECK_WAIT {
+            if !first && may_step(self.clock.now().as_unix_millis(), next) {
+                self.clock.advance(PASS_STEP);
             }
+            first = false;
             self.world.engine.kernel().tend().await;
             let watch = self.watch(id).await;
             if watch["checks"] == checks && watch["state"] != "running" {
@@ -257,7 +261,10 @@ impl Stand {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("the check never ended: {}", self.watch(id).await);
+        panic!(
+            "the check never ended in {CHECK_WAIT:?}: {}",
+            self.watch(id).await
+        );
     }
 
     async fn watch(&self, id: &str) -> Json {
