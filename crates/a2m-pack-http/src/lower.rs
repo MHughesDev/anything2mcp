@@ -41,7 +41,7 @@ pub const EXTRACT: StepKind = StepKind::fixed("extract");
 pub const PROBE: StepKind = StepKind::fixed("probe");
 /// The step of the `api` mode: one call of an operation a pinned
 /// description states, sent once the description is known not to have
-/// changed since it was pinned (decision 0399). It never saves.
+/// changed since it was pinned (decision 0389). It never saves.
 pub const CALL: StepKind = StepKind::fixed("call");
 
 pub(crate) const READ_VERBS: &[&str] = &["read", "list", "search"];
@@ -104,7 +104,7 @@ pub(crate) struct Found<'a> {
 }
 
 /// One lowering of a binding: the endpoints it may name, and what it found
-/// wrong. The `api` mode lowers through it too (decision 0399).
+/// wrong. The `api` mode lowers through it too (decision 0389).
 pub(crate) struct Lower<'a, 'b> {
     pub(crate) cx: &'a LowerContext<'b>,
     pub(crate) section: Option<(SectionIndex, EndpointSection)>,

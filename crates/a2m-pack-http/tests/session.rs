@@ -688,7 +688,7 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
             "operations/account_get.yaml"
         ]
     );
-    // Each GET is stated once (rule eight, decision 0399): the drafted
+    // Each GET is stated once (rule eight, decision 0389): the drafted
     // read's request in the pinned description, and no endpoint entry for
     // it; the GET no read is drafted for in its endpoint entry, and not in
     // the pinned description.
@@ -905,7 +905,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
     assert!(app.writes().await.unwrap().is_empty());
 }
 
-/// Package 4.4, the `api` mode (decision 0399): the test application's
+/// Package 4.4, the `api` mode (decision 0389): the test application's
 /// description, imported where it serves it, drafts reads that bind the
 /// described operation itself, pinned to the description's digest, and
 /// that compile. Run, the read gives what the application stores. Once the

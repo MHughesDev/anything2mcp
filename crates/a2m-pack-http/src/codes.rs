@@ -25,7 +25,7 @@ a2m_core::failure_codes! {
         meaning "The body of an accepted answer does not fit the declared shape.",
         next "Compare the system's answer with the endpoint's `response_schema` and the operation's outputs, and correct the one that is wrong.";
     DESCRIPTION_CHANGED = Drift, "description_changed",
-        meaning "The published description an `api` binding is pinned to is not, where it was served, the text it was pinned from: it has changed, or is no longer served there. Nothing of the call was sent (decision 0399).",
+        meaning "The published description an `api` binding is pinned to is not, where it was served, the text it was pinned from: it has changed, or is no longer served there. Nothing of the call was sent (decision 0389).",
         next "Import the description again, review what changed in the drafts, and publish a new version.";
     UNEXPECTED_STATUS = UnknownVariant, "unexpected_status",
         meaning "A status the endpoint does not declare.",
@@ -180,7 +180,7 @@ pub(crate) fn token_not_read(endpoint: &str) -> Failure {
 
 /// A pinned description that is not, where it was served, the text it was
 /// pinned from. Its name is the target's; nothing of the system's text is
-/// said. Nothing of the call was sent (decision 0399).
+/// said. Nothing of the call was sent (decision 0389).
 pub(crate) fn description_changed(description: &str, why: &str) -> Failure {
     failure(
         &row::DESCRIPTION_CHANGED,

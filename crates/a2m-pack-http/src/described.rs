@@ -1,4 +1,4 @@
-//! The `api` mode (decision 0399): a read bound to an operation a
+//! The `api` mode (decision 0389): a read bound to an operation a
 //! published description states, by its `operationId` or by its method and
 //! path, rather than to an endpoint entry a person wrote.
 //!
@@ -857,7 +857,7 @@ impl Lowering for ApiLowering {
 /// description an `api` binding names state one operation, on one surface,
 /// by one method and path. Rule eight keeps an operation's request in one
 /// place of the endpoint catalog: an endpoint entry, or a pinned
-/// description's document (decision 0399).
+/// description's document (decision 0389).
 pub(crate) struct StatedTwice;
 
 /// What states one request: the surface, the method, and the path as a

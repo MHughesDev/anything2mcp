@@ -418,7 +418,7 @@ impl Discoverer for HttpDescription {
             let text = openapi::redacted(&bytes, scope.redact)?;
             let mut operations = openapi::operations(text.as_bytes())?;
             // What an `api` binding is pinned to: the digest of the text as
-            // it was read, and where it was served (decision 0399).
+            // it was read, and where it was served (decision 0389).
             let digest = crate::described::digest_of(&text);
             for operation in &mut operations {
                 operation.digest = Some(digest.clone());

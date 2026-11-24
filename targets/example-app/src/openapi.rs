@@ -5,7 +5,7 @@
 //! Case 38: the description is revised, as a release of the service would revise
 //! it, through the control interface: the same routes, described as of a later
 //! version, so that a binding pinned to the first text can tell it has changed
-//! (decision 0399).
+//! (decision 0389).
 
 use axum::extract::State;
 use axum::routing::get;

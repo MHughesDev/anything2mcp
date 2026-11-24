@@ -262,7 +262,7 @@ struct Session {
     unencrypted_accepted: bool,
     sections: BTreeMap<usize, EndpointSection>,
     /// The pinned descriptions of the plan, by the position of their
-    /// section; their operations are in `sections` too (decision 0399).
+    /// section; their operations are in `sections` too (decision 0389).
     described: BTreeMap<usize, DescribedSection>,
     /// The pinned descriptions this pass found unchanged where they are
     /// served, by section and name. Each is read again once a pass.
@@ -2123,7 +2123,7 @@ impl HttpDriver {
     /// of the surface: what a discoverer may send.
     /// Before the first call of a pass that a pinned description serves,
     /// the description is read again where it was served, and its digest
-    /// compared with the one the plan pins (decision 0399). One that has
+    /// compared with the one the plan pins (decision 0389). One that has
     /// changed, or is no longer served there, stops the call as `drift`,
     /// `description_changed`, and nothing of the call is sent. A
     /// description handed in as a file names no place, and is not read.

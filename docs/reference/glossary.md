@@ -43,7 +43,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Driver | The code that carries out steps in one mode |
 | Earlier run | An unfinished run (running, resting for a person, or stopped and resumable) that an identical call is given back instead of a new run; the result is marked `earlier_run` ([decision 0176](../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)) |
 | Effect class | `read`, `write`, or `irreversible` |
-| Endpoint catalog | Where every request the HTTP pack sends is stated, once: the endpoint entries in `endpoints/`, and the pinned descriptions in `descriptions/`, whose documents are the entries of reads bound in `api` ([decision 0399](../decisions/0399-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
+| Endpoint catalog | Where every request the HTTP pack sends is stated, once: the endpoint entries in `endpoints/`, and the pinned descriptions in `descriptions/`, whose documents are the entries of reads bound in `api` ([decision 0389](../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
 | Engine | The Anything2MCP process. On one machine, one per user |
 | Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
 | Envelope | A sealed value together with what it is bound to: the owner's key and its generation, the wrapped data key, and the ciphertext. It opens only under the context it was sealed for |
@@ -106,7 +106,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Page request | A request a web page makes by itself, which the observing tab records as names and kinds and which a `page_http` read may repeat from inside the page, with GET alone ([decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
 | Part | One of the seven divisions of the specification; the first digit of a section's number |
 | Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
-| Pinned description | The HTTP pack's reading of a published description's drafted reads, in `descriptions/`, with the digest of the text it was read from and where it was served; an `api` binding names one, and its change is `drift`, `description_changed` ([decision 0399](../decisions/0399-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
+| Pinned description | The HTTP pack's reading of a published description's drafted reads, in `descriptions/`, with the digest of the text it was read from and where it was served; an `api` binding names one, and its change is `drift`, `description_changed` ([decision 0389](../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
 | Plan | The old name of the compiled target, kept in the code until roadmap package N0 renames it ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |

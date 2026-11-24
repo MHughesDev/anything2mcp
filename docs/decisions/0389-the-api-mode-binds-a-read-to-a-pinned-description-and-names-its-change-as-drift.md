@@ -1,4 +1,4 @@
-# 0399. The `api` mode binds a read to a pinned description, and names its change as drift
+# 0389. The `api` mode binds a read to a pinned description, and names its change as drift
 
 **Status:** Accepted. Design decision, made by the agent that built package 4.4. The owner had not read this record when it was merged.
 

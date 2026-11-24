@@ -55,7 +55,7 @@ const READ: &str = "example_api_orders_get";
 const ORDER_INPUT: &str = r#"{"order_id": "A-100"}"#;
 /// The drafted files the hour keeps: the read's operation, the description
 /// it is pinned to in the `api` mode, the one place its request is
-/// stated (decision 0399).
+/// stated (decision 0389).
 const KEPT: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// The sign-in, as the developer's agent declares it: the provider and the

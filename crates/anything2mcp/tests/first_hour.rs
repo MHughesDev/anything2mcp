@@ -317,7 +317,7 @@ fn tried(report: &Json, proven: bool) -> Vec<String> {
 
 /// The drafted files a scout of the test application writes for the read
 /// this hour is for: its operation, the description it is pinned to in the
-/// `api` mode, which is the one place its request is stated (decision 0399).
+/// `api` mode, which is the one place its request is stated (decision 0389).
 const KEPT: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// What a scout's report says, checked the same way for every scout of the
@@ -377,7 +377,7 @@ fn check_report(report: &Json) {
         .iter()
         .find(|entry| {
             // The read rule's entry: the pinned description's rule says of
-            // the same finding only that nothing was pinned (decision 0399).
+            // the same finding only that nothing was pinned (decision 0389).
             entry["description"].to_string().contains("/pickup")
                 && !entry["reason"].to_string().contains("not pinned")
         })
@@ -665,7 +665,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // 9. The service's description is revised after the version was
     // published: the published read is pinned to the text it was drafted
     // from, so the call stops as named drift and nothing of it is sent
-    // (decision 0399). Served as it was pinned again, the call reads.
+    // (decision 0389). Served as it was pinned again, the call reads.
     app.revise_description(true).await.unwrap();
     let before = app.seen().await.unwrap().len();
     let (code, drifted) = desk.run(&["call", READ, "--input", ORDER_INPUT]).await;

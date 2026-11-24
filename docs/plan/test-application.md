@@ -63,7 +63,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 34 | Redirects to another host name | A redirect off the target stops; no input changes where a request goes | 2 |
 | 35 | Answers an optional object property as an object, as `null`, as missing, or as a text, when told to; its description lists the property as not required and not nullable | A property the description does not require is drafted as possibly null; a value of another kind still stops ([decision 0297](../decisions/0297-a-property-a-description-does-not-require-is-drafted-as-possibly-null.md)) | 2 |
 | 36 | Answers with a property named `client_secret`, with an invented value, beside ordinary values, and takes an optional query value `access_token`; a second read requires a query value `api_key` | A field or a parameter named as a secret is never drafted as an output or an input; the read that requires such a parameter is not drafted ([decision 0302](../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)) | 2 |
-| 38 | Serves its description revised, as a release would revise it, when told to | A read pinned to the description's first text stops as `drift`, `description_changed`, before its call is sent ([decision 0399](../decisions/0399-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) | 2 |
+| 38 | Serves its description revised, as a release would revise it, when told to | A read pinned to the description's first text stops as `drift`, `description_changed`, before its call is sent ([decision 0389](../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) | 2 |
 
 ## The driver conformance suite
 

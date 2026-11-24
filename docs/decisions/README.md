@@ -380,4 +380,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0386 | [A read's run is committed without a disk sync of its own](0386-a-reads-run-is-committed-without-a-disk-sync-of-its-own.md) | Accepted (design decision) |
 | 0387 | [The command pack drafts an operation only once a person has declared the command's effect](0387-the-command-pack-drafts-an-operation-only-once-a-person-has-declared-the-commands-effect.md) | Accepted (design decision) |
 | 0388 | [Every refusal of the approval page is named, and a script is proven unable to approve](0388-every-refusal-of-the-approval-page-is-named-and-a-script-is-proven-unable-to-approve.md) | Accepted (design decision) |
-| 0399 | [The `api` mode binds a read to a pinned description, and names its change as drift](0399-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md) | Accepted (design decision) |
+| 0389 | [The `api` mode binds a read to a pinned description, and names its change as drift](0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md) | Accepted (design decision) |

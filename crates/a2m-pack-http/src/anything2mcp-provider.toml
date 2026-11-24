@@ -24,7 +24,7 @@ session_writes = 1
 exclusive = "none"
 
 # Reads bound to an operation of a pinned published description
-# (decision 0399). A `call` never saves: a pinned description holds reads
+# (decision 0389). A `call` never saves: a pinned description holds reads
 # only. Ranked ahead of `http`, so a verified `api` binding is tried first;
 # being the first, it is also the mode a surface's discovery is prepared
 # in, so it takes the discoverers' `probe`, which the one driver of both

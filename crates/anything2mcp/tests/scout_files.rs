@@ -37,7 +37,7 @@ const DESCRIPTION_FILE: &str = "sources/example-openapi.json";
 
 /// The files a scout of the test application drafts for one read: the
 /// pinned description that states its request, and its operation
-/// (decision 0399).
+/// (decision 0389).
 const DRAFTED: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// A register map in the layout the device pack reads, as a vendor of the
@@ -735,7 +735,7 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     // The other read is held. The pinned description that states its
     // request holds no question and names nothing the read defines (the
     // read names the description, not the other way), so it stays in
-    // place (decision 0399).
+    // place (decision 0389).
     let held: Vec<String> = scouted["content"]["drafted"]["held_back"]
         .as_array()
         .unwrap()

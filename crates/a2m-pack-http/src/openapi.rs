@@ -708,7 +708,7 @@ pub(crate) struct DescribedOperation {
     pub base_path: Option<String>,
     /// The digest of the description's text as the import read it, once
     /// redacted and with its line endings made one: what an `api` binding
-    /// is pinned to (decision 0399). A finding that states none is not
+    /// is pinned to (decision 0389). A finding that states none is not
     /// pinned, and its read is drafted over its endpoint entry.
     pub digest: Option<String>,
     /// The path, on the surface, the description was fetched from; none
@@ -1465,7 +1465,7 @@ impl DraftingRule for DescribedOperationRule {
         };
         // An operation the pinned description states has its request there,
         // in the endpoint catalog's entry for an `api` read: no endpoint
-        // entry states it a second time (rule eight, decision 0399).
+        // entry states it a second time (rule eight, decision 0389).
         if crate::described::pinned_draft(finding, &operation, cx).is_some() {
             cx.not_drafted(crate::described::PINNED_ELSEWHERE);
             return Ok(Vec::new());

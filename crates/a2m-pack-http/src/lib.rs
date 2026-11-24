@@ -13,7 +13,7 @@
 //!
 //! The `api` mode binds a read to an operation of a published description
 //! the import pinned, with the description's digest, in `descriptions/`;
-//! a description changed since is named drift (decision 0399).
+//! a description changed since is named drift (decision 0389).
 //!
 //! Not built yet, and so not declared in the pack's manifest: writes
 //! through `api`, a token taken from another endpoint's answer, a challenge
@@ -95,7 +95,7 @@ impl Pack for HttpPack {
         let api = Mode::new(API_MODE)?;
         // One driver for both modes: an `api` call is sent as an `http`
         // request is, and the reads left running are counted once for the
-        // pack (decision 0399).
+        // pack (decision 0389).
         let driver = Arc::new(driver::HttpDriver::new(
             Arc::clone(cx.redact()),
             max_response_bytes,

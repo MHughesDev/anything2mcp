@@ -364,7 +364,7 @@ impl DraftingRule for DescribedReadRule {
         let verb_value = DraftValue::text(if listed { "list" } else { "read" });
         // A read whose operation is pinned with the description's digest
         // binds the operation itself, in the `api` mode; any other binds
-        // its endpoint entry (decision 0399).
+        // its endpoint entry (decision 0389).
         let pinned_to = crate::described::pinned_draft(finding, &operation, cx);
         let pinned = pinned_to.is_some();
         let mut binding = match pinned_to {
