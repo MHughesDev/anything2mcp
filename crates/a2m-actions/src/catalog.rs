@@ -69,6 +69,16 @@ fn any_map() -> JsonSchema {
     JsonSchema::map_of(JsonSchema::any())
 }
 
+/// Why a listed tool cannot be called now (decision 0396): the reason,
+/// `drift`; the knowledge the mark that stops it names; and when the mark
+/// was made.
+fn unavailable() -> JsonSchema {
+    JsonSchema::object()
+        .required("reason", text())
+        .required("knowledge", text())
+        .optional("marked_at", JsonSchema::int())
+}
+
 /// The shape of a run, as `tool.call`, `run.get`, and `run.resume` return it.
 fn run_output() -> JsonSchema {
     JsonSchema::object()
@@ -269,7 +279,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
 
     vec![
         // Using tools.
-        act("tool.search", "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, and effects; call tool.describe for a schema.", VIEWER, Use, "1", List)
+        act("tool.search", "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.", VIEWER, Use, "1", List)
             .opt_pos("query", TEXT, "Words to look for in names and descriptions. Leave out to list everything.")
             .opt("target", TEXT, TARGET)
             .opt("module", TEXT, "A module of the target.")
@@ -285,6 +295,8 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("kind", text())
                     .required("effect", text())
                     .required("description", text())
+                    .required("available", JsonSchema::bool())
+                    .optional("unavailable", unavailable())
                     .optional("compiled_target_hash", text())
                     .optional("hazard", text())
                     .optional("title", text())
@@ -312,7 +324,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("description_by", text())
                 .required("input_schema", any_map())
                 .required("output_schema", any_map())
-                .required("annotations", any_map()))
+                .required("annotations", any_map())
+                .required("available", JsonSchema::bool())
+                .optional("unavailable", unavailable()))
             .example(r#"{"tool": "example_orders_order_get"}"#)
             .done(),
         act("tool.call", "Call one published operation or pipeline by name with its input. Returns the result of a read, or the run's resting state (such as needs_approval) with the next step. A write never proceeds without a person's approval.", Who::ByEffect, Use, "1", Change)
