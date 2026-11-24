@@ -1,5 +1,5 @@
 //! The addresses a person registered for a target (spec section 502, rule
-//! 2; decision 0999): the address given to `target.add`, and every address
+//! 2; decision 0413): the address given to `target.add`, and every address
 //! of every version a person published. A draft that reaches another is
 //! published only from the publish page, which names it.
 

@@ -1,4 +1,4 @@
-# 0999. The addresses a person registered for a target are those given to `target add` and those of every version a person published
+# 0413. The addresses a person registered for a target are those given to `target add` and those of every version a person published
 
 **Status:** Accepted. Design decision, made by the worker who built package 9.3u, under the lead's brief. The owner had not read this record when it was merged.
 
