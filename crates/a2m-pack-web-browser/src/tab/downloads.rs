@@ -14,6 +14,14 @@
 //! larger than the bound is cancelled as soon as its size is known to be, or
 //! reached, and what the browser wrote is deleted. One download only: a
 //! second one that begins while the lift holds is cancelled.
+//!
+//! The browser writes into the writing folder, beside the folder it was
+//! given, and a file is moved into that folder only once the browser says it
+//! is whole. The browser may make its half-written file of a cancelled
+//! download after it has said the download ended, and clears it a moment
+//! later, with nothing it reports in between; so the folder a step names
+//! holds whole files alone, whenever it is read, and what is left in the
+//! writing folder is the browser's to clear, or the next lift's.
 
 use std::path::{Path, PathBuf};
 
@@ -60,11 +68,25 @@ impl From<BrowserError> for DownloadError {
     }
 }
 
+/// The folder the browser writes a declared download into, beside the folder
+/// the file is kept in: its name with [`WRITING`] after it.
+fn writing_folder(folder: &Path) -> PathBuf {
+    let mut name = folder.file_name().unwrap_or_default().to_os_string();
+    name.push(WRITING);
+    folder.with_file_name(name)
+}
+
+/// What the name of the writing folder adds to the name of the folder a
+/// file is kept in.
+const WRITING: &str = "-writing";
+
 /// What the tab holds of a declared download.
 #[derive(Default)]
 pub(super) struct DownloadState {
-    /// The folder and the bound, while the refusal is lifted.
+    /// The writing folder and the bound, while the refusal is lifted.
     allowed: Option<(PathBuf, u64)>,
+    /// The folder a whole file is moved into.
+    into: Option<PathBuf>,
     /// The download that began, by the browser's number for it.
     guid: Option<String>,
     suggested: String,
@@ -149,10 +171,11 @@ impl Page {
     }
 
     /// After a cancel: waits for the browser to say the download ended, one
-    /// way or the other, so that the file it leaves is not written after it
-    /// is deleted, and then deletes what the browser wrote, under either
-    /// name it uses while it writes.
-    async fn forget_download(&self, folder: &Path, guid: &str) {
+    /// way or the other, and then deletes what the browser wrote in the
+    /// writing folder, under either name it uses while it writes. A
+    /// half-written file the browser makes after it said so is never in the
+    /// folder a step names, and the browser clears it itself.
+    async fn forget_download(&self, writing: &Path, guid: &str) {
         let mut changes = self.download_changes.subscribe();
         let until = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
@@ -172,18 +195,8 @@ impl Page {
                 () = tokio::time::sleep_until(until) => break,
             }
         }
-        // The browser clears its own half-written file a moment after it
-        // says the download ended: it is given that moment, on a condition
-        // (the file is gone), before anything is deleted for it.
-        let half = folder.join(format!("{guid}.crdownload"));
-        for _ in 0..40 {
-            if !half.exists() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
         for name in [guid.to_owned(), format!("{guid}.crdownload")] {
-            let _ = std::fs::remove_file(folder.join(name));
+            let _ = std::fs::remove_file(writing.join(name));
         }
     }
 
@@ -210,13 +223,15 @@ impl Page {
 
 impl ActTab {
     /// Lifts the refusal of downloads for the browser's context of this
-    /// profile: the next download of the tab is written into `folder`, under
-    /// a name the browser makes, and may be at most `most_bytes`. Lifted until
-    /// [`ActTab::forbid_downloads`].
+    /// profile: the next download of the tab is written, under a name the
+    /// browser makes, into the writing folder beside `folder`, made when it
+    /// is not there and emptied of what an earlier step left; it may be at
+    /// most `most_bytes`, and is moved into `folder` once it is whole.
+    /// Lifted until [`ActTab::forbid_downloads`].
     ///
     /// # Errors
     ///
-    /// The browser did not take it.
+    /// The browser did not take it, or the writing folder could not be made.
     pub async fn allow_download(
         &self,
         folder: &Path,
@@ -224,16 +239,27 @@ impl ActTab {
         deadline: Deadline,
     ) -> Result<(), BrowserError> {
         let page = &self.page;
+        let writing = writing_folder(folder);
+        std::fs::create_dir_all(&writing).map_err(|error| {
+            BrowserError::Unexpected(format!("the writing folder of downloads: {error}"))
+        })?;
+        if let Ok(entries) = std::fs::read_dir(&writing) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
         *page.downloads() = DownloadState {
-            allowed: Some((folder.to_path_buf(), most_bytes)),
+            allowed: Some((writing.clone(), most_bytes)),
+            into: Some(folder.to_path_buf()),
             ..DownloadState::default()
         };
-        page.download_behavior("allowAndName", Some(folder), deadline)
+        page.download_behavior("allowAndName", Some(&writing), deadline)
             .await
     }
 
-    /// Waits for the one download to be whole, and gives it. A file larger
-    /// than the bound is cancelled and deleted.
+    /// Waits for the one download to be whole, moves it from the writing
+    /// folder into the folder named, and gives it. A file larger than the
+    /// bound is cancelled and deleted.
     ///
     /// # Errors
     ///
@@ -244,7 +270,10 @@ impl ActTab {
         /// What the state says now, read with the lock held and no await.
         enum Now {
             Wait,
-            Whole(Download),
+            Whole {
+                written: PathBuf,
+                download: Download,
+            },
             Over {
                 guid: String,
                 path: PathBuf,
@@ -270,19 +299,26 @@ impl ActTab {
         loop {
             let now = {
                 let state = page.downloads();
-                match (state.guid.clone(), state.allowed.clone()) {
-                    (Some(guid), Some((folder, limit))) => {
-                        let path = folder.join(&guid);
+                match (
+                    state.guid.clone(),
+                    state.allowed.clone(),
+                    state.into.clone(),
+                ) {
+                    (Some(guid), Some((writing, limit)), Some(into)) => {
+                        let path = writing.join(&guid);
                         if state.too_large {
                             Now::Over { guid, path, limit }
                         } else if state.cancelled {
                             Now::Ended { path }
                         } else if state.done {
-                            Now::Whole(Download {
-                                path,
-                                suggested: state.suggested.clone(),
-                                bytes: state.received,
-                            })
+                            Now::Whole {
+                                written: path,
+                                download: Download {
+                                    path: into.join(&guid),
+                                    suggested: state.suggested.clone(),
+                                    bytes: state.received,
+                                },
+                            }
                         } else {
                             Now::Wait
                         }
@@ -291,7 +327,19 @@ impl ActTab {
                 }
             };
             match now {
-                Now::Whole(download) => return Ok(download),
+                Now::Whole { written, download } => {
+                    // The browser said the file is whole: it has its
+                    // final name, and is moved into the folder named.
+                    return match std::fs::rename(&written, &download.path) {
+                        Ok(()) => Ok(download),
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&written);
+                            Err(DownloadError::Browser(BrowserError::Unexpected(format!(
+                                "the whole file could not be moved out of the writing folder: {error}"
+                            ))))
+                        }
+                    };
+                }
                 Now::Over { guid, path, limit } => {
                     cancel(guid.clone()).await;
                     if let Some(folder) = path.parent() {
