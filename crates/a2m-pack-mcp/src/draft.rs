@@ -46,7 +46,7 @@ mod why {
 /// Whether a person answered, in the target's mapping, that the server does
 /// not run the one string of this tool, for the definition the finding
 /// reports: an entry of the surface's mapping, outside the holding folder,
-/// with the finding's digest and `free_text: false` (decision 0399).
+/// with the finding's digest and `free_text: false` (decision 0365).
 fn answered_not_free_text(cx: &DraftContext<'_>, surface: &str, tool: &str, digest: &str) -> bool {
     cx.existing().is_some_and(|sources| {
         sources

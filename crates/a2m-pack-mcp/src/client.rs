@@ -46,7 +46,7 @@ pub(crate) enum Revision {
     /// 2025-06-18: the same handshake, asking for the earlier revision. A
     /// server's own error for a call's bad input may come as the protocol
     /// error -32602 in it, which is a stop as a changed tool, never a
-    /// retry (decision 0399).
+    /// retry (decision 0365).
     HandshakeEarlier,
     /// 2026-07-28: no handshake; every request names the revision.
     NoHandshake,

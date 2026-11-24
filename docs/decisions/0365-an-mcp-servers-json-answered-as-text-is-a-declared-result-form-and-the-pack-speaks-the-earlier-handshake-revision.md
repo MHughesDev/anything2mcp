@@ -1,4 +1,4 @@
-# 0399. An MCP server's JSON answered as text is a declared result form, and the pack speaks the earlier handshake revision
+# 0365. An MCP server's JSON answered as text is a declared result form, and the pack speaks the earlier handshake revision
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), from field test 6. The owner had not read this record when it was merged.
 

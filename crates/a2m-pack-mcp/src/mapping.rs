@@ -23,7 +23,7 @@ pub(crate) const REVISION_HANDSHAKE: &str = "2025-11-25";
 /// The earlier revision with the same handshake, which the pack speaks as a
 /// client: what it uses of the protocol, the handshake, the version header,
 /// `tools/list`, `tools/call`, output schemas, and structured content, is
-/// the same in it (decision 0399).
+/// the same in it (decision 0365).
 pub(crate) const REVISION_HANDSHAKE_EARLIER: &str = "2025-06-18";
 /// The revision with no handshake: every request names it.
 pub(crate) const REVISION_NO_HANDSHAKE: &str = "2026-07-28";
@@ -39,7 +39,7 @@ pub(crate) const RESULT_STRUCTURED: &str = "structured";
 /// The result's value is its text, under one name, `text`.
 pub(crate) const RESULT_TEXT: &str = "text";
 /// The result's text items are JSON, read as its members: one object, or,
-/// under the entry's `records`, one row for each item (decision 0399).
+/// under the entry's `records`, one row for each item (decision 0365).
 pub(crate) const RESULT_JSON_TEXT: &str = "json_text";
 
 /// The `mcp` surface kind: its address, and for a local server program the

@@ -635,7 +635,7 @@ fn listed_members(
 }
 
 /// The members of a result whose text items are JSON (`result: json_text`,
-/// decision 0399). An item whose text is empty, or only spaces, holds
+/// decision 0365). An item whose text is empty, or only spaces, holds
 /// nothing. With `records` named, every item is a row, and an item that is
 /// a JSON list gives each of its elements as a row: the rows are listed
 /// under that name, and no item at all is an empty list, so "none" is told
