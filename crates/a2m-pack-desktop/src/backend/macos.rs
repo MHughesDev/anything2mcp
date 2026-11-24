@@ -2096,7 +2096,7 @@ mod tests {
         // What the application says after Save is a field that is not
         // editable, an entry as on the other systems, which the screen
         // model's confirmation names; the problem's field is hidden, and
-        // listed only while the application refuses a value (decision 0999).
+        // listed only while the application refuses a value (decision 0414).
         for name in ["New customer", "New status", "Message"] {
             assert_eq!(has("entry", name), 1, "entry {name}:\n{said}");
         }

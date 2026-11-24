@@ -600,7 +600,7 @@ mod on_macos {
             "New customer",
             "New status",
             // Not editable, and a text field all the same, as the read-only
-            // entries of the other stands are (decision 0999).
+            // entries of the other stands are (decision 0414).
             "Message",
         ] {
             assert!(

@@ -24,7 +24,7 @@
 //! text field (`AXTextField`), as the read-only edits of the Windows stand
 //! and the read-only entries of the Linux stand say they are entries: left
 //! to AppKit, a text field that is not editable says it is a static text
-//! (decision 0999).
+//! (decision 0414).
 //!
 //! A value a client sets into a field (`setAccessibilityValue:`) is kept in
 //! the book with its window and its label, shown by the field, and not
@@ -147,7 +147,7 @@ define_class!(
         /// static text's, which would make `Message` and `Problem`, and a
         /// field the read-only fault locks, a label here where the Linux
         /// and Windows stands show a read-only entry, and the one screen
-        /// model the three share could find none of them (decision 0999).
+        /// model the three share could find none of them (decision 0414).
         /// Whether a client may set its value is still answered below.
         #[unsafe(method_id(accessibilityRole))]
         fn accessibility_role(&self) -> Option<Retained<NSString>> {

@@ -1,4 +1,4 @@
-# 0999. The macOS stand shows each value field as a text field, whether or not it is editable
+# 0414. The macOS stand shows each value field as a text field, whether or not it is editable
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
