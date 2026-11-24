@@ -1,4 +1,4 @@
-# 0399. The file drafter reads a sheet with no table and types a JSON field by its values, and the committing step carries what it writes
+# 0346. The file drafter reads a sheet with no table and types a JSON field by its values, and the committing step carries what it writes
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Carries on [decision 0188](0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md) and [decision 0342](0342-a-documents-cell-may-be-empty-unless-it-is-a-key-or-declared-required.md) for the file pack, and settles findings 22 (the file half), 24, 25, and 26 of [field test 4](../reviews/field-tests.md).
 
