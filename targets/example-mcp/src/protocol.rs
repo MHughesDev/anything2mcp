@@ -11,10 +11,39 @@ use crate::tools;
 
 /// The revision served through the `initialize` handshake.
 pub const HANDSHAKE_REVISION: &str = "2025-11-25";
+/// The earlier revision served through the same handshake, as an earlier
+/// release of a server serves it alone.
+pub const EARLIER_HANDSHAKE_REVISION: &str = "2025-06-18";
 /// The revision served with no handshake: every request names it.
 pub const STATELESS_REVISION: &str = "2026-07-28";
 /// Every revision the stand serves, newest first.
-pub const REVISIONS: [&str; 2] = [STATELESS_REVISION, HANDSHAKE_REVISION];
+pub const REVISIONS: [&str; 3] = [
+    STATELESS_REVISION,
+    HANDSHAKE_REVISION,
+    EARLIER_HANDSHAKE_REVISION,
+];
+/// The revisions served through the handshake, newest first.
+const HANDSHAKE_REVISIONS: [&str; 2] = [HANDSHAKE_REVISION, EARLIER_HANDSHAKE_REVISION];
+/// What a stand set to the earlier revision alone serves.
+const EARLIER_ONLY: [&str; 1] = [EARLIER_HANDSHAKE_REVISION];
+
+/// The revisions served through the handshake now, newest first.
+fn handshake_revisions(state: &State) -> &'static [&'static str] {
+    if state.settings.earlier_revision_only {
+        &EARLIER_ONLY
+    } else {
+        &HANDSHAKE_REVISIONS
+    }
+}
+
+/// Every revision served now, newest first.
+fn served_revisions(state: &State) -> &'static [&'static str] {
+    if state.settings.earlier_revision_only {
+        &EARLIER_ONLY
+    } else {
+        &REVISIONS
+    }
+}
 /// Where a request with no handshake names its revision, under `params._meta`.
 ///
 /// Verified against the text of the 2026-07-28 revision: research note 18
@@ -194,19 +223,24 @@ fn initialize(state: &mut State, conn: &mut Conn, params: &Value) -> Result<Exec
     // The handshake's rule: answer with the requested revision if it is
     // served, and otherwise with one that is. The client ends the connection
     // if it cannot speak that one. A test may ask for a plain refusal instead.
-    if requested != HANDSHAKE_REVISION && state.settings.refuse_unknown_revision {
-        return Err(RpcError::unsupported_revision(requested, &[HANDSHAKE_REVISION]).status(200));
-    }
+    let served = handshake_revisions(state);
+    let answered = match served.iter().find(|revision| **revision == requested) {
+        Some(revision) => *revision,
+        None if state.settings.refuse_unknown_revision => {
+            return Err(RpcError::unsupported_revision(requested, served).status(200));
+        }
+        None => served[0],
+    };
     conn.phase = Phase::Initialized;
     let prefix = match conn.transport {
         Transport::Stdio => "stdio",
         Transport::Http => "session",
     };
     let id = state.register(conn, prefix);
-    state.record(&id, conn.transport).revision = Some(HANDSHAKE_REVISION.to_owned());
+    state.record(&id, conn.transport).revision = Some(answered.to_owned());
     Ok(Executed {
         result: json!({
-            "protocolVersion": HANDSHAKE_REVISION,
+            "protocolVersion": answered,
             "capabilities": {"tools": {"listChanged": conn.transport == Transport::Stdio}},
             "serverInfo": {
                 "name": SERVER_NAME,
@@ -334,7 +368,7 @@ fn admit(
                 .and_then(Value::as_str)
                 .or(header_revision);
             match named {
-                Some(STATELESS_REVISION) => {
+                Some(STATELESS_REVISION) if !state.settings.earlier_revision_only => {
                     let id = match conn.transport {
                         Transport::Stdio => state.register(conn, "stdio"),
                         Transport::Http => "stateless".to_owned(),
@@ -343,8 +377,11 @@ fn admit(
                         Some(STATELESS_REVISION.to_owned());
                     Ok(id)
                 }
-                Some(HANDSHAKE_REVISION) | None => Err(RpcError::not_initialized()),
-                Some(other) => Err(RpcError::unserved_revision(other, &REVISIONS)),
+                Some(named) if handshake_revisions(state).contains(&named) => {
+                    Err(RpcError::not_initialized())
+                }
+                None => Err(RpcError::not_initialized()),
+                Some(other) => Err(RpcError::unserved_revision(other, served_revisions(state))),
             }
         }
     }
@@ -433,9 +470,10 @@ pub(crate) fn dispatch(state: &mut State, conn: &mut Conn, incoming: &Incoming<'
     }
     if let Some(named) = incoming.header_revision
         && method != "initialize"
-        && !REVISIONS.contains(&named)
+        && !served_revisions(state).contains(&named)
     {
-        return RpcError::unserved_revision(named, &REVISIONS).into_outcome(id.unwrap_or(&no_id));
+        return RpcError::unserved_revision(named, served_revisions(state))
+            .into_outcome(id.unwrap_or(&no_id));
     }
 
     let Some(id) = id else {

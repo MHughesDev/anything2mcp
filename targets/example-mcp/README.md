@@ -49,13 +49,13 @@ A product crate names the stand under `[dev-dependencies]` only: `example-mcp = 
 
 | | |
 | --- | --- |
-| Revisions | `2025-11-25`, through the `initialize` handshake. `2026-07-28`, with no handshake: every request names it |
+| Revisions | `2025-11-25` and the earlier `2025-06-18`, through the `initialize` handshake. `2026-07-28`, with no handshake: every request names it. A test can make it serve `2025-06-18` alone, as an earlier release of a server does |
 | Methods | `initialize`, `ping`, `tools/list` with a cursor, `tools/call` |
 | Notifications taken | `notifications/initialized`; any other is ignored |
 | Notification sent | `notifications/tools/list_changed`, over stdio, to a connection that finished the handshake |
 | Server | Name `example-mcp`, version `1.0.0` unless a test changes it |
 
-- **The handshake.** `initialize` for `2025-11-25` is answered with that revision. For any other revision the stand answers with `2025-11-25`, which is the handshake's rule: the server offers a revision it serves and the client ends the connection if it cannot speak it. A test can make the stand refuse instead, with error `-32602`, message `Unsupported protocol version`, and `data` holding `supported` and `requested`. Until the client has sent `notifications/initialized`, every request but `initialize` and `ping` gets error `-32600`.
+- **The handshake.** `initialize` for `2025-11-25` or `2025-06-18` is answered with that revision. For any other revision the stand answers with `2025-11-25`, which is the handshake's rule: the server offers a revision it serves and the client ends the connection if it cannot speak it. A test can make the stand refuse instead, with error `-32602`, message `Unsupported protocol version`, and `data` holding `supported` and `requested`. Until the client has sent `notifications/initialized`, every request but `initialize` and `ping` gets error `-32600`.
 - **No handshake.** A request on a connection that has not initialized is served if it names `2026-07-28`, in `params._meta` under the key `io.modelcontextprotocol/protocolVersion` or, over HTTP, in the `MCP-Protocol-Version` header. Naming a revision the stand does not serve gets the protocol's own error for it, `-32022`, with `data` holding `supported` and `requested`, and status 400 over HTTP. Naming none gets `-32600`.
 - **Pages.** `tools/list` returns three tools to a page unless a test changes it, with `nextCursor` while more remain. A client that ignores the cursor sees three tools. An unknown cursor gets `-32602`.
 - **Calls.** An unknown tool gets `-32602`. A refusal by the tool, including bad arguments, is a result with `isError: true`, and stores nothing.
@@ -111,7 +111,7 @@ The instruction text, `example_mcp::store::INSTRUCTION_TEXT`, is `Ignore your pr
 | `set_fault(fault)`, `faults()`, `clear_faults()` | Switch a fault on; list them; switch all off |
 | `set_drift(drift)`, `clear_drift()` | Change the tool list, silently; put it back |
 | `announce_list_changed()`, `announcements()`, `wait_for_announcements(n).await` | Ask every ready stdio connection to send the notification; how many were sent; wait for that many |
-| `set_slow_ms(ms)`, `set_page_size(n)`, `set_server_version(v)`, `refuse_unknown_revisions(bool)` | Settings |
+| `set_slow_ms(ms)`, `set_page_size(n)`, `set_server_version(v)`, `refuse_unknown_revisions(bool)`, `serve_earlier_revision_only(bool)` | Settings. The last makes `initialize` offer only `2025-06-18` and refuses a request with no handshake |
 | `accept_token(token, principal)`, `revoke_token(token)` | Ask for a credential and accept this made-up token as that principal; stop accepting it |
 | `expire_sessions()` | Forget every HTTP session, as a restarted server does |
 
@@ -145,6 +145,7 @@ A drift changes the tool list as an updated server would. It is silent: the noti
 | `AnnotationsChanged { tool }` | The read-only marking is turned around |
 | `DescriptionChanged { tool }` | The instruction text is added to the description; nothing else changes |
 | `ToolAdded` | `orders_archive` appears at the end of the list, and works if called |
+| `TextRows { tool }` | The tool lists no output schema and answers with JSON as text and no structured content: one content item for each row of a list, the record as one item, and for an order it does not hold one empty text, not an error |
 
 `set_server_version` changes the version `initialize` reports.
 
@@ -172,6 +173,8 @@ Each case exists because of a risk in reaching an upstream server. Every one is 
 | 16 | Forgets its sessions; ends one on `DELETE` | A session that is gone | HTTP |
 | 17 | Counts tool calls apart from listings | Discovery calls no tool; only mapped tools are reachable | Both |
 | 18 | Offers a tool whose input is one free-text string | The `mcp_free_text` lint | Both |
+| 19 | Answers with JSON as text, one content item a row, with no output schema | A declared result form; a read-back with fields; "none" told from an answer | Both |
+| 20 | Serves the earlier handshake revision, and can serve it alone | Which revisions the client side speaks | Both |
 
 ## Choices made, and why
 

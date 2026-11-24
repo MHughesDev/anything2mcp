@@ -161,6 +161,14 @@ pub enum Drift {
     },
     /// A tool named `orders_archive` appears at the end of the list.
     ToolAdded,
+    /// The tool states no output schema and answers with JSON as text, as
+    /// many servers do: one content item for each row of a list, the one
+    /// record as one item, and for a record it does not hold one empty
+    /// text, not an error. It has no structured content.
+    TextRows {
+        /// The tool that answers so.
+        tool: String,
+    },
 }
 
 /// Everything a test can set. The default is a stand with no fault.
@@ -175,6 +183,11 @@ pub struct Settings {
     /// Answer an `initialize` for a revision the stand does not serve with an
     /// error, in place of offering the revision it does serve.
     pub refuse_unknown_revision: bool,
+    /// Serve the earlier handshake revision, 2025-06-18, alone, as an
+    /// earlier release of a server does: `initialize` offers only it, and a
+    /// request with no handshake is refused.
+    #[serde(default)]
+    pub earlier_revision_only: bool,
     /// Whether a credential is asked for: a bearer token over HTTP, and the
     /// token the program was started with over stdio.
     pub credential_required: bool,
@@ -196,6 +209,7 @@ impl Default for Settings {
             page_size: DEFAULT_PAGE_SIZE,
             server_version: DEFAULT_SERVER_VERSION.to_owned(),
             refuse_unknown_revision: false,
+            earlier_revision_only: false,
             credential_required: false,
             tokens: BTreeMap::new(),
             faults: Vec::new(),

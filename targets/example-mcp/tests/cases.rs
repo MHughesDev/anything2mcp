@@ -12,8 +12,9 @@ use example_mcp::control::Control;
 use example_mcp::faults::{Drift, Fault, FaultKind, Malformed};
 use example_mcp::harness::{HttpStand, StdioStand, stdio_program};
 use example_mcp::protocol::{
-    CREDENTIAL_REFUSED, HANDSHAKE_REVISION, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND,
-    PARSE_ERROR, STATELESS_REVISION, STATELESS_VERSION_META_KEY, UNSUPPORTED_VERSION,
+    CREDENTIAL_REFUSED, EARLIER_HANDSHAKE_REVISION, HANDSHAKE_REVISION, INVALID_PARAMS,
+    INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, STATELESS_REVISION, STATELESS_VERSION_META_KEY,
+    UNSUPPORTED_VERSION,
 };
 use example_mcp::state::{CallOutcome, Transport};
 use example_mcp::stdio::EXIT_DROPPED;
@@ -462,7 +463,7 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
     assert_eq!(refused["error"]["data"]["requested"], "1999-01-01");
     assert_eq!(
         refused["error"]["data"]["supported"],
-        json!([HANDSHAKE_REVISION])
+        json!([HANDSHAKE_REVISION, EARLIER_HANDSHAKE_REVISION])
     );
 
     assert_eq!(
@@ -485,7 +486,11 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
     assert_eq!(unknown["error"]["data"]["requested"], "1999-01-01");
     assert_eq!(
         unknown["error"]["data"]["supported"],
-        json!([STATELESS_REVISION, HANDSHAKE_REVISION])
+        json!([
+            STATELESS_REVISION,
+            HANDSHAKE_REVISION,
+            EARLIER_HANDSHAKE_REVISION
+        ])
     );
     let needs_handshake = stateless.request("tools/list", meta(HANDSHAKE_REVISION))?;
     assert_eq!(needs_handshake["error"]["code"], INVALID_REQUEST);
@@ -500,6 +505,87 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
             Some(HANDSHAKE_REVISION.to_owned()),
             Some(STATELESS_REVISION.to_owned())
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn stdio_the_earlier_revision_is_served_by_handshake_and_can_be_served_alone() -> Outcome {
+    let stand = StdioStand::new()?;
+    let control = stand.control();
+
+    // Asked for the earlier revision, the stand answers with it.
+    let mut client = StdioClient::start(&stand, None)?;
+    let hello = client.request("initialize", initialize_params(EARLIER_HANDSHAKE_REVISION))?;
+    assert_eq!(
+        hello["result"]["protocolVersion"],
+        EARLIER_HANDSHAKE_REVISION
+    );
+    drop(client);
+
+    // Set to it alone, as an earlier release of a server: the newer
+    // revision is offered the earlier one, and no request goes without
+    // the handshake.
+    control.serve_earlier_revision_only(true)?;
+    let mut client = StdioClient::start(&stand, None)?;
+    let offer = client.request("initialize", initialize_params(HANDSHAKE_REVISION))?;
+    assert_eq!(
+        offer["result"]["protocolVersion"],
+        EARLIER_HANDSHAKE_REVISION
+    );
+    drop(client);
+    let mut stateless = StdioClient::start(&stand, None)?;
+    let refused = stateless.request(
+        "tools/list",
+        json!({"_meta": {STATELESS_VERSION_META_KEY: STATELESS_REVISION}}),
+    )?;
+    assert_eq!(refused["error"]["code"], UNSUPPORTED_VERSION);
+    assert_eq!(
+        refused["error"]["data"]["supported"],
+        json!([EARLIER_HANDSHAKE_REVISION])
+    );
+    let revisions: Vec<_> = control
+        .connections()?
+        .into_iter()
+        .filter_map(|c| c.revision)
+        .collect();
+    assert_eq!(
+        revisions,
+        [EARLIER_HANDSHAKE_REVISION, EARLIER_HANDSHAKE_REVISION]
+    );
+    Ok(())
+}
+
+#[test]
+fn stdio_a_tool_can_answer_json_as_text_one_item_a_row() -> Outcome {
+    let stand = StdioStand::new()?;
+    let control = stand.control();
+    for tool in ["orders_list", "orders_get"] {
+        control.set_drift(Drift::TextRows { tool: tool.into() })?;
+    }
+    let mut client = StdioClient::start(&stand, None)?;
+    client.handshake()?;
+    let tools = client.tools()?;
+    for tool in ["orders_list", "orders_get"] {
+        let listed = tools.iter().find(|t| t["name"] == tool).ok_or("listed")?;
+        assert!(listed.get("outputSchema").is_none(), "{tool}");
+    }
+    // One content item a row, each a JSON object, and no structured content.
+    let list = client.call("orders_list", json!({}))?;
+    let items = list["result"]["content"].as_array().ok_or("content")?;
+    assert_eq!(items.len(), 3);
+    assert!(list["result"].get("structuredContent").is_none());
+    let first: Value = serde_json::from_str(items[0]["text"].as_str().ok_or("text")?)?;
+    assert_eq!(first["order_id"], "A-100");
+    // The record as one item; one it does not hold as one empty text.
+    let one = client.call("orders_get", json!({"order_id": "A-101"}))?;
+    let text = one["result"]["content"][0]["text"].as_str().ok_or("text")?;
+    assert_eq!(serde_json::from_str::<Value>(text)?["status"], "submitted");
+    let none = client.call("orders_get", json!({"order_id": "A-999"}))?;
+    assert_eq!(none["result"]["isError"], false);
+    assert_eq!(
+        none["result"]["content"],
+        json!([{"type": "text", "text": ""}])
     );
     Ok(())
 }
