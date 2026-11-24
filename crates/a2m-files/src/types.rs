@@ -104,11 +104,18 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
         ("email", text(false, Whitespace::Trim)),
         ("phone", text(true, Whitespace::Collapse)),
         ("identifier", text(true, Whitespace::Trim)),
-        ("url", text(true, Whitespace::Trim)),
+        (URL_TYPE, text(true, Whitespace::Trim)),
         ("file", text(true, Whitespace::Exact)),
         (UNTRUSTED_TEXT, text(true, Whitespace::Collapse)),
     ]
 }
+
+/// The built-in field type of an address. An input of it accepts only the
+/// destinations its operation declares: the compiler refuses one with
+/// none (`kernel.url_without_destination`), and the engine refuses any
+/// other address at run time (section 502). The compiled field type keeps
+/// this name, which is how the engine knows it.
+pub const URL_TYPE: &str = "url";
 
 /// The built-in field type of free text that came from the system: `text`,
 /// marked untrusted. A drafting rule types such an output with it, so that

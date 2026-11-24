@@ -22,6 +22,7 @@ mod binding;
 pub mod codes;
 mod compare;
 mod control;
+mod destination;
 mod diff;
 mod drift;
 mod engine;

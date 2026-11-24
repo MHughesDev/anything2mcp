@@ -278,6 +278,15 @@ pub struct Hooks {
     pub before: Mutex<Vec<StepHook>>,
     /// A step of this kind panics in the driver.
     pub panics_on: Mutex<Option<String>>,
+    /// How many contexts the driver has prepared; each is numbered by it,
+    /// from one.
+    pub contexts: AtomicU64,
+    /// Every step that reached a driver, with the number of the context it
+    /// was handed.
+    pub acted_in: Mutex<Vec<(String, u64)>>,
+    /// Every context given back, by its number, and whether the engine
+    /// said it was poisoned.
+    pub released: Mutex<Vec<(u64, bool)>>,
     /// A step of this kind never ends in the driver.
     pub hangs_on: Mutex<Option<String>>,
     /// Preparing a driver never ends.
@@ -396,6 +405,8 @@ struct AppState {
     http: reqwest::Client,
     /// The posture the context was prepared in.
     posture: Posture,
+    /// The context's number, from `Hooks::contexts`.
+    context: u64,
     /// The layout each screen of the compiled target is modelled with, by its
     /// section and its name: a section of the kind `screen` maps each
     /// screen's name to its layout.
@@ -580,6 +591,13 @@ impl AppDriver {
                 .lock()
                 .unwrap()
                 .push((self.mode.to_string(), step.kind.to_string()));
+            if let Some(state) = prepared.state::<AppState>() {
+                hooks
+                    .acted_in
+                    .lock()
+                    .unwrap()
+                    .push((step.kind.to_string(), state.context));
+            }
             let recorded = prepared.recorded().clone();
             let recorded_code = recorded.get("item_code").cloned();
             hooks.given.lock().unwrap().push(Given {
@@ -1105,6 +1123,7 @@ impl Driver for AppDriver {
                     .build()
                     .unwrap(),
                 posture: cx.posture,
+                context: self.hooks.contexts.fetch_add(1, Ordering::SeqCst) + 1,
                 screens: modelled_screens(cx.compiled_target),
             }))
         })
@@ -1161,8 +1180,17 @@ impl Driver for AppDriver {
         }
     }
 
-    fn release<'a>(&'a self, _prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
-        Box::pin(async move { Cleanup::complete() })
+    fn release<'a>(&'a self, mut prepared: Prepared, poisoned: bool) -> BoxFuture<'a, Cleanup> {
+        Box::pin(async move {
+            if let Some(state) = prepared.state::<AppState>() {
+                self.hooks
+                    .released
+                    .lock()
+                    .unwrap()
+                    .push((state.context, poisoned));
+            }
+            Cleanup::complete()
+        })
     }
 }
 
@@ -1454,6 +1482,53 @@ pub const SLOT_ADD: &str = "example_slot_add";
 pub const SHEET_ENTER: &str = "example_sheet_enter";
 /// A pipeline that creates a header and then its lines.
 pub const KIT_ENTER: &str = "example_kit_enter";
+
+/// The read of an order also takes `link`, an optional input of the
+/// built-in type `url`, and declares `order_get_declares` as its one
+/// destination; the first write of a line item declares
+/// `upsert_declares`. The pipeline `ORDER_FILL` takes a required `link`
+/// of its own and passes it to its first step, the read (section 502).
+pub fn reads_take_a_link(
+    compiled_target: &mut CompiledTarget,
+    order_get_declares: &str,
+    upsert_declares: &str,
+) {
+    let url = field_type(
+        compiled_target,
+        "url",
+        &FieldRule::Text {
+            case_sensitive: true,
+            whitespace: Whitespace::Trim,
+        },
+        Sensitivity::Internal,
+    );
+    let link = expr(compiled_target, "input.link", ValueType::Text);
+    for operation in &mut compiled_target.operations {
+        let declares = match operation.name.as_str() {
+            ORDER_GET => order_get_declares,
+            ITEM_UPSERT => upsert_declares,
+            _ => continue,
+        };
+        operation.manifest.destinations.push(declares.to_owned());
+        if operation.name.as_str() == ORDER_GET {
+            operation
+                .inputs
+                .push(input("link", url, ValueType::Text, false));
+        }
+    }
+    for pipeline in &mut compiled_target.pipelines {
+        if pipeline.name.as_str() != ORDER_FILL {
+            continue;
+        }
+        pipeline
+            .inputs
+            .push(input("link", url, ValueType::Text, true));
+        pipeline.steps[0].with.push(StepArg {
+            name: "link".to_owned(),
+            value: link,
+        });
+    }
+}
 
 /// The sheet the pipelines read: delimited text with a header row.
 pub fn sheet(rows: &[(&str, &str, &str, &str)]) -> Vec<u8> {
