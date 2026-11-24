@@ -1,6 +1,6 @@
 # 0390. The open questions of 2026-11-24 are settled by the lead, and the first release is what progress counts toward
 
-**Status:** Accepted. Design decision. The owner asked the lead, as the architect, to answer the lead's own eighteen open questions and to weigh again the assumptions it held with low confidence; the answers are the lead's, given on the owner's behalf, and none is an owner decision. Three of them (points 2, 3, and 5) are recommendations, because only the owner can act on them. The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision. The owner asked the lead, as the architect, to answer the lead's own eighteen open questions and to weigh again the assumptions it held with low confidence; the answers are the lead's, given on the owner's behalf, and none is an owner decision. Three of them (points 2, 3, and 5) are recommendations, because only the owner can act on them. The owner read these answers in conversation and accepted them as they stand.
 
 **Date:** 2026-11-24
 

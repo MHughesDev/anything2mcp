@@ -8,8 +8,8 @@
 //! | `goto` | Finds the one window of the application with the screen's role and title, waiting for the application to signal one until the step's deadline |
 //! | `wait` | Reads the window's tree, and again each time the application signals a change, until the screen's `ready` condition holds or the deadline passes; then, for a record with a key, proves the window shows that record |
 //! | `read` | Reads each field's value, or each column of the table as a list. A control that holds a secret is refused, never read |
-//! | `set` | Linux only. Finds the field in a fresh walk, proves again the application's process, sets its whole text through its editable-text interface, and reads the field: a value the field does not hold as it was set stops the run before anything is saved |
-//! | `invoke` | Linux only. Finds the action's element, proves the process again, refuses to act when the window already shows the action's confirmation or a refusal, does the element's named action, and waits, by the application's signals, for the confirmation, a refusal the screen declares, or the end of the application |
+//! | `set` | Finds the field in a fresh walk, proves again the application's process, sets its whole text (on Linux through its editable-text interface, on Windows through UI Automation's value pattern, on macOS through its `AXValue`), and reads the field: a value the field does not hold as it was set stops the run before anything is saved |
+//! | `invoke` | Finds the action's element, proves the process again, refuses to act when the window already shows the action's confirmation or a refusal, does the element's named action (on Windows UI Automation's `Invoke`, on macOS `AXPress`, each for the action `click` only), and waits, by the application's signals, for the confirmation, a refusal the screen declares, or the end of the application |
 //! | `snapshot` | The shape of every window of the application: roles, the names that are the window's shape, the structure. Never a value |
 //!
 //! Nothing here starts a program, and nothing reaches another application:
@@ -19,9 +19,11 @@
 //! application nothing until it is proven to be the program the surface
 //! declares. A `set` or an `invoke` is done only in a posture that may act,
 //! holds the driver's one desktop from its first `set` to the end of its
-//! committing `invoke`, and sends no key and no pointer event. On Windows
-//! and macOS a write stops before anything is sent, as `writes_not_built`
-//! (decision 0218).
+//! committing `invoke`, and sends no key and no pointer event (decision
+//! 0218). On Windows and macOS the same steps act through each system's
+//! own interface, with the same proofs before every act (decision 0399);
+//! on any other system a write stops before anything is sent, as
+//! `writes_not_built`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -33,7 +35,7 @@ use a2m_provider::{
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use serde_json::json;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
@@ -48,6 +50,16 @@ use crate::model::{
 use crate::screens::{PACK, SCREEN_KIND};
 use crate::tree::{El, Miss, Node, Tree};
 
+/// How a `set` sets a field's text, for its trace: on Linux through its
+/// editable-text interface, on Windows through UI Automation's value
+/// pattern, on macOS by setting its `AXValue`.
+#[cfg(target_os = "linux")]
+const STRATEGY: &str = "editable_text";
+#[cfg(windows)]
+const STRATEGY: &str = "value_pattern";
+#[cfg(target_os = "macos")]
+const STRATEGY: &str = "ax_value";
+
 /// The format of the shapes a `snapshot` step gives.
 pub(crate) const SNAPSHOT_FORMAT: &str = "1";
 
@@ -61,7 +73,7 @@ pub(crate) struct DesktopDriver {
     /// two runs never type into one desktop at once. The scheduler's
     /// exclusive key (`exclusive = "screen"`) serializes writes on one
     /// surface first; this holds where two surfaces share one desktop.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     desk: Arc<Mutex<()>>,
 }
 
@@ -70,7 +82,7 @@ impl DesktopDriver {
         Self {
             session,
             limits,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             desk: Arc::new(Mutex::new(())),
         }
     }
@@ -98,12 +110,12 @@ struct Held {
     posture: Posture,
     /// What proved the application's process at prepare, proved again
     /// before every act.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     proof: crate::backend::Proof,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     desk: Arc<Mutex<()>>,
     /// The desktop, while this binding's write holds it.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     holding: Option<OwnedMutexGuard<()>>,
 }
 
@@ -394,10 +406,11 @@ impl Held {
     /// that the application shows no window that no screen of the target
     /// names, such as a dialog raised since the `wait`. Either is a stop,
     /// with nothing sent (unknown means stop).
-    // Only Linux has an acting half in this version; Windows and macOS
-    // reach this once theirs are built, and until then it has no caller
-    // there.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    // A system with no back end has no acting half, and no caller of this.
+    #[cfg_attr(
+        not(any(target_os = "linux", windows, target_os = "macos")),
+        allow(dead_code)
+    )]
     async fn before_act(
         &self,
         step: &Step,
@@ -458,7 +471,7 @@ impl Held {
 
     /// Takes the driver's one desktop for this binding's write, waiting
     /// for another write to end until the step's deadline.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     async fn hold(&mut self, deadline: Deadline) -> Result<(), StepFailure> {
         if self.holding.is_some() {
             return Ok(());
@@ -502,7 +515,7 @@ impl Held {
 
     /// The first variant of the screen the walk shows, with what the
     /// element its condition names says: the application's own words.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     async fn variant_shown(
         &self,
         tree: &Tree,
@@ -523,13 +536,13 @@ impl Held {
         Ok(None)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     async fn set(&mut self, step: &Step, _input: &StepInput<'_>) -> Result<Observed, StepFailure> {
         self.may_act(step)?;
         Err(codes::writes_not_built())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     async fn invoke(
         &mut self,
         step: &Step,
@@ -539,7 +552,7 @@ impl Held {
         Err(codes::writes_not_built())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     async fn set(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
         use crate::backend::{Acted, Settable};
         use crate::model::SetStep;
@@ -665,13 +678,13 @@ impl Held {
                 a2m_telemetry::Detail::new("step", "set"),
                 a2m_telemetry::Detail::new("screen", name),
                 a2m_telemetry::Detail::new("field", payload.field),
-                a2m_telemetry::Detail::new("strategy", "editable_text"),
+                a2m_telemetry::Detail::new("strategy", STRATEGY),
             ])],
             ..Observed::default()
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     async fn invoke(
         &mut self,
         step: &Step,
@@ -688,7 +701,7 @@ impl Held {
         result
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     async fn invoke_held(
         &self,
         step: &Step,
@@ -865,7 +878,7 @@ impl Held {
                     return Err(self.no_confirmation(
                         step,
                         &what,
-                        "then the accessibility bus was lost",
+                        "then the accessibility interface was lost",
                     ));
                 }
             }
@@ -874,7 +887,7 @@ impl Held {
 
     /// An action that was sent, whose fate is not known: for one that
     /// saves, the record is in doubt.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     fn no_confirmation(&self, step: &Step, what: &str, why: &str) -> StepFailure {
         let row = if step.commits {
             &a2m_provider::codes::row::NO_CONFIRMATION
@@ -989,6 +1002,12 @@ impl Held {
             .management_namespace
             .clone()
             .unwrap_or_else(|| crate::windows_kinds::DEFAULT_NAMESPACE.to_owned());
+        // Another machine's namespace is never asked, whatever the review
+        // said of the binding's statement: fail closed, here, before the
+        // management service is reached.
+        if crate::lower::names_another_machine(&namespace) {
+            return Err(codes::remote_namespace_refused());
+        }
         let read = crate::backend::wmi::read(namespace.clone(), class.clone())
             .await
             .map_err(|error| unsent(&error, &self.program))?;
@@ -1079,7 +1098,7 @@ fn condition_reads(cond: &Cond, node: &Node) -> bool {
 }
 
 /// The first locator a condition names: where a variant's words are.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
 fn first_locator(cond: &Cond) -> Option<&crate::model::Locator> {
     match cond {
         Cond::Visible(locator)
@@ -1102,7 +1121,7 @@ fn value_text(value: Option<&Value>) -> Option<String> {
 }
 
 /// How a step was done, for its trace.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
 fn acting(means: Vec<a2m_telemetry::Detail>) -> a2m_provider::Capture {
     a2m_provider::Capture::acting(&a2m_telemetry::Acting {
         means,
@@ -1170,7 +1189,7 @@ impl Driver for DesktopDriver {
                     return Err(unsent(&error, &program));
                 }
             };
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             let proof = match look.proof(&app, fields.digest.as_deref()) {
                 Ok(proof) => proof,
                 Err(error) => {
@@ -1192,11 +1211,11 @@ impl Driver for DesktopDriver {
                 window: None,
                 limits: self.limits,
                 posture: cx.posture,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
                 proof,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
                 desk: Arc::clone(&self.desk),
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
                 holding: None,
             }))
         })

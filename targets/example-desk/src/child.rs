@@ -25,6 +25,15 @@
 //! of the started copy, which runs one test at a time, writes that test's
 //! name with no end of line before the test runs, so the stand's first
 //! answer, on Windows, follows it on the same line.
+//!
+//! The write half is shared too ([`Book`]): what the application stores,
+//! how many times Save stored, every value set into a field, what the
+//! window says under `Message`, and the faults a test arms, each window
+//! keeping it as its controls change (decision 0399). The faults built
+//! here are a silent Save, a read-only or disabled field, and the two
+//! changes under a reader between its look and its act; a Save whose
+//! confirmation is late or whose application exits, a second window, and
+//! a restart are Linux's only.
 
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -35,7 +44,10 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use crate::{Line, Order, REQUIRE_ENV, StandError, Truth, required};
+use crate::{
+    CUSTOMER_REFUSED, Fault, FieldSet, Line, Order, REQUIRE_ENV, STATUS_REFUSED, STATUSES,
+    StandError, Truth, required,
+};
 
 /// The variable that makes a started copy of the test serve the stand.
 const CHILD_ENV: &str = "A2M_DESK_STAND_CHILD";
@@ -70,6 +82,143 @@ pub fn serve_if_child() {
         let code = crate::mac::window::serve();
         std::process::exit(code);
     }
+}
+
+/// What the application stores and says, and the faults armed for it: the
+/// write half of the stand on Windows and macOS, kept by the window's code
+/// in the stand's process.
+#[derive(Debug, Default)]
+pub(crate) struct Book {
+    /// What is stored, by name (`customer`, `status`).
+    pub(crate) stored: std::collections::BTreeMap<String, String>,
+    /// How many times Save stored.
+    pub(crate) stores: u64,
+    /// Every value set into a field, in order.
+    pub(crate) sets: Vec<FieldSet>,
+    /// What the field labelled `Message` shows.
+    pub(crate) message: String,
+    /// The next press of Save stores nothing and says nothing.
+    pub(crate) silent: bool,
+    /// Once the order number has next been read, the window shows this
+    /// order number.
+    pub(crate) record_after_read: Option<String>,
+    /// Once the order number has next been read, the application raises
+    /// its dialog.
+    pub(crate) dialog_after_read: bool,
+}
+
+/// The stand's book, in the stand's process.
+pub(crate) static BOOK: Mutex<Book> = Mutex::new(Book {
+    stored: std::collections::BTreeMap::new(),
+    stores: 0,
+    sets: Vec::new(),
+    message: String::new(),
+    silent: false,
+    record_after_read: None,
+    dialog_after_read: false,
+});
+
+/// The book, whatever a thread that held it did.
+pub(crate) fn book() -> std::sync::MutexGuard<'static, Book> {
+    BOOK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What one press of Save does, by the application's own rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Pressed {
+    /// A fault: nothing stored and nothing said.
+    Silent,
+    /// The values are refused, with the application's words.
+    Refused(&'static str),
+    /// The values are stored; the window shows them and says so.
+    Stored,
+}
+
+impl Book {
+    /// The order the window shows when the stand starts: what it stores.
+    pub(crate) fn open(&mut self, order: &Order) {
+        self.stored
+            .insert("customer".to_owned(), order.customer.clone());
+        self.stored
+            .insert("status".to_owned(), order.status.clone());
+    }
+
+    /// A press of Save with what the edit fields hold.
+    pub(crate) fn press(&mut self, customer: &str, status: &str) -> Pressed {
+        if std::mem::take(&mut self.silent) {
+            return Pressed::Silent;
+        }
+        if customer.trim().is_empty() {
+            return Pressed::Refused(CUSTOMER_REFUSED);
+        }
+        if !STATUSES.contains(&status) {
+            return Pressed::Refused(STATUS_REFUSED);
+        }
+        self.stores += 1;
+        self.stored
+            .insert("customer".to_owned(), customer.to_owned());
+        self.stored.insert("status".to_owned(), status.to_owned());
+        Pressed::Stored
+    }
+
+    /// The book's part of the control interface's answer to `truth`, after
+    /// the fields both systems wrote before it: the stores, the message,
+    /// the stored customer and status, and the sets.
+    pub(crate) fn line(&self) -> String {
+        let sets: Vec<String> = self
+            .sets
+            .iter()
+            .map(|set| format!("{}\u{1f}{}\u{1f}{}", set.window, set.field, set.value))
+            .collect();
+        format!(
+            "{}\t{}\t{}\t{}\t{}",
+            self.stores,
+            self.message,
+            self.stored.get("customer").map_or("", String::as_str),
+            self.stored.get("status").map_or("", String::as_str),
+            sets.join("\u{1e}")
+        )
+    }
+}
+
+/// A fault the Windows and macOS stands carry out, as a line of the
+/// control interface; `None` for one that only Linux's does.
+fn fault_line(fault: &Fault) -> Option<String> {
+    match fault {
+        Fault::SaveSilently => Some("fault silent".to_owned()),
+        Fault::ReadOnly(label) => Some(format!("fault read_only\t{label}")),
+        Fault::Disabled(label) => Some(format!("fault disabled\t{label}")),
+        Fault::AnotherRecordAfterRead(number) => Some(format!("fault record\t{number}")),
+        Fault::DialogAfterRead => Some("fault dialog".to_owned()),
+        Fault::ExitAfterSave | Fault::ConfirmLate(_) => None,
+    }
+}
+
+/// A fault the window carries out on its controls, read from a line of
+/// the control interface. The faults of the book are armed by
+/// [`arm`]; this is what is left for the window: the label of a field to
+/// make read-only, or disabled.
+pub(crate) enum FieldFault {
+    ReadOnly(String),
+    Disabled(String),
+}
+
+/// Arms the fault a line of the control interface names, and gives the
+/// one the window must carry out on a field, if any. `Err` for a line that
+/// names no fault.
+pub(crate) fn arm(line: &str) -> Result<Option<FieldFault>, ()> {
+    let rest = line.strip_prefix("fault ").ok_or(())?;
+    let (kind, value) = rest.split_once('\t').unwrap_or((rest, ""));
+    let mut book = book();
+    match kind {
+        "silent" => book.silent = true,
+        "record" => book.record_after_read = Some(value.to_owned()),
+        "dialog" => book.dialog_after_read = true,
+        "read_only" => return Ok(Some(FieldFault::ReadOnly(value.to_owned()))),
+        "disabled" => return Ok(Some(FieldFault::Disabled(value.to_owned()))),
+        _ => return Err(()),
+    }
+    Ok(None)
 }
 
 fn encode_order(order: &Order) -> String {
@@ -428,9 +577,13 @@ impl Stand {
         let answer = self.ask("truth", "truth")?;
         let fields: Vec<&str> = answer.split('\t').collect();
         let number = |at: usize| fields.get(at).and_then(|text| text.parse::<u64>().ok());
-        let (Some(writes), Some(secret_reads), Some(tracking), Some(asked)) =
-            (number(1), number(2), fields.get(3), fields.get(4))
-        else {
+        let (Some(writes), Some(secret_reads), Some(tracking), Some(asked), Some(stores)) = (
+            number(1),
+            number(2),
+            fields.get(3),
+            fields.get(4),
+            number(5),
+        ) else {
             return Err(StandError(format!(
                 "the stand's answer `{answer}` is not in the form it writes"
             )));
@@ -443,13 +596,46 @@ impl Stand {
                 Some((member.to_owned(), times.parse::<u64>().ok()?))
             })
             .collect();
+        let text = |at: usize| fields.get(at).copied().unwrap_or_default().to_owned();
+        let mut stored = std::collections::BTreeMap::new();
+        stored.insert("customer".to_owned(), text(7));
+        stored.insert("status".to_owned(), text(8));
+        let sets = text(9)
+            .split('\u{1e}')
+            .filter(|set| !set.is_empty())
+            .filter_map(|set| {
+                let mut parts = set.split('\u{1f}');
+                Some(FieldSet {
+                    window: parts.next()?.to_owned(),
+                    field: parts.next()?.to_owned(),
+                    value: parts.next()?.to_owned(),
+                })
+            })
+            .collect();
         Ok(Truth {
             writes,
             secret_reads,
             asked,
             tracking: (*tracking).to_owned(),
-            ..Truth::default()
+            stored,
+            stores,
+            sets,
+            message: text(6),
         })
+    }
+
+    pub(crate) fn fault(&self, fault: &Fault) -> Result<(), StandError> {
+        let line = fault_line(fault).ok_or_else(|| {
+            StandError(format!(
+                "the stand's fault {fault:?} is built for Linux only"
+            ))
+        })?;
+        let answer = self.ask(&line, "fault")?;
+        if answer == "fault" {
+            Ok(())
+        } else {
+            Err(StandError(format!("the stand refused the fault: {answer}")))
+        }
     }
 
     pub(crate) fn show_late(&self, after: Duration) -> Result<(), StandError> {

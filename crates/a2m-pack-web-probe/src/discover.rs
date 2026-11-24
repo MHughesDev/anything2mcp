@@ -22,7 +22,7 @@ use a2m_pack_web_browser::{
 };
 use a2m_provider::{
     BoxFuture, Discoverer, DiscovererName, DiscoveryReport, DiscoveryScope, FindingSink,
-    SandboxPort, SurfaceDescription,
+    SandboxPort, SurfaceDescription, TrafficCapture, take_capture,
 };
 use serde_json::Value as Json;
 
@@ -870,7 +870,9 @@ impl WebCapture {
         let (mut pages, start) = Pages::new(scope)?;
         let mut out = Once::new(out);
         let tab = core.tab(scope).await?;
-        tab.record_exchanges();
+        // The page's own requests reach this discoverer through the
+        // contract's traffic capture, and pass its check (decision 0391).
+        TrafficCapture::start(&tab);
         let mut exchanges: Vec<(Exchange, Vec<(LimitationCode, String)>)> = Vec::new();
         while let Some((address, _, focused)) = pages.next(core.max_pages, scope) {
             let arrival = core.arrive(&tab, &address, &start, scope).await?;
@@ -920,7 +922,17 @@ impl WebCapture {
             // for its answers is bounded for each page, so that one request
             // that never ends does not hold the whole discovery.
             let until = Deadline::after(PAGE_WAIT.min(scope.deadline.remaining()));
-            let taken = tab.exchanges(until).await;
+            let taken = take_capture(&tab, until, scope.redact).await;
+            if taken.withheld > 0 {
+                pages.report.dropped += taken.withheld as u64;
+                limitations.push((
+                    LimitationCode::NotExercised,
+                    format!(
+                        "{} request(s) the page made by itself are left out whole: their method or origin held a secret or was not of its form.",
+                        taken.withheld
+                    ),
+                ));
+            }
             if taken.awaited > 0 {
                 limitations.push((
                     LimitationCode::NotExercised,
@@ -955,7 +967,7 @@ impl WebCapture {
                 },
                 limitations,
             ));
-            for own in taken.exchanges {
+            for own in taken.requests {
                 if own.origin != start.origin {
                     pages.report.dropped += 1;
                     continue;
@@ -984,6 +996,12 @@ impl WebCapture {
                 }
                 if own.query_left_out {
                     limitations.push(query_left_out());
+                }
+                if own.headers_left_out {
+                    limitations.push((
+                        LimitationCode::NotExercised,
+                        "A header of the request is left out: its name held a secret or was not a plain name.".to_owned(),
+                    ));
                 }
                 if own.names_withheld {
                     limitations.push(dictionary());

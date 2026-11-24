@@ -17,19 +17,19 @@
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Acted, Heard, Look, Proof, Settable};
+pub(crate) use linux::{Look, Proof};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub(crate) mod wmi;
 #[cfg(windows)]
-pub(crate) use self::windows::Look;
+pub(crate) use self::windows::{Look, Proof};
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub(crate) use macos::Look;
+pub(crate) use macos::{Look, Proof};
 
 #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 mod none;
@@ -81,6 +81,50 @@ pub(crate) struct Window {
     pub title: String,
 }
 
+/// How an act failed: before anything was sent, or after it was sent,
+/// with its fate unknown.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Acted {
+    NotSent(AxError),
+    Unknown(AxError),
+}
+
+/// Whether an element offers a text that may be set.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Settable {
+    Yes,
+    /// It offers the interface, and its state says it takes no text today.
+    ReadOnly,
+    /// It offers the interface, and its state says it is not enabled.
+    Disabled,
+    /// It offers no editable text at all.
+    NoInterface,
+}
+
+/// What a watch heard first.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Heard {
+    /// The application signalled a change.
+    Changed,
+    /// The application's connection to the bus ended, or on macOS its
+    /// process exited. Windows does not hear this: there a walk that fails
+    /// says it.
+    #[cfg_attr(windows, allow(dead_code))]
+    Gone,
+    /// The deadline passed first.
+    Passed,
+}
+
+/// The one name of an action that `perform` takes on Windows and macOS:
+/// the interface's own press (UI Automation's `Invoke`, the accessibility
+/// interface's `AXPress`). Any other name is no action the element offers
+/// (decision 0399).
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) const PRESS: &str = "click";
+
 /// Why the back end could not do what it was asked. Nothing that could
 /// change the application was ever sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +151,10 @@ pub(crate) enum AxError {
     /// The program's digest is not the one stated.
     #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     NotProven,
-    /// Before an act, the application's connection is no longer owned by
-    /// the process proven when the run was prepared, or the element is not
-    /// the application's.
-    #[cfg(target_os = "linux")]
+    /// Before an act, the application's connection (on Windows and macOS,
+    /// its process) is no longer the process proven when the run was
+    /// prepared, or the element is not the application's.
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
     Replaced,
     /// The service the surface names has no owner on the session bus. Never
     /// started.
@@ -205,7 +249,7 @@ impl AxError {
                 ),
                 "Review the program that is installed, then state its digest in the surface, or reinstall the reviewed one.",
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
             Self::Replaced => codes::failure(
                 &codes::row::APPLICATION_NOT_PROVEN,
                 format!(

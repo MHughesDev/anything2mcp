@@ -39,6 +39,16 @@
 //! call into the interface inside an [`ask`] that names it. A secure text
 //! field (`AXSecureTextField`) is reported as present and secret, and its
 //! value is never asked for.
+//!
+//! **The acting half** is apart (decision 0399, after decision 0218 on
+//! Linux): [`Hands`], which only the driver's `set` and `invoke` make,
+//! makes the calls of [`ACT_CALLS`] through [`act`], the one function that
+//! may: set a text field's `AXValue`, and perform `AXPress`. Only the
+//! acting half calls it, and tests hold the lists and this file's source.
+//! Before every act it proves again, on the accessibility thread, that the
+//! element is the application's and that the application is the process
+//! proven at prepare: its start time, its program, and its digest when
+//! the surface states one. Nothing posts a key or a pointer event.
 
 use std::collections::BTreeMap;
 use std::ffi::{c_int, c_void};
@@ -52,11 +62,11 @@ use std::time::Duration;
 use a2m_provider::{Deadline, resolved_path};
 use objc2_application_services::{AXError as Said, AXIsProcessTrusted, AXObserver, AXUIElement};
 use objc2_core_foundation::{
-    CFArray, CFRetained, CFRunLoop, CFString, CFType, kCFRunLoopDefaultMode,
+    CFArray, CFBoolean, CFRetained, CFRunLoop, CFString, CFType, kCFRunLoopDefaultMode,
 };
 use tokio::sync::oneshot;
 
-use super::{App, AxError, Limits, Window};
+use super::{Acted, App, AxError, Heard, Limits, PRESS, Settable, Window};
 use crate::roles;
 use crate::tree::{El, Node, Tree};
 
@@ -87,7 +97,22 @@ pub(crate) const READ_CALLS: &[&str] = &[
     "AXObserverCreate",
     "AXObserverAddNotification",
     "AXObserverGetRunLoopSource",
+    // Before an act: whether a field's value may be set, and the names of
+    // the actions an element offers. Asking does nothing.
+    "AXUIElementIsAttributeSettable",
+    "AXUIElementCopyActionNames",
 ];
+
+/// Every call the acting half may make: set one attribute's value, and
+/// perform one action. Only [`act`] makes one, and only [`Hands`] calls
+/// it. A test holds that no call of [`READ_CALLS`] is here.
+pub(crate) const ACT_CALLS: &[&str] = &["AXUIElementSetAttributeValue", "AXUIElementPerformAction"];
+
+/// The one attribute the acting half sets: a text field's value.
+const ACT_ATTRIBUTES: &[&str] = &["AXValue"];
+
+/// The one action the acting half performs: a press.
+const ACT_ACTIONS: &[&str] = &["AXPress"];
 
 /// Every attribute [`copy`] may ask for. `AXValue` is asked of a text
 /// field only when its subrole is not a secure text field's, of a static
@@ -104,6 +129,8 @@ pub(crate) const READ_ATTRIBUTES: &[&str] = &[
     "AXRows",
     "AXColumnHeaderUIElements",
     "AXHeader",
+    // Before a set: whether the field is enabled.
+    "AXEnabled",
 ];
 
 /// The notifications a wait listens to, on the application's element and
@@ -249,6 +276,42 @@ fn ask<T>(call: &'static str, make: impl FnOnce() -> T) -> Result<T, AxError> {
         return Err(AxError::Lost(format!("`{call}` is not a read")));
     }
     Ok(make())
+}
+
+/// Makes one call of [`ACT_CALLS`], the one function that changes an
+/// application, and gives what the interface answered: whether the
+/// application did it is the caller's to read from it. Only [`Hands`]
+/// calls it. A call not on the list is not made.
+fn act(call: &'static str, make: impl FnOnce() -> Said) -> Result<Said, Acted> {
+    if !ACT_CALLS.contains(&call) || READ_CALLS.contains(&call) {
+        return Err(Acted::NotSent(AxError::Lost(format!(
+            "`{call}` is not a call that acts"
+        ))));
+    }
+    Ok(make())
+}
+
+/// What the interface answered to an act, as the driver reads it: done; not
+/// done, and said so; or not known.
+fn acted(call: &str, answer: Said) -> Result<bool, Acted> {
+    if answer == Said::Success {
+        return Ok(true);
+    }
+    if [
+        Said::AttributeUnsupported,
+        Said::ActionUnsupported,
+        Said::IllegalArgument,
+        Said::NotImplemented,
+    ]
+    .contains(&answer)
+    {
+        return Ok(false);
+    }
+    if answer == Said::APIDisabled {
+        return Err(Acted::NotSent(AxError::NotTrusted));
+    }
+    // The application may have done it and not answered in time.
+    Err(Acted::Unknown(said(call, answer)))
 }
 
 /// The value of one attribute of [`READ_ATTRIBUTES`], or `None` when the
@@ -979,6 +1042,18 @@ impl Watch {
     /// Waits for the application's next notification. `false` when the
     /// deadline passed first; the application's exit is an error.
     pub(crate) async fn next(&mut self, deadline: Deadline) -> Result<bool, AxError> {
+        match self.heard(deadline).await? {
+            Heard::Changed => Ok(true),
+            Heard::Passed => Ok(false),
+            Heard::Gone => Err(AxError::Lost(
+                "the application exited, or its listener ended".to_owned(),
+            )),
+        }
+    }
+
+    /// Waits for the application's next notification, or its exit, or the
+    /// deadline, whichever is first.
+    pub(crate) async fn heard(&mut self, deadline: Deadline) -> Result<Heard, AxError> {
         let (changes, exited) = (&mut self.changes, &mut self.exited);
         let heard = std::future::poll_fn(|cx| {
             if let Some(waiting) = exited.as_mut()
@@ -994,11 +1069,9 @@ impl Watch {
             changes.poll_recv(cx).map(|change| change.map(|()| true))
         });
         match tokio::time::timeout_at(deadline.at(), heard).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Err(AxError::Lost(
-                "the application exited, or its listener ended".to_owned(),
-            )),
-            Err(_) => Ok(false),
+            Ok(Some(_)) => Ok(Heard::Changed),
+            Ok(None) => Ok(Heard::Gone),
+            Err(_) => Ok(Heard::Passed),
         }
     }
 }
@@ -1227,6 +1300,239 @@ fn await_exit(queue: Arc<OwnedFd>, exited: oneshot::Sender<()>) {
     }
 }
 
+/// What the driver proved of the application's process when it was
+/// prepared, and proves again before every act: its number, its start
+/// time, the program it runs, and, when the surface states one, the
+/// program's digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Proof {
+    process: i32,
+    started: (u64, u64),
+    program: PathBuf,
+    digest: Option<String>,
+}
+
+impl Proof {
+    /// Whether the process is still the one proven. Only the process table
+    /// is asked, and the program's file read when a digest is stated.
+    fn holds(&self) -> bool {
+        let same = facts_of(self.process).is_some_and(|facts| facts.started == self.started)
+            && program_of(self.process)
+                .and_then(|running| resolved_path(&running).ok())
+                .is_some_and(|running| running == self.program);
+        same && self.digest.as_ref().is_none_or(|stated| {
+            running_digest(self.process, &self.program).as_ref() == Some(stated)
+        })
+    }
+}
+
+/// The element a key names, when its process is still the one proven.
+fn proven(ax: &Ax, proof: &Proof, el: &El) -> Result<CFRetained<AXUIElement>, AxError> {
+    if process_of(el)? != proof.process || !proof.holds() {
+        return Err(AxError::Replaced);
+    }
+    ax.element(el)
+}
+
+/// The acting half of the back end, over one look and the proof of its
+/// application. Made only by the driver's `set` and `invoke`; it is the
+/// only caller of [`act`]. Each method is one job on the accessibility
+/// thread, which proves the element's process again before it acts.
+pub(crate) struct Hands<'a> {
+    look: &'a Look,
+    proof: &'a Proof,
+}
+
+impl Hands<'_> {
+    /// Proves again, before an act, that the element is the application's
+    /// and that the application is still the process proven when the run
+    /// was prepared.
+    pub(crate) async fn prove(&self, app: &App, node: &Node) -> Result<(), AxError> {
+        if node.el.bus != app.root.bus {
+            return Err(AxError::Replaced);
+        }
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        self.look
+            .run(2 * CALL_LIMIT, move |ax| {
+                proven(ax, &proof, &el).map(|_| ())
+            })
+            .await
+    }
+
+    /// Whether the field's value may be set now: it is a text field that
+    /// holds no secret, it is enabled, and the interface says its value
+    /// may be set.
+    #[allow(unsafe_code)] // one call into the accessibility interface, explained below
+    pub(crate) async fn settable(&self, node: &Node) -> Result<Settable, AxError> {
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        self.look
+            .run(2 * CALL_LIMIT, move |ax| {
+                let element = proven(ax, &proof, &el)?;
+                let role = text_of(&element, "AXRole")?.unwrap_or_default();
+                let subrole = text_of(&element, "AXSubrole")?.unwrap_or_default();
+                if !TEXT_ROLES.contains(&role.as_str()) || subrole == SECURE {
+                    return Ok(Settable::NoInterface);
+                }
+                let enabled = copy(&element, "AXEnabled")?
+                    .and_then(|value| value.downcast::<CFBoolean>().ok())
+                    .is_none_or(|enabled| enabled.as_bool());
+                if !enabled {
+                    return Ok(Settable::Disabled);
+                }
+                let name = CFString::from_str("AXValue");
+                let mut settable: u8 = 0;
+                // SAFETY: the element is a valid, retained element of this
+                // thread; the name outlives the call; `settable` is ours.
+                let answer = ask("AXUIElementIsAttributeSettable", || unsafe {
+                    element.is_attribute_settable(&name, NonNull::from(&mut settable))
+                })?;
+                if answer != Said::Success {
+                    return Err(said("AXUIElementIsAttributeSettable", answer));
+                }
+                Ok(if settable == 0 {
+                    Settable::ReadOnly
+                } else {
+                    Settable::Yes
+                })
+            })
+            .await
+    }
+
+    /// Sets the field's whole value. A secure text field is never set: its
+    /// subrole is read again first. `false` when the interface says the
+    /// field took nothing.
+    #[allow(unsafe_code)] // one call into the accessibility interface, explained below
+    pub(crate) async fn set_text(&self, node: &Node, text: &str) -> Result<bool, Acted> {
+        if node.secret {
+            return Err(Acted::NotSent(AxError::Secret));
+        }
+        let (proof, el, text) = (self.proof.clone(), node.el.clone(), text.to_owned());
+        let answer = self
+            .look
+            .run(2 * CALL_LIMIT, move |ax| {
+                let sent = (|| {
+                    let element = proven(ax, &proof, &el).map_err(Acted::NotSent)?;
+                    let subrole = text_of(&element, "AXSubrole").map_err(Acted::NotSent)?;
+                    if subrole.as_deref() == Some(SECURE) {
+                        return Err(Acted::NotSent(AxError::Secret));
+                    }
+                    let attribute = "AXValue";
+                    if !ACT_ATTRIBUTES.contains(&attribute) {
+                        return Err(Acted::NotSent(AxError::Lost(
+                            "an attribute that is not set".to_owned(),
+                        )));
+                    }
+                    let name = CFString::from_str(attribute);
+                    let value = CFString::from_str(&text);
+                    let value: &CFType = &value;
+                    // SAFETY: the element is a valid, retained element of
+                    // this thread; the name and the value, a string, which is
+                    // the type a text field's value takes, outlive the call.
+                    let answer = act("AXUIElementSetAttributeValue", || unsafe {
+                        element.set_attribute_value(&name, value)
+                    })?;
+                    acted("AXUIElementSetAttributeValue", answer)
+                })();
+                Ok(sent)
+            })
+            .await;
+        // A job the thread may have begun is a set that may have been made.
+        answer.unwrap_or_else(|error| Err(Acted::Unknown(error)))
+    }
+
+    /// Does the element's action named `name`: only [`PRESS`], as
+    /// `AXPress`. `Ok(None)` when the name is another, or the element
+    /// offers no press, and nothing was sent; `Ok(Some(false))` when the
+    /// interface says it was not done.
+    #[allow(unsafe_code)] // calls into the accessibility interface, explained below
+    pub(crate) async fn perform(&self, node: &Node, name: &str) -> Result<Option<bool>, Acted> {
+        if name != PRESS {
+            return Ok(None);
+        }
+        let (proof, el) = (self.proof.clone(), node.el.clone());
+        let answer = self
+            .look
+            .run(2 * CALL_LIMIT, move |ax| {
+                let sent = (|| {
+                    let element = proven(ax, &proof, &el).map_err(Acted::NotSent)?;
+                    let press = "AXPress";
+                    if !ACT_ACTIONS.contains(&press) {
+                        return Err(Acted::NotSent(AxError::Lost(
+                            "an action that is not performed".to_owned(),
+                        )));
+                    }
+                    let mut names: *const CFArray = std::ptr::null();
+                    // SAFETY: the element is a valid, retained element of
+                    // this thread; `names` is ours, and the call writes into
+                    // it one array it has retained for us, or nothing.
+                    let answer = ask("AXUIElementCopyActionNames", || unsafe {
+                        element.copy_action_names(NonNull::from(&mut names))
+                    })
+                    .map_err(Acted::NotSent)?;
+                    if answer != Said::Success {
+                        return Err(Acted::NotSent(said("AXUIElementCopyActionNames", answer)));
+                    }
+                    // SAFETY: on success the array is one the caller owns
+                    // (the "copy" rule), or null; each member of it is a Core
+                    // Foundation object, checked to be a string before it is
+                    // read as one.
+                    let offered = NonNull::new(names.cast_mut()).is_some_and(|names| {
+                        let names = unsafe {
+                            CFRetained::cast_unchecked::<CFArray<CFType>>(CFRetained::from_raw(
+                                names,
+                            ))
+                        };
+                        (0..names.len().min(64))
+                            .filter_map(|at| names.get(at))
+                            .filter_map(|name| name.downcast::<CFString>().ok())
+                            .filter(|name| name.to_string() == press)
+                            .count()
+                            == 1
+                    });
+                    if !offered {
+                        return Ok(None);
+                    }
+                    let action = CFString::from_str(press);
+                    // SAFETY: the element is a valid, retained element of
+                    // this thread; the action's name outlives the call.
+                    let answer = act("AXUIElementPerformAction", || unsafe {
+                        element.perform_action(&action)
+                    })?;
+                    acted("AXUIElementPerformAction", answer).map(Some)
+                })();
+                Ok(sent)
+            })
+            .await;
+        answer.unwrap_or_else(|error| Err(Acted::Unknown(error)))
+    }
+}
+
+impl Look {
+    /// What proves the application's process now: for the driver to keep,
+    /// and to prove again before every act. Only the process table is
+    /// asked.
+    pub(crate) fn proof(&self, app: &App, digest: Option<&str>) -> Result<Proof, AxError> {
+        let process = i32::try_from(app.process).map_err(|_| AxError::Replaced)?;
+        let program = program_of(process)
+            .and_then(|running| resolved_path(&running).ok())
+            .ok_or(AxError::Replaced)?;
+        let facts = facts_of(process).ok_or(AxError::Replaced)?;
+        Ok(Proof {
+            process,
+            started: facts.started,
+            program,
+            digest: digest
+                .map(|stated| stated.strip_prefix("sha256:").unwrap_or(stated).to_owned()),
+        })
+    }
+
+    /// The acting half, over this look and the proof of its application.
+    /// Only the driver's `set` and `invoke` ask for it.
+    pub(crate) fn hands<'a>(&'a self, proof: &'a Proof) -> Hands<'a> {
+        Hands { look: self, proof }
+    }
+}
+
 impl Look {
     /// Starts the accessibility thread, after the system says this process
     /// may use the interface. The interface reads the session the engine
@@ -1420,13 +1726,20 @@ mod tests {
         ("AXObserver::create(", "AXObserverCreate"),
         ("add_notification(", "AXObserverAddNotification"),
         ("run_loop_source(", "AXObserverGetRunLoopSource"),
+        ("is_attribute_settable(", "AXUIElementIsAttributeSettable"),
+        ("copy_action_names(", "AXUIElementCopyActionNames"),
+    ];
+
+    /// Each method of the bindings the acting half names, with the call it
+    /// makes: each only inside an [`act`] that names it.
+    const ACT_BOUND: &[(&str, &str)] = &[
+        ("set_attribute_value(", "AXUIElementSetAttributeValue"),
+        ("perform_action(", "AXUIElementPerformAction"),
     ];
 
     /// The methods of the bindings that act, by the names this module would
     /// write: none may appear.
     const ACTING_METHODS: &[&str] = &[
-        "set_attribute_value(",
-        "perform_action(",
         "post_keyboard_event(",
         "remove_notification(",
         "AXMakeProcessTrusted(",
@@ -1442,7 +1755,27 @@ mod tests {
     fn the_back_end_makes_no_call_that_acts_and_asks_no_attribute_to_set() {
         for call in READ_CALLS {
             assert!(!ACTING_CALLS.contains(call), "{call}");
+            assert!(!ACT_CALLS.contains(call), "{call}");
         }
+        // The acting half sets a text field's value and presses, and
+        // nothing else: no key, no pointer, no permission.
+        assert_eq!(
+            ACT_CALLS,
+            &["AXUIElementSetAttributeValue", "AXUIElementPerformAction"]
+        );
+        for call in ACT_CALLS {
+            assert!(ACTING_CALLS.contains(call), "{call}");
+        }
+        assert_eq!(ACT_ATTRIBUTES, &["AXValue"]);
+        assert_eq!(ACT_ACTIONS, &["AXPress"]);
+        assert!(matches!(
+            act("AXUIElementPostKeyboardEvent", || Said::Success),
+            Err(Acted::NotSent(_))
+        ));
+        assert!(matches!(
+            act("AXUIElementCopyAttributeValue", || Said::Success),
+            Err(Acted::NotSent(_))
+        ));
         for attribute in READ_ATTRIBUTES {
             assert!(!SET_ATTRIBUTES.contains(attribute), "{attribute}");
         }
@@ -1523,7 +1856,46 @@ mod tests {
                 );
             }
         }
-        // And nothing that acts is named at all.
+        // The acting half's two methods are named only inside an act that
+        // names their call, and every act is inside the acting half.
+        let hands = code
+            .find("impl Hands<'_> {")
+            .expect("the acting half is in the module");
+        let hands_end = hands
+            + code[hands..]
+                .find("\n}\n")
+                .expect("the acting half's block ends");
+        let mut acts = Vec::new();
+        let opening = "act(\"";
+        let mut from = 0;
+        while let Some(found) = code[from..].find(opening) {
+            let start = from + found;
+            let named = start + opening.len();
+            let call = &code[named..named + code[named..].find('"').unwrap()];
+            let end = start + code[start..].find("})").unwrap();
+            if !code[..start].ends_with('_') {
+                acts.push((start, end, call));
+            }
+            from = end;
+        }
+        assert_eq!(acts.len(), 2, "one set and one press");
+        for (start, _, call) in &acts {
+            assert!(ACT_CALLS.contains(call), "`{call}` is not a call that acts");
+            assert!(
+                (hands..hands_end).contains(start),
+                "an act outside the acting half"
+            );
+        }
+        for (method, call) in ACT_BOUND {
+            for (at, _) in code.match_indices(method) {
+                assert!(
+                    acts.iter()
+                        .any(|(start, end, named)| *start < at && at < *end && named == call),
+                    "`{method}` is called outside an act that names `{call}`"
+                );
+            }
+        }
+        // And nothing else that acts is named at all.
         for method in ACTING_METHODS {
             assert!(!code.contains(method), "`{method}` is named");
         }

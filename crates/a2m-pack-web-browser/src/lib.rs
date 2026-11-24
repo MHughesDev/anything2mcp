@@ -38,6 +38,7 @@
 //! reported), uploads, recycling, and the platform profiles.
 
 mod browsers;
+mod capture;
 mod client;
 mod error;
 mod launch;
@@ -62,6 +63,7 @@ pub use browsers::{
     DIGESTS_SETTING, DOWNLOADS_FOLDER, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey,
     STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
+pub use capture::captured;
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;

@@ -120,7 +120,7 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 - A test stand imitates the part of its kind of system that makes the kind hard, and nothing else. Make it as real as is cheap.
 - Tests ask the test stand what it stored. A test never proves a write using Anything2MCP's own read path alone.
 - CI runs the build, the lints, and the tests on Windows, macOS, and Linux.
-- The benchmark suite in `bench/` runs in CI and stores its results. A regression over 10% on a budgeted path is to fail the build: the comparison is built (`a2m-bench compare`) and CI does not run it yet, because no budgeted path is measured. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
+- The benchmark suite in `bench/` runs in CI and stores its results. A regression over 10% on a budgeted path is to fail the build: CI runs the comparison (`a2m-bench compare`) against a result stored on purpose from a quiet runner in `bench/baseline/` (decision 0369); none is stored yet, so for now it compares nothing. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
 - The nine ledger rules in spec section 208 are each a test; a change that breaks one cannot merge.
 - Fault-injection tests are part of the definition of done for anything that writes: expired session, lost connection after a write was sent, bad input, stale approval, blocked surface.
 - Fixtures must be synthetic or scrubbed. Never commit recorded business data.
