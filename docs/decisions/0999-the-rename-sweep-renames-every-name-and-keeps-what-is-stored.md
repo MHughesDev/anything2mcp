@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-24
 
-**Changes:** the name of the compiled target in the code and the documents in force ([decision 0329](0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)); the failure codes and the action whose names carried the old word; the platform profile `aspnet_webforms`, now `server_postback_forms`; nothing that is stored.
+**Changes:** the name of the compiled target in the code and the documents in force ([decision 0329](0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)); the failure codes and the action whose names carried the old word; the platform profile `aspnet_webforms`, now `server_postback_forms`; nothing that is stored. The roadmap gains row N0b, for the names of [decision 0330](0330-every-name-says-what-the-part-is-in-plain-words.md).
 
 ## Context
 
@@ -25,10 +25,13 @@ Decision 0329 renamed the plan, the compiled and hashed form of a target version
 5. **Words that name something else stay:** the ledger's planned records (`plan_records`, `PlannedRecord`, the event `planned`), the scheduler's `plan` of a watch's due time, the program's `start::plan` of a launch, prose about planning work, `docs/plan/`, the Build Order, a step's plan in an approval, and the text of test data such as `Digest::of(b"plan")`. Old decision records, journal entries, research notes, and review results keep the word of their day.
 6. **The profile `aspnet_webforms` is `server_postback_forms`,** its file `profiles/server_postback_forms.yaml`. Its comments and detection hints name no framework: it is detected by a hidden field that carries the page's state between postbacks, or by the page's own postback function. It states no `ready` rule, because its platform's own test is a call into the framework's script object and would name it; the rule was read and checked and never run, and `blur_then_wait_ready` waits for the form to be drawn again, not on that rule ([decision 0385](0385-the-set-step-commits-a-text-control-as-the-surfaces-platform-profile-says.md)). Its identifier patterns are unchanged. Decisions 0370 and 0385 keep the old name as history.
 
+7. **The names of decision 0330 are a row of their own, N0b.** N0 renamed the compiled target and the profile, and merged them. The other renames touch every crate again, a crate's name (the logs crate), a pack's contract (`PackContext::telemetry`), enum names a test holds to the documents (`Archetype`), and keys read from files a person writes (`archetype` in a provider manifest), and "profile" alone must be split three ways by hand. N0b does them under the rule of point 4: a name in code and prose is renamed; a name stored, or read from a file a person or a pack has already written, stays, and is listed. Until N0b lands, the code and the documents keep the old names of 0330.
+
 ## Alternatives
 
 | Alternative | Why not |
 | --- | --- |
 | Rename the stored names too, with a migration and a new format number | Every hash of every published version would change, and a store or trace an older build wrote would need rewriting. The stored name is read by no person |
 | Name the action `compiled_target.show` | Actions are grouped by the object a person names; a person shows a target, and what is printed is its compiled target |
+| Do the names of 0330 in the same change | A change of about two thousand uses across every crate, on top of this one, could not be checked by hand in one sitting; a sweep half done would leave two vocabularies |
 | Keep the profile's framework-specific readiness script | It names a real framework, against rule 9, and nothing runs it |
