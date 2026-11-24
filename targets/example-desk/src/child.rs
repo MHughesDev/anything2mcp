@@ -16,7 +16,9 @@
 //!
 //! One session at a time in a test process: the tests of one binary run in
 //! parallel, and two windows of one program would be two applications to
-//! the pack. A [`Session`] holds the seat until it and its stand are gone.
+//! the pack. A [`Session`] holds the seat until it and its stand are gone;
+//! a test that asks for a second while it holds one is told at once
+//! ([`crate::seat`]).
 //!
 //! The control interface is a line protocol on the process's standard
 //! input and output, every answer marked with [`PREFIX`]; the test
@@ -41,9 +43,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::seat::{Seat, Taken};
 use crate::{
     CUSTOMER_REFUSED, Fault, FieldSet, Line, Order, REQUIRE_ENV, STATUS_REFUSED, STATUSES,
     StandError, Truth, required,
@@ -281,42 +284,28 @@ fn answer_in(line: &str) -> Option<&str> {
 }
 
 /// The one seat of this test process.
-static SEAT: Mutex<bool> = Mutex::new(false);
-static SEAT_FREED: Condvar = Condvar::new();
+static SEAT: Seat = Seat::new();
 
 /// What a session and its stand share: the seat and the folder with the
 /// program's copy, both given back when the last of them is gone.
 struct Held {
     folder: PathBuf,
+    _seat: Taken,
 }
 
 impl Held {
     fn take(folder: PathBuf) -> Result<Self, StandError> {
-        let start = Instant::now();
-        let mut busy = SEAT.lock().unwrap_or_else(PoisonError::into_inner);
-        while *busy {
-            let left = SEAT_LIMIT.saturating_sub(start.elapsed());
-            if left.is_zero() {
-                return Err(StandError(format!(
-                    "another test of this process held the desktop for {} seconds",
-                    SEAT_LIMIT.as_secs()
-                )));
-            }
-            busy = SEAT_FREED
-                .wait_timeout(busy, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
-        *busy = true;
-        Ok(Self { folder })
+        Ok(Self {
+            folder,
+            _seat: SEAT.take(SEAT_LIMIT)?,
+        })
     }
 }
 
 impl Drop for Held {
+    /// The folder is removed before the seat is given back.
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.folder);
-        *SEAT.lock().unwrap_or_else(PoisonError::into_inner) = false;
-        SEAT_FREED.notify_one();
     }
 }
 

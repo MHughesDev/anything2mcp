@@ -491,6 +491,9 @@ mod on_each_system {
         let truth = scene.desk().truth();
         assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
 
+        // On Windows and macOS a test process has one desktop at a time,
+        // which the scene above holds until it is gone.
+        drop(scene);
         let Some(scene) = Scene::start("dialog").await else {
             return;
         };
