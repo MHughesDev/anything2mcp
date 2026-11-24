@@ -24,8 +24,8 @@ use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
     Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, Snapshot, SnapshotLimits, Visibility,
-    looks_like_an_action, path_by_structure, plain_segment,
+    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
+    Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -299,9 +299,37 @@ struct Session {
 /// browsers, and the tab's setup, with the session's state, which is placed
 /// again into the new browser. Nothing here signs in: the state is the one
 /// the run's lease handed over.
-struct Reopen {
+pub(crate) struct Reopen {
     browsers: Browsers,
     setup: TabSetup,
+}
+
+impl Reopen {
+    pub(crate) fn new(browsers: Browsers, setup: TabSetup) -> Self {
+        Self { browsers, setup }
+    }
+
+    /// Places the session's state into the profile's browser, which the
+    /// browser engine starts afresh from the same data directory once the
+    /// browser it had is lost, and opens a new observing tab there, with
+    /// the same environment, origins, and asserted reads (decision 0424).
+    pub(crate) async fn observing_tab(
+        &self,
+        safe: &SafeRequests,
+        deadline: Deadline,
+    ) -> Result<ObserveTab, StepFailure> {
+        self.setup.place_state(&self.browsers, deadline).await?;
+        self.browsers
+            .observer()
+            .observing_tab(
+                &self.setup.profile,
+                &self.setup.environment,
+                safe,
+                &self.setup.origins,
+            )
+            .await
+            .map_err(|error| browser_failure(&error, "the opening of a tab in a new browser"))
+    }
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -742,18 +770,10 @@ impl Session {
         if !self.looking.browser_lost() || !self.in_observing_tab(step)? {
             return Ok(());
         }
-        let Reopen { browsers, setup } = &self.reopen;
-        setup.place_state(browsers, input.deadline).await?;
-        self.looking = browsers
-            .observer()
-            .observing_tab(
-                &setup.profile,
-                &setup.environment,
-                &self.asserted.safe_requests(&self.origin),
-                &setup.origins,
-            )
-            .await
-            .map_err(|error| browser_failure(&error, "the opening of a tab in a new browser"))?;
+        self.looking = self
+            .reopen
+            .observing_tab(&self.asserted.safe_requests(&self.origin), input.deadline)
+            .await?;
         if step.kind == GOTO {
             return Ok(());
         }
@@ -2559,10 +2579,7 @@ impl UiDriver {
                 environment: setup.environment.clone(),
                 origins: setup.origins.clone(),
             }),
-            reopen: Reopen {
-                browsers: self.browsers.clone(),
-                setup,
-            },
+            reopen: Reopen::new(self.browsers.clone(), setup),
             since_goto: Vec::new(),
             gotos,
             origin,

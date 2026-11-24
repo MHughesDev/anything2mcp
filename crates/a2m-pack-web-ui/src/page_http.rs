@@ -38,7 +38,7 @@ use std::time::Duration;
 use a2m_auth::SessionLease;
 use a2m_core::{
     EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
-    Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Verb,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Values, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -60,7 +60,7 @@ use serde_json::Value as Json;
 
 use crate::codes::{self, shown};
 use crate::driver::{
-    TabSetup, acting, browser_failure, edge_refusal, fail, refusal, segment, tab_setup, until,
+    Reopen, acting, browser_failure, edge_refusal, fail, refusal, segment, tab_setup, until,
     within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
@@ -826,6 +826,26 @@ struct Session {
     /// The surface's asserted reads, and whether the observing tab was
     /// handed them.
     asserted: AssertedReads,
+    /// How to open the observing tab again when its browser is lost.
+    reopen: Reopen,
+    /// The last `goto` done in the observing tab, with its arguments: what
+    /// brought that tab's page where it is. A `goto` in the acting tab
+    /// leaves it, since every read is made in the observing tab whichever
+    /// tab the last `goto` chose.
+    last_look: Option<(Step, Values)>,
+}
+
+/// The tab a `goto` asks for. A compiled target compiled before a `goto`
+/// said its tab held reads alone, so a `goto` that does not say is the
+/// observing tab's.
+fn tab_wanted(step: &Step) -> Result<TabKind, StepFailure> {
+    if step.payload.is_none() {
+        return Ok(TabKind::Observe);
+    }
+    step.payload
+        .decode::<GotoStep>()
+        .map(|goto| goto.tab)
+        .map_err(|_| codes::not_usable("its payload does not decode"))
 }
 
 /// What a write's answer is, by what its entry declares.
@@ -864,20 +884,64 @@ impl Session {
         refusal(&refused, what, &self.asserted)
     }
 
+    /// Whether `step` runs in the observing tab: a `goto` that reaches its
+    /// page there, or a `request` whose entry reads. A request that writes
+    /// is sent only from the acting tab.
+    fn in_observing_tab(&self, step: &Step) -> Result<bool, StepFailure> {
+        if step.kind == GOTO {
+            return Ok(self.to_act.is_none() || tab_wanted(step)? != TabKind::Act);
+        }
+        Ok(step.kind == REQUEST && self.entry(step)?.1.write.is_none())
+    }
+
+    /// Keeps the last `goto` done in the observing tab.
+    fn remember(&mut self, step: &Step, input: &StepInput<'_>) {
+        if step.kind == GOTO && self.on == TabKind::Observe {
+            self.last_look = Some((step.clone(), input.args.clone()));
+        }
+    }
+
+    /// When the browser of the observing tab is lost and `step` runs in
+    /// that tab: places the session's state into a new browser started from
+    /// the same profile, opens the observing tab there, and, for a read's
+    /// `request`, brings its page back by the last `goto` in that tab, done
+    /// again (decisions 0424 and 0999). The tab can only read, so doing it
+    /// again changes nothing in the system. Nothing here signs in: the
+    /// state placed is the one the run's lease handed over, and a page
+    /// answered with a declared sign of expiry stops as it would have the
+    /// first time. A write is never helped: its request is sent only from
+    /// the acting tab, which was in the lost browser too, and a write is
+    /// never sent again.
+    async fn recover(&mut self, step: &Step, input: &StepInput<'_>) -> Result<(), StepFailure> {
+        if !self.looking.browser_lost() || !self.in_observing_tab(step)? {
+            return Ok(());
+        }
+        self.looking = self
+            .reopen
+            .observing_tab(&self.asserted.safe_requests(&self.origin), input.deadline)
+            .await?;
+        if step.kind == GOTO {
+            return Ok(());
+        }
+        if let Some((done, args)) = self.last_look.clone() {
+            // The tab the steps act in stays the one the last `goto` chose.
+            let on = self.on;
+            let again = self
+                .goto(&done, &StepInput::new(&args, input.deadline))
+                .await;
+            self.on = on;
+            again?;
+        }
+        Ok(())
+    }
+
     /// The tab for a `goto`: the acting tab only for a write's own `goto`,
     /// opened then, in a posture that may act; the observing tab in every
     /// other case. A compiled target compiled before a `goto` said its tab
     /// held reads alone, so a `goto` that does not say is the observing
     /// tab's.
     async fn choose(&mut self, step: &Step) -> Result<(), StepFailure> {
-        let wanted = if step.payload.is_none() {
-            TabKind::Observe
-        } else {
-            step.payload
-                .decode::<GotoStep>()
-                .map(|goto| goto.tab)
-                .map_err(|_| codes::not_usable("its payload does not decode"))?
-        };
+        let wanted = tab_wanted(step)?;
         let Some(to_act) = self.to_act.as_ref().filter(|_| wanted == TabKind::Act) else {
             self.on = TabKind::Observe;
             return Ok(());
@@ -1495,15 +1559,13 @@ impl PageHttpDriver {
     ) -> Result<Session, StepFailure> {
         let setup = tab_setup(cx, lease)?;
         setup.place_state(&self.browsers, cx.deadline).await?;
-        let TabSetup {
-            origin,
-            profile,
-            environment,
-            origins,
-            state: _,
-            // A page request sends its value; no control is committed.
-            commit: _,
-        } = setup;
+        // A page request sends its value; no control is committed. The
+        // state stays with the setup, to be placed again into a new browser
+        // when the observing tab's is lost.
+        let origin = setup.origin.clone();
+        let profile = setup.profile.clone();
+        let environment = setup.environment.clone();
+        let origins = setup.origins.clone();
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
         for (position, section) in cx.compiled_target.packs.iter().enumerate() {
@@ -1608,6 +1670,8 @@ impl PageHttpDriver {
             expiry,
             posture: cx.posture,
             asserted,
+            reopen: Reopen::new(self.browsers.clone(), setup),
+            last_look: None,
         })
     }
 }
@@ -1635,6 +1699,9 @@ impl Driver for PageHttpDriver {
             if let Some(failure) = session.refused(&what) {
                 return Err(StepFailure::not_sent(failure));
             }
+            // A read goes on in a new browser of the same profile when the
+            // observing tab's browser was lost (decisions 0424 and 0999).
+            session.recover(step, input).await?;
             let done = if step.kind == GOTO {
                 session.goto(step, input).await
             } else if step.kind == REQUEST {
@@ -1664,7 +1731,12 @@ impl Driver for PageHttpDriver {
                     )))
                 }
                 Some(failure) => Err(StepFailure::not_sent(failure)),
-                None => done,
+                None => {
+                    if let Ok(StepOutcome::Done(_)) = &done {
+                        session.remember(step, input);
+                    }
+                    done
+                }
             }
         })
     }
