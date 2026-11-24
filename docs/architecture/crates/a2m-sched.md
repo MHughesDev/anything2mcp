@@ -204,7 +204,7 @@ On loss, `sweep` does section 223's steps in one transaction:
 3. The run stops as `possible_commit`, `runner_lost`, when it is in a state a run can stop from.
 4. A `reconcile` job is queued when the job could write or a record is in doubt, with `available_at` at the end of the quarantine. What the lost job held alone passes to it, so no other job takes those resources in between.
 
-When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The check after a loss is not a job of its own: the reconcile queued after a lost lease carries `verify_after_loss`, as does each reconcile queued after it, and when it settles the runner reads every verified record once more in the same lease ([decision 0399](../../decisions/0399-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
+When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The check after a loss is not a job of its own: the reconcile queued after a lost lease carries `verify_after_loss`, as does each reconcile queued after it, and when it settles the runner reads every verified record once more in the same lease ([decision 0347](../../decisions/0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 
 ## Exclusive resources during a run
 
@@ -312,7 +312,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 
 1. Done: `submit` with health, dedupe, the queue bound, and the caller's cap; the queue; `claim`, `heartbeat`, `finish`. With slice 3.7.
 2. Done: waiting for locks, behind the ledger's lock calls. With slice 3.7.
-3. Done: lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test. The check after a loss is the last part of that reconcile, in its lease ([decision 0399](../../decisions/0399-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
+3. Done: lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test. The check after a loss is the last part of that reconcile, in its lease ([decision 0347](../../decisions/0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 4. Done: per-session parallelism, exclusive resources, priority, and round robin between callers. Not built: a weighted share for a caller.
 5. Done: rate budgets, kept in the store.
 6. Done in part: `hello`, matching by capability and home runner, `drain`, `bye`, `cancel`, holds. Not built: enrollment and revoking a runner, which belong to the runner link of slices 7.1 and 7.2; marking a runner offline when it falls silent.

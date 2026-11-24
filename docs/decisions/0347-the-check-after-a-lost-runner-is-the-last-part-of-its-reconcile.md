@@ -1,4 +1,4 @@
-# 0399. The check after a lost runner is the last part of its reconcile
+# 0347. The check after a lost runner is the last part of its reconcile
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Builds the check after a lost runner of package 3.7, which [spec section 223](../spec/2-kernel/223-the-runner-protocol.md) names as a `verify_after_loss` job.
 
