@@ -216,6 +216,8 @@ impl PersonActId { pub const fn from_bytes(b: [u8; 16]) -> Self; pub fn parse(t:
 pub struct PersonActAsk { pub act: PersonActId, pub person: PrincipalId, pub action: ActionName,
     pub summary: String, pub input: Vec<ShownField>, pub details: Vec<String>,
     pub surfaces: Vec<ActSurface>, pub warnings: Vec<ActWarning>,   // a publish's; not repeated in `details` (0199)
+    // ActSurface { name, kind, address, addresses, notices, new_in, new_here }: new_in names the environments
+    // in which its address is at a place no person registered, new_here says the same of `address` (0999)
     pub review: Option<ReviewSummary>,   // a publish's, sign-in addresses from the keeper, every text redacted (0264)
     pub secrets: Vec<AskedSecret>, pub asked_through: String, pub expires_at: Timestamp }
 pub struct ShownField { pub name: String, pub value: String, pub cut: bool }
@@ -388,7 +390,7 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 | Compiled targets | `a2m-ledger` | A compiled target that fails its hash check is unavailable alone: a call to one of its tools answers the load's failure, `busy`/`store_corrupt`, before a run is made, and `tool.search` leaves its tools out with a warning (`a_compiled_target_that_fails_its_hash_check_makes_its_tools_unavailable_and_no_other`) | `ok` |
 | Keeper, scheduler, engine | `a2m-auth`, `a2m-sched`, `a2m-engine` | Not expected to fail; a failure is `stopped` | |
 
-The places a person registered for each target (decision 0413, `src/origins.rs`): the place of the address given to `target.add`, and every place of every version a person published, kept among the installation's facts. `version.publish` compares the places of the compiled target with them; one not registered is published only from the publish page, whose kernel lines name it first, and a publish from a command is refused `policy`/`address_unregistered`.
+The places a person registered for each target (decision 0413, `src/origins.rs`): the place of the address given to `target.add`, and every place of every version a person published, kept among the installation's facts. `version.publish` compares the places of the compiled target with them; one not registered is published only from the publish page, whose kernel lines name it first, and a publish from a command is refused `policy`/`address_unregistered`. Each `ActSurface` of the publish says in which environments its address is at such a place (`new_in`, and `new_here` for its default address), from the same comparison, so that the page marks each where it lists the surfaces in the fixed words `NEW_PLACE` ([decision 0999](../../decisions/0999-the-publish-page-lists-the-surfaces-first-and-marks-each-new-address-where-it-lists-it.md)).
 
 The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 

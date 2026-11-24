@@ -428,7 +428,7 @@
    "group": "Front Door",
    "where": "a2m-local",
    "state": "p",
-   "text": "The approval page shows one stored change and its hash. The publish page shows what a version's tools can do and which gates ran. The sign-in window is a visible window of the engine's own browser. Pressing the button raises the operating system's presence prompt. Proven on Linux; the Windows and macOS prompts are written and no person has run them.",
+   "text": "The approval page shows one stored change and its hash. The publish page shows where each surface leads first, marking each address no person registered for the target, then what a version's tools can do and which gates ran. The sign-in window is a visible window of the engine's own browser. Pressing the button raises the operating system's presence prompt. Proven on Linux; the Windows and macOS prompts are written and no person has run them.",
    "weighing": [],
    "rows": [
     {
@@ -576,7 +576,8 @@
    "decided": [
     "Publishing keeps the presence prompt for every version, reads included. A proposal to drop it for read-only versions was reviewed and rejected: a trial runs in a sandbox with every guard against writing on, and a published read runs live with them off.",
     "A field test signs in and approves through a field build, a second program that is never packaged, with its own field prompt. Not: a setting of the product that turns the presence prompt off (0304).",
-    "The publish page shows each gate as passed, failed or not built, and each tool's level, lowest first. Not: a page that lists only the gates that passed (0307)."
+    "The publish page shows each gate as passed, failed or not built, and each tool's level, lowest first. Not: a page that lists only the gates that passed (0307).",
+    "The publish page lists the surfaces first and marks each new address where it lists it, from the registry's comparison. Not: the new places in a section of their own, or matched against the addresses by the page (0999)."
    ]
   },
   "registry": {
