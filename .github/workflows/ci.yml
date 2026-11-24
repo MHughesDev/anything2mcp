@@ -64,6 +64,11 @@ jobs:
         run: cargo test -p a2m-vault --locked -- --ignored the_real_key_store_holds_the_root
       # The harness and its sample scenario; nothing is gated until a budgeted
       # path is measured (spec section 225).
+      # The scenarios that start the product's program find it beside the
+      # harness; build it first on Linux, where the budgets are measured.
+      - name: Build the program the benchmark starts
+        if: runner.os == 'Linux'
+        run: cargo build --locked --release -p anything2mcp
       - name: Benchmark
         run: cargo run --locked --release -p a2m-bench -- run --out bench-results
         env:
