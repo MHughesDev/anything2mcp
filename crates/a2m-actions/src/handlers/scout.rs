@@ -1034,10 +1034,35 @@ async fn draft(
             .iter()
             .map(|path| path.as_str().to_owned())
             .collect();
+        // The findings a rule covers and drafted nothing from, each with
+        // the finding's own words (looked up by its id) and the reason the
+        // rule gave (roadmap package FT11).
+        let not_drafted: Vec<Json> = report
+            .not_drafted
+            .iter()
+            .map(|left| {
+                let description = findings
+                    .iter()
+                    .find(|finding| finding.id() == left.finding)
+                    .map_or(Json::Null, |finding| untrusted(json!(finding.found())));
+                json!({
+                    "finding": left.finding.to_string(),
+                    "description": description,
+                    "pack": left.pack,
+                    "reason": if left.reason.is_empty() {
+                        "the rule gave no reason"
+                    } else {
+                        left.reason.as_str()
+                    },
+                })
+            })
+            .collect();
         Ok((
             json!({
                 "written": files,
                 "held_back": held_back,
+                "not_drafted": not_drafted,
+                "left_out_as_secret": report.left_out_as_secret,
                 "conflicts": paths(&report.conflicts),
                 "refused": report.refused.iter().map(|(path, why)| json!({"file": path.as_str(), "why": why})).collect::<Vec<_>>(),
                 "open_questions": report.open_questions.len(),

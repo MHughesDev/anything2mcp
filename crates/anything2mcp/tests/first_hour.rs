@@ -363,6 +363,25 @@ fn check_report(report: &Json) {
         assert_eq!(tool["level"], "executed", "{tool}");
         assert_eq!(tool["tries"], 5, "{tool}");
     }
+    // Case 36: the read that requires a parameter named as a secret is
+    // reported as not drafted, with the finding's own words and the rule's
+    // reason, and the report counts what was left out by name.
+    let left = content["drafted"]["not_drafted"].as_array().unwrap();
+    let pickup = left
+        .iter()
+        .find(|entry| entry["description"].to_string().contains("/pickup"))
+        .unwrap_or_else(|| panic!("the pickup read is not in not_drafted: {report}"));
+    assert!(pickup["finding"].is_string(), "{pickup}");
+    assert_eq!(pickup["pack"], "http", "{pickup}");
+    let reason = pickup["reason"].as_str().unwrap();
+    assert!(reason.contains("is a secret"), "{pickup}");
+    assert!(
+        content["drafted"]["left_out_as_secret"].as_u64().unwrap() >= 1,
+        "{report}"
+    );
+    let text = report["result"]["text"].as_str().unwrap();
+    assert!(text.contains("Left out as secret:"), "{text}");
+    assert!(text.contains("Not drafted:"), "{text}");
     // An agent asked: no consent is recorded on the person's behalf.
     assert_eq!(content["consent"]["recorded"], false, "{report}");
 }

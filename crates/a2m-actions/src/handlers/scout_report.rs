@@ -288,6 +288,20 @@ fn rendered(report: &Json) -> String {
             "Held: {held} drafts wait in the target's `held/` folder, out of the target, for an answer to an open question; `draft.lint` lists each with its question, and `scout.report` with `part` `drafted.held_back` lists the files."
         ));
     }
+    let not_drafted = list(&content["drafted"]["not_drafted"]).count();
+    if not_drafted > 0 {
+        lines.push(format!(
+            "Not drafted: {not_drafted} findings a rule covers drafted nothing, each with the rule's reason; `scout.report` with `part` `drafted.not_drafted` lists them."
+        ));
+    }
+    let secret = content["drafted"]["left_out_as_secret"]
+        .as_u64()
+        .unwrap_or(0);
+    if secret > 0 {
+        lines.push(format!(
+            "Left out as secret: {secret} properties or parameters, named as a secret's, are in no draft."
+        ));
+    }
     let tools: Vec<&Json> = list(&content["tried"]["tools"]).collect();
     if tools.len() > TEXT_LINES {
         lines.push(format!(
@@ -365,6 +379,7 @@ pub(crate) const PARTS: &[&str] = &[
     "compared.not_covered",
     "drafted.written",
     "drafted.held_back",
+    "drafted.not_drafted",
     "drafted.conflicts",
     "drafted.refused",
     "checked.problems",
