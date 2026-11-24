@@ -415,3 +415,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0421 | [A declared download gives its name and size as outputs, which the read-back does not read](0421-a-declared-download-gives-its-name-and-size-as-outputs-the-read-back-does-not-read.md) | Accepted (design decision) |
 | 0422 | [A tab that answers not even a probe is closed, and three hangs recycle its browser between runs](0422-a-tab-that-answers-not-even-a-probe-is-closed-and-three-hangs-recycle-its-browser-between-runs.md) | Accepted (design decision) |
 | 0423 | [A closed kernel holds no clone of its store](0423-a-closed-kernel-holds-no-clone-of-its-store.md) | Accepted (design decision) |
+| 0999 | [A read whose browser is lost goes on in a new browser of the same profile, and only its observing tab is opened again](0999-a-read-whose-browser-is-lost-goes-on-in-a-new-browser-of-the-same-profile-and-only-its-observing-tab-is-opened-again.md) | Accepted (design decision) |
