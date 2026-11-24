@@ -2861,6 +2861,17 @@ impl Scene {
         change: impl FnOnce(&mut Plan),
         settings: impl FnOnce(&mut EngineSettings),
     ) -> Self {
+        Self::with_packs(tool, change, settings, |_, _| {}).await
+    }
+
+    /// A scene whose registry holds more packs than the test pack: `more`
+    /// adds them to the builder, and is given the redactor of the vault.
+    pub async fn with_packs(
+        tool: &str,
+        change: impl FnOnce(&mut Plan),
+        settings: impl FnOnce(&mut EngineSettings),
+        more: impl FnOnce(&mut RegistryBuilder, &Arc<dyn a2m_core::Redact>),
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("scene");
         let hooks = Arc::new(Hooks::default());
@@ -2884,6 +2895,7 @@ impl Scene {
         };
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
         builder.add_pack(&pack);
+        more(&mut builder, &redact);
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
         let registry: Arc<Registry> = Arc::new(registry);
