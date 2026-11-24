@@ -761,6 +761,9 @@ struct Pending {
     /// The loader of the document it was sent under, where the browser
     /// said: a watching tab closes what a document left behind.
     loader: Option<String>,
+    /// Whether its answer has arrived whole and is being read: then the
+    /// read alone makes it an exchange, and nothing else closes it.
+    reading: bool,
 }
 
 /// The most exchanges an observing tab keeps before they are taken.
@@ -2872,6 +2875,7 @@ impl Page {
                         exchange,
                         answered: false,
                         loader,
+                        reading: false,
                     },
                 );
                 self.waiting.send_replace(pending.len());
@@ -3010,16 +3014,18 @@ impl Page {
 
     /// The number of a request of the page whose answer has arrived whole,
     /// when its body is to be read: the read is made off the tab's one
-    /// stream of events, so that the events after it are not held.
+    /// stream of events, so that the events after it are not held. The
+    /// request is marked as being read, so that the read alone closes it:
+    /// a document loaded while the read is on its way leaves it be
+    /// ([`Self::left_behind`]), and it is recorded once.
     fn answer_to_read(&self, event: &Event) -> Option<String> {
         match &event.kind {
             EventKind::LoadingFinished(done)
-                if event.session.as_deref() == Some(self.session.as_str())
-                    && self
-                        .pending
-                        .lock()
-                        .is_ok_and(|pending| pending.contains_key(&done.request_id)) =>
+                if event.session.as_deref() == Some(self.session.as_str()) =>
             {
+                let mut pending = self.pending.lock().ok()?;
+                let one = pending.get_mut(&done.request_id)?;
+                one.reading = true;
                 Some(done.request_id.clone())
             }
             _ => None,
