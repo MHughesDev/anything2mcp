@@ -1,4 +1,4 @@
-# 0399. The first result of H-26: the boundary stays, and where a second command-like pack would meet the contract
+# 0344. The first result of H-26: the boundary stays, and where a second command-like pack would meet the contract
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

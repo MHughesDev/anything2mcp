@@ -40,7 +40,7 @@ So: 1 change that the command pack forced alone, 5 that it forced or asked for w
 
 - The register entry for H-26 is `supported`, with the limits below, and its dated notes link here.
 - The boundary between kernel and packs is not redrawn. One plan change in the first pack of a second kind, and additions after audits, is slight by the roadmap's rule and by section 306's.
-- [Decision 0399](../decisions/0399-the-first-result-of-h-26-the-boundary-stays-and-where-a-second-command-like-pack-would-meet-the-contract.md) records this and names what to watch.
+- [Decision 0399](../decisions/0344-the-first-result-of-h-26-the-boundary-stays-and-where-a-second-command-like-pack-would-meet-the-contract.md) records this and names what to watch.
 
 ## What is still unknown
 
