@@ -248,12 +248,15 @@ fn commit_failure(failure: StepFailure) -> Failure {
 }
 
 /// What the failure of a provider's step becomes once the record's write
-/// was sent: the write is in doubt. Two classes stand, because each keeps
-/// the record in doubt and says more: `possible_commit` itself, and
-/// `session_expired`, which rests the run until a person signs in.
+/// was sent: the write is in doubt. Only `possible_commit` itself stands.
+/// A session that ended after the write was sent is in doubt too, never
+/// `session_expired` (decision 0399): the write may have landed, so the run
+/// says so, `retry_safe` false, and the keeper has been told of the end
+/// already. A resume needs a session like any other, so it waits for the
+/// sign-in, and then reconciles before anything is written again.
 fn after_send(failure: Failure, what: &str) -> Failure {
     match failure.class() {
-        FailureClass::PossibleCommit | FailureClass::SessionExpired => failure,
+        FailureClass::PossibleCommit => failure,
         _ => in_doubt(what, &failure),
     }
 }

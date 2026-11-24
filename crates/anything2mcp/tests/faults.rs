@@ -183,14 +183,23 @@ async fn a_session_that_ends_during_the_read_back_leaves_the_write_in_doubt_unti
     proxy.alter_reads(Alteration::StripAuthorization, true);
     let ended = world.agent(&["run", "resume", &run]).await;
     assert_eq!(writes(&app).await, 1);
-    // The run waits for the person to sign in, and is not complete: the
-    // write was not read back. (The engine names this `needs_login`, not
-    // `possible_commit`; the package's row records it as left.)
-    assert_eq!(ended.finished.code, 3, "{}", ended.json);
-    assert_eq!(ended.result()["status"], "needs_login", "{}", ended.json);
+    // The write may have landed and was not read back: the run says so,
+    // and says that sending it again is not safe (decision 0399).
+    assert_eq!(ended.result()["status"], "stopped", "{}", ended.json);
+    assert_eq!(ended.error()["class"], "possible_commit", "{}", ended.json);
+    assert_eq!(ended.error()["code"], "no_confirmation", "{}", ended.json);
+    assert_eq!(ended.error()["retry_safe"], false, "{}", ended.json);
     let kinds_now = kinds(&world.ok(&["trace", "show", &run]).await);
     assert_eq!(count(&kinds_now, "acted"), 1, "{kinds_now:?}");
     assert_eq!(count(&kinds_now, "verified"), 0, "{kinds_now:?}");
+
+    // Resumed while the session is still refused, the run does not
+    // complete, and nothing more reaches the stand.
+    let waiting = world.agent(&["run", "resume", &run]).await;
+    assert_ne!(waiting.result()["status"], "completed", "{}", waiting.json);
+    assert_eq!(writes(&app).await, 1);
+    let kinds_now = kinds(&world.ok(&["trace", "show", &run]).await);
+    assert_eq!(count(&kinds_now, "intent"), 1, "{kinds_now:?}");
 
     // Signed in again, the resume reads the record first, finds the write,
     // and sends nothing more.

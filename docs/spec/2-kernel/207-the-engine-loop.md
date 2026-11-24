@@ -31,7 +31,7 @@ Every failure falls into one class, and the class alone decides what happens:
 | Class | Example | Response |
 | --- | --- | --- |
 | `transient` | Timeout on a read, dropped connection, upstream 503 | Retry up to 2 times, reads and idempotent writes only |
-| `session_expired` | Redirect to the identity provider, 401 from the backend | Session keeper tries a silent refresh once; otherwise stop with `needs_login`; resumable |
+| `session_expired` | Redirect to the identity provider, 401 from the backend | Session keeper tries a silent refresh once; otherwise stop with `needs_login`; resumable. After a write was sent, the record is in doubt instead: `possible_commit`, and the resume, once signed in, reconciles first ([decision 0399](../../decisions/0399-a-session-that-ends-after-a-write-was-sent-leaves-the-write-in-doubt.md)) |
 | `edge_blocked` | 403 or 429 from a bot defense, challenge page | Stop with evidence; no retry; alert |
 | `drift` | Locator fails its fingerprint; response fails its schema; upstream tool changed | Stop; capture; mark the binding unhealthy; try the next verified binding for reads only. A write never moves to another binding inside a job |
 | `unknown_variant` | Unexpected dialog, page, window, or status | Stop; capture; never guess |
