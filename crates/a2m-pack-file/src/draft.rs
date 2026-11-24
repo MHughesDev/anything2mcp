@@ -23,9 +23,12 @@
 //! kind of rows with no key is listed and never read by key or written, and
 //! a field of the type `untrusted_text` is never written.
 //!
-//! A value in a JSON document has a type of its own that the file does not
-//! name, so a JSON document keeps every type and its key as questions, and
-//! no read is drafted over it.
+//! A value in a JSON document has a type of its own, which the file does
+//! state: text is `untrusted_text`, a number `decimal`, true or false
+//! `boolean`. A key whose values are of more than one kind, are lists or
+//! records, or are nowhere set keeps its type as a question; so does the key
+//! of a list of records, which the file does not state. No read is drafted
+//! over a JSON document.
 //!
 //! A settings file names one-value places by a path of keys (decision
 //! 0246). Its document has a record kind for the keys before the first
@@ -118,6 +121,20 @@ impl Typed {
     }
 }
 
+impl Typed {
+    /// A JSON value has a type of its own: text is `untrusted_text`, a
+    /// number an exact decimal, and true or false a boolean. What no type
+    /// reads (values of more than one kind, a list or a record inside, a
+    /// key that holds nothing anywhere, and a finding made before the kinds
+    /// were carried) stays a question (finding 26 of field test 4).
+    fn of_json(column: Option<&ColumnFound>) -> Self {
+        match (column, Self::of_cells(column)) {
+            (None, _) | (_, Self::LeftOut) => Self::Unknown,
+            (_, typed) => typed,
+        }
+    }
+}
+
 /// One field as both rules draft it.
 struct FieldDraft {
     /// Its name in the document.
@@ -196,7 +213,7 @@ impl LayoutDraft {
                         name: name_from(header, &mut taken),
                         at,
                         typed: if json {
-                            Typed::Unknown
+                            Typed::of_json(columns.get(position))
                         } else {
                             Typed::of_cells(columns.get(position))
                         },
@@ -278,26 +295,35 @@ impl LayoutDraft {
                         name_from(&table.name, &mut taken),
                         place,
                         &table.headers,
-                        &[],
+                        &table.columns,
                     ));
                 }
             }
             Format::Workbook => {
                 fingerprint.push(("sheets", texts(&found.sheets)));
-                let tables: Vec<String> = found.tables.iter().map(|t| t.name.clone()).collect();
+                // A sheet's rows under its header row are no table the
+                // workbook defines, and are not in its fingerprint.
+                let tables: Vec<String> = found
+                    .tables
+                    .iter()
+                    .filter(|table| !table.on_sheet)
+                    .map(|table| table.name.clone())
+                    .collect();
                 fingerprint.push(("tables", texts(&tables)));
                 fingerprint.push(("names", texts(&found.names)));
                 for table in &found.tables {
-                    let place = (
-                        "table",
-                        DraftValue::map(vec![
-                            (
-                                "sheet",
-                                DraftValue::text(table.sheet.as_deref().unwrap_or_default()),
-                            ),
-                            ("name", DraftValue::text(&table.name)),
-                        ]),
-                    );
+                    let sheet = table.sheet.as_deref().unwrap_or_default();
+                    let place = if table.on_sheet {
+                        ("sheet", DraftValue::text(sheet))
+                    } else {
+                        (
+                            "table",
+                            DraftValue::map(vec![
+                                ("sheet", DraftValue::text(sheet)),
+                                ("name", DraftValue::text(&table.name)),
+                            ]),
+                        )
+                    };
                     kinds.push(kind(
                         name_from(&table.name, &mut taken),
                         place,

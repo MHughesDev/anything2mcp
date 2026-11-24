@@ -68,6 +68,12 @@ pub struct TableFound {
     /// list, and in a finding made before it was carried.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<ColumnFound>,
+    /// Whether the rows are those under the header row of a whole sheet,
+    /// which defines no table: the way a person's spreadsheet is saved by
+    /// most office programs (finding 25 of field test 4). `name` is then
+    /// the sheet's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_sheet: bool,
 }
 
 /// What the cells of one column of a workbook's table hold below its
@@ -127,6 +133,67 @@ fn columns_of(part: &a2m_sources::ParsedPart, range: a2m_sources::CellRange) -> 
             }
         })
         .collect()
+}
+
+/// What the values of one key hold across the records of a JSON list: the
+/// one kind every value that holds something is of (text, a number, or true
+/// or false), or `Mixed` for values of more than one kind, a list or a
+/// record inside, and a key that holds nothing anywhere, which no type
+/// reads (finding 26 of field test 4). A shape, never a value.
+fn json_column(items: &[a2m_sources::json::JsonNode], key: &str) -> ColumnFound {
+    let mut kind = None;
+    for item in items {
+        let JsonValue::Record(members) = &item.value else {
+            continue;
+        };
+        for (_, value) in members.iter().filter(|(name, _)| name == key) {
+            let this = match &value.value {
+                JsonValue::Null => continue,
+                JsonValue::Text(text) if text.is_empty() => continue,
+                JsonValue::Text(_) => CellKind::Text,
+                JsonValue::Number(_) => CellKind::Number,
+                JsonValue::Bool(_) => CellKind::Boolean,
+                JsonValue::List(_) | JsonValue::Record(_) => CellKind::Mixed,
+            };
+            kind = match kind {
+                None => Some(this),
+                Some(known) if known == this => Some(known),
+                Some(_) => Some(CellKind::Mixed),
+            };
+        }
+    }
+    ColumnFound {
+        cells: kind.unwrap_or(CellKind::Mixed),
+        formula: false,
+    }
+}
+
+/// The rows of a sheet that defines no table, under its first row that
+/// holds anything: its text cells are the headers, and the rows below it
+/// are the records. Nothing for a sheet with no header text or no row
+/// below its header row.
+fn sheet_rows_found(
+    sheet: &a2m_sources::SheetStructure,
+    part: &a2m_sources::ParsedPart,
+) -> Option<TableFound> {
+    let top = part.cells.first()?.cell.at.row;
+    if sheet.headers.iter().all(String::is_empty) || part.rows <= top {
+        return None;
+    }
+    let right = u32::try_from(sheet.headers.len()).ok()?;
+    let range = a2m_sources::CellRange {
+        top,
+        left: 1,
+        bottom: part.rows,
+        right,
+    };
+    Some(TableFound {
+        name: sheet.name.clone(),
+        sheet: Some(sheet.name.clone()),
+        headers: sheet.headers.clone(),
+        columns: columns_of(part, range),
+        on_sheet: true,
+    })
 }
 
 /// What a `file_layout` finding holds: the file's layout, as the file
@@ -258,8 +325,17 @@ fn layout_of(
                         columns: part
                             .map(|part| columns_of(part, table.range))
                             .unwrap_or_default(),
+                        on_sheet: false,
                     }
                 }));
+                // A sheet that defines no table holds its rows under its
+                // first row that holds anything, which is its header row.
+                if sheet.tables.is_empty()
+                    && let Some(part) = part
+                    && let Some(found_sheet) = sheet_rows_found(sheet, part)
+                {
+                    found.tables.push(found_sheet);
+                }
             }
             found.names = structure.names.iter().map(|n| n.name.clone()).collect();
             found.macros = structure.macros;
@@ -290,11 +366,14 @@ fn layout_of(
                             _ => false,
                         });
                         if records && !items.is_empty() {
+                            let columns =
+                                keys.iter().map(|name| json_column(items, name)).collect();
                             found.tables.push(TableFound {
                                 name: key.clone(),
                                 sheet: None,
                                 headers: keys,
-                                columns: Vec::new(),
+                                columns,
+                                on_sheet: false,
                             });
                         }
                     }
