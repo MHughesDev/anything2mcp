@@ -50,7 +50,7 @@ One declaration per provider. It is data: the runtime can read it without loadin
 | Extension points | Which it fills |
 | Modes and verbs | For a driver: the modes it serves, each with its archetype, verbs, and step kinds; its rank, the default place in binding order when an operation states none; the intents stored ahead of acting; the parallel reads and writes per session; and what one write holds alone |
 | Surface kinds | The surface kinds it registers, each with its archetype and whether a session is held on it |
-| Discoverers | Each with its archetype, the finding kinds it may return, the sources it uses, the highest level it may claim, and its bounds |
+| Discoverers | Each with its archetype, the finding kinds it may return, the sources it uses, the highest level it may claim, and its bounds. Designed and not built ([decision 0450](../../decisions/0450-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md)): whether the engine or a person drives it, `driven_by`, `engine` when left out. A discoverer a person drives is a capture: the registry never gives it to a scout or to `discover.run`, it is started only as a capture job that its person begins on the engine's own page, it is handed a port that refuses every step, and it returns when the kernel signals that the person stopped or at a bound |
 | File kinds | The target-file kinds and binding fields it defines, with their schemas; its lint rules, with codes and levels; its drafting rules, from finding kind to file kind |
 | Reads | The file kinds and finding kinds of other packs it reads as data |
 | Actions | The actions it adds, each with its effect |

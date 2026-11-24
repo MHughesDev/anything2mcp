@@ -286,7 +286,7 @@ This is held in four places, and each would hold without the others.
 | Where | How |
 | --- | --- |
 | The type | The probe is constructed with an `Observer`. It opens observing and watching tabs only; neither has an input method, and there is no way to get an acting tab from one. A check in CI refuses the names of the acting types in the probe's source |
-| The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames, unless a person marked that request safe |
+| The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames, unless a person marked that request safe. As built, nothing can mark one: every caller hands the tab an empty list. How a person marks one is designed below, under "A page that reads by a method that may write" |
 | Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped. Every address discovery visits passes the same check, whatever named it: a link, a focus path, or the surface itself. The drivers hold a key's value and a page request's path to the same list |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox, with a lease the keeper marked for discovery. A discoverer is given only what the sandbox port offers: no driver, no ledger token, no way to act |
 
@@ -315,6 +315,20 @@ Exploring and capturing a person's own use are two different things, and the pac
 | Started by | The scout, `discover.run`, or an authoring action | Only the person whose use it records, with `capture.start`; they stop it with `capture.stop` and are told what is kept ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
 
 The scout never opens a watching tab.
+
+A capture of a person's use runs in the watching tab, in the visible window the sign-in uses, held to the origins the surface declares. The engine sends nothing there: it listens to the exchanges with the surface's origin and takes a snapshot, by structure, of each screen the person visits. Of a request it keeps the method, the path by structure, the names of its query and of a structured body's fields, and the shape of the answer, never a value. The watching tab is not built, and the first capture was once scoped to the observing tab ([decision 0308](../../decisions/0308-the-first-capture-records-reads-only-in-the-engines-own-browser-and-drafts-to-the-holding-folder.md), point 1); [decision 0450](../../decisions/0450-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md) puts it here, because an observing tab shows a capture only what a scout already sees.
+
+### A page that reads by a method that may write
+
+Many pages ask for their own data with `POST`: a search form, a query endpoint that takes its question in a body, a page that posts its form back to draw a grid's next page. An observing tab fails that request, so today no mode of the web pack reads such a page: a `ui` read stops as `policy`, `page_write_refused`, and a scout sees the screen empty. The design ([decision 0450](../../decisions/0450-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md); not built):
+
+| Step | What happens |
+| --- | --- |
+| Learned | In a capture, where the request passes because the person made it. Seen at least twice with one shape and a structured answer, it is drafted as an endpoint in the holding folder with an open question in place of its effect: does every request by this method to this path only read? No operation is drafted from it |
+| Asserted | A person answers by writing `effect: read` and `read_asserted: true`, the key the HTTP pack reads ([section 303](303-the-http-pack.md)). A drafter never writes it. The endpoint catalog is the one place that says it (rule 8) |
+| Let through | The drivers hand an observing tab the asserted reads of the compiled target they run: in a live run of a published version, and in a try or a shadow of one in an environment of kind `test`. Never under the drafts, and never in discovery. A request matches by method, origin, and the entry's path as a template, segment for segment |
+| Shown | The publish page names each asserted read as a statement the person makes by publishing |
+| Not covered | An address that takes reads and writes by one method cannot be asserted: the statement would be false. Pinning such a request by its body is a later package |
 
 ### Capture
 
