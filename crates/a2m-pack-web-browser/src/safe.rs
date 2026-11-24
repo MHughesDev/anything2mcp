@@ -2,7 +2,10 @@
 //! change the system (decision 0394, point 3).
 //!
 //! An observing tab fails, before it leaves the browser, every request whose
-//! method is not `GET`, `HEAD`, or `OPTIONS` (decision 0195). A person may
+//! method is not `GET`, `HEAD`, or `OPTIONS` (decision 0195), and every
+//! request, whatever its method, that carries a header overriding its
+//! method (decision 0270, point 2): a `GET` that says `DELETE` is judged by
+//! what it says, and passes neither as a read nor as a safe request. A person may
 //! say of one request that it changes nothing, and a published version hands
 //! the tab that word as a [`SafeRequest`]. A request passes only when it
 //! matches one in all four parts:
@@ -12,8 +15,7 @@
 //! - **the path**, against a template segment for segment: a segment written
 //!   `{name}` matches one segment of the request's path, and any other is
 //!   equal byte for byte. A longer or a shorter path does not match, and a
-//!   request whose address carries a query, or a header that overrides its
-//!   method, matches nothing (decision 0270, point 2);
+//!   request whose address carries a query matches nothing;
 //! - **the body**: none, or one of the declared encoding whose value fits a
 //!   closed [`Shape`], `enum` and all. The bytes are taken from the
 //!   interception's own event, decoded only here, and dropped when the
@@ -51,8 +53,8 @@ use crate::protocol::{HeldBody, Sent};
 pub const LONGEST_SAFE_BODY: usize = 1024 * 1024;
 
 /// The headers that override a request's method, compared without regard to
-/// letter case (decision 0270, point 2). A request that carries one matches
-/// no safe request, whatever it names.
+/// letter case (decision 0270, point 2). A request that carries one is
+/// failed, whatever its method and whatever the header names.
 const METHOD_OVERRIDES: &[&str] = &[
     "x-http-method-override",
     "x-http-method",
@@ -103,7 +105,11 @@ pub struct SafeRequests {
 
 impl SafeRequests {
     /// Whether an observing tab lets this request through: a method that
-    /// reads, or a match with one safe request in all four parts.
+    /// reads, or a match with one safe request in all four parts. A request
+    /// that carries a header overriding its method passes neither way,
+    /// whatever method it names: a system that honours the header reads it
+    /// as the method it names, and a `GET` that says `DELETE` may write
+    /// (decisions 0195 and 0270).
     pub(crate) fn allows(
         &self,
         method: &str,
@@ -111,6 +117,9 @@ impl SafeRequests {
         headers: &Map<String, Value>,
         body: &HeldBody,
     ) -> bool {
+        if overrides_method(headers) {
+            return false;
+        }
         if matches!(method, "GET" | "HEAD" | "OPTIONS") {
             return true;
         }
@@ -119,7 +128,7 @@ impl SafeRequests {
             .iter()
             .filter(|safe| safe.method == method && safe.at(address))
             .collect();
-        if candidates.is_empty() || overrides_method(headers) {
+        if candidates.is_empty() {
             return false;
         }
         // The body is decoded once, and only for a request that could pass.
@@ -554,6 +563,25 @@ mod tests {
             &SafeRequests::default(),
             &sent("GET", SEARCH, None, None)
         ));
+        // A read that carries a method override is not a read: it fails
+        // whatever it names, and whatever is listed (decision 0270).
+        for method in ["GET", "HEAD", "OPTIONS"] {
+            for name in [
+                "X-HTTP-Method-Override",
+                "x-http-method",
+                "X-METHOD-OVERRIDE",
+            ] {
+                for named in ["DELETE", "GET"] {
+                    let mut over = sent(method, SEARCH, None, None);
+                    over.headers.insert(name.to_owned(), json!(named));
+                    assert!(
+                        !allows(&SafeRequests::default(), &over),
+                        "{method} {name}: {named}"
+                    );
+                    assert!(!allows(&json_search(), &over), "{method} {name}: {named}");
+                }
+            }
+        }
         assert!(!allows(&SafeRequests::default(), &post(SEARCH)));
     }
 

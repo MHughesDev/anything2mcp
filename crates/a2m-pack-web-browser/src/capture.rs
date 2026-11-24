@@ -1,15 +1,28 @@
-//! The observing tab as a traffic capture of the provider contract
-//! (decision 0391): what [`ObserveTab::exchanges`] records, in the
-//! contract's form. A pack that holds observing tabs offers the capability
-//! by declaring it and registering a source that opens one.
+//! The observing tab and the watching tab as traffic captures of the
+//! provider contract (decisions 0391 and 0392): what
+//! [`ObserveTab::exchanges`] and [`WatchTab::exchanges`] record, in the
+//! contract's form. A pack that holds such tabs offers the capability by
+//! declaring it and registering a source that opens one.
 
 use a2m_provider::{BoxFuture, CapturedRequest, CapturedTraffic, Deadline, TrafficCapture};
 
-use crate::tab::{ObserveTab, PageExchange, PageExchanges};
+use crate::tab::{ObserveTab, PageExchange, PageExchanges, WatchTab};
 
 impl TrafficCapture for ObserveTab {
     fn start(&self) {
         self.record_exchanges();
+    }
+
+    fn take_recorded<'a>(&'a self, until: Deadline) -> BoxFuture<'a, CapturedTraffic> {
+        Box::pin(async move { captured(self.exchanges(until).await) })
+    }
+}
+
+/// A watching tab records from the moment it opens: it is opened for a
+/// capture alone, and the first page the engine sends it to is part of it.
+impl TrafficCapture for WatchTab {
+    fn start(&self) {
+        self.record();
     }
 
     fn take_recorded<'a>(&'a self, until: Deadline) -> BoxFuture<'a, CapturedTraffic> {
@@ -43,5 +56,8 @@ fn request(one: PageExchange) -> CapturedRequest {
         media_type: one.content_type,
         fields: one.fields,
         names_withheld: one.names_withheld,
+        body_media_type: one.body_media_type,
+        body_fields: one.body_fields,
+        body_names_withheld: one.body_names_withheld,
     }
 }

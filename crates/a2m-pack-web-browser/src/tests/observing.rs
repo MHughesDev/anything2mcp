@@ -225,6 +225,9 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
             content_type: "application/json".to_owned(),
             fields: Some(fields),
             names_withheld: false,
+            body_media_type: String::new(),
+            body_fields: None,
+            body_names_withheld: false,
         }]
     );
     // No value of the query, the header, the cookie, or the answer.
@@ -571,6 +574,20 @@ fn state_is(text: &str) -> crate::Primitive {
     )
 }
 
+/// Where a read that carries a method override is sent, one path for each
+/// method: the stand would hear it, had it left.
+const OVERRIDDEN: &str = "/api/cases/rows/overridden";
+
+/// A page's own read of `method`, carrying header `name` that says it is
+/// `says`.
+fn overridden(app: &TestApp, method: &str, name: &str, says: &str) -> String {
+    format!(
+        "fetch({:?}, {{method: {method:?}, headers: {{{name:?}: {says:?}}}}})\
+         .then((r) => 'sent:' + r.status, () => 'failed')",
+        app.url(&format!("{OVERRIDDEN}/{method}"))
+    )
+}
+
 /// The `POST` lines the stand heard, in order.
 async fn posts_heard(app: &TestApp) -> Vec<String> {
     let mut heard = app.seen().await.unwrap();
@@ -784,6 +801,20 @@ async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_temp
             "no listed match",
             sends(&app, "POST", "/cases/events/rows", "application/json", good),
         ),
+        // A read that says it is another method is judged by what it says
+        // (decision 0270): a system that honours the header would write.
+        (
+            "a GET that says DELETE",
+            overridden(&app, "GET", "X-HTTP-Method-Override", "DELETE"),
+        ),
+        (
+            "a HEAD that says PUT",
+            overridden(&app, "HEAD", "x-http-method", "PUT"),
+        ),
+        (
+            "an OPTIONS that says POST",
+            overridden(&app, "OPTIONS", "X-Method-Override", "POST"),
+        ),
     ];
     for (why, script) in &refused {
         assert_eq!(
@@ -797,6 +828,18 @@ async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_temp
     must(tab.wait(&state_is("Loaded."), soon()).await);
     let blocked = tab.blocked();
     assert_eq!(blocked.len(), refused.len(), "{blocked:?}");
+    for method in ["GET", "HEAD", "OPTIONS"] {
+        assert!(
+            blocked.iter().any(|one| one.method == method
+                && one.address == app.url(&format!("{OVERRIDDEN}/{method}"))),
+            "{method}: {blocked:?}"
+        );
+    }
+    let seen = app.seen().await.unwrap();
+    assert!(
+        !seen.iter().any(|line| line.contains(OVERRIDDEN)),
+        "{seen:?}"
+    );
 
     // The stand stored nothing and heard nothing of them: the only body it
     // was sent since is the page's own search, loaded again.

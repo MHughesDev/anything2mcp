@@ -35,6 +35,9 @@ pub mod codes {
         SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
             meaning "A page, or an address, is on an origin the tab was not opened for. The same name, with the same class, as the code the packs built on this crate give a surface nobody declared.",
             next "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.";
+        ADDRESS_LOOKS_LIKE_AN_ACTION = Policy, "address_looks_like_an_action",
+            meaning "A watching tab was to be opened on an address that looks like an action. The same name, with the same class, as the web probe's code for an address discovery will not visit.",
+            next "Open it on the surface's own address; the engine never sends a tab to an address that looks like an action.";
     }
 
     /// From the provider contract: the link to the browser broke before the
