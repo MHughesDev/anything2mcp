@@ -830,8 +830,8 @@ pub(crate) mod review_shown {
 
     use a2m_core::AddressScope;
     use a2m_files::{
-        BindingStates, ProbeReview, ProgramRun, Reach, ReachGroup, ReviewItem, ReviewSummary,
-        SentTo, SignInReview, VariableValue,
+        AssertedReview, BindingStates, ProbeReview, ProgramRun, Reach, ReachGroup, ReviewItem,
+        ReviewSummary, SentTo, SignInReview, VariableValue,
     };
 
     use super::escape;
@@ -1149,13 +1149,53 @@ pub(crate) mod review_shown {
         out
     }
 
-    /// The sign-ins of a version, then its tools.
+    /// One asserted read: the request, the entry that asserts it, its
+    /// body's fields, and the summary's fixed sentence in bold.
+    fn asserted_html(asserted: &AssertedReview) -> String {
+        let mut out = String::from("<li>");
+        let _ = write!(
+            out,
+            "<p>{} {} on the surface {}, asserted by the {} {}: <strong>{}</strong>.</p>",
+            code(&asserted.read.method),
+            code(&asserted.read.path),
+            code(asserted.surface.as_str()),
+            code(asserted.kind.as_str()),
+            code(&asserted.read.entry),
+            escape(asserted.says),
+        );
+        if asserted.read.fields.is_empty() {
+            out.push_str("<p>It sends no field.</p>");
+        } else {
+            out.push_str("<p>The fields it may send, and no other:</p><ul>");
+            for field in &asserted.read.fields {
+                let _ = write!(out, "<li>{}, a {}", code(&field.name), code(&field.kind));
+                if !field.one_of.is_empty() {
+                    let _ = write!(out, ", one of {}", codes(&field.one_of));
+                }
+                out.push_str("</li>");
+            }
+            out.push_str("</ul>");
+        }
+        out.push_str("</li>");
+        out
+    }
+
+    /// The sign-ins of a version, then the reads a person asserted, then
+    /// its tools. The surfaces come before all of them, from
+    /// `version_shown` (decision 0418).
     pub(crate) fn review_html(review: &ReviewSummary) -> String {
         let mut out = String::new();
         if !review.sign_ins.is_empty() {
             out.push_str("<h2>How it signs in</h2><p>Read these first: a credential sent to an address puts every tool of the surfaces it covers at risk.</p><ul>");
             for sign_in in &review.sign_ins {
                 out.push_str(&sign_in_html(sign_in));
+            }
+            out.push_str("</ul>");
+        }
+        if !review.asserted.is_empty() {
+            out.push_str("<h2>The reads a person asserted</h2><p>Each of these requests is sent by a method that may change the system, and the browser lets it through for every read of its surface, whichever tool sends it.</p><ul>");
+            for asserted in &review.asserted {
+                out.push_str(&asserted_html(asserted));
             }
             out.push_str("</ul>");
         }

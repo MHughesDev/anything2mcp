@@ -130,6 +130,42 @@ pub trait FileKind: Send + Sync {
     fn fixed_places(&self, _doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
         Vec::new()
     }
+    /// The reads a document asserts: requests by a method that may write,
+    /// which a person marked as changing nothing (`read_asserted: true`).
+    /// The publish page names each, since the person's word is the only
+    /// evidence for it (decision 0394, point 5). The compiler asks this of
+    /// every document that passed its schema. A kind that has no such key
+    /// asserts none, which is the default.
+    fn asserts(&self, _doc: &Located<Doc>) -> Vec<AssertedRead> {
+        Vec::new()
+    }
+}
+
+/// A read a document asserts: one entry of a pack's own file, the request
+/// it describes, and the fields its body may carry (decision 0394, point 5).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct AssertedRead {
+    /// The entry's name, as the file kind defines it.
+    pub entry: String,
+    /// The request's method, such as `POST`.
+    pub method: String,
+    /// The request's path, as the entry writes it.
+    pub path: String,
+    /// The fields of its body, by name; empty for a request that carries
+    /// no body, or one whose body is an object with no fields.
+    pub fields: Vec<AssertedField>,
+}
+
+/// One field of an asserted read's body.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct AssertedField {
+    /// The field's name.
+    pub name: String,
+    /// The word of its shape's `type`, such as `string`.
+    pub kind: String,
+    /// The texts it may be, from its `enum`; empty when any text fits.
+    #[serde(rename = "enum")]
+    pub one_of: Vec<String>,
 }
 
 /// The one fixed place a binding reads or writes, by the file kind that

@@ -17,6 +17,8 @@ use a2m_core::{
 };
 use serde::Serialize;
 
+use crate::register::{AssertedField, AssertedRead};
+
 /// What the summary says of a binding whose pack does not state what it
 /// starts, sets, or sends to.
 pub const NOT_STATED: &str = "this kind of tool does not state what it runs";
@@ -39,6 +41,9 @@ pub const PROVIDER_NOT_HELD: &str = "the provider is not held by this engine, so
 /// What the summary says of a sign-in whose probe is named and not yet
 /// drafted.
 pub const PROBE_PENDING: &str = "the read that checks this sign-in is not drafted yet: a session it makes is not confirmed until that read exists and passes, and no version can be published with it";
+/// What the summary says beside each asserted read (decision 0394, point 5).
+pub const ASSERTED_NOTICE: &str =
+    "the person's word is the only evidence that this request changes nothing";
 
 // ---- What a pack states about one binding ----
 
@@ -164,6 +169,25 @@ pub struct ReviewSummary {
     /// file's order. A page shows these before the tools: a credential sent
     /// to an address is a risk to every tool of the surfaces it covers.
     pub sign_ins: Vec<SignInReview>,
+    /// Each read a person asserted: a request by a method that may write,
+    /// marked as changing nothing, ordered by surface, file kind, and entry.
+    /// A page shows these with the sign-ins, before the tools: the tab lets
+    /// such a request through for every read of its surface, whichever tool
+    /// sends it (decision 0394, point 5).
+    pub asserted: Vec<AssertedReview>,
+}
+
+/// One asserted read, for the person who publishes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AssertedReview {
+    /// The file kind whose entry asserts it, such as `page_request`.
+    pub kind: a2m_core::FileKindName,
+    /// The surface the entry is on.
+    pub surface: SurfaceName,
+    /// The entry, its request, and its body's fields.
+    pub read: AssertedRead,
+    /// [`ASSERTED_NOTICE`].
+    pub says: &'static str,
 }
 
 /// What one tool may do, for the person who reviews a version before it is
@@ -560,7 +584,35 @@ impl ReviewSummary {
                     .collect(),
             })
             .collect();
-        Self { items, sign_ins }
+        let asserted = self
+            .asserted
+            .iter()
+            .map(|asserted| AssertedReview {
+                kind: asserted.kind.clone(),
+                surface: asserted.surface.clone(),
+                read: AssertedRead {
+                    entry: f(&asserted.read.entry),
+                    method: f(&asserted.read.method),
+                    path: f(&asserted.read.path),
+                    fields: asserted
+                        .read
+                        .fields
+                        .iter()
+                        .map(|field| AssertedField {
+                            name: f(&field.name),
+                            kind: f(&field.kind),
+                            one_of: all(&field.one_of),
+                        })
+                        .collect(),
+                },
+                says: asserted.says,
+            })
+            .collect();
+        Self {
+            items,
+            sign_ins,
+            asserted,
+        }
     }
 
     /// States where a sign-in sends in one environment: the addresses the
@@ -668,10 +720,11 @@ pub(crate) struct OpReview {
     pub bindings: Vec<(Mode, SurfaceIndex, Statement)>,
 }
 
-/// The summary of a compiled target.
+/// The summary of a compiled target, with the reads its pack files assert.
 pub(crate) fn review_of(
     compiled_target: &CompiledTarget,
     reviews: &BTreeMap<OperationName, OpReview>,
+    mut asserted: Vec<AssertedReview>,
 ) -> ReviewSummary {
     let surface_names = |indices: &[SurfaceIndex]| -> Vec<SurfaceName> {
         indices
@@ -874,7 +927,12 @@ pub(crate) fn review_of(
         })
         .collect();
     sign_ins_in_review_order(&mut sign_ins);
-    ReviewSummary { items, sign_ins }
+    asserted.sort_by(|a, b| (&a.surface, &a.kind, &a.read).cmp(&(&b.surface, &b.kind, &b.read)));
+    ReviewSummary {
+        items,
+        sign_ins,
+        asserted,
+    }
 }
 
 /// The tools in the summary's order, the riskiest first: by hazard, then

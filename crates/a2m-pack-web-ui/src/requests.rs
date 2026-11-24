@@ -833,6 +833,40 @@ impl FileKind for RequestKind {
             && doc.get("read_asserted").is_none())
     }
 
+    /// A page request marked `effect: read`, by a method other than `GET`,
+    /// with `read_asserted: true`: its name, method, path, and the fields
+    /// of its body, for the publish page (decision 0394, point 5). An entry
+    /// whose body cannot be read is refused by `compile`, so nothing is
+    /// published from it; it is named here with the fields that could be.
+    fn asserts(&self, doc: &Located<Doc>) -> Vec<a2m_files::AssertedRead> {
+        let method = doc.text("method").unwrap_or_default();
+        if method == "GET"
+            || doc.text("effect") != Some("read")
+            || doc.get("read_asserted").and_then(Located::as_bool) != Some(true)
+        {
+            return Vec::new();
+        }
+        let fields = asserted_read(doc, method, &mut Diagnostics::new())
+            .and_then(|read| read.body)
+            .map(|body| {
+                body.fields
+                    .into_iter()
+                    .map(|(name, field)| a2m_files::AssertedField {
+                        name,
+                        kind: field.kind.word().to_owned(),
+                        one_of: field.one_of,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        vec![a2m_files::AssertedRead {
+            entry: doc.text("endpoint").unwrap_or_default().to_owned(),
+            method: method.to_owned(),
+            path: doc.text("path").unwrap_or_default().to_owned(),
+            fields,
+        }]
+    }
+
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
         doc.get("endpoint")
             .and_then(|name| {

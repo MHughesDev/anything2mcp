@@ -1565,6 +1565,21 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
                 },
             ),
         ],
+        asserted: vec![a2m_files::AssertedReview {
+            kind: a2m_core::FileKindName::new("page_request").unwrap(),
+            surface: surface(),
+            read: a2m_files::AssertedRead {
+                entry: "rows_search".to_owned(),
+                method: "POST".to_owned(),
+                path: "/api/<b>rows</b>/search".to_owned(),
+                fields: vec![a2m_files::AssertedField {
+                    name: "order".to_owned(),
+                    kind: "string".to_owned(),
+                    one_of: vec!["newest".to_owned(), "oldest".to_owned()],
+                }],
+            },
+            says: a2m_files::ASSERTED_NOTICE,
+        }],
     };
     let page = review_html(&review);
     let at = |text: &str| page.find(text).unwrap_or_else(|| panic!("{text}: {page}"));
@@ -1574,6 +1589,29 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
         "{page}"
     );
     assert!(at("Not confirmed") < at("example_report_get"), "{page}");
+    // The reads a person asserted, after the sign-ins and before the tools,
+    // each with its request, its fields, and the sentence in bold
+    // (decision 0394, point 5).
+    assert!(
+        at("How it signs in") < at("The reads a person asserted")
+            && at("The reads a person asserted") < at("What each tool may do"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>POST</code> <code>/api/&lt;b&gt;rows&lt;/b&gt;/search</code>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            "<strong>{}</strong>",
+            escape_like_page(a2m_files::ASSERTED_NOTICE)
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>order</code>, a <code>string</code>, one of <code>newest</code>, <code>oldest</code>"),
+        "{page}"
+    );
     assert!(at("Not confirmed") < at("example_report_run"), "{page}");
     assert!(page.contains(&escape_like_page(PROBE_PENDING)), "{page}");
     // Where the credential goes, off this machine, in bold, escaped.
@@ -1620,7 +1658,7 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
         "{page}"
     );
     // Nothing a target wrote is markup on the page.
-    for raw in ["<i>", "<run>", "a&b", "\u{202e}"] {
+    for raw in ["<i>", "<run>", "a&b", "\u{202e}", "<b>"] {
         assert!(!page.contains(raw), "{raw}: {page}");
     }
 }

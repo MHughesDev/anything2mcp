@@ -1,0 +1,23 @@
+# The search the cases page sends as it loads. The route archives with
+# `op: archive`; a person asserts that the request with `op: search`, and
+# only that, changes nothing (decision 0394).
+endpoint: cases_rows_search
+surface: app
+method: POST
+path: "/api/cases/rows/search"
+page: "/cases/rows-by-post"
+effect: read
+read_asserted: true
+request_encoding: json
+request_schema:
+  type: object
+  additionalProperties: false
+  required: [status, op]
+  properties:
+    status: {type: string, enum: [open]}
+    op: {type: string, enum: [search]}
+response_schema:
+  type: object
+  required: [rows]
+  properties:
+    rows: {type: array}

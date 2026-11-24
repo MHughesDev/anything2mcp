@@ -777,6 +777,43 @@ impl FileKind for EndpointKind {
         doc.text("effect") != Some("read") || !safe || unsafe_override(doc).is_some()
     }
 
+    /// An endpoint marked `read` whose method HTTP does not mark safe, with
+    /// `read_asserted: true`: its name, method, path, and the fields of its
+    /// `request_schema`, for the publish page (decision 0394, point 5). A
+    /// shape that cannot be read is refused by `compile`; the entry is
+    /// named here with no fields.
+    fn asserts(&self, doc: &Located<Doc>) -> Vec<a2m_files::AssertedRead> {
+        let method = doc.text("method").unwrap_or_default();
+        let safe = Method::from_word(method).is_some_and(Method::is_safe);
+        if safe
+            || doc.text("effect") != Some("read")
+            || doc.get("read_asserted").and_then(Located::as_bool) != Some(true)
+        {
+            return Vec::new();
+        }
+        let fields = doc
+            .get("request_schema")
+            .and_then(|written| Shape::from_doc(written).ok())
+            .map(|shape| {
+                shape
+                    .properties
+                    .into_iter()
+                    .map(|(name, field)| a2m_files::AssertedField {
+                        name,
+                        kind: field.kind.word().to_owned(),
+                        one_of: field.one_of,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        vec![a2m_files::AssertedRead {
+            entry: doc.text("endpoint").unwrap_or_default().to_owned(),
+            method: method.to_owned(),
+            path: doc.text("path").unwrap_or_default().to_owned(),
+            fields,
+        }]
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],

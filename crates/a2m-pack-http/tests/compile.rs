@@ -324,6 +324,29 @@ fn the_lint_rules_find_what_they_name() {
     })
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     assert!(compiled.warnings.find("http.effect_method").is_none());
+    // The asserted read is named for the publish page, by its entry, its
+    // method, and its path, with the fixed sentence (decision 0394, point
+    // 5); the target as written asserts none.
+    let named: Vec<(&str, &str, &str, &str, &str)> = compiled
+        .review
+        .asserted
+        .iter()
+        .map(|asserted| {
+            (
+                asserted.kind.as_str(),
+                asserted.surface.as_str(),
+                asserted.read.entry.as_str(),
+                asserted.read.method.as_str(),
+                asserted.read.path.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [("endpoint", "api", "order_list", "POST", "/api/orders")]
+    );
+    assert_eq!(compiled.review.asserted[0].says, a2m_files::ASSERTED_NOTICE);
+    assert!(compile(&registry, "example").review.asserted.is_empty());
     refused(
         orders,
         |text| text.replacen("effect: read\n", "effect: read\nread_asserted: true\n", 1),
