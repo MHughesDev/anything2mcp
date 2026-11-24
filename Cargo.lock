@@ -406,6 +406,7 @@ name = "a2m-pack-web-browser"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-netstate",
  "a2m-provider",
  "a2m-telemetry",
  "example-app",

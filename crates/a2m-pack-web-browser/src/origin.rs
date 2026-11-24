@@ -15,7 +15,8 @@
 use std::collections::BTreeSet;
 
 use a2m_core::ScopedHost;
-use a2m_provider::{MachineState, NetworkPlace, Placed};
+use a2m_netstate::NetworkFingerprint;
+use a2m_provider::{MachineState, NetworkPlace, PlacedInReach, Reach};
 
 use crate::browsers::Address;
 
@@ -163,14 +164,31 @@ impl Origins {
     /// (decisions 0223 and 0143). The guard itself still compares origins,
     /// which tell apart what one place does not: two origins can be on one
     /// place, and a tab refuses the other (package N2b).
+    ///
+    /// `reaches` are the reaches the person has saved and `current` is the
+    /// fingerprint of the network the machine is on now, as
+    /// `Kernel::reaches_and_network` gives them: an origin a reach in force
+    /// sends through a named gateway is placed `via_gateway`, and one a
+    /// reach not in force names is placed as it would be without it
+    /// (decision 0327, package N3).
     #[must_use]
-    pub fn places(&self, state: &MachineState) -> Vec<(&str, Placed)> {
+    pub fn places(
+        &self,
+        state: &MachineState,
+        reaches: &[Reach],
+        current: &NetworkFingerprint,
+    ) -> Vec<(&str, PlacedInReach)> {
         self.reach()
             .into_iter()
             .map(|origin| {
                 (
                     origin,
-                    NetworkPlace::of(&ScopedHost::of_destination(origin), state),
+                    NetworkPlace::of_in_reach(
+                        &ScopedHost::of_destination(origin),
+                        state,
+                        reaches,
+                        current,
+                    ),
                 )
             })
             .collect()

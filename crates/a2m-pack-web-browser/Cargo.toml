@@ -14,6 +14,7 @@ test-support = []
 
 [dependencies]
 a2m-core = { path = "../a2m-core" }
+a2m-netstate = { path = "../a2m-netstate" }
 a2m-provider = { path = "../a2m-provider" }
 serde.workspace = true
 serde_json.workspace = true

@@ -1182,11 +1182,12 @@ async fn a_frame_in_another_process_of_an_acting_tab_sends_nothing_outside_the_t
 /// own address.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_origin_of_the_test_application_has_a_place_and_a_name_is_never_resolved() {
+    use a2m_netstate::NetworkFingerprint;
     use a2m_provider::{MachineState, NetworkPlace};
 
     let app = TestApp::start().await.unwrap();
     let origins = reaching_the_other_name(&app);
-    let places = origins.places(&MachineState::read());
+    let places = origins.places(&MachineState::read(), &[], &NetworkFingerprint::default());
     // The application's own address, and its other name as a place the
     // page may send requests to: two origins, two places.
     assert_eq!(places.len(), 2);
@@ -1212,8 +1213,60 @@ async fn every_origin_of_the_test_application_has_a_place_and_a_name_is_never_re
     // A machine whose state cannot be read still places the stand.
     assert!(
         origins
-            .places(&MachineState::unread())
+            .places(&MachineState::unread(), &[], &NetworkFingerprint::default())
             .iter()
             .any(|(_, placed)| placed.place == NetworkPlace::ThisMachine)
     );
+}
+
+/// A reach in force that sends an origin through a named gateway places it
+/// `via_gateway`; one for another network does not (decision 0327, package
+/// N3). The place never changes what the guard allows.
+#[test]
+fn an_origin_a_reach_in_force_sends_through_a_gateway_is_placed_via_gateway() {
+    use std::net::IpAddr;
+
+    use a2m_netstate::NetworkFingerprint;
+    use a2m_provider::{GatewayName, MachineState, NetworkPlace, Reach, ReachEntry};
+
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
+    fn network(hardware: u8, gateway: &str, subnet: &str) -> NetworkFingerprint {
+        NetworkFingerprint::of_facts(
+            Some(&[0, 0x11, 0x22, 0x33, 0x44, hardware]),
+            Some(ip(gateway)),
+            None,
+            Some((ip(subnet), 24)),
+            &[],
+        )
+    }
+    fn reach(on: NetworkFingerprint) -> Reach {
+        Reach {
+            label: "named".to_owned(),
+            network: on,
+            look: Vec::new(),
+            send: vec![ReachEntry::through(
+                "https://app.example.com",
+                GatewayName::new("office").unwrap(),
+            )],
+        }
+    }
+    let home = network(1, "192.168.1.1", "192.168.1.20");
+    let cafe = network(9, "10.20.0.1", "10.20.0.77");
+    let origins = Origins::of([&at("https://app.example.com/")]);
+    let state = MachineState::read();
+
+    let in_force = origins.places(&state, &[reach(home.clone())], &home);
+    assert_eq!(in_force.len(), 1);
+    assert_eq!(in_force[0].1.place, NetworkPlace::ViaGateway);
+    assert_eq!(
+        in_force[0].1.gateway.as_ref().map(|g| g.as_str()),
+        Some("office")
+    );
+
+    let not_in_force = origins.places(&state, &[reach(home)], &cafe);
+    assert_ne!(not_in_force[0].1.place, NetworkPlace::ViaGateway);
+    assert!(not_in_force[0].1.gateway.is_none());
+    assert!(origins.allows(&at("https://app.example.com/")));
 }
