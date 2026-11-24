@@ -1349,7 +1349,7 @@ impl Draw {
     }
 
     fn int(&mut self, below: u64) -> i64 {
-        i64::try_from(self.below(below)).unwrap()
+        ok(i64::try_from(self.below(below)))
     }
 }
 
@@ -1358,7 +1358,7 @@ impl Draw {
 fn grouped(digits: &str, mark: char) -> String {
     let mut out = String::new();
     for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(mark);
         }
         out.push(digit);
@@ -1405,10 +1405,10 @@ fn shown_feet_inches(inches: &Decimal) -> String {
 
 /// Text as a system that shows capitals and pads spaces shows it.
 fn shown_shouting(text: &str, draw: &mut Draw) -> String {
-    let mut out = " ".repeat(usize::try_from(draw.below(3)).unwrap());
+    let mut out = " ".repeat(ok(usize::try_from(draw.below(3))));
     for word in text.split(' ') {
         out.push_str(&word.to_uppercase());
-        out.push_str(&" ".repeat(1 + usize::try_from(draw.below(3)).unwrap()));
+        out.push_str(&" ".repeat(1 + ok(usize::try_from(draw.below(3)))));
     }
     out
 }
