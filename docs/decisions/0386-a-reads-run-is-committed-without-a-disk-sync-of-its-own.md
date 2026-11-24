@@ -1,4 +1,4 @@
-# 0399. A read's run is committed without a disk sync of its own
+# 0386. A read's run is committed without a disk sync of its own
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 

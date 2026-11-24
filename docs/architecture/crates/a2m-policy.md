@@ -43,7 +43,7 @@ impl Policy {
     /// The same, in a transaction of its own, which always commits.
     pub async fn decide_alone(&self, req: Request) -> Decision;
     /// The same, committed as hard as `durability_for(req, durability)` says: relaxed only
-    /// for a request whose effect is `read` and that is bound to no diff (decision 0399).
+    /// for a request whose effect is `read` and that is bound to no diff (decision 0386).
     pub async fn decide_alone_as(&self, req: Request, durability: Durability) -> Decision;
     pub fn durability_for(req: &Request, asked: Durability) -> Durability;
     /// The answer a request would get, recording nothing.
