@@ -1,0 +1,516 @@
+//! Package 9.1 in a real browser, through the product's commands: the
+//! test application's form of a line item is changed on purpose, as a
+//! release of a web application changes a screen (`POST /__control/screens`).
+//! A canary, the check of a watch of the read through that form, catches a
+//! change its locators do not survive; the write through the same form is
+//! then refused as drift, naming the tool, before anything reaches the
+//! application; a repaired screen model is drafted and published by the
+//! test, as a person or an agent would, and the write is then approved,
+//! made once, and read back. A change the locators survive, because they
+//! name a field by its role and its label and not by its place, its class,
+//! or its identifier, shows no drift at all. The application is asked what
+//! it stored. It needs a browser, as the web pack's tests find one.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
+mod common;
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use a2m_actions::{
+    ApprovalAsk, ApprovalDesk, BoxFuture, Paths, PersonActAsk, PersonSurface, PresenceAsk,
+    PresenceProof, SessionAsk, SignInAsk, SurfaceLink,
+};
+use a2m_auth::PersonAnswer;
+use a2m_core::{Failure, RunId};
+use a2m_policy::{Channel, PresenceCheck};
+use a2m_telemetry::{Clock, ManualClock, SystemClock};
+use anything2mcp::{Engine, EngineOptions};
+use common::{Machine, World};
+use example_app::harness::TestApp;
+use example_app::releases::{ChangedPage, ScreenChange};
+use serde_json::{Value as Json, json};
+
+const PLACEHOLDER: &str = "http://127.0.0.1:4010";
+const GET: &str = "example_line_item_get";
+const UPDATE: &str = "example_line_item_update";
+/// The screen model of the form, in the project's draft.
+const SCREEN: &str = "targets/example/screens/line_item.yaml";
+
+/// How many passes of tending a test waits through for a check to end
+/// before it fails by name.
+const PASSES: u32 = 1_500;
+
+/// A person surface that shows the engine's pages: it keeps the desk, the
+/// approvals it was asked for, and each person's act, and the test presses
+/// there.
+struct Pages {
+    desk: Mutex<Option<Arc<ApprovalDesk>>>,
+    approvals: Mutex<Vec<ApprovalAsk>>,
+    acts: Mutex<Vec<PersonActAsk>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl PersonSurface for Pages {
+    fn take_desk(&self, desk: ApprovalDesk) {
+        *self.desk.lock().unwrap() = Some(Arc::new(desk));
+    }
+
+    fn ask_approval(&self, ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            let run = ask.run;
+            self.approvals.lock().unwrap().push(ask);
+            Ok(SurfaceLink {
+                url: Some(format!("http://127.0.0.1/approve/{run}")),
+                text: "Open the approval page.".to_owned(),
+            })
+        })
+    }
+
+    fn ask_sign_in(&self, _ask: SignInAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async {
+            Ok(SurfaceLink {
+                url: None,
+                text: String::new(),
+            })
+        })
+    }
+
+    fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>> {
+        Box::pin(async move {
+            Ok(PresenceProof::new(
+                PresenceCheck::OsPrompt,
+                ask.principal,
+                self.clock.now(),
+            ))
+        })
+    }
+
+    fn ask_session(&self, _ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
+        Box::pin(async { PersonAnswer::NoAnswer })
+    }
+
+    fn shows_person_acts(&self) -> bool {
+        true
+    }
+
+    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            let link = format!("http://127.0.0.1/act/{}", ask.act);
+            self.acts.lock().unwrap().push(ask);
+            Ok(SurfaceLink {
+                url: Some(link),
+                text: "Open the page to carry it out.".to_owned(),
+            })
+        })
+    }
+}
+
+/// The application, a machine whose project uses it through its pages,
+/// and an engine on that machine with the page surface and a clock the
+/// test moves.
+struct Stand {
+    app: TestApp,
+    machine: Machine,
+    world: World,
+    pages: Arc<Pages>,
+    clock: Arc<ManualClock>,
+}
+
+impl Stand {
+    /// The `pages` project over a new application, its draft linted and
+    /// published by its person.
+    async fn published() -> Self {
+        let app = TestApp::start().await.unwrap();
+        let machine = Machine::new("pages", &[(PLACEHOLDER, &app.url(""))]).on_disk();
+        let clock = Arc::new(ManualClock::starting_at(SystemClock::new().now()));
+        let pages = Arc::new(Pages {
+            desk: Mutex::new(None),
+            approvals: Mutex::new(Vec::new()),
+            acts: Mutex::new(Vec::new()),
+            clock: Arc::clone(&clock) as Arc<dyn Clock>,
+        });
+        let mut options = EngineOptions::of_machine(
+            Paths::under(machine.home.path()),
+            machine.environment(),
+            Arc::clone(&pages) as Arc<dyn PersonSurface>,
+        );
+        options.project = Some(machine.project.path().to_path_buf());
+        options.place = machine.place;
+        options.key_store.clone_from(&machine.key_store);
+        options.clock = Arc::clone(&clock) as Arc<dyn Clock>;
+        let engine = Engine::open(options).await.expect("the settings load");
+        assert!(
+            engine.runner_problem().is_none(),
+            "{:?}",
+            engine.runner_problem()
+        );
+        let world = World {
+            engine,
+            surface: Arc::clone(&machine.surface),
+            clock: Arc::clone(&clock) as Arc<dyn Clock>,
+        };
+        let stand = Self {
+            app,
+            machine,
+            world,
+            pages,
+            clock,
+        };
+        stand.publish().await;
+        stand
+    }
+
+    /// Lints the draft and publishes it, as its person.
+    async fn publish(&self) {
+        let linted = self.world.ok(&["draft", "lint", "example"]).await;
+        assert_eq!(linted["ok"], true, "{linted}");
+        let published = self.world.person(&["version", "publish", "example"]).await;
+        assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    }
+
+    /// The repair: the screen model in the draft is changed to say what
+    /// the form shows now, each of `changes` replacing a text of the file,
+    /// and the draft is published again. Nothing is healed in a run.
+    async fn repaired(&self, changes: &[(&str, &str)]) {
+        let path = self.machine.project.path().join(SCREEN);
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        for (old, new) in changes {
+            assert!(text.contains(old), "{old} is not in the screen model");
+            text = text.replace(old, new);
+        }
+        std::fs::write(&path, text).unwrap();
+        self.publish().await;
+    }
+
+    /// A canary of the read of line item L-101: a watch of it, every
+    /// minute for an hour, confirmed by its person on the page. Gives its
+    /// identifier once its first check has ended.
+    async fn canary(&self) -> String {
+        let input = json!({"order_id": "A-100", "item_code": "L-101"}).to_string();
+        let ends_at = (self.clock.now().as_unix_millis() + 3_600_000).to_string();
+        let asked = self
+            .world
+            .agent(&[
+                "watch",
+                "create",
+                GET,
+                "--input",
+                &input,
+                "--interval-seconds",
+                "60",
+                "--ends-at",
+                &ends_at,
+            ])
+            .await;
+        assert_eq!(asked.result()["state"], "asked", "{:?}", asked.finished);
+        let id = asked.result()["watch_id"].as_str().unwrap().to_owned();
+        let ask = self
+            .pages
+            .acts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|ask| {
+                ask.action.as_str() == "watch.confirm"
+                    && ask.input.iter().any(|field| field.value == id)
+            })
+            .cloned()
+            .expect("the person was shown the confirmation");
+        let proof = PresenceProof::new(PresenceCheck::OsPrompt, self.person().id, self.clock.now())
+            .for_act(ask.act);
+        let done = self.desk().carry_out(ask.act, proof).await.unwrap();
+        assert!(done.ok, "{done:?}");
+        self.checked(Duration::from_secs(10), &id, 1).await;
+        id
+    }
+
+    /// Moves the clock by `by` and tends until the watch `id` has made
+    /// `checks` checks and is not running one. Between two passes the
+    /// clock moves on by a tenth of a second.
+    async fn checked(&self, by: Duration, id: &str, checks: u64) -> Json {
+        self.clock.advance(by);
+        for pass in 0..PASSES {
+            if pass > 0 {
+                self.clock.advance(Duration::from_millis(100));
+            }
+            self.world.engine.kernel().tend().await;
+            let watch = self.watch(id).await;
+            if watch["checks"] == checks && watch["state"] != "running" {
+                return watch;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the check never ended: {}", self.watch(id).await);
+    }
+
+    async fn watch(&self, id: &str) -> Json {
+        self.world.ok(&["watch", "get", id]).await
+    }
+
+    async fn changes(&self, id: &str) -> Vec<Json> {
+        self.world.ok(&["watch", "changes", id]).await["changes"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    fn person(&self) -> a2m_policy::PrincipalRef {
+        self.world
+            .engine
+            .caller(a2m_actions::FrontDoor::Command, false)
+            .principal
+            .principal()
+            .clone()
+    }
+
+    fn desk(&self) -> Arc<ApprovalDesk> {
+        self.pages.desk.lock().unwrap().clone().unwrap()
+    }
+
+    /// The write of a line item of order A-100, called by an agent: it
+    /// rests, its person approves the diff they were shown, and it is
+    /// resumed. Gives what the resume gave.
+    async fn written(&self, item: &str, description: &str, quantity: u32) -> Json {
+        let input = json!({
+            "order_id": "A-100",
+            "item_code": item,
+            "description": description,
+            "quantity": quantity,
+            "length_in": "12.5",
+        })
+        .to_string();
+        let rested = self
+            .world
+            .agent(&["tool", "call", UPDATE, "--input", &input])
+            .await;
+        assert_eq!(
+            rested.result()["status"],
+            "needs_approval",
+            "{}",
+            rested.json
+        );
+        let run = rested.result()["run_id"].as_str().unwrap().to_owned();
+        let run_id: RunId = run.parse().unwrap();
+        let asked = self
+            .pages
+            .approvals
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap();
+        assert_eq!(asked.run, run_id);
+        let person = self.person();
+        let proof = PresenceProof::new(PresenceCheck::OsPrompt, person.id, self.clock.now());
+        self.desk()
+            .approve(run_id, asked.diff_hash, person, Channel::LocalPrompt, proof)
+            .await
+            .unwrap();
+        let done = self.world.agent(&["run", "resume", &run]).await;
+        assert_eq!(done.finished.code, 0, "{}", done.json);
+        assert_eq!(done.result()["status"], "completed", "{}", done.json);
+        done.result().clone()
+    }
+
+    async fn close(self) {
+        self.world.close().await;
+    }
+}
+
+fn kinds(changes: &[Json]) -> Vec<&str> {
+    changes
+        .iter()
+        .map(|change| change["kind"].as_str().unwrap())
+        .collect()
+}
+
+/// A change the screen model does not survive: the canary catches it and
+/// stops the watch as drifted; the write through the same form is refused
+/// as drift, naming the tool, with nothing sent and nobody asked; the
+/// repair, published, lets a canary through the changed form pass and
+/// the write be made once and read back.
+async fn caught_and_repaired(change: ScreenChange, repair: &[(&str, &str)], why: &str) {
+    let stand = Stand::published().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, change)
+        .await
+        .unwrap();
+
+    // The canary's read finds the form changed, and the watch stops on it.
+    let id = stand.canary().await;
+    let watch = stand.watch(&id).await;
+    assert_eq!(watch["state"], "paused", "{change:?}: {watch}");
+    assert_eq!(watch["reason"], "drifted", "{change:?}: {watch}");
+    // The watch says which failure of the pack it stopped on.
+    assert_eq!(watch["failure"]["class"], "drift", "{change:?}: {watch}");
+    assert_eq!(watch["failure"]["code"], why, "{change:?}: {watch}");
+
+    // The write through the same form is refused before anything is sent:
+    // nobody is asked to approve it, and the application heard nothing of
+    // the line item and stored nothing.
+    let before = stand.app.seen().await.unwrap();
+    let input = json!({
+        "order_id": "A-100",
+        "item_code": "L-102",
+        "description": "Oak rail",
+        "quantity": 6,
+        "length_in": "12.5",
+    })
+    .to_string();
+    let refused = stand
+        .world
+        .agent(&["tool", "call", UPDATE, "--input", &input])
+        .await;
+    assert_ne!(refused.finished.code, 0, "{}", refused.json);
+    assert_eq!(
+        refused.error()["code"],
+        "binding_drifted",
+        "{change:?}: {}",
+        refused.json
+    );
+    assert_eq!(refused.error()["class"], "drift", "{}", refused.json);
+    // The run is stopped, not failed: a write the mark stops never fails.
+    assert_eq!(refused.result()["status"], "stopped", "{}", refused.json);
+    let message = refused.error()["message"].as_str().unwrap();
+    assert!(message.contains(UPDATE), "{message}");
+    assert!(stand.pages.approvals.lock().unwrap().is_empty());
+    let heard = stand.app.heard_since(&before).await.unwrap();
+    assert!(
+        !heard.iter().any(|line| line.contains("L-102")),
+        "{heard:?}"
+    );
+    assert!(stand.app.writes().await.unwrap().is_empty());
+
+    // The repair: the screen model says what the form shows now, drafted
+    // and published as any version is. A canary through the changed form
+    // passes on it.
+    stand.repaired(repair).await;
+    let again = stand.canary().await;
+    let watch = stand.watch(&again).await;
+    assert_eq!(watch["state"], "confirmed", "{change:?}: {watch}");
+
+    // The write is then made once, verified, and read back; the
+    // application holds exactly that one write.
+    let done = stand.written("L-102", "Oak rail", 6).await;
+    assert_eq!(done["result"]["description"], "Oak rail", "{done}");
+    assert_eq!(done["result"]["quantity"], 6, "{done}");
+    assert_eq!(stand.app.writes().await.unwrap().len(), 1);
+    assert_eq!(stand.app.write_count("A-100", "L-102").await.unwrap(), 1);
+    let stored = stand
+        .app
+        .stored_item("A-100", "L-102")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.description, "Oak rail");
+    assert_eq!(stored.quantity, 6);
+    assert_eq!(stored.length_sixteenths, 200);
+
+    // No run of the writing tool failed: the one the drift refused is
+    // stopped, and the one after the repair completed.
+    let runs = stand
+        .world
+        .ok(&["run", "list", "--tool", UPDATE, "--limit", "100"])
+        .await;
+    let mut statuses: Vec<&str> = runs["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["status"].as_str().unwrap())
+        .collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, ["completed", "stopped"], "{runs}");
+    stand.close().await;
+}
+
+/// A reworded label and button: the field's locators name it by its label,
+/// so "Qty" is not "Quantity", and no locator of the list finds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reworded_form_is_caught_by_a_canary_and_repaired_with_no_failed_write() {
+    caught_and_repaired(
+        ScreenChange::Reword,
+        &[
+            (
+                "{role: textbox, name: Quantity}",
+                "{role: textbox, name: Qty}",
+            ),
+            (
+                "{role: button, name: Save}",
+                "{role: button, name: Save line item}",
+            ),
+        ],
+        "locator_not_found",
+    )
+    .await;
+}
+
+/// A form wrapped in a card that takes its heading: every locator still
+/// finds its field, but the fingerprint says the field's section shows
+/// "Line Item Details", and the form no longer does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wrapped_form_is_caught_by_its_fingerprint_and_repaired_with_no_failed_write() {
+    caught_and_repaired(
+        ScreenChange::Wrap,
+        &[(
+            "section: {role: form, name: \"\"}, near_text: \"Line Item Details\"",
+            "section: {role: region, name: \"Line Item Details\"}, near_text: \"Line Item Details\"",
+        )],
+        "fingerprint_mismatch",
+    )
+    .await;
+}
+
+/// A restyled form, every class and identifier renamed, and a reordered
+/// one: the locators name each field by its role and its label, and its
+/// fingerprint by the section it is in, none of which changed. The canary
+/// passes, nothing is marked, and the write is made once under each with
+/// the first version, unrepaired.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restyled_or_reordered_form_shows_no_drift_and_takes_the_write() {
+    let stand = Stand::published().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Restyle)
+        .await
+        .unwrap();
+    let id = stand.canary().await;
+    let watch = stand.watch(&id).await;
+    assert_eq!(watch["state"], "confirmed", "restyle: {watch}");
+    let done = stand.written("L-102", "Restyled rail", 5).await;
+    assert_eq!(done["result"]["quantity"], 5, "{done}");
+    assert_eq!(stand.app.write_count("A-100", "L-102").await.unwrap(), 1);
+
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Reorder)
+        .await
+        .unwrap();
+    let watch = stand.checked(Duration::from_secs(60), &id, 2).await;
+    assert_eq!(watch["state"], "confirmed", "reorder: {watch}");
+    let done = stand.written("L-103", "Reordered brace", 8).await;
+    assert_eq!(done["result"]["quantity"], 8, "{done}");
+
+    // Two checks of a record nothing changed, through two changed forms:
+    // nothing but the confirmation. The application holds exactly the two
+    // writes, one under each change.
+    let changes = stand.changes(&id).await;
+    assert_eq!(kinds(&changes), ["confirmed"], "{changes:?}");
+    assert_eq!(stand.app.writes().await.unwrap().len(), 2);
+    assert_eq!(stand.app.write_count("A-100", "L-103").await.unwrap(), 1);
+    let stored = stand
+        .app
+        .stored_item("A-100", "L-103")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.description, "Reordered brace");
+    assert_eq!(stored.quantity, 8);
+    stand.close().await;
+}
