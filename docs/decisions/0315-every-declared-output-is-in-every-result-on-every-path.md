@@ -1,6 +1,6 @@
 # 0315. Every declared output is in every result, on every path
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Completes [decision 0305](0305-an-output-that-may-be-absent-is-declared-so-in-the-plan-and-the-output-schema.md) for the engine and for the packs other than HTTP.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Completes [decision 0305](0305-an-output-that-may-be-absent-is-declared-so-in-the-plan-and-the-output-schema.md) for the engine and for the packs other than HTTP. Carried on by [decision 0399](0399-a-documents-cell-may-be-empty-unless-it-is-a-key-or-declared-required.md), which supersedes the sentence of point 6 on a document's cells: a cell that is not a key and not declared `required: true` may be absent.
 
 **Date:** 2026-11-23
 
