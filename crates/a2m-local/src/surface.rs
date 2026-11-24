@@ -2197,26 +2197,28 @@ impl PersonSurface for LocalSurface {
             let code = inner.code()?;
             let mut state = inner.state();
             // A run is looked at after its answer too, before it is
-            // resumed: an answered change gets no second page.
+            // resumed: a declined change gets no second page. An approved
+            // one is asked about again only when its approval cleared
+            // nothing, because it expired or was revoked (decision 0399):
+            // until it is used, the kernel itself says the run is approved
+            // and asks no surface. That ask gets a new page.
             let answered = state
                 .answered
                 .iter()
                 .rev()
                 .find(|(run, diff_hash, _)| *run == ask.run && *diff_hash == ask.diff_hash)
                 .map(|(_, _, how)| *how);
-            if let Some(how) = answered {
+            if answered == Some(Answered::Declined) {
                 return Ok(SurfaceLink {
                     url: None,
-                    text: match how {
-                        Answered::Approved => {
-                            "A person approved this change. Resume the run to carry it out."
-                        }
-                        Answered::Declined => {
-                            "This change was declined, or nobody answered in its time. Nothing is written."
-                        }
-                    }
-                    .to_owned(),
+                    text: "This change was declined, or nobody answered in its time. Nothing is written."
+                        .to_owned(),
                 });
+            }
+            if answered == Some(Answered::Approved) {
+                state
+                    .answered
+                    .retain(|(run, diff_hash, _)| *run != ask.run || *diff_hash != ask.diff_hash);
             }
             // The run is looked at many times while it waits: the page it
             // already has is the page it keeps.

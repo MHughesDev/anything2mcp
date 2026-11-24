@@ -540,7 +540,7 @@ impl Control for InProcessControl {
                     let pre_approved = decision.clearance();
                     if pre_approval && let Some(clearance) = pre_approved {
                         tx.ledger().begin_writes(&fence, clearance)?;
-                        return Ok(Ok(Clearance::Cleared));
+                        return Ok(Ok((Clearance::Cleared, false)));
                     }
                     // A refusal stops the run here; it is not a wait. That
                     // is a kill switch, and it is a policy engine that
@@ -552,7 +552,7 @@ impl Control for InProcessControl {
                     match policy.consume(tx, run, &diff) {
                         Ok(clearance) => {
                             tx.ledger().begin_writes(&fence, clearance)?;
-                            Ok(Ok(Clearance::Cleared))
+                            Ok(Ok((Clearance::Cleared, false)))
                         }
                         Err(missing) if missing.code() == &a2m_policy::APPROVAL_MISSING => {
                             // The refusal to write without a person is a
@@ -575,12 +575,42 @@ impl Control for InProcessControl {
                                 }),
                                 None,
                             )?;
-                            Ok(Ok(Clearance::Waits))
+                            Ok(Ok((Clearance::Waits, false)))
+                        }
+                        // The run's approval is expired, used, revoked, or
+                        // for another diff: it clears nothing, and the run
+                        // waits for a person to approve its diff again
+                        // (decision 0399). The refusal is named in the
+                        // run's own events, beside the need it leaves.
+                        Err(stale) if *stale.code() == a2m_policy::APPROVAL_STALE => {
+                            tx.ledger().append_event(
+                                &fence,
+                                EventKind::Need,
+                                &json!({
+                                    "needs": "approval",
+                                    "decision": decision.id.to_string(),
+                                    "diff": diff.to_string(),
+                                    "refused": stale.code().as_str(),
+                                    "why": stale.message(),
+                                }),
+                                None,
+                            )?;
+                            Ok(Ok((Clearance::Waits, true)))
                         }
                         Err(stale) => Ok(Err(stale)),
                     }
                 })
                 .await?;
+            let cleared = cleared.map(|(clearance, stale)| {
+                if stale {
+                    // What this process noted of an approval no longer
+                    // holds, and the page it was given on has closed: the
+                    // run's next answer asks for an approval afresh, with
+                    // a new page.
+                    self.kernel.inner.signals.forget(run);
+                }
+                clearance
+            });
             if matches!(cleared, Ok(Clearance::Cleared)) {
                 // The approval is used: the run no longer waits to be
                 // resumed.
