@@ -120,6 +120,14 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
     out
 }
 
+/// What the report says a person does with its open questions (field
+/// test 6, finding 36). `unknown.settle` is not built, so the way through is
+/// the target's own files, outside the holding folder, and the scout run
+/// again; for an MCP read held because its one string may be a key or a
+/// query, that is the tool's `free_text: false` in the target's mapping
+/// (decision 0365).
+const OPEN_QUESTIONS_WHY: &str = "What the scout could not decide. `unknown.list` names each question, and `draft.lint` each draft in `held/` that waits for one. Answer it in the target's own files, outside `held/`, and run the scout again: for an MCP read held because its one string may be a key or a query, a person who finds that the server does not run the string states `free_text: false` for the tool in the target's mapping, and the read is drafted.";
+
 /// The report of a scout whose stages 0 to 6 are in `done`, with the
 /// target's questions that are not settled.
 pub(crate) fn assemble(
@@ -193,7 +201,7 @@ pub(crate) fn assemble(
             {
                 "order": 3,
                 "what": "open_questions",
-                "why": "What the scout could not decide; each is settled with evidence (`unknown.settle`).",
+                "why": OPEN_QUESTIONS_WHY,
                 "count": open.len(),
             },
         ],
@@ -570,6 +578,16 @@ mod tests {
             .expect("a line for the discoverer");
         assert!(line.contains("`description_unreadable`"), "{line}");
         assert!(line.contains("Hand in a readable description."), "{line}");
+    }
+
+    /// The report sends a person to no action that is not built: an open
+    /// question is answered in the target's files, and for an MCP read
+    /// held over its one string, by `free_text: false` (finding 36).
+    #[test]
+    fn the_open_questions_are_answered_in_the_targets_files_and_not_by_an_unbuilt_action() {
+        assert!(!super::OPEN_QUESTIONS_WHY.contains("unknown.settle"));
+        assert!(super::OPEN_QUESTIONS_WHY.contains("`free_text: false`"));
+        assert!(super::OPEN_QUESTIONS_WHY.contains("run the scout again"));
     }
 
     #[test]
