@@ -210,6 +210,11 @@ async fn a_file_is_read_through_the_file_pack() {
     // was, byte for byte.
     assert_eq!(read["description"], row[1].as_str(), "{read}");
     assert_eq!(read["on_hand"].to_string(), row[2], "{read}");
+    // The row's note cell is empty: a cell of a document that is neither
+    // a key nor declared `required` may be empty, and reads as null
+    // (decision 0315).
+    assert_eq!(row[3], "", "{row:?}");
+    assert!(read["note"].is_null(), "{read}");
     assert_eq!(stand.sha256("prices/stock.csv").unwrap(), before);
     world.close().await;
 }

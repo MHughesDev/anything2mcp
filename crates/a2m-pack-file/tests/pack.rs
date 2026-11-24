@@ -885,3 +885,48 @@ fn the_review_states_what_the_file_pack_runs_and_where_it_sends() {
         item.reach
     );
 }
+
+/// Whether each output of `operation` in the plan of `root` may be absent.
+fn absent_of(root: &Path, operation: &str) -> Vec<(String, bool)> {
+    let registry = registry(Roots::none());
+    let plan = compile(root, registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .plan;
+    let found = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    found
+        .outputs
+        .iter()
+        .map(|output| (output.name.clone(), output.may_be_absent))
+        .collect()
+}
+
+fn pairs(pairs: &[(&str, bool)]) -> Vec<(String, bool)> {
+    pairs
+        .iter()
+        .map(|(name, absent)| ((*name).to_owned(), *absent))
+        .collect()
+}
+
+#[test]
+fn a_documents_cell_may_be_empty_unless_it_is_a_key_or_declared_required() {
+    // A cell of delimited text may be empty: every field read but the key
+    // may be absent (decision 0399).
+    assert_eq!(
+        absent_of(&fixtures(), "example_stock_get"),
+        pairs(&[("description", true), ("on_hand", true), ("note", true)])
+    );
+    // A field the document declares `required` may not be absent.
+    let changed = Changed::new(&[(
+        "documents/stock.yaml",
+        "description: {header: description, type: text}",
+        "description: {header: description, type: text, required: true}",
+    )]);
+    assert_eq!(
+        absent_of(&changed.0, "example_stock_get"),
+        pairs(&[("description", false), ("on_hand", true), ("note", true)])
+    );
+}

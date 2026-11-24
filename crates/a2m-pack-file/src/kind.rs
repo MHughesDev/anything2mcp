@@ -33,6 +33,7 @@ fn field_schema() -> JsonSchema {
         .optional("writable", JsonSchema::bool())
         .optional("formula", JsonSchema::bool())
         .optional("may_begin_formula", JsonSchema::bool())
+        .optional("required", JsonSchema::bool())
 }
 
 fn record_schema() -> JsonSchema {
@@ -204,6 +205,7 @@ fn record_of(
         let path = texts(field.get("path")).unwrap_or_default();
         let formula = field.get("formula").and_then(Located::as_bool) == Some(true);
         let writable = field.get("writable").and_then(Located::as_bool) == Some(true);
+        let required = field.get("required").and_then(Located::as_bool) == Some(true);
         let may_begin_formula =
             field.get("may_begin_formula").and_then(Located::as_bool) == Some(true);
         if may_begin_formula && format != Format::Delimited {
@@ -262,6 +264,7 @@ fn record_of(
             writable,
             formula,
             may_begin_formula,
+            required,
         });
     }
     if fields.is_empty() {

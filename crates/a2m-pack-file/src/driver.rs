@@ -1148,8 +1148,8 @@ impl Driver for FileDriver {
                         StepSpec::Locate { record, expect } => {
                             locate(loaded, current, &record, expect, step, input)
                         }
-                        StepSpec::One { record } => done(read_one(loaded, current, &record)?),
-                        StepSpec::List { record, limit } => {
+                        StepSpec::One { record, .. } => done(read_one(loaded, current, &record)?),
+                        StepSpec::List { record, limit, .. } => {
                             done(read_list(loaded, current, &record, limit)?)
                         }
                         StepSpec::Set { record, change } => {
@@ -1247,6 +1247,7 @@ mod tests {
             writable: true,
             formula: false,
             may_begin_formula,
+            required: false,
         };
         assert!(formula_guard(&field(false), &Value::Int(-5), "-5").is_ok());
         assert!(formula_guard(&field(false), &Value::from("-5"), "-5").is_err());

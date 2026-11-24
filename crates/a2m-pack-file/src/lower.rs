@@ -168,11 +168,12 @@ impl Steps<'_> {
         )
     }
 
-    fn one(&self, record: &str) -> Result<Step, Diagnostic> {
+    fn one(&self, record: &str, spec: &RecordSpec) -> Result<Step, Diagnostic> {
         self.step(
             READ,
             &StepSpec::One {
                 record: record.to_owned(),
+                may_be_empty: spec.may_be_empty(),
             },
             Vec::new(),
             &codes::row::VALUE_UNREADABLE,
@@ -301,18 +302,38 @@ impl Lowering for FileLowering {
     /// An entry of a folder has no size or digest unless it is a file (and
     /// no digest past the folder's bound), and no time it was changed where
     /// the machine does not say: those outputs may be absent (decision
-    /// 0305). A document's cells are not known to hold a value or not; an
-    /// empty one stops the run unless the operation declares the output
-    /// `may_be_absent`.
-    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> Vec<String> {
+    /// 0305). A document's place may be empty, a cell of a table or a
+    /// sheet as much as a key of a JSON or settings file: every field the
+    /// `read` steps read that is not part of the record's key and is not
+    /// declared `required: true` may be absent, as the steps' payloads
+    /// carry it (decision 0315).
+    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
         if binding.field("folder").is_some() {
-            ["size", "modified", "digest"]
+            return ["size", "modified", "digest"]
                 .into_iter()
                 .map(str::to_owned)
-                .collect()
-        } else {
-            Vec::new()
+                .collect();
         }
+        let mut names: Vec<String> = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == READ)
+        {
+            if let Ok(StepSpec::One { may_be_empty, .. } | StepSpec::List { may_be_empty, .. }) =
+                step.payload.decode::<StepSpec>()
+            {
+                for name in may_be_empty {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
     }
 
     /// `save` is the one kind that saves, and it always does: it replaces
@@ -546,6 +567,7 @@ impl Lowering for FileLowering {
                         &StepSpec::List {
                             record: record_name.to_owned(),
                             limit,
+                            may_be_empty: record.may_be_empty(),
                         },
                         Vec::new(),
                         &codes::row::VALUE_UNREADABLE,
@@ -573,7 +595,7 @@ impl Lowering for FileLowering {
                 lowered.act = vec![
                     steps.open(false)?,
                     steps.locate(record_name, Expect::Present, key, true)?,
-                    steps.one(record_name)?,
+                    steps.one(record_name, record)?,
                 ];
                 return Ok(lowered);
             }
@@ -648,7 +670,7 @@ impl Lowering for FileLowering {
             lowered.read_back = vec![
                 steps.open(false)?,
                 steps.locate(record_name, Expect::Present, key, true)?,
-                steps.one(record_name)?,
+                steps.one(record_name, record)?,
             ];
             Ok(lowered)
         })();
