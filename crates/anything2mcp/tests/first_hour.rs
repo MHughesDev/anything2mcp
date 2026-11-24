@@ -762,3 +762,60 @@ async fn a_scout_with_an_engine_inside_each_command_ends_with_its_report() {
     }
     assert!(app.writes().await.unwrap().is_empty());
 }
+
+/// The three commands of a first draft, and nothing else: from an empty
+/// folder, `init`, `add` with the test application's address and the kind
+/// of its surface, and `lint` give a draft that lints clean and holds the
+/// read the first hour goes on to publish. No file is written by hand, no
+/// engine is served, and nothing is written to the system.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn init_add_and_lint_alone_take_an_empty_folder_to_a_linted_draft() {
+    let app = TestApp::start().await.unwrap();
+    let desk = Desk::inside();
+    assert_eq!(
+        std::fs::read_dir(desk.project.path()).unwrap().count(),
+        0,
+        "the folder starts empty"
+    );
+
+    let made = desk.ok(&["init"]).await;
+    assert!(
+        made["result"]["written"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("anything2mcp.toml")),
+        "{made}"
+    );
+
+    let address = app.url("");
+    let added = desk
+        .ok(&[
+            "add",
+            "example",
+            "--address",
+            &address,
+            "--kind",
+            SURFACE_KIND,
+        ])
+        .await;
+    assert_eq!(added["action"], "scout.report", "{added}");
+    assert!(
+        !added["result"]["content"]["drafted"]["written"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{added}"
+    );
+
+    let linted = desk.ok(&["lint", "example"]).await;
+    assert_eq!(linted["action"], "draft.lint", "{linted}");
+    assert_eq!(linted["result"]["ok"], true, "{linted}");
+    assert!(
+        linted["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(READ)),
+        "{linted}"
+    );
+    assert!(app.writes().await.unwrap().is_empty());
+}
