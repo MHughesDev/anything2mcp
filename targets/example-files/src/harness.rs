@@ -137,6 +137,9 @@ struct State {
     held: Vec<(String, File)>,
     /// What to put back when the standing faults end, oldest first.
     restore: Vec<(PathBuf, Permissions)>,
+    /// Files marked as not on this machine, each with the attributes it had
+    /// before, to put back when the standing faults end.
+    offline: Vec<(PathBuf, u32)>,
     ledger: Ledger,
 }
 
@@ -676,6 +679,12 @@ impl FileStand {
                 state.held.push((file.clone(), held));
                 Ok(())
             }
+            Fault::NotOnThisMachine { file } => {
+                let path = self.path(file)?;
+                let before = mark_offline(&path)?;
+                state.offline.push((path, before));
+                Ok(())
+            }
             Fault::ReadOnlyFile { file } => {
                 let path = self.path(file)?;
                 let saved = mark_read_only(&path)?;
@@ -749,6 +758,9 @@ impl FileStand {
     fn end_standing_faults(&self, state: &mut State) -> Result<(), StandError> {
         state.held.clear();
         let mut first_failure = Ok(());
+        while let Some((path, before)) = state.offline.pop() {
+            first_failure = first_failure.and(put_attributes_back(&path, before));
+        }
         while let Some((path, saved)) = state.restore.pop() {
             match fs::set_permissions(&path, saved) {
                 Ok(()) => {}
@@ -1081,6 +1093,69 @@ fn hold_without_sharing(path: &Path) -> Result<File, StandError> {
     use std::os::windows::fs::OpenOptionsExt;
     let opened = fs::OpenOptions::new().read(true).share_mode(0).open(path);
     io_at("hold a file open", path, opened)
+}
+
+/// The path as Windows' wide functions take it, ending in a nul.
+#[cfg(windows)]
+fn wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
+    path.as_os_str().encode_wide().chain([0]).collect()
+}
+
+/// Gives the file the offline attribute, and gives back the attributes it
+/// had before.
+#[cfg(windows)]
+#[allow(unsafe_code, reason = "two calls into the system, explained below")]
+fn mark_offline(path: &Path) -> Result<u32, StandError> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_OFFLINE, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW,
+    };
+    let name = wide(path);
+    // SAFETY: `name` is a path ending in a nul, alive for the call, which
+    // only reads it.
+    let before = unsafe { GetFileAttributesW(name.as_ptr()) };
+    if before == INVALID_FILE_ATTRIBUTES {
+        return io_at(
+            "look at a file's attributes",
+            path,
+            Err(io::Error::last_os_error()),
+        );
+    }
+    // SAFETY: as above.
+    if unsafe { SetFileAttributesW(name.as_ptr(), before | FILE_ATTRIBUTE_OFFLINE) } == 0 {
+        return io_at("mark a file offline", path, Err(io::Error::last_os_error()));
+    }
+    Ok(before)
+}
+
+#[cfg(not(windows))]
+fn mark_offline(_path: &Path) -> Result<u32, StandError> {
+    Err(StandError::Unsupported(
+        "only Windows lets a program of the user mark a file's bytes as elsewhere",
+    ))
+}
+
+/// Gives the file back the attributes it had. A file removed meanwhile has
+/// nothing to put back.
+#[cfg(windows)]
+#[allow(unsafe_code, reason = "one call into the system, explained below")]
+fn put_attributes_back(path: &Path, before: u32) -> Result<(), StandError> {
+    use windows_sys::Win32::Storage::FileSystem::SetFileAttributesW;
+    if !path.exists() {
+        return Ok(());
+    }
+    let name = wide(path);
+    // SAFETY: `name` is a path ending in a nul, alive for the call, which
+    // only reads it.
+    if unsafe { SetFileAttributesW(name.as_ptr(), before) } == 0 {
+        return io_at("end a fault", path, Err(io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn put_attributes_back(_path: &Path, _before: u32) -> Result<(), StandError> {
+    Ok(())
 }
 
 #[cfg(not(windows))]

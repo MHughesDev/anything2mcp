@@ -402,7 +402,8 @@ impl Roots {
 /// Whatever compares a path with a root's folder resolves it by this, and by nothing else.
 pub fn resolved_path(path: &Path) -> std::io::Result<PathBuf>;
 pub enum Access { Read, Write }
-pub enum EntryKind { Absent, File, Folder, Link, Other }
+pub enum EntryKind { Absent, File, Folder, Link, Other, NotOnThisMachine }  // the last: a file whose bytes are elsewhere (decision 0430)
+impl EntryKind { pub fn of_metadata(metadata: &std::fs::Metadata) -> Self; }  // from symlink_metadata, by the same rule
 #[derive(Clone)]
 pub struct CheckedPath { /* private; no public constructor */ }
 impl CheckedPath {

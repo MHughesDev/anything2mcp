@@ -40,5 +40,9 @@ example-cli = { path = "../../targets/example-cli" }
 example-decompiler = { path = "../../targets/example-decompiler" }
 tokio = { workspace = true, features = ["test-util"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# The test that tries to make a dataless file, with `chflags`.
+libc.workspace = true
+
 [lints]
 workspace = true

@@ -21,7 +21,9 @@ use a2m_core::Digest;
 use a2m_provider::{Access, CheckedPath, EntryKind, HeldFolder, StepFailure};
 
 use crate::codes::{self, stop};
-use crate::open::{held_by_another, locked, missing, not_allowed, unavailable};
+use crate::open::{
+    held_by_another, locked, missing, not_allowed, not_on_this_machine, unavailable,
+};
 
 /// Whether the text is one file name: no folder, no step out, no drive, no
 /// placeholder.
@@ -301,6 +303,7 @@ impl Named {
         match self.checked.entry_kind() {
             Ok(EntryKind::File) => {}
             Ok(EntryKind::Absent) => return Err(missing()),
+            Ok(EntryKind::NotOnThisMachine) => return Err(not_on_this_machine()),
             Ok(EntryKind::Link) => {
                 return Err(StepFailure::not_sent(not_allowed(
                     "it is a link, and a document's file is a regular file under its own name",

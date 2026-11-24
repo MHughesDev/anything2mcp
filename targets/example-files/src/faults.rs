@@ -83,6 +83,16 @@ pub enum Fault {
         /// The file's name below the root.
         file: String,
     },
+    /// Standing: the file is marked as one whose bytes are not on this
+    /// machine, as a sync program marks a file it keeps elsewhere: on
+    /// Windows by the offline attribute, which a program of the user may
+    /// set. The bytes stay on disk, so the stand can still tell that
+    /// nothing changed them. Windows only: a macOS dataless file is made
+    /// only by a file provider, and Linux has no such mark.
+    NotOnThisMachine {
+        /// The file's name below the root.
+        file: String,
+    },
     /// Standing: the file is marked read-only. On Windows this also stops the
     /// file being replaced; on Unix it does not, because the folder decides that.
     ReadOnlyFile {
@@ -194,6 +204,7 @@ impl Fault {
             self,
             Self::LockSignal { .. }
                 | Self::HeldWithoutSharing { .. }
+                | Self::NotOnThisMachine { .. }
                 | Self::ReadOnlyFile { .. }
                 | Self::ReadOnlyFolder { .. }
                 | Self::FileMode { .. }
@@ -206,7 +217,7 @@ impl Fault {
     #[must_use]
     pub fn exists_here(&self) -> bool {
         match self {
-            Self::HeldWithoutSharing { .. } => cfg!(windows),
+            Self::HeldWithoutSharing { .. } | Self::NotOnThisMachine { .. } => cfg!(windows),
             Self::ReadOnlyFolder { .. } | Self::OwnedByAnother { .. } | Self::FileMode { .. } => {
                 cfg!(unix)
             }

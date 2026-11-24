@@ -94,12 +94,21 @@ mod os {
         /// What stands at `name` in the folder. A link is not followed.
         pub(in super::super) fn kind(&self, name: &OsStr) -> io::Result<EntryKind> {
             match statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(found) => Ok(match FileType::from_raw_mode(found.st_mode) {
-                    FileType::RegularFile => EntryKind::File,
-                    FileType::Directory => EntryKind::Folder,
-                    FileType::Symlink => EntryKind::Link,
-                    _ => EntryKind::Other,
-                }),
+                Ok(found) => {
+                    let kind = match FileType::from_raw_mode(found.st_mode) {
+                        FileType::RegularFile => EntryKind::File,
+                        FileType::Directory => EntryKind::Folder,
+                        FileType::Symlink => EntryKind::Link,
+                        _ => EntryKind::Other,
+                    };
+                    // A dataless file's flag, read with its type and with
+                    // nothing opened (decision 0430).
+                    #[cfg(target_os = "macos")]
+                    let marks = super::super::Marks::Macos(found.st_flags);
+                    #[cfg(not(target_os = "macos"))]
+                    let marks = super::super::Marks::None;
+                    Ok(kind.with_marks(marks))
+                }
                 Err(Errno::NOENT) => Ok(EntryKind::Absent),
                 Err(error) => Err(error.into()),
             }
@@ -842,19 +851,10 @@ mod os {
 
         /// What stands at `name` in the folder. A link is not followed.
         pub(in super::super) fn kind(&self, name: &OsStr) -> io::Result<EntryKind> {
+            // On Windows the attributes come with the type, from the entry
+            // opened as itself, which recalls nothing (decision 0430).
             match fs::symlink_metadata(self.0.join(name)) {
-                Ok(found) => {
-                    let kind = found.file_type();
-                    Ok(if kind.is_symlink() {
-                        EntryKind::Link
-                    } else if kind.is_dir() {
-                        EntryKind::Folder
-                    } else if kind.is_file() {
-                        EntryKind::File
-                    } else {
-                        EntryKind::Other
-                    })
-                }
+                Ok(found) => Ok(EntryKind::of_metadata(&found)),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(EntryKind::Absent),
                 Err(error) => Err(error),
             }
