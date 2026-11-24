@@ -324,11 +324,11 @@ Many pages ask for their own data with `POST`: a search form, a query endpoint t
 
 | Step | What happens |
 | --- | --- |
-| Learned | In a capture, where the request passes because the person made it. Seen at least twice with one shape and a structured answer, it is drafted as an endpoint in the holding folder with an open question in place of its effect: does every request by this method to this path only read? No operation is drafted from it |
+| Learned | In a capture, where the request passes because the person made it. Seen at least twice with one shape and a structured answer, it is drafted as an endpoint in the holding folder with its body's structure as `request_schema` and an open question in place of its effect. The question says that the capture saw no value and that seeing no change is not evidence. No operation is drafted from it |
 | Asserted | A person answers by writing `effect: read` and `read_asserted: true`, the key the HTTP pack reads ([section 303](303-the-http-pack.md)). A drafter never writes it. The endpoint catalog is the one place that says it (rule 8) |
-| Let through | The drivers hand an observing tab the asserted reads of the compiled target they run: in a live run of a published version, and in a try or a shadow of one in an environment of kind `test`. Never under the drafts, and never in discovery. A request matches by method, origin, and the entry's path as a template, segment for segment |
-| Shown | The publish page names each asserted read as a statement the person makes by publishing |
-| Not covered | An address that takes reads and writes by one method cannot be asserted: the statement would be false. Pinning such a request by its body is a later package |
+| Let through | The drivers hand an observing tab the asserted reads of the compiled target they run: in a live run of a published version, and in a try or a shadow of one in an environment of kind `test`. Never under the drafts, and never in discovery. A request matches by method, origin, the entry's path as a template, segment for segment, and its body, which must validate against the entry's closed `request_schema`, any `enum` included |
+| Shown | The publish page names each asserted read, and says that the person's word is the only evidence it changes nothing |
+| Not covered | Where a read and a write to one address differ only in a long text of the body, no `enum` can tell them apart. Pinning that text by digest is a later package |
 
 ### Capture
 
