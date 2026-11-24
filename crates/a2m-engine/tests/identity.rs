@@ -138,12 +138,9 @@ async fn a_stamped_record_is_found_again_by_its_stamp_after_a_lost_answer() {
         [("N-001".to_owned(), format!("ref:{token}"))]
     );
 
-    // Before the intent, the freshness check looked for the stamp once,
-    // and found no record carrying it.
-    assert_eq!(
-        scene.steps(&["find_item", "add_item"]),
-        ["find_item", "add_item"]
-    );
+    // Before the intent nothing looked for the stamp: a record still
+    // `planned` was never sent, so no record can carry it (decision 0399).
+    assert_eq!(scene.steps(&["find_item", "add_item"]), ["add_item"]);
 
     // Reconcile looks the record up by its stamp, finds the write landed,
     // and writes nothing.
@@ -152,8 +149,8 @@ async fn a_stamped_record_is_found_again_by_its_stamp_after_a_lost_answer() {
     assert_eq!(outcome, JobOutcome::Settled { remaining: 0 });
     assert_eq!(scene.record_states().await, [RecordState::Verified]);
     let lookups = scene.hooks.given("find_item");
-    assert_eq!(lookups.len(), 2);
-    assert_eq!(lookups[1].stamp.as_deref(), Some(token.as_str()));
+    assert_eq!(lookups.len(), 1);
+    assert_eq!(lookups[0].stamp.as_deref(), Some(token.as_str()));
 
     let outcome = scene.work(JobKind::Execute, REF_ADD, input).await;
     assert!(completed(&outcome), "{outcome:?}");
@@ -178,12 +175,13 @@ async fn a_stamped_record_whose_write_never_left_is_written_once_on_resume() {
     assert_eq!(scene.hooks.count("add_item"), 0);
 
     // The lookup by the stamp finds nothing: the record goes back to
-    // `planned` and is written, once.
+    // `planned` and is written, once, with no second look before its new
+    // intent (decision 0399).
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, REF_ADD, input).await;
     assert!(completed(&outcome), "{outcome:?}");
     let log = scene.steps(&["find_item", "add_item"]);
-    assert_eq!(log, ["find_item", "find_item", "add_item"]);
+    assert_eq!(log, ["find_item", "add_item"]);
     assert_eq!(stored(&scene, "A-102").await.len(), 1);
     assert_eq!(scene.record_states().await, [RecordState::Verified]);
 }
@@ -260,16 +258,16 @@ async fn a_key_assigned_before_the_commit_point_is_recorded_first_and_read_back_
         "{log:?}"
     );
     assert!(at(&log, "before_commit") < at(&log, "add_item"), "{log:?}");
-    // The save and the read-back used the assigned code. The one lookup
-    // by the stamp is the freshness check, before the intent.
+    // The save and the read-back used the assigned code. Nothing looked
+    // the record up by its stamp: before its intent it was never sent
+    // (decision 0399), and after its save it is read by the recorded code.
     assert_eq!(
         text(&scene.hooks.given("add_item")[0].args, "code"),
         "N-001"
     );
     let read_back = scene.hooks.given("get_item");
     assert_eq!(text(&read_back.last().unwrap().args, "item_code"), "N-001");
-    assert_eq!(scene.hooks.count("find_item"), 1);
-    assert!(at(&log, "find_item") < at(&log, "intend"), "{log:?}");
+    assert_eq!(scene.hooks.count("find_item"), 0);
     let stored = scene
         .app
         .stored_item("A-102", "N-001")

@@ -2681,7 +2681,20 @@ async fn commit_point(
         && record
             .seen_in
             .is_none_or(|context| context == run.serial_of(held));
-    if !fresh && found.identity.strategy != IdentityStrategy::None && !cannot_read(binding) {
+    // A record found by its stamp that is still `planned` was never sent:
+    // its intent comes next, and nothing is sent before an intent. No record
+    // of the system can carry its stamp, so the preview did not look for it
+    // and this check does not either (decision 0399). A look for it could
+    // say nothing more, and where the system cannot prove an absence by
+    // itself, such as a log that has lost its front, it would stop the
+    // write for nothing.
+    let never_sent = found.identity.strategy == IdentityStrategy::Stamped
+        && record.state == RecordState::Planned;
+    if !fresh
+        && !never_sent
+        && found.identity.strategy != IdentityStrategy::None
+        && !cannot_read(binding)
+    {
         let raw = read_record(run, found, record, held, false).await?;
         let seen = raw
             .as_ref()

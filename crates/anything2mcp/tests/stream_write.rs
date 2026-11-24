@@ -167,6 +167,25 @@ impl Raw {
         info["state"]["messages"].as_i64().unwrap()
     }
 
+    /// Where the log begins now: 1 for a log that has lost nothing from
+    /// its front.
+    async fn first(&mut self) -> i64 {
+        let info = self.api(&format!("$JS.API.STREAM.INFO.{STREAM}"), "").await;
+        info["state"]["first_seq"].as_i64().unwrap()
+    }
+
+    /// Takes the oldest messages off the log's front, keeping the newest
+    /// `keep`, as a message limit or an age limit does to a log in use.
+    async fn trim_front(&mut self, keep: u64) {
+        let purged = self
+            .api(
+                &format!("$JS.API.STREAM.PURGE.{STREAM}"),
+                &format!(r#"{{"keep":{keep}}}"#),
+            )
+            .await;
+        assert_eq!(purged["success"], true, "{purged}");
+    }
+
     async fn remove_stream(&mut self) {
         self.api(&format!("$JS.API.STREAM.DELETE.{STREAM}"), "")
             .await;
@@ -437,6 +456,84 @@ async fn a_publish_cut_after_the_server_stored_it_is_resumed_and_the_stream_hold
         kinds.iter().filter(|kind| **kind == "acted").count() <= 1,
         "{kinds:?}"
     );
+    raw.remove_stream().await;
+    world.close().await;
+}
+
+/// A log in use has lost its front: two more events of another order came
+/// after the seed, and the oldest two were taken off, so the log begins at
+/// its third position. Before decision 0399 the engine looked for a record
+/// never sent with nothing recorded, and the look stopped the publish as
+/// `scan_inconclusive`.
+async fn a_log_whose_front_was_trimmed(raw: &mut Raw) {
+    for order in ["B-201", "B-202"] {
+        let more = raw
+            .api(
+                &format!("{SUBJECT}.{order}"),
+                &format!(r#"{{"order_id":"{order}","event":"created"}}"#),
+            )
+            .await;
+        assert!(more.get("seq").is_some(), "{more}");
+    }
+    raw.trim_front(1).await;
+    assert_eq!(raw.stored().await, 1);
+    assert_eq!(raw.first().await, 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_to_a_log_whose_front_was_trimmed_is_sent_once_and_read_back() {
+    let Some((address, mut raw, _turn)) = server().await else {
+        return;
+    };
+    a_log_whose_front_was_trimmed(&mut raw).await;
+    let machine = machine(&address);
+    let world = published(&machine).await;
+
+    let run = approved(&world, RECORD, EVENT).await;
+    assert_eq!(raw.stored().await, 1);
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.result()["status"], "completed", "{}", done.json);
+    assert_eq!(raw.stored().await, 2);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    let kinds = kinds(&trace);
+    assert_eq!(kinds.iter().filter(|kind| **kind == "intent").count(), 1);
+    assert!(kinds.contains(&"verified"), "{kinds:?}");
+
+    let again = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(again.result()["status"], "completed", "{}", again.json);
+    assert_eq!(raw.stored().await, 2);
+    raw.remove_stream().await;
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_cut_on_a_log_whose_front_was_trimmed_is_found_from_where_the_log_ended() {
+    let Some((address, mut raw, _turn)) = server().await else {
+        return;
+    };
+    a_log_whose_front_was_trimmed(&mut raw).await;
+    let cutter = Cutter::start(&address).await;
+    let machine = machine(&cutter.address);
+    let world = published(&machine).await;
+    let run = approved(&world, RECORD, EVENT).await;
+
+    cutter.arm();
+    let lost = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(cutter.cuts(), 1, "{}", lost.json);
+    assert_eq!(lost.error()["class"], "possible_commit", "{}", lost.json);
+    assert_eq!(lost.error()["retry_safe"], false, "{}", lost.json);
+    assert_eq!(raw.stored().await, 2);
+
+    // The scan starts where the log ended before the publish, as the step
+    // before it recorded, not at the log's front, which was lost: it finds
+    // the message and sends nothing more.
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.result()["status"], "completed", "{}", done.json);
+    assert_eq!(raw.stored().await, 2);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    let kinds = kinds(&trace);
+    assert_eq!(kinds.iter().filter(|kind| **kind == "intent").count(), 1);
+    assert!(kinds.contains(&"reconcile_read"), "{kinds:?}");
     raw.remove_stream().await;
     world.close().await;
 }

@@ -242,7 +242,7 @@ A `Reconcile` job, and the start of any resumed `Execute` job, read `JobSpec::sn
 | Identity strategy | How the record is read |
 | --- | --- |
 | `natural`, `composite` | The binding's read-back steps alone, from the identity inputs |
-| `stamped` | The binding's lookup steps, which are handed the record's token as the step's stamp. At the first preview no record can carry the token, so the record is a `create` without a lookup |
+| `stamped` | The binding's lookup steps, which are handed the record's token as the step's stamp. At the first preview no record can carry the token, so the record is a `create` without a lookup; for the same reason a record still `planned` is not read by the freshness check before its intent, since it was never sent ([decision 0399](../../decisions/0399-a-stamped-record-never-sent-is-not-looked-for-before-its-intent.md)) |
 | `find` | The binding's lookup steps, from the inputs. The pack's lookup step sees the matches: more than one is its failure `possible_commit`, `ambiguous_match`, which the engine carries; the engine never picks one. Zero matches during reconcile waits the settle time out once and looks again |
 | Any, once a key was assigned | The read-back steps, which are handed the assigned key as the step's key and find everything the record's steps observed under `result` |
 | Any, with outputs recorded before the commit point | The read-back steps, which find the recorded values under `result` |
