@@ -1,0 +1,20 @@
+# A page the server draws whole: a change of its input is taken when the
+# control loses the focus.
+screen: reference
+surface: app
+reach: {url: "/cases/commit/plain"}
+ready: {visible: {role: heading, name: "Reference"}}
+fields:
+  reference:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: Reference}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save reference"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, contains: "Saved"}}
+    commits: true
