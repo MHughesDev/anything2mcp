@@ -11,7 +11,9 @@
 //!
 //! - `page_requests/{request}.yaml`: the entry, with the path, the page,
 //!   `GET`, `effect: read`, and the answer's shape: each top-level name
-//!   with the kind it was seen with, required when every answer held it;
+//!   with the kind it was seen with, and a question in place of `required`
+//!   (decisions 0322 and 0341: what every captured answer held is quoted,
+//!   never taken as required);
 //! - `operations/{request}_request.yaml`: `{target}_{request}_get`, a read
 //!   whose inputs, and key, are the placeholders, and whose outputs are the
 //!   answer's plain values: a string as `untrusted_text`, an integer as
@@ -131,7 +133,9 @@ struct Value {
     kind: &'static str,
     /// The field type of the output it gives, when it gives one.
     output: Option<&'static str>,
-    required: bool,
+    /// Held by every answer the capture saw: a fact about the capture, not
+    /// a promise of the application.
+    seen_in_all: bool,
 }
 
 /// The top-level values of the answer the finding names, in order of name.
@@ -159,12 +163,12 @@ fn values(response: &Json) -> Option<Vec<Value>> {
             // entry does not declare it.
             _ => continue,
         };
-        let required = field.get("optional").and_then(Json::as_bool) != Some(true);
+        let seen_in_all = field.get("optional").and_then(Json::as_bool) != Some(true);
         out.push(Value {
             name: name.clone(),
             kind,
-            output: output.filter(|_| required),
-            required,
+            output: output.filter(|_| seen_in_all),
+            seen_in_all,
         });
     }
     Some(out)
@@ -271,11 +275,19 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             )
         })
         .collect();
-    let required = values
+    // What was seen in every answer is not what the application promises
+    // (decisions 0322 and 0341): the entry's `required` is left to a
+    // person, and the held draft asks which values the answer may leave
+    // out. The names seen in every answer are quoted to help the answer.
+    let seen: Vec<&str> = values
         .iter()
-        .filter(|value| value.required)
-        .map(|value| DraftValue::text(&value.name))
+        .filter(|value| value.seen_in_all)
+        .map(|value| value.name.as_str())
         .collect();
+    let required = cx.open_question_quoting(
+        "Which values of this request's answer may it leave out? Nothing is taken as required from what a capture saw. The values every captured answer held are quoted; list under `required` only those the application always gives.",
+        &seen,
+    );
     // A request that cannot be made again exactly is drafted with a
     // question in place of its path, and no read over it.
     let unmade = not_reproduced(&found);
@@ -326,7 +338,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 "response_schema",
                 DraftValue::map(vec![
                     ("type", DraftValue::text("object")),
-                    ("required", DraftValue::List(required)),
+                    ("required", required),
                     ("properties", DraftValue::Map(properties)),
                 ]),
             ),

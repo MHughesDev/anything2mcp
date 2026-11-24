@@ -127,6 +127,39 @@ fn draft(stand: &Stand, folder: &Folder, findings: &[Finding]) -> DraftReport {
         .unwrap()
 }
 
+/// The part of a person who answers the held draft's one question about
+/// what the answer may leave out (decisions 0322 and 0341): each held file
+/// moves into place with the answer's `required` listing every value its
+/// `properties` declare. The drafter never states it from a capture.
+fn answered(folder: &Folder, report: &DraftReport) -> DraftReport {
+    let mut report = report.clone();
+    for held in std::mem::take(&mut report.held) {
+        let from = folder.path().join(held.as_str());
+        let name = held.as_str().strip_prefix("held/").unwrap().to_owned();
+        let mut text = std::fs::read_to_string(&from).unwrap();
+        if let Some(start) = text.find("required: {") {
+            let end = start + text[start..].find('\n').unwrap();
+            let properties = text.find("properties:\n").unwrap();
+            let names: Vec<&str> = text[properties..]
+                .lines()
+                .skip(1)
+                .take_while(|line| line.starts_with("    "))
+                .filter(|line| !line.starts_with("     "))
+                .map(|line| line.trim().trim_end_matches(':'))
+                .collect();
+            text.replace_range(start..end, &format!("required: [{}]", names.join(", ")));
+        }
+        let to = folder.path().join(&name);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(&to, text).unwrap();
+        std::fs::remove_file(&from).unwrap();
+        report.written.push(RelPath::new(&name).unwrap());
+    }
+    report.written.sort();
+    report.open_questions.clear();
+    report
+}
+
 /// Every file of a target folder, in order of path.
 fn files_of(folder: &Path) -> Vec<(RelPath, Vec<u8>)> {
     fn walk(root: &Path, at: &Path, out: &mut Vec<(RelPath, Vec<u8>)>) {
@@ -260,6 +293,30 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
         finding(&origin, "screen", "orders_screen.json"),
     ];
     let report = draft(&stand, &folder, &findings);
+    // The request's entry asks which values its answer may leave out, and
+    // is held with the read over it; it never states `required` from what
+    // the capture saw. The screen's reads stay in place.
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        held,
+        [
+            "held/operations/api_orders_totals_request.yaml",
+            "held/page_requests/api_orders_totals.yaml",
+        ],
+        "{report:?}"
+    );
+    assert_eq!(report.open_questions.len(), 1, "{report:?}");
+    assert!(report.refused.is_empty(), "{report:?}");
+    let held_entry = std::fs::read_to_string(
+        folder
+            .path()
+            .join("held/page_requests/api_orders_totals.yaml"),
+    )
+    .unwrap();
+    assert!(held_entry.contains("required: {"), "{held_entry}");
+    assert!(!held_entry.contains("required: ["), "{held_entry}");
+    // A person's answer moves the pair into place.
+    let report = answered(&folder, &report);
     let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
     // The request's read and the screen's reads have names of their own:
     // one from the request's path, the others from the page's.
@@ -273,10 +330,6 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
             "screens/orders_line_items.yaml",
             "screens/orders_values.yaml",
         ],
-        "{report:?}"
-    );
-    assert!(
-        report.open_questions.is_empty() && report.refused.is_empty(),
         "{report:?}"
     );
     let entry = std::fs::read_to_string(folder.path().join("page_requests/api_orders_totals.yaml"))
@@ -310,7 +363,8 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     }
     // Drafting twice gives the same bytes.
     let again = new_target("page-http-again", &origin);
-    draft(&stand, &again, &findings);
+    let again_report = draft(&stand, &again, &findings);
+    answered(&again, &again_report);
     assert_eq!(files_of(folder.path()), files_of(again.path()));
 
     let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
@@ -586,7 +640,9 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
             .join("page_requests/api_orders_totals.yaml")
             .exists()
     );
-    assert_eq!(report.open_questions.len(), 1, "{report:?}");
+    // Two questions: which request answers what the page shows, and which
+    // values its answer may leave out.
+    assert_eq!(report.open_questions.len(), 2, "{report:?}");
     let question = &report.open_questions[0];
     let quoting = question.quoting.as_ref().unwrap();
     assert_eq!(
@@ -643,7 +699,7 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
             ["held/page_requests/api_orders_totals.yaml"],
             "{why}: {report:?}"
         );
-        assert_eq!(report.open_questions.len(), 1, "{why}: {report:?}");
+        assert_eq!(report.open_questions.len(), 2, "{why}: {report:?}");
     }
     assert!(app.writes().await.unwrap().is_empty());
     stand.end().await;
@@ -683,6 +739,7 @@ fn a_page_http_binding_on_an_operation_that_writes_is_refused_by_name() {
     let stand = Stand::new("page-http-writes", Arc::new(NoSecrets));
     let folder = new_target("page-http-writes", origin);
     let report = draft(&stand, &folder, &[summary_exchange(origin)]);
+    let report = answered(&folder, &report);
     let path = "operations/api_orders_totals_request.yaml";
     // An operation declared to write, through a read of the page: refused
     // by this pack's own name.
@@ -766,6 +823,7 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
     let stand = Stand::new("page-http-measured", Arc::new(NoSecrets));
     let folder = new_target("page-http-measured", &origin);
     let report = draft(&stand, &folder, &[summary_exchange(&origin)]);
+    let report = answered(&folder, &report);
     std::fs::create_dir_all(folder.path().join("screens")).unwrap();
     std::fs::write(
         folder.path().join("screens/order_totals_page.yaml"),
@@ -893,6 +951,7 @@ fn an_answer_value_named_as_a_secret_is_never_a_drafted_output() {
         found["note"] = INVENTED.into();
     });
     let report = draft(&stand, &folder, &[one]);
+    let report = answered(&folder, &report);
     let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
     assert_eq!(
         written,
