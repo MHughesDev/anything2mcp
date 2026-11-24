@@ -132,6 +132,27 @@ A recipe that built an address from `127.0.0.1` and `{port}` does not: `{port}` 
 system's port on the network, and nothing is published on this machine. Change such an
 address to `{system}`.
 
+Three more things a recipe may say under `"system"`, for a system that is not a request
+service:
+
+- `"ready": {"exec": [argv]}` in place of a path: the system is ready when that program,
+  run inside its container, exits 0. For a system that answers no HTTP request, such as a
+  database server.
+- `"network": "box"`: the system's container shares the network of the product's box
+  (`--network container:<box>`), so that the product reaches it on the box's loopback address,
+  127.0.0.1, as the product sees a system on the person's own machine. The box is then started,
+  and the closed-network check made, before the system. `{host}` is `127.0.0.1`, `{system}` is
+  `http://127.0.0.1:<port>`, and `{direct}` is the box's address on the closed network. It
+  cannot be combined with `"proxy": true`, whose upstream is the system's container by name.
+- `"harness_features": ["<package>/<feature>", ...]`: features of workspace packages that the
+  field harness is built with, such as a store a pack speaks to only behind a feature. The
+  report states them, because a run with them is not a run of the product as it is shipped.
+
+A recipe whose system is a folder of files, not a program, says `"system": {"kind": "folder"}`
+and names no image: no system's container is started, and the folder is made by the recipe's
+own steps (`python`, `copy`) under `{project}` or `{data}`. The steps `exec` and `http`, and a
+proxy, need a system's container and are refused in such a recipe.
+
 When the run ends, every container and the network it made are removed, unless `--keep`,
 which leaves them running and prints their names so they can be removed.
 """
@@ -179,6 +200,9 @@ SHORT_HASH = 12
 PROXY_PORT = 8080
 CONTROL_PORT = 9099
 RUN_LABEL = "a2m-field-run"
+
+# A feature a recipe may build the field harness with: a workspace package and its feature.
+FEATURE = re.compile(r"^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -268,8 +292,11 @@ class Run:
         return ["docker", "network", "create", "--internal", "--label", self.label, self.network]
 
     def system_argv(self, system, data, env):
-        """The system's container: on the closed network, with no published port."""
-        argv = ["docker", "run", "-d", "--name", self.system, "--network", self.network, "--label", self.label]
+        """The system's container: on the closed network, with no published port. With
+        `"network": "box"`, in the box's own network, so that it is on the box's loopback
+        address and on the closed network through the box, and nowhere else."""
+        network = f"container:{self.box}" if system.get("network") == "box" else self.network
+        argv = ["docker", "run", "-d", "--name", self.system, "--network", network, "--label", self.label]
         if "volume" in system:
             argv += ["-v", f"{data}:{system['volume']}"]
         for key, value in env.items():
@@ -445,26 +472,39 @@ class ProxyBox:
         raise CannotRun("The fault proxy did not start.")
 
 
-def harness_build(build_dir):
+def harness_build(build_dir, features=()):
     """The command that builds the field harness into `build_dir`, and its environment: a
     cargo target folder of the run's own, so that the harness is never in the shared one,
-    and no debug information or incremental state, which only cost disk."""
+    and no debug information or incremental state, which only cost disk. Each feature is
+    `<package>/<feature>`; its package is selected beside the harness, so that cargo's one
+    resolution of features gives the harness the package with that feature on."""
     env = dict(os.environ)
     env.update(
         CARGO_TARGET_DIR=os.path.join(build_dir, "target"),
         CARGO_INCREMENTAL="0",
         CARGO_PROFILE_DEV_DEBUG="0",
     )
-    argv = ["cargo", "build", "-p", HARNESS_PACKAGE, "--locked", "--quiet"]
+    argv = ["cargo", "build", "-p", HARNESS_PACKAGE]
+    for feature in features:
+        if not FEATURE.match(feature):
+            raise CannotRun(f"A harness feature is not `<package>/<feature>`: {feature!r}")
+        argv += ["-p", feature.split("/")[0]]
+    if features:
+        argv += ["--features", ",".join(features)]
+    argv += ["--locked", "--quiet"]
     return argv, env, os.path.join(build_dir, "target", "debug", HARNESS_PACKAGE)
 
 
-def build_harness(build_root, execute=None):
+def build_harness(build_root, execute=None, features=()):
     """Build the field harness into a new folder under `build_root`. Returns the folder,
     which the caller deletes, and the binary."""
     execute = execute or (lambda argv, env: run(argv, env=env, cwd=REPO, seconds=3600))
     build_dir = tempfile.mkdtemp(prefix="a2m-field-harness-", dir=build_root)
-    argv, env, binary = harness_build(build_dir)
+    try:
+        argv, env, binary = harness_build(build_dir, features)
+    except CannotRun:
+        shutil.rmtree(build_dir, ignore_errors=True)
+        raise
     code, out, err = execute(argv, env)
     if code != 0 or not os.path.isfile(binary):
         shutil.rmtree(build_dir, ignore_errors=True)
@@ -687,6 +727,8 @@ def do_step(step, names, env, active, proxy=None, harness=None):
             }
         )
         return {"ok": True, "output": f"{spec['do']}: the next {spec.get('times', 1)} {spec.get('method', 'GET')} {spec['path']}"}
+    if ("exec" in step or "http" in step) and "direct" not in names:
+        raise CannotRun("An `exec` or `http` step needs a system's container; this recipe's system is a folder.")
     if "exec" in step:
         code, out, err = run(["docker", "exec", *step.get("as", []), active.system, *step["exec"]])
         return {"ok": code == 0, "output": (out + err)[-2000:]}
@@ -756,8 +798,16 @@ def met(expect, shown):
     return None
 
 
-def wait_ready(base, path, seconds=90):
+def wait_ready(base, path, seconds=90, container=None):
+    """Wait until the system answers 200 at `path`, or, when `path` is `{"exec": [argv]}`,
+    until that program exits 0 inside `container`."""
     until = time.time() + seconds
+    if isinstance(path, dict):
+        while time.time() < until:
+            if run(["docker", "exec", container, *path["exec"]], seconds=30)[0] == 0:
+                return
+            time.sleep(1)
+        raise CannotRun(f"The system's readiness check {path['exec']} did not exit 0 within {seconds} seconds.")
     while time.time() < until:
         try:
             status, _ = request(base, {"path": path})
@@ -800,8 +850,16 @@ def main():
         print("The container engine is not running; start it, then run the field test again.")
         return 2
     system = recipe["system"]
-    if "@sha256:" not in system["image"]:
+    a_folder = system.get("kind") == "folder"
+    if a_folder:
+        if "image" in system or system.get("proxy") or system.get("network"):
+            print("A recipe whose system is a folder names no image, no proxy, and no network.")
+            return 2
+    elif "@sha256:" not in system.get("image", ""):
         print("The recipe's image is not pinned by digest.")
+        return 2
+    if system.get("network") == "box" and system.get("proxy"):
+        print("A system in the box's network cannot have the proxy, whose upstream is the system's container.")
         return 2
     try:
         system_env(system, {})
@@ -815,11 +873,12 @@ def main():
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
         "data": os.path.join(run_dir, "data"),
-        "port": str(system["port"]),
-        "host": active.system,
     }
-    names["system"] = f"http://{active.system}:{system['port']}"
-    names["base"] = names["system"]
+    if not a_folder:
+        names["port"] = str(system["port"])
+        names["host"] = "127.0.0.1" if system.get("network") == "box" else active.system
+        names["system"] = f"http://{names['host']}:{system['port']}"
+        names["base"] = names["system"]
     for folder in (names["project"], names["data"]):
         os.makedirs(folder)
     home = os.path.abspath(args.home) if args.home else os.path.join(run_dir, "home")
@@ -834,7 +893,12 @@ def main():
     proxy = None
     harness = None
     build_dir = None
-    report = {"field_test": recipe["name"], "image": system["image"], "steps": []}
+    report = {
+        "field_test": recipe["name"],
+        "image": system.get("image", "none: the system is a folder"),
+        "harness_features": system.get("harness_features", []),
+        "steps": [],
+    }
     failed = 0
 
     def start_engine(harness_binary):
@@ -848,19 +912,27 @@ def main():
 
     try:
         print("building the field harness")
-        build_dir, harness_binary = build_harness(args.harness_build)
+        build_dir, harness_binary = build_harness(args.harness_build, features=system.get("harness_features", ()))
         code, _, err = run(active.network_argv())
         if code != 0:
             raise CannotRun(f"The closed network was not made: {err.strip()[-400:]}")
-        code, _, err = run(active.system_argv(system, names["data"], system_env(system, names)))
-        if code != 0:
-            raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
-        _, address, _ = run(
-            ["docker", "inspect", active.system, "--format",
-             "{{(index .NetworkSettings.Networks \"" + active.network + "\").IPAddress}}"]
-        )
-        names["direct"] = f"http://{address.strip()}:{system['port']}"
-        wait_ready(names["direct"], system["ready"])
+        if not a_folder and system.get("network") == "box":
+            # The box first, and the closed-network check with it, so that the system's
+            # container can join the box's network.
+            active.ensure_box(
+                env["A2M_BINARY"], home, names["project"], f"{os.getuid()}:{os.getgid()}", harness=harness_binary
+            )
+        if not a_folder:
+            code, _, err = run(active.system_argv(system, names["data"], system_env(system, names)))
+            if code != 0:
+                raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
+            holder = active.box if system.get("network") == "box" else active.system
+            _, address, _ = run(
+                ["docker", "inspect", holder, "--format",
+                 "{{(index .NetworkSettings.Networks \"" + active.network + "\").IPAddress}}"]
+            )
+            names["direct"] = f"http://{address.strip()}:{system['port']}"
+            wait_ready(names["direct"], system["ready"], container=active.system)
         if system.get("proxy"):
             code, _, err = run(active.proxy_argv(system["port"]))
             if code != 0:
@@ -870,7 +942,7 @@ def main():
             names["base"] = f"http://{active.proxy}:{PROXY_PORT}"
         for number, raw in enumerate(recipe["steps"], 1):
             straight = any(kind in raw for kind in ("http", "sqlite", "exec", "python"))
-            step = fill(raw, {**names, "base": names["direct"]} if straight else names)
+            step = fill(raw, {**names, "base": names["direct"]} if straight and "direct" in names else names)
             if "a2m" in step and harness is None:
                 harness = start_engine(harness_binary)
             shown = do_step(step, names, env, active, proxy, harness)
@@ -878,7 +950,10 @@ def main():
             for name, path in step.get("keep", {}).items():
                 value = kept(answer or {}, path)
                 if value is None:
-                    raise CannotRun(f"Step {number} has no `{path}` in its answer to keep as `{{{name}}}`.")
+                    raise CannotRun(
+                        f"Step {number} has no `{path}` in its answer to keep as `{{{name}}}`; "
+                        f"it showed: {shown.get('output', '')[-1500:]}"
+                    )
                 names[name] = value
             why = met(step.get("expect", {"ok": True}), shown)
             entry = {

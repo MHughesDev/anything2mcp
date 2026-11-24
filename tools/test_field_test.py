@@ -63,6 +63,31 @@ class Containers(unittest.TestCase):
         self.assertIn("K=v", argv)
         self.assertEqual(argv[-1], SYSTEM["image"])
 
+    def test_a_system_in_the_box_s_network_joins_the_box_and_publishes_nothing(self):
+        argv = self.run.system_argv({**SYSTEM, "network": "box"}, "/runs/data", {})
+        self.assertEqual(flag_value(argv, "--network"), f"container:{self.run.box}")
+        self.assertNotIn("-p", argv)
+        self.assertNotIn("--publish", argv)
+        self.assertNotIn("host", argv)
+
+    def test_a_ready_program_is_run_inside_the_system_until_it_exits_0(self):
+        seen = []
+        answers = iter([(1, "", ""), (0, "", "")])
+
+        def fake(argv, **_):
+            seen.append(argv)
+            return next(answers)
+
+        with mock.patch.object(field_test, "run", fake), mock.patch.object(field_test.time, "sleep"):
+            field_test.wait_ready("http://x", {"exec": ["ready-check"]}, container="sys")
+        self.assertEqual(seen, [["docker", "exec", "sys", "ready-check"]] * 2)
+
+    def test_a_folder_recipe_refuses_steps_that_need_a_system(self):
+        names = {"project": "/p", "recipe": "/r", "data": "/d"}
+        for step in ({"exec": ["true"]}, {"http": {"path": "/"}}):
+            with self.assertRaises(field_test.CannotRun):
+                field_test.do_step(step, names, {}, self.run)
+
     def test_the_binary_is_mounted_read_only_and_home_and_project_are_mounted(self):
         argv = self.run.box_argv("/b/anything2mcp", "/h", "/p/project", "1000:1000")
         self.assertIn(f"/b/anything2mcp:{field_test.BOX_BINARY}:ro", argv)
@@ -375,6 +400,21 @@ class HarnessCommands(unittest.TestCase):
             with self.assertRaises(field_test.CannotRun):
                 field_test.build_harness(root, lambda argv, env: (101, "", "error"))
             self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_a_feature_selects_its_package_beside_the_harness(self):
+        argv, _, _ = field_test.harness_build("/scratch/b", ["example-pack/server"])
+        self.assertEqual(argv[:4], ["cargo", "build", "-p", field_test.HARNESS_PACKAGE])
+        self.assertIn("example-pack", argv)
+        self.assertEqual(flag_value(argv, "--features"), "example-pack/server")
+        self.assertIn("--locked", argv)
+        self.assertNotIn("--features", field_test.harness_build("/scratch/b")[0])
+
+    def test_a_feature_that_is_not_package_and_feature_is_refused_and_leaves_no_folder(self):
+        for bad in ("server", "a/b; rm", "--all-features", "a/b/c"):
+            with tempfile.TemporaryDirectory() as root:
+                with self.assertRaises(field_test.CannotRun):
+                    field_test.build_harness(root, lambda argv, env: (0, "", ""), features=[bad])
+                self.assertEqual(list(Path(root).iterdir()), [])
 
     def test_the_page_is_asked_inside_the_box_on_its_loopback_address(self):
         argv = self.run.page_argv(4321)
