@@ -232,6 +232,19 @@ fn a_badly_formed_name_or_file_is_refused_with_the_line() {
             "{absence}"
         );
     }
+    // The time a mode's `prepare` may take is more than nothing and no
+    // more than the kernel's ceiling.
+    for within in ["0", "600001"] {
+        let declares = manifest("alpha", "request", "").replace(
+            "steps = [\"fetch\", \"send\"]",
+            &format!("steps = [\"fetch\", \"send\"]\nprepare_within_ms = {within}"),
+        );
+        assert_eq!(
+            Manifest::parse(&declares).unwrap_err().code(),
+            &codes::MANIFEST_INVALID,
+            "{within}"
+        );
+    }
     let level = manifest("alpha", "request", "")
         .replace(r#"max_level = "discovered""#, r#"max_level = "approved""#);
     assert_eq!(

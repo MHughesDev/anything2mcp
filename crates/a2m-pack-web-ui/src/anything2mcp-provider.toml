@@ -18,6 +18,10 @@ steps = ["goto", "wait", "read", "set", "invoke"]
 # No kind of step always saves: an `invoke` saves when its action is
 # declared to, and the lowering refuses a `commits` mark on any other kind.
 commit_steps = []
+# Preparing starts the browser when none is open, which may take the whole
+# launch deadline of two minutes on a cold machine, and then opens a tab and
+# places its state (decision 0427).
+prepare_within_ms = 180000
 rank = 60
 session_reads = 4
 session_writes = 1
@@ -38,6 +42,7 @@ archetype = "request"
 verbs = ["read", "update"]
 steps = ["goto", "request"]
 commit_steps = []
+prepare_within_ms = 180000
 rank = 40
 session_reads = 4
 session_writes = 1
@@ -54,6 +59,7 @@ archetype = "request"
 verbs = ["call", "submit"]
 steps = ["goto", "wait", "call_tool"]
 commit_steps = ["call_tool"]
+prepare_within_ms = 180000
 rank = 30
 session_reads = 4
 session_writes = 1

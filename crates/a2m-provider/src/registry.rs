@@ -1080,6 +1080,7 @@ impl Registry {
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
+            prepare_within: candidate.decl.prepare_within(),
             codes: candidate.codes.clone(),
             choice: ProviderChoice {
                 provider: candidate.provider.clone(),
@@ -1119,6 +1120,7 @@ impl Registry {
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
+            prepare_within: candidate.decl.prepare_within(),
             codes: candidate.codes.clone(),
             choice: ProviderChoice {
                 provider: candidate.provider.clone(),

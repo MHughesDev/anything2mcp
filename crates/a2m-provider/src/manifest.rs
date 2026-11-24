@@ -261,6 +261,14 @@ pub struct ModeDecl {
     /// mode proves nothing on its own.
     #[serde(default)]
     pub absence_steps: Vec<StepKind>,
+    /// The longest the mode's driver states one `prepare` may take, in
+    /// milliseconds: what acquiring the binding's tab, client, window, or
+    /// file takes on a slow machine, starting any program it needs. The
+    /// engine gives `prepare` this long, and, where it is left out, its own
+    /// default (decision 0427). It is at least one millisecond and at most
+    /// [`PREPARE_CEILING`]; a manifest that states another is refused.
+    #[serde(default)]
+    pub prepare_within_ms: Option<u64>,
     /// Its place in binding order when an operation states none; lower is
     /// tried first.
     #[serde(default = "default_rank")]
@@ -278,6 +286,11 @@ pub struct ModeDecl {
     #[serde(default)]
     pub exclusive: Exclusive,
 }
+
+/// The longest a mode's manifest may state that one `prepare` takes: ten
+/// minutes. A start slower than that is a machine that is not working, and
+/// the engine gives it up rather than hold a job for it (decision 0427).
+pub const PREPARE_CEILING: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The defaults of a mode, as the registry gives them to the engine and,
 /// as data, to the scheduler.
@@ -306,6 +319,13 @@ impl ModeDecl {
             session_writes: self.session_writes,
             exclusive: self.exclusive,
         }
+    }
+
+    /// The longest one `prepare` of the mode's driver may take, as its
+    /// manifest states it; `None` where it states none.
+    #[must_use]
+    pub fn prepare_within(&self) -> Option<std::time::Duration> {
+        self.prepare_within_ms.map(std::time::Duration::from_millis)
     }
 }
 
@@ -1060,6 +1080,15 @@ impl Manifest {
                 return Err(invalid(
                     "modes",
                     "a step kind whose absence is authoritative is listed once, is one of the mode's step kinds, and never commits",
+                ));
+            }
+            if mode
+                .prepare_within()
+                .is_some_and(|within| within.is_zero() || within > PREPARE_CEILING)
+            {
+                return Err(invalid(
+                    "modes",
+                    "the time a mode's `prepare` may take is at least one millisecond and at most ten minutes",
                 ));
             }
             if mode.session_reads == 0 || mode.session_writes == 0 {

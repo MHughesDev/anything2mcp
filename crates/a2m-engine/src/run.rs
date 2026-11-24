@@ -731,7 +731,15 @@ impl<'a> Run<'a> {
                 .map(ProgramRef::from)
                 .collect(),
         );
-        let deadline = Deadline::after(self.engine.deps.settings.prepare_timeout);
+        // The mode's own longest prepare, as its manifest states it, which
+        // the manifest check holds under the kernel's ceiling; the engine's
+        // default where it states none (decision 0427).
+        let deadline = Deadline::after(
+            candidate
+                .handle
+                .prepare_within()
+                .unwrap_or(self.engine.deps.settings.prepare_timeout),
+        );
         let context = PrepareContext {
             run: self.job.run,
             epoch: self.job.epoch,

@@ -65,9 +65,9 @@ pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_
 pub use manifest::{
     ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, DrivenBy, Effects,
     EvidenceDecl, Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
-    MANIFEST_FILE_NAME, MANIFEST_FORMAT, Manifest, ModeDecl, ModeDefaults, NetworkEffect, Points,
-    ProgramDecl, ProviderKind, ProviderSection, ReadDecl, Requirement, RunSection, SettingDecl,
-    SettingScope, SettingType, SurfaceKindDecl,
+    MANIFEST_FILE_NAME, MANIFEST_FORMAT, Manifest, ModeDecl, ModeDefaults, NetworkEffect,
+    PREPARE_CEILING, Points, ProgramDecl, ProviderKind, ProviderSection, ReadDecl, Requirement,
+    RunSection, SettingDecl, SettingScope, SettingType, SurfaceKindDecl,
 };
 pub use name::{ActionName, DiscovererName, ProviderName, RootName, SubsystemKind};
 pub use pack::{CompilerRegistrations, Pack, PackContext, Registrar};

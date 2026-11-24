@@ -79,6 +79,19 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         list
     };
     assert_eq!(sorted(declared), sorted(produced));
+    // Every mode is given long enough to prepare for a browser to start
+    // to the end of its launch deadline and a tab to open after it, so the
+    // engine never drops a slow first start before the pack itself gives
+    // it up (decision 0427).
+    let browser = a2m_pack_web_browser::BrowserSettings::default();
+    for mode in &manifest.modes {
+        let within = mode.prepare_within().unwrap();
+        assert!(
+            within >= browser.launch_deadline + browser.call_deadline,
+            "{}",
+            mode.name
+        );
+    }
     // The step kinds the lowering makes are the mode's, and no others.
     let steps = &manifest.modes[0].steps;
     for kind in [
